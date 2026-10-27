@@ -68,6 +68,17 @@ if(BUILD_TESTING)
   Test(test_biobytearray BioByteArray.cpp BioByteArray.h
                                     func_base.cpp func_base.h)
   Test(test_asn1int asn1int.cpp asn1int.h func_base.h func_base.cpp)
+
+  add_executable(test_takey
+    ${PROJECT_SOURCE_DIR}/lib/test_takey.cpp
+    ${PROJECT_BINARY_DIR}/local.h
+  )
+  target_link_libraries(test_takey PRIVATE xcalib ${QT}::Test ${ASAN_LIB})
+  set_target_properties(test_takey PROPERTIES MACOSX_BUNDLE FALSE)
+  add_test(NAME test_takey COMMAND test_takey)
+  add_dependencies(tests test_takey)
+  set_tests_properties(test_takey PROPERTIES LABELS "console;lib")
+
   Test(test_asn1time asn1time.cpp asn1time.h func_base.h func_base.cpp)
   Test(test_entropy entropy.cpp entropy.h func.h func_base.cpp xfile.h)
   Test(test_x509name x509name.cpp x509name.h func_base.h func_base.cpp
