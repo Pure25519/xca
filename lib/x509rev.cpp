@@ -101,7 +101,9 @@ X509_REVOKED *x509rev::toREVOKED(bool withReason) const
 	Q_CHECK_PTR(rev);
 	X509_REVOKED_set_serialNumber(rev, serial.get());
 	X509_REVOKED_set_revocationDate(rev, (ASN1_TIME*)date.get_utc());
-	X509_REVOKED_add1_ext_i2d(rev, NID_invalidity_date,
+	/* RFC 5280 5.3.2: only add the extension if the date is known */
+	if (!ivalDate.isUndefined())
+		X509_REVOKED_add1_ext_i2d(rev, NID_invalidity_date,
 							 (ASN1_TIME*)ivalDate.get(), 0, 0);
 
 	/* RFC says to not add the extension if it is "unspecified" */
