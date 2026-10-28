@@ -45,6 +45,8 @@ class arguments
 	bool need_db{ false };
 
   public:
+	static const QStringList secret_opts;
+	static QStringList loggable(int argc, char *argv[]);
 	static bool is_console(int argc, char *argv[]);
 	static QString help();
 	static QString man();
