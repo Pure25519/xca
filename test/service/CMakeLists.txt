@@ -93,6 +93,12 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Key sizes as openssl pkey reads them (BTD-94)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_key PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)

@@ -81,6 +81,10 @@ Rules:
 
 `test_service_key.cpp` is the reference example (key generation via
 `db_key::newKey(keyjob, name)`), `test_service_harness.cpp` tests the harness itself.
+`test_service_key.cpp` also checks the size of every generated key type in the key, in the audit
+entry and with `openssl pkey -text` (skipped without the `openssl` program), and that a size
+OpenSSL rejects fails with `invalid_key_size` (BTD-94). Test RSA with more than 2048 bit: 2048 is
+OpenSSL's default and passes even when the requested size is ignored.
 `test_service_audit.cpp` covers the audit log (BTD-29); its fixture is described in
 `data/README.md`. Audit entries land in the per-test database, so a test reads them with
 `AuditLog::entries()` right after the call. The caller contract for service functions (one
