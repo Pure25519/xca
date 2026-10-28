@@ -462,8 +462,14 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert->setSerial(getUniqueSerial(spec.signer));
 
 	// Step 3 - Choose the Date, capped at the issuer chain
+	bool capped;
+	a1time notAfter = spec.effectiveNotAfter(&capped);
+	if (capped && notAfter <= spec.notBefore)
+		throw serviceError("invalid_validity",
+			tr("The issuer chain ends on %1, not after the start of the certificate on %2")
+			.arg(notAfter.toPrettyGMT()).arg(spec.notBefore.toPrettyGMT()));
 	cert->setNotBefore(spec.notBefore);
-	cert->setNotAfter(spec.effectiveNotAfter());
+	cert->setNotAfter(notAfter);
 
 	// STEP 4 handle extensions
 

@@ -1399,6 +1399,17 @@ void NewX509::accept()
 	bool capped = false;
 	a1time cappedEnd = IssuanceSpec::cappedNotAfter(requestedEnd, signer,
 							&capped);
+	if (capped && cappedEnd <= notBefore->getDate()) {
+		gotoTab(2);
+		xcaWarningBox msg(this, tr("The signer's validity ends on %1, not after the start of the certificate on %2. The certificate cannot be issued below this signer.")
+			.arg(cappedEnd.toPrettyGMT())
+			.arg(notBefore->getDate().toPrettyGMT()));
+		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
+		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
+		if (msg.exec() == QMessageBox::Close)
+			reject();
+		return;
+	}
 	if (capped) {
 		gotoTab(2);
 		QString text = tr("The certificate will be longer valid than the signer. This is probably not what you want.");

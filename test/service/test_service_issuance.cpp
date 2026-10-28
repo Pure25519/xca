@@ -70,6 +70,8 @@ class test_service_issuance : public ServiceTestCase
 	void validityUnderIssuer_data();
 	void validityUnderIssuer();
 	void validityCappedByRoot();
+	void validityEndsBeforeStart_data();
+	void validityEndsBeforeStart();
 };
 
 IssuanceSpec test_service_issuance::caSpec(const QString &cn, pki_key *key,
@@ -569,4 +571,78 @@ void test_service_issuance::validityCappedByRoot()
 					"unlimited"));
 	QVERIFY(ee2);
 	QCOMPARE(notAfterText(ee2), QString("20350101000000Z"));
+}
+
+/* A cap that leaves no validity window is an error, not a certificate
+ * that ends before (or when) it starts: below an expired issuer chain,
+ * or with a notBefore at or after the CA's end. The rows above keep
+ * notBefore at now below CAs that end later, so the capped end always
+ * came after the start. */
+void test_service_issuance::validityEndsBeforeStart_data()
+{
+	QTest::addColumn<QString>("caStart");
+	QTest::addColumn<QString>("caEnd");
+	QTest::addColumn<QString>("notBefore");   // empty: now
+	QTest::addColumn<QString>("notAfter");
+	QTest::addColumn<bool>("valid");
+
+	QTest::newRow("expired issuer")
+		<< "20000101000000Z" << "20100101000000Z" << QString()
+		<< "20500101000000Z" << false;
+	QTest::newRow("expired issuer, unlimited request")
+		<< "20000101000000Z" << "20100101000000Z" << QString()
+		<< "unlimited" << false;
+	QTest::newRow("notBefore after CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20410101000000Z"
+		<< "20500101000000Z" << false;
+	QTest::newRow("notBefore equal to CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20400101000000Z"
+		<< "20500101000000Z" << false;
+	QTest::newRow("notBefore one second before CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20391231235959Z"
+		<< "20500101000000Z" << true;
+}
+
+void test_service_issuance::validityEndsBeforeStart()
+{
+	QFETCH(QString, caStart);
+	QFETCH(QString, caEnd);
+	QFETCH(QString, notBefore);
+	QFETCH(QString, notAfter);
+	QFETCH(bool, valid);
+
+	IssuanceSpec caS = validitySpec("Window CA", nullptr, caEnd);
+	caS.notBefore = plainTime(caStart);
+	pki_x509 *ca = issue(caS);
+	QVERIFY(ca);
+	QCOMPARE(notAfterText(ca), caEnd);
+
+	IssuanceSpec spec = validitySpec("Window EE", ca, notAfter);
+	if (!notBefore.isEmpty())
+		spec.notBefore = plainTime(notBefore);
+	int certs = Store.getAll<pki_x509>().size();
+	int before = AuditLog::entries().size();
+
+	if (valid) {
+		pki_x509 *cert = issue(spec);
+		QVERIFY(cert);
+		QCOMPARE(notAfterText(cert), caEnd);
+		QCOMPARE(AuditLog::entries().last().result, QString("success"));
+		return;
+	}
+	try {
+		Database.model<db_x509>()->newCert(ctx, spec);
+		QFAIL("newCert issued a certificate without a validity window");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_validity"));
+	}
+	QCOMPARE(Store.getAll<pki_x509>().size(), certs);
+	QList<AuditEntry> entries = AuditLog::entries();
+	QCOMPARE(entries.size(), before + 1);
+	QCOMPARE(entries.last().action, QString("certificate.issue"));
+	QCOMPARE(entries.last().result, QString("failure"));
+	QCOMPARE(entries.last().errorCode, QString("invalid_validity"));
+	QCOMPARE(entries.last().params["validity_capped"].toBool(), true);
+	QVERIFY(entries.last().objectId.isEmpty());
+	QVERIFY(AuditLog::verify().ok());
 }
