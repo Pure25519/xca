@@ -213,7 +213,7 @@ class pki_key: public pki_base
 		virtual QList<int> possibleHashNids();
 		QString getMsg(msg_type msg, int n = 1) const;
 
-		void writePublic(XFile &file, bool pem) const;
+		void writePublic(QIODevice &file, bool pem) const;
 		QString getJWKcrv() const;
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool compare(const pki_base *ref) const;
@@ -261,7 +261,7 @@ class pki_key: public pki_base
 		void d2i_old(QByteArray &ba, int type);
 		QByteArray i2d() const;
 		EVP_PKEY *load_ssh2_key(const QByteArray &ba);
-		void writeSSH2public(XFile &file) const;
+		void writeSSH2public(QIODevice &file) const;
 		QString fingerprint(const QString &format) const;
 		bool SSH2_compatible() const;
 		void print(BioByteArray &b, enum print_opt opt) const;

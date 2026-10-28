@@ -31,6 +31,19 @@ pki_pkcs12::pki_pkcs12(const QString &d, pki_x509 *acert, pki_key *akey)
 pki_pkcs12::pki_pkcs12(const QString &fname)
 	:pki_multi(fname)
 {
+	XFile file(fname);
+	file.open_read();
+	parse(file.readAll(), fname);
+}
+
+pki_pkcs12::pki_pkcs12(const QByteArray &ba, const QString &name)
+	:pki_multi(name)
+{
+	parse(ba, name);
+}
+
+void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
+{
 	Passwd pass;
 	EVP_PKEY *mykey = NULL;
 	X509 *mycert = NULL;
@@ -41,9 +54,7 @@ pki_pkcs12::pki_pkcs12(const QString &fname)
 	const ASN1_OBJECT *macobj = NULL;
 
 	setFilename(fname);
-	XFile file(fname);
-	file.open_read();
-	BioByteArray b(file.readAll());
+	BioByteArray b(ba);
 
 	PKCS12 *pkcs12 = d2i_PKCS12_bio(b.ro(), NULL);
 	if (pki_ign_openssl_error()) {
@@ -129,22 +140,13 @@ pki_pkcs12::pki_pkcs12(const QString &fname)
 	pki_openssl_error();
 }
 
-void pki_pkcs12::writePKCS12(XFile &file, encAlgo &encAlgo) const
+void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
+			const Passwd &pass) const
 {
-	Passwd pass;
 	PKCS12 *pkcs12;
 
 	if (cert == NULL || key == NULL)
 		my_error(tr("No key or no Cert and no pkcs12"));
-
-	pass_info p(XCA_TITLE,
-		tr("Please enter the password to encrypt the key of certificate '%1' "
-		   "in the PKCS#12 file:\n%2")
-			.arg(cert->getIntName()).arg(nativeSeparator(file.fileName())));
-	p.setPurpose(pass_info::ExportPassword);
-
-	if (PwDialogCore::execute(&p, &pass, true) != 1)
-		return;
 
 	STACK_OF(X509) *certstack = sk_X509_new_null();
 	foreach(pki_base *pki, multi) {
@@ -171,7 +173,7 @@ void pki_pkcs12::writePKCS12(XFile &file, encAlgo &encAlgo) const
 			MBSTRING_ASC, (const unsigned char*)csp.constData(), csp.size());
 	}
 
-	pkcs12 = PKCS12_create(pass.data(), getIntName().toUtf8().data(),
+	pkcs12 = PKCS12_create(pass.constData(), getIntName().toUtf8().data(),
 				pkey, cert->getCert(), certstack,
 				keyAlgoNid, certAlgoNid, 0, 0, 0);
 	pki_openssl_error();
@@ -179,7 +181,7 @@ void pki_pkcs12::writePKCS12(XFile &file, encAlgo &encAlgo) const
 	Q_CHECK_PTR(pkcs12);
 
 	if (encAlgo.legacy())
-		PKCS12_set_mac(pkcs12, pass.data(), -1, NULL, 0, 1, EVP_sha1());
+		PKCS12_set_mac(pkcs12, pass.constData(), -1, NULL, 0, 1, EVP_sha1());
 
 	BioByteArray b;
 	i2d_PKCS12_bio(b, pkcs12);

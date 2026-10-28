@@ -26,7 +26,7 @@ class db_temp: public db_x509name
 	void fillContextMenu(QMenu *menu, const QModelIndex &index);
 	QList<pki_temp*> getPredefs() const;
 	bool alterTemp(pki_temp *temp);
-	void exportItem(const QModelIndex &index,
-			const pki_export *, XFile &file) const;
+	void writeItem(pki_base *pki, const pki_export *xport,
+		QIODevice &file, const Passwd &pass) const;
 };
 #endif

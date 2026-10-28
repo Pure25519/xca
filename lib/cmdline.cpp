@@ -324,8 +324,20 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		f.close();
 	}
 	if (cmd_opts.has("import")) {
-		Database.insert(cmdline_items);
+		ImportSpec spec;
+		/* importItems() takes the items over */
+		spec.items << cmdline_items;
 		*_cmdline_items = nullptr;
+		try {
+			ImportResult result = Database.importItems(
+				ServiceContext::localUser(ServiceContext::cli),
+				spec);
+			foreach(pki_base *pki, result.existing)
+				XCA_INFO(importExistsMessage(pki));
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	return exitcode;
 }

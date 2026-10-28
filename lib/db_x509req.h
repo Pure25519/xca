@@ -40,8 +40,8 @@ class db_x509req: public db_x509super
 		pki_x509req *newRequest(const ServiceContext &ctx,
 				const RequestSpec &spec);
 		void setSigned(QModelIndex index, bool signe);
-		void exportItem(const QModelIndex &index,
-				const pki_export *xport, XFile &file) const;
+		void writeItem(pki_base *pki, const pki_export *xport,
+				QIODevice &file, const Passwd &pass) const;
 
 	public slots:
 		/* GUI: the New Request dialog, defined in

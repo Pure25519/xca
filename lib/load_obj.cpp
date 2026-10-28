@@ -30,13 +30,32 @@ pki_base *load_base::loadItem(const QString &s)
 		pki->fload(s);
 		openssl_error();
 	}
-	catch (errorEx &err){
+	catch (errorEx &){
 		delete pki;
-		throw err;
+		throw;
 	}
 	pki->pkiSource = imported;
 	pki->autoIntName(s);
 	pki->setFilename(s);
+	return pki;
+}
+
+pki_base *load_base::loadData(const QByteArray &ba, const QString &name)
+{
+	pki_base *pki = newItem();
+	if (!pki)
+		return NULL;
+	try {
+		pki->fromBytes(ba, name);
+		openssl_error();
+	}
+	catch (...) {
+		delete pki;
+		throw;
+	}
+	pki->pkiSource = imported;
+	pki->autoIntName(name);
+	pki->setFilename(name);
 	return pki;
 }
 
@@ -116,6 +135,11 @@ pki_base * load_pkcs12::loadItem(const QString &s)
 {
 	pki_base *p12 = new pki_pkcs12(s);
 	return p12;
+}
+
+pki_base *load_pkcs12::loadData(const QByteArray &ba, const QString &name)
+{
+	return new pki_pkcs12(ba, name);
 }
 
 /* Templates */

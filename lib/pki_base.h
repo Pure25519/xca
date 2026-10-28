@@ -177,10 +177,14 @@ class pki_base : public QObject
 		virtual bool pem(BioByteArray &b);
 		virtual void fromPEM_BIO(BIO *, const QString &);
 		virtual void fromPEMbyteArray(const QByteArray &, const QString &);
-		virtual void fload(const QString &);
+		/* Reads the file and parses it with fromBytes() */
+		virtual void fload(const QString &fname);
+		/* Parses one object from the content of a file (BTD-34);
+		 * name: the file name or another description of the source */
+		virtual void fromBytes(const QByteArray &ba, const QString &name);
 		virtual void writeDefault(const QString&) const;
 		virtual void fillJWK(QJsonObject &, const pki_export *) const { };
-		void exportToJWK(XFile &file, const pki_export *xport) const;
+		void exportToJWK(QIODevice &file, const pki_export *xport) const;
 
 		/* Qt Model-View methods */
 		virtual QVariant bg_color(const dbheader *) const

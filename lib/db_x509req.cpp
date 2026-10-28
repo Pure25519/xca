@@ -142,10 +142,10 @@ pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
 	}
 }
 
-void db_x509req::exportItem(const QModelIndex &index,
-		const pki_export *xport, XFile &file) const
+void db_x509req::writeItem(pki_base *pki, const pki_export *xport,
+		QIODevice &file, const Passwd &) const
 {
-	pki_x509req *req = fromIndex<pki_x509req>(index);
+	pki_x509req *req = dynamic_cast<pki_x509req *>(pki);
 	if (!req)
 		return;
 

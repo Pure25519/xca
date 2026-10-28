@@ -43,6 +43,7 @@ cmdline.cpp   pkcs11_provider.cpp
 audit.cpp	audit.h
 issuance.cpp	issuance.h
 request.cpp	request.h
+importexport.cpp	importexport.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)

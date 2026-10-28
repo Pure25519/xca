@@ -317,7 +317,7 @@ ExportDialog *CertTreeView::exportDialog(const QModelIndexList &indexes)
 		tr("vCalendar entry ( *.ics )") + ";;" +
 		tr("OpenVPN file ( *.ovpn )") + ";;" +
 		tr("OpenVPN tls-auth key ( *.key )"), indexes, QPixmap(":certImg"),
-		pki_export::select(x509, basemodel->exportFlags(indexes)),
+		pki_export::select(x509, basemodel->exportFlags(items(indexes))),
 		                   "certexport");
 }
 

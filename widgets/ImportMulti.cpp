@@ -17,6 +17,8 @@
 #include "lib/pki_scard.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_temp.h"
+#include "lib/audit.h"
+#include "lib/importexport.h"
 #include "CrlDetail.h"
 #include "CertDetail.h"
 #include "KeyDetail.h"
@@ -182,19 +184,41 @@ void ImportMulti::on_butImport_clicked()
 
 void ImportMulti::importIndexes(const QModelIndexList &indexes)
 {
+	QList<pki_base *> items;
+
 	if (!openDB())
 		return;
 
-	Transaction;
-	if (!TransBegin())
-		return;
-
 	foreach(QModelIndex index, indexes) {
-		import(index);
+		pki_base *pki = index.column() == 0 ?
+				mcont->fromIndex(index) : nullptr;
+		if (pki && !pki->getSqlItemId().isValid())
+			items << pki;
 	}
-	TransCommit();
+	foreach(pki_base *pki, items)
+		mcont->remFromCont(mcont->index(pki));
+	importItems(items);
 	if (mcont->rowCount(QModelIndex()) == 0)
 		accept();
+}
+
+QList<pki_base *> ImportMulti::importItems(QList<pki_base *> items)
+{
+	ImportSpec spec;
+	spec.items = items;
+	try {
+		ImportResult result = Database.importItems(
+			ServiceContext::localUser(ServiceContext::gui), spec);
+		foreach(pki_base *pki, result.existing)
+			XCA_INFO(importExistsMessage(pki));
+		return result.created;
+	} catch (serviceError &err) {
+		if (err.code != "cancelled")
+			XCA_ERROR(err);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
+	return QList<pki_base *>();
 }
 
 void ImportMulti::on_deleteToken_clicked()
@@ -256,7 +280,8 @@ pki_base *ImportMulti::import(pki_base *pki)
 		delete pki;
 		return NULL;
 	}
-	return Database.insert(pki);
+	QList<pki_base *> stored = importItems(QList<pki_base *>() << pki);
+	return stored.isEmpty() ? NULL : stored[0];
 }
 
 void ImportMulti::on_butDetails_clicked()
