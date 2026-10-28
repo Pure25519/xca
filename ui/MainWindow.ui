@@ -26,7 +26,11 @@
        </attribute>
        <layout class="QHBoxLayout" name="layout_2">
         <item>
-         <widget class="KeyTreeView" name="keyView"/>
+         <widget class="KeyTreeView" name="keyView">
+          <property name="accessibleName">
+           <string>Private Keys</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QFrame" name="keyButtons">
@@ -125,7 +129,11 @@
        </attribute>
        <layout class="QHBoxLayout" name="horizontalLayout">
         <item>
-         <widget class="ReqTreeView" name="reqView"/>
+         <widget class="ReqTreeView" name="reqView">
+          <property name="accessibleName">
+           <string>Certificate signing requests</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QFrame" name="reqButtons">
@@ -217,7 +225,11 @@
        </attribute>
        <layout class="QHBoxLayout" name="layout">
         <item>
-         <widget class="CertTreeView" name="certView"/>
+         <widget class="CertTreeView" name="certView">
+          <property name="accessibleName">
+           <string>Certificates</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QFrame" name="certButtons">
@@ -324,7 +336,11 @@
        </attribute>
        <layout class="QHBoxLayout" name="layout_4">
         <item>
-         <widget class="TempTreeView" name="tempView"/>
+         <widget class="TempTreeView" name="tempView">
+          <property name="accessibleName">
+           <string>Templates</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QFrame" name="tempButtons">
@@ -410,7 +426,11 @@
        </attribute>
        <layout class="QHBoxLayout" name="crl_2">
         <item>
-         <widget class="CrlTreeView" name="crlView"/>
+         <widget class="CrlTreeView" name="crlView">
+          <property name="accessibleName">
+           <string>Revocation lists</string>
+          </property>
+         </widget>
         </item>
         <item>
          <widget class="QFrame" name="crlButtons">

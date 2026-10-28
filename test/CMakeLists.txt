@@ -1,6 +1,7 @@
 
 list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp)
+	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp
+	automationIds.cpp)
 
 list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)
 
@@ -10,6 +11,11 @@ add_executable(testxca img/imgres.qrc ${srcs}
 add_test(NAME testxca COMMAND testxca)
 set_tests_properties(testxca PROPERTIES LABELS gui)
 add_dependencies(tests testxca)
+
+# Automation IDs (BTD-61, doc/automation-ids.md), also part of testxca
+add_test(NAME test_automation_ids COMMAND testxca automationIds)
+set_tests_properties(test_automation_ids PROPERTIES LABELS gui
+	ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 target_link_libraries(testxca ${ASAN_LIB} ${QT}::Test xcalib)
 target_link_options(testxca PRIVATE -pthread)
 

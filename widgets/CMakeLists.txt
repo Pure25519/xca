@@ -1,4 +1,5 @@
 list(APPEND xca_sources
+AutomationId.cpp	AutomationId.h
 CertDetail.cpp		NewCrl.cpp		XcaApplication.h
 CertDetail.h		NewCrl.h		XcaDialog.cpp
 CertExtend.cpp		NewKey.cpp		XcaDialog.h

@@ -10,6 +10,7 @@
 #include "X509SuperTreeView.h"
 #include "CertDetail.h"
 #include "MainWindow.h"
+#include "AutomationId.h"
 
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
@@ -25,10 +26,13 @@ void X509SuperTreeView::fillContextMenu(QMenu *menu, QMenu *,
 	if (indexes.size() != 1 || !x)
 		return;
 
-	transform = menu->addMenu(tr("Transform"));
-	transform->addAction(tr("Template"), this, SLOT(toTemplate()));
-	transform->addAction(tr("Public key"), this,
-		SLOT(extractPubkey()))->setEnabled(!x->getRefKey());
+	transform = setAutomationId(menu->addMenu(tr("Transform")),
+			ctxId("transform"));
+	setAutomationId(transform->addAction(tr("Template"), this,
+		SLOT(toTemplate())), ctxId("transform_template"));
+	setAutomationId(transform->addAction(tr("Public key"), this,
+		SLOT(extractPubkey())), ctxId("transform_publicKey"))->
+		setEnabled(!x->getRefKey());
 }
 
 void X509SuperTreeView::extractPubkey()

@@ -13,6 +13,7 @@
 #include "clicklabel.h"
 #include "Help.h"
 #include "OidResolver.h"
+#include "AutomationId.h"
 #include "lib/func_base.h"
 #include "lib/func.h"
 #include "lib/XcaWarningCore.h"
@@ -264,6 +265,8 @@ void CertDetail::setReq(pki_x509req *req)
 
 			label->setText(QString(OBJ_nid2ln(nid)));
 			label->setToolTip(QString(OBJ_nid2sn(nid)));
+			QString id = AutomationId::sanitize(OBJ_nid2sn(nid));
+			label->setObjectName("attrLabel_" + id);
 			attrLayout->addWidget(label, ii, 0);
 			added++;
 
@@ -271,6 +274,8 @@ void CertDetail::setReq(pki_x509req *req)
 			for (int j=0; j<count; j++) {
 				const ASN1_TYPE *at = X509_ATTRIBUTE_get0_type(att, j);
 				label = labelFromAsn1String(at->value.asn1_string);
+				label->setObjectName(j ? QString("attr_%1_%2")
+						.arg(id).arg(j +1) : "attr_" + id);
 				attrLayout->addWidget(label, ii, j +1);
 			}
 			ii++;

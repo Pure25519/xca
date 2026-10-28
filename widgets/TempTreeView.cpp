@@ -12,6 +12,7 @@
 #include "NewX509.h"
 #include "XcaDialog.h"
 #include "MainWindow.h"
+#include "AutomationId.h"
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
 #include <QMenu>
@@ -22,9 +23,12 @@ void TempTreeView::fillContextMenu(QMenu *menu, QMenu *,
 	if (indexes.size() != 1)
 		return;
 
-	menu->addAction(tr("Duplicate"), this, SLOT(duplicateTemp()));
-	menu->addAction(tr("Create certificate"), this, SLOT(certFromTemp()));
-	menu->addAction(tr("Create request"), this, SLOT(reqFromTemp()));
+	setAutomationId(menu->addAction(tr("Duplicate"), this,
+			SLOT(duplicateTemp())), ctxId("duplicate"));
+	setAutomationId(menu->addAction(tr("Create certificate"), this,
+			SLOT(certFromTemp())), ctxId("createCertificate"));
+	setAutomationId(menu->addAction(tr("Create request"), this,
+			SLOT(reqFromTemp())), ctxId("createRequest"));
 }
 
 void TempTreeView::duplicateTemp()
