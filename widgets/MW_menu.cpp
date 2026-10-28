@@ -23,6 +23,7 @@
 #include "OidResolver.h"
 #include "OpenDb.h"
 #include "Help.h"
+#include "AutomationId.h"
 #include <QApplication>
 #include <QClipboard>
 #include <QMenuBar>
@@ -49,6 +50,8 @@ QAction *MainWindow::languageMenuEntry(const QStringList &sl)
 		tooltip += " - " + sl[2];
 
 	QAction *a = new QAction(lang, this);
+	a->setObjectName("act_lang_" + (sl[0].isEmpty() ? QString("system") :
+					AutomationId::sanitize(sl[0])));
 	a->setToolTip(tooltip);
 	a->setData(QVariant(locale));
 	a->setDisabled(!XcaApplication::languageAvailable(locale));
@@ -78,11 +81,12 @@ void MainWindow::init_menu()
 	wdMenuList.clear();
 	scardList.clear();
 	acList.clear();
-	setMenuBar(new QMenuBar(nullptr));
+	setMenuBar(setAutomationId(new QMenuBar(nullptr), "menu_bar"));
 
 	langGroup = new QActionGroup(this);
 
 	languageMenu = new tipMenu(tr("Language"), this);
+	setAutomationId(languageMenu, "menu_language");
 	connect(languageMenu, SIGNAL(triggered(QAction*)),
 		qApp, SLOT(switchLanguage(QAction*)));
 
@@ -95,33 +99,40 @@ void MainWindow::init_menu()
 
 #ifndef APPSTORE_COMPLIANT
 	historyMenu = new tipMenu(tr("Recent DataBases") + " ...", this);
+	setAutomationId(historyMenu, "menu_history");
 	update_history_menu();
 
 	connect(historyMenu, SIGNAL(triggered(QAction*)),
 	        this, SLOT(open_database(QAction*)));
 
-	file = menuBar()->addMenu(tr("&File"));
+	file = setAutomationId(menuBar()->addMenu(tr("&File")), "menu_file");
 
 	a = file->addAction(tr("New DataBase"), this, SLOT(new_database()));
+	a->setObjectName("act_file_newDatabase");
 	a->setShortcut(QKeySequence::New);
 	a->setEnabled(OpenDb::hasSqLite());
 
 	a = file->addAction(tr("Open DataBase"), this, SLOT(load_database()));
+	a->setObjectName("act_file_openDatabase");
 	a->setShortcut(QKeySequence::Open);
 	a->setEnabled(OpenDb::hasSqLite());
 
-	file->addAction(tr("Open Remote DataBase"),
-			this, SLOT(openRemoteSqlDB()))->
+	setAutomationId(file->addAction(tr("Open Remote DataBase"),
+			this, SLOT(openRemoteSqlDB())),
+			"act_file_openRemoteDatabase")->
 			setEnabled(OpenDb::hasRemoteDrivers());
 	file->addMenu(historyMenu);
-	file->addAction(tr("Set as default DataBase"), this,
-				SLOT(default_database()));
+	setAutomationId(file->addAction(tr("Set as default DataBase"), this,
+				SLOT(default_database())),
+			"act_file_setDefaultDatabase");
 	a = file->addAction(tr("Close DataBase"), this, SLOT(close_database()));
+	a->setObjectName("act_file_closeDatabase");
 	a->setShortcut(QKeySequence::Close);
 	acList += a;
 
 #endif
 	options = new QAction(tr("Options"), this);
+	options->setObjectName("act_file_options");
 	connect(options, SIGNAL(triggered()), this, SLOT(setOptions()));
 	options->setMenuRole(QAction::PreferencesRole);
 #ifndef APPSTORE_COMPLIANT
@@ -130,6 +141,7 @@ void MainWindow::init_menu()
 	acList += options;
 
 	a = new QAction(tr("Exit"), this);
+	a->setObjectName("act_file_exit");
 	connect(a, SIGNAL(triggered()),
 		qApp, SLOT(quit()), Qt::QueuedConnection);
 	a->setMenuRole(QAction::QuitRole);
@@ -140,61 +152,72 @@ void MainWindow::init_menu()
 	file->addAction(a);
 #endif
 
-	import = menuBar()->addMenu(tr("I&mport"));
-	import->addAction(tr("Keys"), keyView, SLOT(load()) );
-	import->addAction(tr("Requests"), reqView, SLOT(load()) );
-	import->addAction(tr("Certificates"), certView, SLOT(load()) );
-	import->addAction(tr("PKCS#12"), certView, SLOT(loadPKCS12()) );
-	import->addAction(tr("PKCS#7"), certView, SLOT(loadPKCS7()) );
-	import->addAction(tr("Template"), tempView, SLOT(load()) );
-	import->addAction(tr("Revocation list"), crlView, SLOT(load()));
-	import->addAction(tr("PEM file"), this, SLOT(loadPem()) );
-	import->addAction(tr("Paste PEM file"), this, SLOT(pastePem()))->
-			setShortcut(QKeySequence::Paste);
+	import = setAutomationId(menuBar()->addMenu(tr("I&mport")),
+				"menu_import");
+	setAutomationId(import->addAction(tr("Keys"), keyView, SLOT(load()) ),
+			"act_import_keys");
+	setAutomationId(import->addAction(tr("Requests"), reqView, SLOT(load()) ),
+			"act_import_requests");
+	setAutomationId(import->addAction(tr("Certificates"), certView, SLOT(load()) ),
+			"act_import_certificates");
+	setAutomationId(import->addAction(tr("PKCS#12"), certView, SLOT(loadPKCS12()) ),
+			"act_import_pkcs12");
+	setAutomationId(import->addAction(tr("PKCS#7"), certView, SLOT(loadPKCS7()) ),
+			"act_import_pkcs7");
+	setAutomationId(import->addAction(tr("Template"), tempView, SLOT(load()) ),
+			"act_import_template");
+	setAutomationId(import->addAction(tr("Revocation list"), crlView, SLOT(load())),
+			"act_import_crl");
+	setAutomationId(import->addAction(tr("PEM file"), this, SLOT(loadPem()) ),
+			"act_import_pemFile");
+	setAutomationId(import->addAction(tr("Paste PEM file"), this, SLOT(pastePem())),
+			"act_import_pastePem")->setShortcut(QKeySequence::Paste);
 
 #ifndef APPSTORE_COMPLIANT
-	token = menuBar()->addMenu(tr("Token"));
-	token->addAction(tr("&Manage Security token"), this,
-				SLOT(manageToken()));
-	token->addAction(tr("&Init Security token"),  this,
-				SLOT(initToken()));
-	token->addAction(tr("&Change PIN"), this,
-				SLOT(changePin()) );
-	token->addAction(tr("Change &SO PIN"), this,
-				SLOT(changeSoPin()) );
-	token->addAction(tr("Init PIN"), this,
-				SLOT(initPin()) );
+	token = setAutomationId(menuBar()->addMenu(tr("Token")), "menu_token");
+	setAutomationId(token->addAction(tr("&Manage Security token"), this,
+				SLOT(manageToken())), "act_token_manage");
+	setAutomationId(token->addAction(tr("&Init Security token"),  this,
+				SLOT(initToken())), "act_token_init");
+	setAutomationId(token->addAction(tr("&Change PIN"), this,
+				SLOT(changePin()) ), "act_token_changePin");
+	setAutomationId(token->addAction(tr("Change &SO PIN"), this,
+				SLOT(changeSoPin()) ), "act_token_changeSoPin");
+	setAutomationId(token->addAction(tr("Init PIN"), this,
+				SLOT(initPin()) ), "act_token_initPin");
 #endif
-	extra = menuBar()->addMenu(tr("Extra"));
-	acList += extra->addAction(tr("&Dump DataBase"), this,
-				SLOT(dump_database()));
-	acList += extra->addAction(tr("&Export Certificate Index"), this,
-				SLOT(exportIndex()));
-	acList += extra->addAction(tr("Export Certificate &Index hierarchy"), this,
-				SLOT(exportIndexHierarchy()));
-	acList += extra->addAction(tr("C&hange DataBase password"), this,
-				SLOT(changeDbPass()));
+	extra = setAutomationId(menuBar()->addMenu(tr("Extra")), "menu_extra");
+	acList += setAutomationId(extra->addAction(tr("&Dump DataBase"), this,
+				SLOT(dump_database())), "act_extra_dumpDatabase");
+	acList += setAutomationId(extra->addAction(tr("&Export Certificate Index"), this,
+				SLOT(exportIndex())), "act_extra_exportIndex");
+	acList += setAutomationId(extra->addAction(tr("Export Certificate &Index hierarchy"), this,
+				SLOT(exportIndexHierarchy())), "act_extra_exportIndexHierarchy");
+	acList += setAutomationId(extra->addAction(tr("C&hange DataBase password"), this,
+				SLOT(changeDbPass())), "act_extra_changeDbPassword");
 
 	extra->addSeparator();
-	acList += extra->addAction(tr("Change table font"), this,
-				SLOT(changeTableFont()));
-	acList += extra->addAction(tr("Reset table font"), this,
-				SLOT(resetTableFont()));
+	acList += setAutomationId(extra->addAction(tr("Change table font"), this,
+				SLOT(changeTableFont())), "act_extra_changeTableFont");
+	acList += setAutomationId(extra->addAction(tr("Reset table font"), this,
+				SLOT(resetTableFont())), "act_extra_resetTableFont");
 	extra->addSeparator();
 
-	extra->addAction(tr("Generate DH parameter"), this,
-				 SLOT(generateDHparam()));
-	extra->addAction(tr("OID Resolver"), resolver, SLOT(show()));
+	setAutomationId(extra->addAction(tr("Generate DH parameter"), this,
+				 SLOT(generateDHparam())), "act_extra_generateDhParam");
+	setAutomationId(extra->addAction(tr("OID Resolver"), resolver, SLOT(show())),
+			"act_extra_oidResolver");
 
 #ifdef APPSTORE_COMPLIANT
 	extra->addSeparator();
 	extra->addMenu(languageMenu);
 	extra->addAction(options);
 #endif
-	help = menuBar()->addMenu(tr("&Help") );
-	help->addAction(tr("Content"), helpdlg, SLOT(content()))->
-			setShortcut(QKeySequence::HelpContents);
+	help = setAutomationId(menuBar()->addMenu(tr("&Help") ), "menu_help");
+	setAutomationId(help->addAction(tr("Content"), helpdlg, SLOT(content())),
+			"act_help_content")->setShortcut(QKeySequence::HelpContents);
 	a = new QAction(tr("About"), this);
+	a->setObjectName("act_help_about");
 	connect(a, SIGNAL(triggered()), this, SLOT(about()));
 	a->setMenuRole(QAction::AboutRole);
 	a->setShortcut(QKeySequence::WhatsThis);
@@ -220,7 +243,8 @@ void MainWindow::update_history_menu()
 			continue;
 		if (txt.size() > 33)
 			txt = QString("...") + txt.mid(txt.size() - 30);
-		a = historyMenu->addAction(QString("%1 %2").arg(j++).arg(txt));
+		a = historyMenu->addAction(QString("%1 %2").arg(j).arg(txt));
+		a->setObjectName(QString("act_history_%1").arg(j++));
 		a->setData(QVariant(hist[i]));
 		a->setToolTip(hist[i]);
 	}

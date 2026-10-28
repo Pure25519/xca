@@ -15,6 +15,7 @@
 #include "clicklabel.h"
 #include "XcaApplication.h"
 #include "OidResolver.h"
+#include "AutomationId.h"
 
 #include <QLabel>
 #include <QPushButton>
@@ -61,6 +62,8 @@ void KeyDetail::setupFingerprints(pki_key *key)
 		QLabel *left = new QLabel(widget);
 		CopyLabel *right = new CopyLabel(widget);
 
+		left->setObjectName("fpLabel_" + AutomationId::sanitize(type));
+		right->setObjectName("fp_" + AutomationId::sanitize(type));
 		left->setTextFormat(Qt::PlainText);
 		left->setText(type);
 		right->setText(key->fingerprint(type));

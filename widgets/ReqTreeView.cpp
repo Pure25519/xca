@@ -10,6 +10,7 @@
 #include "ReqTreeView.h"
 #include "MainWindow.h"
 #include "ExportDialog.h"
+#include "AutomationId.h"
 #include <QAbstractItemModel>
 #include <QAbstractItemView>
 #include <QMenu>
@@ -24,16 +25,17 @@ void ReqTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 	if (indexes.size() != 1 || !req)
 		return;
 
-	menu->addAction(tr("Sign"), this, SLOT(signReq()));
+	setAutomationId(menu->addAction(tr("Sign"), this, SLOT(signReq())),
+			ctxId("sign"));
 	if (req->getDone())
-		menu->addAction(tr("Unmark signed"),
-				this, SLOT(unmarkSigned()));
+		setAutomationId(menu->addAction(tr("Unmark signed"),
+				this, SLOT(unmarkSigned())), ctxId("unmarkSigned"));
 	else
-		menu->addAction(tr("Mark signed"),
-				this, SLOT(markSigned()));
+		setAutomationId(menu->addAction(tr("Mark signed"),
+				this, SLOT(markSigned())), ctxId("markSigned"));
 	if (transform) {
-		transform->addAction(tr("Similar Request"), this,
-				SLOT(toRequest()));
+		setAutomationId(transform->addAction(tr("Similar Request"), this,
+				SLOT(toRequest())), ctxId("transform_similarRequest"));
 	}
 }
 

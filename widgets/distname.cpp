@@ -10,12 +10,14 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QLineEdit>
+#include <QMap>
 #include "lib/x509name.h"
 #include "lib/db_x509super.h"
 #include "lib/base.h"
 #include "clicklabel.h"
 #include "OidResolver.h"
 #include "MainWindow.h"
+#include "AutomationId.h"
 
 DistName::DistName(QWidget* parent)
     : QWidget(parent)
@@ -38,11 +40,15 @@ DistName::DistName(QWidget* parent)
 	v->addLayout(g);
 
 	rfc2253 = new QLineEdit(this);
+	rfc2253->setObjectName("dn_rfc2253");
+	rfc2253->setAccessibleName("RFC 2253");
 	rfc2253->setReadOnly(true);
 	g->addWidget(new QLabel(QString("RFC 2253:"), this), 0, 0);
 	g->addWidget(rfc2253, 0, 1);
 
 	namehash = new QLineEdit(this);
+	namehash->setObjectName("dn_hash");
+	namehash->setAccessibleName("Hash");
 	namehash->setReadOnly(true);
 	g->addWidget(new QLabel(QString("Hash:"), this), 1, 0);
 	g->addWidget(namehash, 1, 1);
@@ -53,6 +59,7 @@ void DistName::setX509name(const x509name &n)
 	DoubleClickLabel *l1;
 	QLabel *l2;
 	QStringList sl;
+	QMap<QString, int> idCount;
 	for (int i=0; i<n.entryCount(); i++) {
 		QString toolt, label, trans;
 		int nid = n.nid(i);
@@ -67,6 +74,13 @@ void DistName::setX509name(const x509name &n)
 		}
 		l1 = new DoubleClickLabel(this);
 		l2 = new CopyLabel(this);
+		/* A repeated entry (e.g. two OUs) gets _2, _3, ... */
+		QString id = AutomationId::sanitize(sl[0]);
+		int cnt = ++idCount[id];
+		if (cnt > 1)
+			id += QString("_%1").arg(cnt);
+		l1->setObjectName("dnLabel_" + id);
+		l2->setObjectName("dn_" + id);
 		l1->setTextFormat(Qt::PlainText);
 		l1->setText(label);
 		l1->setClickText(sl[1]);

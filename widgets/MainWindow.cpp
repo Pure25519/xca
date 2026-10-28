@@ -76,6 +76,7 @@ void MainWindow::initResolver()
 MainWindow::MainWindow() : QMainWindow()
 {
 	dbindex = new QLabel();
+	dbindex->setObjectName("dlg_main_dbStatus");
 	dbindex->setFrameStyle(QFrame::Plain | QFrame::NoFrame);
 	dbindex->setMargin(6);
 
@@ -119,7 +120,9 @@ MainWindow::MainWindow() : QMainWindow()
 	qDebug() << "Table font LOAD:" << tableFont.toString();
 
 	searchEdit = new QLineEdit();
+	searchEdit->setObjectName("dlg_main_search");
 	searchEdit->setPlaceholderText(tr("Search"));
+	searchEdit->setAccessibleName(tr("Search"));
 
 	keyView->setIconSize(QPixmap(":keyIco").size());
 	reqView->setIconSize(QPixmap(":reqIco").size());
@@ -259,6 +262,7 @@ void MainWindow::pastePem()
 
 
 	QTextEdit *textbox = new QTextEdit();
+	textbox->setObjectName("dlg_pastePem_text");
 	textbox->setPlainText(text);
 	XcaDialog *input = new XcaDialog(this, x509, textbox,
 			tr("Import PEM data"), QString());
@@ -797,6 +801,7 @@ void MainWindow::changeEvent(QEvent *event)
 
 		showDatabaseName();
 		searchEdit->setPlaceholderText(tr("Search"));
+		searchEdit->setAccessibleName(tr("Search"));
 	}
 	QMainWindow::changeEvent(event);
 }
