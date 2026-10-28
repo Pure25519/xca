@@ -193,13 +193,16 @@ void test_service_issuance::chain()
 #else
 	QTemporaryDir dir;
 	QVERIFY(dir.isValid());
+	/* each key has its own audit entry key.generate (BTD-32) */
+	pki_key *rootKey = newKey("root-key"), *subKey = newKey("sub-key");
+	QVERIFY(rootKey && subKey);
 	int rc, before = AuditLog::entries().size();
 
-	pki_x509 *root = issue(caSpec("Service Root CA", newKey("root-key"),
+	pki_x509 *root = issue(caSpec("Service Root CA", rootKey,
 					nullptr, 3650));
 	QVERIFY(root);
 	QCOMPARE(AuditLog::entries().size(), before + 1);
-	pki_x509 *sub = issue(caSpec("Service Sub CA", newKey("sub-key"),
+	pki_x509 *sub = issue(caSpec("Service Sub CA", subKey,
 					root, 1825));
 	QVERIFY(sub);
 	QCOMPARE(AuditLog::entries().size(), before + 2);

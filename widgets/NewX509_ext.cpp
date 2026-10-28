@@ -116,6 +116,30 @@ IssuanceSpec NewX509::getIssuanceSpec()
 	return spec;
 }
 
+/* Request mode (BTD-32) */
+RequestSpec NewX509::getRequestSpec()
+{
+	RequestSpec spec;
+
+	spec.name = description->text();
+	spec.subject = getX509name();
+	spec.key = getSelectedKey();
+	spec.hashAlgo = hashAlgo->current();
+	spec.extensions = getExtensionSpec();
+	foreach(nameEdit e, attrEdits) {
+		if (e.nid == NID_pkcs9_unstructuredName)
+			spec.unstructuredName = e.edit->text();
+		else if (e.nid == NID_pkcs9_challengePassword)
+			spec.challengePassword = e.edit->text();
+	}
+	spec.comment = comment->toPlainText();
+	pki_temp *temp = currentTemplate();
+	if (temp)
+		spec.templateName = temp->getIntName();
+	spec.source = getPkiSource();
+	return spec;
+}
+
 /* The single extensions for the validation view and the check icons */
 x509v3ext NewX509::getBasicConstraints()
 {

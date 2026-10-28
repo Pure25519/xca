@@ -63,3 +63,10 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_issuance PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# Key generation and request creation (BTD-32); openssl req -verify
+ServiceTest(test_service_request)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_request PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()

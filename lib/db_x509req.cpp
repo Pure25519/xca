@@ -7,12 +7,13 @@
 
 
 #include "db_x509req.h"
+#include "db_key.h"
 #include "pki_x509req.h"
-#include "pki_temp.h"
+#include "audit.h"
+#include "exception.h"
+#include "func.h"
+#include "request.h"
 #include "XcaWarningCore.h"
-
-#pragma message ("drop UI dependencies")
-#include "widgets/NewX509.h"
 
 db_x509req::db_x509req() : db_x509super("requests")
 {
@@ -57,45 +58,87 @@ pki_base *db_x509req::insert(pki_base *item)
 	return insertPKI(req);
 }
 
-void db_x509req::newItem()
+static AuditParams requestParams(const RequestSpec &spec)
 {
-	newItem(NULL, NULL);
+	AuditParams p;
+	p.set("name", spec.name);
+	p.set("subject", spec.subject.oneLine());
+	p.set("hash_algo", spec.hashAlgo.name());
+	if (spec.key)
+		db_key::keyParams(p, spec.key);
+	if (!spec.templateName.isEmpty())
+		p.set("template", spec.templateName);
+	return p;
 }
 
-void db_x509req::newItem(pki_temp *temp, pki_x509req *orig)
+pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
+			const ServiceContext &ctx)
 {
-	pki_x509req *req = NULL;
-	NewX509 *dlg = new NewX509();
+	pki_x509req *req = nullptr, *stored = nullptr;
 
-	if (temp) {
-		dlg->defineTemplate(temp);
-	} else if (orig) {
-		dlg->fromX509super(orig, true);
-	}
-	dlg->setRequest();
-	if (!dlg->exec()){
-		delete dlg;
-		return;
-	}
+    try {
+	Transaction;
+	TransThrow();
+
+	if (!spec.key)
+		throw serviceError("missing_key",
+			tr("No key was given to sign the request"));
+	if (spec.key->isPubKey())
+		throw serviceError("no_private_key",
+			tr("The key you selected for signing is not a private one."));
+
+	req = new pki_x509req();
+	req->pkiSource = spec.source;
+	req->setIntName(spec.name);
+	req->addAttribute(NID_pkcs9_unstructuredName, spec.unstructuredName);
+	req->addAttribute(NID_pkcs9_challengePassword,
+				spec.challengePassword);
+	req->createReq(spec.key, spec.subject, spec.hashAlgo,
+				spec.buildExtensions());
+	req->setComment(spec.comment);
+
+	params.set("subject", req->getSubject().oneLine());
+	params.set("fingerprint", fingerprint(req->i2d(), EVP_sha256()));
+
+	pki_x509req *oldreq = dynamic_cast<pki_x509req*>(getByReference(req));
+	if (oldreq)
+		throw serviceError("duplicate_request",
+			tr("The certificate signing request already exists in the database as\n'%1'\nand thus was not stored").arg(oldreq->getIntName()));
+	stored = dynamic_cast<pki_x509req*>(insert(req));
+	/* insert() keeps the request in the store or deletes it */
+	req = nullptr;
+	if (!stored)
+		throw serviceError("database_error",
+			tr("The certificate signing request could not be stored"));
+	AuditLog::append(ctx, "request.create", "request",
+			stored->getSqlItemId().toString(), params);
+	if (!TransCommit())
+		throw serviceError("database_error",
+			tr("Failed to commit the database transaction"));
+    }
+    catch (...) {
+	delete req;
+	throw;
+    }
+    return stored;
+}
+
+pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
+			const RequestSpec &spec)
+{
+	AuditParams params = requestParams(spec);
 	try {
-		pki_key *key = dlg->getSelectedKey();
-		x509name xn = dlg->getX509name();
-		req = new pki_x509req();
-		req->pkiSource = dlg->getPkiSource();
-
-		req->setIntName(dlg->description->text());
-
-		dlg->getReqAttributes(req);
-		req->createReq(key, xn, dlg->hashAlgo->current(),
-				dlg->getAllExt());
-		 // set the comment field
-		req->setComment(dlg->comment->toPlainText());
-
-		createSuccess(insert(req));
-	}
-	catch (errorEx &err) {
-		XCA_ERROR(err);
-		delete req;
+		return create(spec, params, ctx);
+	} catch (serviceError &err) {
+		/* after the rollback, so the entry is kept (lib/audit.h) */
+		AuditLog::append(ctx, "request.create", "request",
+				QString(), params, "failure", err.code);
+		throw;
+	} catch (...) {
+		/* errorEx (database, OpenSSL, key decryption) and anything else */
+		AuditLog::append(ctx, "request.create", "request",
+				QString(), params, "failure", "internal_error");
+		throw;
 	}
 }
 
