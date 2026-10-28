@@ -10,6 +10,8 @@
 #include <QTemporaryDir>
 
 #include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
 
 #if !defined(Q_OS_WIN32)
 #include <fcntl.h>
@@ -22,6 +24,17 @@
 #include "lib/xfile.h"
 
 #include "ServiceTestCase.h"
+
+/* Records whether the PIN pad login was started */
+class LoginThread : public QThread
+{
+  public:
+	bool ran{};
+	void run() override
+	{
+		ran = true;
+	}
+};
 
 static const char envVar[] = "XCA_SERVICE_TEST_SECRET";
 static const char keySecret[] = "service-test-key-pass";
@@ -65,6 +78,27 @@ class test_service_secrets : public ServiceTestCase
 		return n;
 	}
 
+	/* A file with exactly these bytes, as file: source */
+	QString rawFile(const QByteArray &content)
+	{
+		QString name = secretDir.filePath("secret.txt");
+		QFile f(name);
+		if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+			return QString();
+		f.write(content);
+		return QString("file:%1").arg(name);
+	}
+
+	static secretError::reason readError(const QString &source)
+	{
+		try {
+			PwDialogHeadless::readSource(source);
+		} catch (secretError &e) {
+			return e.why;
+		}
+		return secretError::reason(-1);
+	}
+
 	pki_evp *newKey()
 	{
 		pki_key *key = Database.model<db_key>()->newKey(
@@ -96,6 +130,14 @@ class test_service_secrets : public ServiceTestCase
 	void keyPassword();
 	void keyPasswordMissing();
 	void exportPasswordMissing();
+
+	void readSourceLineEnd();
+	void readSourceEmptyOrTooLong();
+	void sourceReadOnce();
+	void pinPadNeedsInteractive();
+	void selectTokenNeedsInteractive();
+	void importDerPassword();
+	void callbackSecretTooLong();
 };
 
 void test_service_secrets::cleanup()
@@ -307,6 +349,130 @@ void test_service_secrets::exportPasswordMissing()
 	QByteArray pem = f.readAll();
 	QVERIFY(pem.contains("ENCRYPTED"));
 	QVERIFY(!pem.contains("export-pass"));
+	QFile::remove(fname);
+}
+
+void test_service_secrets::readSourceLineEnd()
+{
+	/* Only the line end goes, spaces belong to the secret */
+	QCOMPARE(QByteArray(PwDialogHeadless::readSource(
+			rawFile("  sp ace  \r\nsecond line\n"))),
+		QByteArray("  sp ace  "));
+	qputenv(envVar, "env-secret\n");
+	QCOMPARE(QByteArray(PwDialogHeadless::readSource(
+			QString("env:%1").arg(envVar))),
+		QByteArray("env-secret"));
+	QByteArray longest(PwDialogHeadless::maxLength, 'x');
+	QCOMPARE(QByteArray(PwDialogHeadless::readSource(rawFile(longest))),
+		longest);
+}
+
+void test_service_secrets::readSourceEmptyOrTooLong()
+{
+	QCOMPARE(readError("pass:"), secretError::unreadable);
+	qputenv(envVar, "");
+	QCOMPARE(readError(QString("env:%1").arg(envVar)),
+		secretError::unreadable);
+	QCOMPARE(readError(rawFile("")), secretError::unreadable);
+	QCOMPARE(readError(rawFile("\nsecond line\n")), secretError::unreadable);
+	/* No silent cut: one byte too many is an error */
+	QByteArray tooLong(PwDialogHeadless::maxLength + 1, 'x');
+	QCOMPARE(readError(rawFile(tooLong + "\n")), secretError::unreadable);
+	QCOMPARE(readError(QString("pass:") + tooLong), secretError::unreadable);
+}
+
+void test_service_secrets::sourceReadOnce()
+{
+#if !defined(Q_OS_WIN32)
+	/* fd: can be read only once: the secret is kept for later requests */
+	PwDialogHeadless h;
+	int fd = ::open(CCHAR(rawFile("from-fd\n").mid(5)), O_RDONLY);
+	QVERIFY(fd >= 0);
+	h.setSource(pass_info::DatabasePassword, QString("fd:%1").arg(fd));
+	QCOMPARE(QByteArray(h.secret(pass_info::DatabasePassword)),
+		QByteArray("from-fd"));
+	QCOMPARE(QByteArray(h.secret(pass_info::DatabasePassword)),
+		QByteArray("from-fd"));
+	::close(fd);
+#endif
+}
+
+void test_service_secrets::pinPadNeedsInteractive()
+{
+	PwDialogHeadless h;
+	pass_info p(XCA_TITLE, "PIN pad token");
+	p.setPin();
+	LoginThread login;
+	try {
+		h.pinPadLogin(&p, &login);
+		QFAIL("pinPadLogin() did not throw");
+	} catch (secretError &e) {
+		QCOMPARE(e.why, secretError::missing);
+	}
+	/* Nothing waits for the reader */
+	QVERIFY(!login.isRunning());
+	QVERIFY(!login.ran);
+}
+
+void test_service_secrets::selectTokenNeedsInteractive()
+{
+	PwDialogHeadless h;
+	try {
+		h.selectToken(QStringList() << "token A" << "token B", nullptr);
+		QFAIL("selectToken() did not throw");
+	} catch (secretError &e) {
+		QCOMPARE(e.why, secretError::missing);
+	}
+}
+
+void test_service_secrets::importDerPassword()
+{
+	/* An encrypted PKCS#8 DER file: the password is asked in the
+	 * callback of d2i_PKCS8PrivateKey_bio, not in the PEM loop */
+	EVP_PKEY *pkey = EVP_EC_gen("P-256");
+	QVERIFY(pkey);
+	QString fname = secretDir.filePath("key.der");
+	BIO *bio = BIO_new_file(CCHAR(fname), "wb");
+	QVERIFY(bio);
+	char pw[] = "import-pass";
+	QVERIFY(i2d_PKCS8PrivateKey_bio(bio, pkey, EVP_aes_256_cbc(),
+					pw, strlen(pw), NULL, NULL) > 0);
+	BIO_free(bio);
+	EVP_PKEY_free(pkey);
+
+	PwDialogHeadless *h = useHeadless();
+	try {
+		pki_evp key;
+		key.fload(fname);
+		QFAIL("fload() did not throw");
+	} catch (secretError &e) {
+		QCOMPARE(e.why, secretError::missing);
+	}
+
+	h->setSource(pass_info::ImportPassword, "pass:import-pass");
+	pki_evp key;
+	key.fload(fname);
+	QVERIFY(key.isPrivKey());
+	QFile::remove(fname);
+}
+
+void test_service_secrets::callbackSecretTooLong()
+{
+	/* A secret that does not fit into OpenSSL's buffer is an error,
+	 * not cut silently, also from the GUI */
+	pki_evp *key = newKey();
+	QVERIFY(key);
+	pwdialog->expect(QByteArray(2000, 'a'));
+	QString fname = secretDir.filePath("export.pem");
+	try {
+		XFile file(fname);
+		file.open_key();
+		key->writeKey(file, EVP_aes_256_cbc(),
+				PwDialogCore::pwCallback, true);
+		QFAIL("writeKey() did not throw");
+	} catch (secretError &e) {
+		QCOMPARE(e.why, secretError::unreadable);
+	}
 	QFile::remove(fname);
 }
 

@@ -54,6 +54,11 @@ int PwDialogCore::pwCallback(char *buf, int size, int rwflag, void *userdata)
 
 	try {
 		result = execute(p, &passwd, rwflag, false);
+		if (result == pw_ok && passwd.size() > size)
+			throw secretError(secretError::unreadable,
+				QObject::tr("The %1 is longer than %2 bytes: %3")
+					.arg(p->getType()).arg(size)
+					.arg(p->getDescription()));
 	} catch (secretError &err) {
 		/* Never throw through OpenSSL: the caller throws it
 		 * with pass_info::throwError() once OpenSSL returned */
@@ -61,10 +66,12 @@ int PwDialogCore::pwCallback(char *buf, int size, int rwflag, void *userdata)
 		result = pw_cancel;
 	}
 
+	if (result != pw_ok)
+		size = 0;
 	size = MIN(size, passwd.size());
 	memcpy(buf, passwd.constData(), size);
 	p->setResult(result);
-	return result == pw_ok ? size : 0;
+	return size;
 }
 
 void PwDialogCore::setGui(PwDialogUI_i *p)
@@ -74,17 +81,33 @@ void PwDialogCore::setGui(PwDialogUI_i *p)
 }
 
 void PwDialogHeadless::setSource(enum pass_info::purpose purpose,
-				const QString &source)
+				const QString &name)
 {
-	if (source.isEmpty())
+	if (name.isEmpty()) {
 		sources.remove(purpose);
-	else
-		sources[purpose] = source;
+		return;
+	}
+	entry s;
+	s.name = name;
+	sources[purpose] = s;
 }
 
 void PwDialogHeadless::clearSources()
 {
 	sources.clear();
+}
+
+Passwd PwDialogHeadless::secret(enum pass_info::purpose purpose)
+{
+	if (!sources.contains(purpose))
+		throw secretError(secretError::missing,
+			QObject::tr("No password source given"));
+	entry &s = sources[purpose];
+	if (!s.read) {
+		s.secret = readSource(s.name);
+		s.read = true;
+	}
+	return s.secret;
 }
 
 bool PwDialogHeadless::isSource(const QString &source)
@@ -104,14 +127,29 @@ QString PwDialogHeadless::sourceName(const QString &source)
 	return source;
 }
 
+/* The first line without its line end. Nothing else is trimmed:
+ * spaces are part of the secret */
+static void chompLine(Passwd &pass)
+{
+	while (pass.endsWith('\n') || pass.endsWith('\r'))
+		pass.chop(1);
+}
+
 static Passwd readFirstLine(QFile &f, const QString &source)
 {
 	if (!f.isOpen())
 		throw secretError(secretError::unreadable,
 			QObject::tr("Cannot read the password from %1: %2")
 				.arg(source).arg(f.errorString()));
+	/* One byte more than allowed, plus the line end, to detect
+	 * an over-long secret instead of cutting it silently */
+	char buf[PwDialogHeadless::maxLength + 3];
+	qint64 len = f.readLine(buf, sizeof buf);
 	Passwd pass;
-	pass = f.readLine(128).trimmed();
+	if (len > 0)
+		pass = QByteArray(buf, len);
+	memset(buf, 0, sizeof buf);
+	chompLine(pass);
 	return pass;
 }
 
@@ -129,23 +167,42 @@ Passwd PwDialogHeadless::readSource(const QString &source)
 				QObject::tr("The environment variable '%1' is not set")
 					.arg(var));
 		pass = value;
+		chompLine(pass);
 	} else if (source.startsWith("file:")) {
 		QFile f(source.mid(5));
-		f.open(QIODevice::ReadOnly);
+		f.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 		pass = readFirstLine(f, source);
 	} else if (source.startsWith("fd:") || source == "stdin") {
 		bool ok = true;
 		int fd = source == "stdin" ? 0 : source.mid(3).toInt(&ok);
 		QFile f;
 		if (ok)
-			f.open(fd, QIODevice::ReadOnly);
+			f.open(fd, QIODevice::ReadOnly | QIODevice::Unbuffered);
 		pass = readFirstLine(f, source);
 	} else {
 		throw secretError(secretError::unreadable,
 			QObject::tr("Unknown password source. Use pass:, env:, "
 				"file:, fd: or stdin"));
 	}
+	if (pass.isEmpty())
+		throw secretError(secretError::unreadable,
+			QObject::tr("The password from %1 is empty")
+				.arg(sourceName(source)));
+	if (pass.size() > maxLength)
+		throw secretError(secretError::unreadable,
+			QObject::tr("The password from %1 is longer than %2 bytes")
+				.arg(sourceName(source)).arg(maxLength));
 	return pass;
+}
+
+/* Why no terminal prompt is possible */
+static QString noInput()
+{
+#if defined(Q_OS_WIN32)
+	return QObject::tr("interactive input is not available on Windows");
+#else
+	return QObject::tr("interactive input is off");
+#endif
 }
 
 enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
@@ -153,12 +210,12 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 {
 	(void)write;
 	(void)abort;
-	QString source = sources.value(p->getPurpose());
+	bool hasSource = sources.contains(p->getPurpose());
 
 	/* A source is used once per request: a second request means
 	 * its secret was wrong, and asking again would loop forever */
-	if (!source.isEmpty() && p->getAttempts() <= 1) {
-		*passwd = readSource(source);
+	if (hasSource && p->getAttempts() <= 1) {
+		*passwd = secret(p->getPurpose());
 		return pw_ok;
 	}
 #if !defined(Q_OS_WIN32)
@@ -174,13 +231,13 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 		throw secretError(secretError::rejected,
 			QObject::tr("The %1 from %2 was not accepted: %3")
 				.arg(p->getType())
-				.arg(source.isEmpty() ? QObject::tr("the command line")
-					: sourceName(source))
+				.arg(hasSource ?
+					sourceName(sources[p->getPurpose()].name) :
+					QObject::tr("the command line"))
 				.arg(p->getDescription()));
 	throw secretError(secretError::missing,
-		QObject::tr("%1 required, but no source is given and "
-			"interactive input is off: %2")
-			.arg(p->getType()).arg(p->getDescription()));
+		QObject::tr("%1 required, but no source is given and %2: %3")
+			.arg(p->getType()).arg(noInput()).arg(p->getDescription()));
 }
 
 int PwDialogHeadless::selectToken(const QStringList &names, QWidget *w)
@@ -201,16 +258,26 @@ int PwDialogHeadless::selectToken(const QStringList &names, QWidget *w)
 	}
 #endif
 	throw secretError(secretError::missing,
-		QObject::tr("Several security tokens are present and interactive "
-			"input is off: %1").arg(names.join(", ")));
+		QObject::tr("Several security tokens are present and %1: %2")
+			.arg(noInput()).arg(names.join(", ")));
 }
 
 void PwDialogHeadless::pinPadLogin(pass_info *p, QThread *login)
 {
-	console_write(stdout, QString(COL_CYAN "%1\n" COL_RESET "%2\n")
-			.arg(p->getDescription())
-			.arg(QObject::tr("Please enter the PIN on the PinPad"))
-			.toUtf8());
-	login->start();
-	login->wait();
+	/* Waiting for someone at the reader blocks a service forever:
+	 * only with interactive input */
+#if !defined(Q_OS_WIN32)
+	if (interactive) {
+		console_write(stdout, QString(COL_CYAN "%1\n" COL_RESET "%2\n")
+				.arg(p->getDescription())
+				.arg(QObject::tr("Please enter the PIN on the PinPad"))
+				.toUtf8());
+		login->start();
+		login->wait();
+		return;
+	}
+#endif
+	throw secretError(secretError::missing,
+		QObject::tr("The token expects the PIN on its PIN pad and %1: %2")
+			.arg(noInput()).arg(p->getDescription()));
 }

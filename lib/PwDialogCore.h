@@ -37,15 +37,31 @@ class PwDialogUI_i
 /* Headless implementation: answers from the sources configured per
  * purpose (pass:, env:, file:, fd:, stdin) and never opens a dialog.
  * A missing or rejected secret throws secretError, unless interactive
- * input on the terminal was enabled explicitly. */
+ * input on the terminal was enabled explicitly (not on Windows).
+ * Each source is read once, on first use; fd: and stdin can only be
+ * read once anyway. */
 class PwDialogHeadless: public PwDialogUI_i
 {
-	QMap<enum pass_info::purpose, QString> sources{};
+	class entry
+	{
+	  public:
+		QString name{};
+		Passwd secret{};
+		bool read{};
+	};
+	QMap<enum pass_info::purpose, entry> sources{};
 	bool interactive{};
 
   public:
+	/* Longest secret accepted: OpenSSL's password callbacks get
+	 * a buffer of PEM_BUFSIZE (1024) bytes */
+	static const int maxLength = 1024;
+
 	void setSource(enum pass_info::purpose purpose, const QString &source);
 	void clearSources();
+	/* The secret of the source for purpose; throws secretError if
+	 * there is none or it cannot be read */
+	Passwd secret(enum pass_info::purpose purpose);
 	void setInteractive(bool i)
 	{
 		interactive = i;

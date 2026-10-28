@@ -46,15 +46,13 @@ static int cmd_help(int exitcode = EXIT_SUCCESS, const char *msg = NULL)
 	return exitcode;
 }
 
-static Passwd acquire_password(const QString &source)
+/* A --password or --sqlpass value as source: without a known prefix
+ * the value is the password itself (upstream behaviour) */
+static QString password_source(const QString &arg)
 {
-	if (PwDialogHeadless::isSource(source))
-		return PwDialogHeadless::readSource(source);
-
-	/* Empty, or a password without source prefix */
-	Passwd pass;
-	pass = source.toUtf8();
-	return pass;
+	if (arg.isEmpty() || PwDialogHeadless::isSource(arg))
+		return arg;
+	return QString("pass:") + arg;
 }
 
 static bool compare_pki_base(pki_base* a, pki_base* b)
@@ -71,10 +69,28 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (argc > 0)
 		xca_name = argv[0];
 	arguments cmd_opts(argc, argv);
-	/* Without a GUI, a password nobody provided ends the command */
-	PwDialogCore::headless()->setInteractive(cmd_opts.has("interactive"));
-	PwDialogCore::cmdline_passwd = acquire_password(cmd_opts["password"]);
-	Passwd sqlpw = acquire_password(cmd_opts["sqlpass"]);
+	QString dbpass = password_source(cmd_opts["password"]);
+	QString sqlpass = password_source(cmd_opts["sqlpass"]);
+	PwDialogHeadless *headless = PwDialogCore::headless();
+	Passwd sqlpw;
+
+	if (console_only) {
+		/* Without a GUI every request of these purposes is answered
+		 * from the source; one nobody provided ends the command */
+		headless->setInteractive(cmd_opts.has("interactive"));
+		headless->setSource(pass_info::DatabasePassword, dbpass);
+		headless->setSource(pass_info::KeyPassword, dbpass);
+		headless->setSource(pass_info::SqlPassword, sqlpass);
+		if (!sqlpass.isEmpty())
+			sqlpw = headless->secret(pass_info::SqlPassword);
+	} else {
+		/* The GUI uses the password once, to unlock the database */
+		if (!dbpass.isEmpty())
+			PwDialogCore::cmdline_passwd =
+				PwDialogHeadless::readSource(dbpass);
+		if (!sqlpass.isEmpty())
+			sqlpw = PwDialogHeadless::readSource(sqlpass);
+	}
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];

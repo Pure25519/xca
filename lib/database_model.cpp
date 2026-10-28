@@ -175,10 +175,9 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		}
 	} while (1);
 
-	Entropy::seed_rng();
-	initSqlDB();
-
 	try {
+		Entropy::seed_rng();
+		initSqlDB();
 		result = initPass(dbName, Settings["pwhash"]);
 		if (result == pw_exit)
 			throw pw_exit;

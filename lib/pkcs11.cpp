@@ -311,6 +311,7 @@ void pkcs11::changePin(const slotid &slot, bool so)
 	QString msg = so ? newSoPinTxt : newPinTxt;
 	pass_info p(XCA_TITLE, msg.arg(ti.label()) + "\n" + ti.pinInfo());
 	p.setPin(so);
+	p.setPurpose(so ? pass_info::NewTokenSoPin : pass_info::NewTokenPin);
 
 	if (PwDialogCore::execute(&p, &newPin, true) == 1) {
 		pinp = pin.toLatin1();
@@ -333,6 +334,7 @@ void pkcs11::initPin(const slotid &slot)
 
 	pass_info p(XCA_TITLE, newPinTxt.arg(ti.label()) + "\n" + ti.pinInfo());
 	p.setPin();
+	p.setPurpose(pass_info::NewTokenPin);
 
 	if (!ti.protAuthPath()) {
 		ret = PwDialogCore::execute(&p, &newPin, true);

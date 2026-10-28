@@ -30,7 +30,9 @@ class pass_info: public QObject
 		ExportPassword,		/* encrypt a file being exported */
 		SqlPassword,		/* the remote SQL server */
 		TokenPin,
-		TokenSoPin
+		TokenSoPin,
+		NewTokenPin,		/* change or initialise a PIN */
+		NewTokenSoPin
 	};
 
   private:

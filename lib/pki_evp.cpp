@@ -345,6 +345,7 @@ void pki_evp::fload(const QString &fname)
 		pki_ign_openssl_error();
 		pkey = d2i_PKCS8PrivateKey_bio(BioByteArray(ba).ro(),
 						NULL, cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		PKCS8_PRIV_KEY_INFO *p8inf;
@@ -359,6 +360,7 @@ void pki_evp::fload(const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = b2i_PVK_bio(BioByteArray(ba).ro(), cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		pki_ign_openssl_error();
@@ -367,6 +369,7 @@ void pki_evp::fload(const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		pki_ign_openssl_error();
