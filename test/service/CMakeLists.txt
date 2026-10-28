@@ -55,6 +55,13 @@ add_test(NAME test_cli_missing_password
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
+# xca --no-gui answers questions only with --yes or --confirm (BTD-71)
+add_test(NAME test_cli_confirmations
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_confirmations
+		-P ${SERVICE_TEST_DIR}/cli_confirmations.cmake)
+set_tests_properties(test_cli_confirmations PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

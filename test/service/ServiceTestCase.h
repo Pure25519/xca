@@ -53,27 +53,35 @@ class StrictPwDialog : public PwDialogUI_i
 };
 
 /* Replaces the message boxes of xcaWarning: questions are answered from
- * the expected answers, messages must match an expected substring. */
+ * the expected answers, messages must match an expected substring.
+ * delegateTo() hands the questions of the current test function to
+ * another implementation, e.g. the headless xcaWarningCore; reset()
+ * ends that and clears the confirmations of xcaWarningCore. */
 class StrictWarning : public xcaWarning_i
 {
 	QList<bool> answers{};
 	QStringList messages{};
+	xcaWarning_i *delegate{};
 
 	void message(const char *kind, const QString &msg);
-	bool question(const char *kind, const QString &msg);
+	bool question(const char *kind, const QString &id,
+			const QString &msg);
 
   public:
+	~StrictWarning();
 	void expectQuestion(bool answer);
 	void expectMessage(const QString &substring);
+	void delegateTo(xcaWarning_i *d);
 	void reset();
 
 	void information(const QString &msg) override;
 	void warning(const QString &msg) override;
 	void warningv3(const QString &msg, const extList &el) override;
-	bool yesno(const QString &msg) override;
-	bool okcancel(const QString &msg) override;
+	bool yesno(const QString &id, const QString &msg) override;
+	bool okcancel(const QString &id, const QString &msg) override;
 	void sqlerror(QSqlError err) override;
 	void error(const QString &msg) override;
+	QString answerSource(const QString &id) const override;
 };
 
 /* Base class of every service test: a fresh XCA database in its own

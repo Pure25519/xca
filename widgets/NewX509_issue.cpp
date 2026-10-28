@@ -38,7 +38,7 @@ static void issueFromDialog(db_x509 *certs, NewX509 *dlg)
 		pki_key *clientkey = cert->getRefKey();
 		if (clientkey && clientkey->isToken()) {
 			pki_scard *card = (pki_scard*)clientkey;
-			if (XCA_YESNO(QObject::tr("Store the certificate to the key on the token '%1 (#%2)' ?").
+			if (XCA_YESNO("token.store_certificate", QObject::tr("Store the certificate to the key on the token '%1 (#%2)' ?").
 				arg(card->getCardLabel()).arg(card->getSerial())))
 			{
 				try {

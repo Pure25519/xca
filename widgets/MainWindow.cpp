@@ -475,7 +475,7 @@ MainWindow::~MainWindow()
 void MainWindow::closeEvent(QCloseEvent *e)
 {
 	if (dhgen) {
-		if (!XCA_YESNO("Abort Diffie-Hellmann parameter generation?")){
+		if (!XCA_YESNO("dh.abort", "Abort Diffie-Hellmann parameter generation?")){
 			e->ignore();
 			return;
 		}

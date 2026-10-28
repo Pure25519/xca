@@ -39,6 +39,9 @@ Token selection and PIN pad logins are always unexpected.
 To test the headless path, hand the requests of one test function to a `PwDialogHeadless`
 configured with sources: `pwdialog->delegateTo(h)` (takes ownership; `cleanup()` ends it).
 `test_service_secrets.cpp` shows it.
+Questions work the same way: `warning->delegateTo(new xcaWarningCore())` answers them as
+`xca --no-gui` does, from `xcaWarningCore::setConfirmations()` (`--yes`, `--confirm`);
+`cleanup()` ends it and clears the confirmations. `test_service_key.cpp` shows it.
 The ctest `test_service_harness_selfcheck` proves that an unexpected prompt really turns a test red.
 
 ## Adding tests for a service ticket

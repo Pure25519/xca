@@ -57,6 +57,13 @@ QString ServiceContext::osUser()
 	return user.isEmpty() ? QString("unknown") : user;
 }
 
+void ServiceContext::confirm(const QString &id, const QString &source)
+{
+	QString c = id + ":" + source;
+	if (!confirmed.contains(c))
+		confirmed << c;
+}
+
 ServiceContext ServiceContext::localUser(enum channel c)
 {
 	return ServiceContext(c, "os:" + osUser());
@@ -78,12 +85,13 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
-		"ca_id", "count", "crl_number", "curve", "der_size",
-		"encrypted", "file", "fingerprint", "format", "hash_algo",
-		"invalidity_date", "issuer", "item_id", "key_size",
-		"key_type", "name", "next_update", "not_after", "not_before",
-		"outcome", "reason", "reason_bit", "revocation_date",
-		"serial", "subject", "template", "this_update",
+		"ca_id", "confirmed", "count", "crl_number", "curve",
+		"der_size", "encrypted", "file", "fingerprint", "format",
+		"hash_algo", "invalidity_date", "issuer", "item_id",
+		"key_size", "key_type", "name", "next_update", "not_after",
+		"not_before", "outcome", "question", "reason", "reason_bit",
+		"revocation_date", "serial", "subject", "template",
+		"this_update",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
@@ -480,8 +488,13 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (action == actionCheckpoint || action == actionKeyCreate)
 		throw errorEx(QString("Audit action '%1' is reserved")
 				.arg(action));
+	/* The questions confirmed for this operation (BTD-71). Only here:
+	 * a checkpoint signs exactly the params it stores. */
+	AuditParams p = params;
+	if (!ctx.confirmations().isEmpty())
+		p.set("confirmed", ctx.confirmations().join(","));
 	AuditEntry e = insertEntry(ctx, action, objectType, objectId,
-				params, result, errorCode);
+				p, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	try {

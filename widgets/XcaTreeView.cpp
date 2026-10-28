@@ -267,7 +267,7 @@ void XcaTreeView::deleteItems()
 	if (!TransBegin())
 		return;
 
-	if (!XCA_OKCANCEL(pki->getMsg(pki_base::msg_delete,
+	if (!XCA_OKCANCEL("item.delete", pki->getMsg(pki_base::msg_delete,
 			items.size()).arg(items.join("', '"))))
 		return;
 

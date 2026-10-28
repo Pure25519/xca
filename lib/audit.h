@@ -87,6 +87,7 @@ class ServiceContext
   private:
 	enum channel chan;
 	QString actorId;
+	QStringList confirmed{};
 
   public:
 	/* actor: "os:<login>", "apikey:<key id>" or "cert:<SHA-256 fingerprint>" */
@@ -110,6 +111,14 @@ class ServiceContext
 	QString actor() const
 	{
 		return actorId;
+	}
+	/* The caller answered question id (XCA_YESNO) with "yes", source:
+	 * "dialog", "--yes" or "--confirm" (BTD-71). append() records the
+	 * confirmations as parameter "confirmed", e.g. "key.size:--yes". */
+	void confirm(const QString &id, const QString &source);
+	QStringList confirmations() const
+	{
+		return confirmed;
 	}
 };
 

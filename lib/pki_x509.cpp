@@ -537,7 +537,7 @@ void pki_x509::deleteFromToken(const slotid &slot)
 		return;
 
 	tkInfo ti = p11.tokenInfo();
-	if (!XCA_YESNO(tr("Delete the certificate '%1' from the token '%2 (#%3)'?").
+	if (!XCA_YESNO("token.delete_certificate", tr("Delete the certificate '%1' from the token '%2 (#%3)'?").
 		arg(getIntName()).arg(ti.label()).arg(ti.serial())))
 	{
 		return;
