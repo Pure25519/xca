@@ -87,47 +87,89 @@ bool pki_evp::sqlUpdatePrivateKey()
 	return false;
 }
 
+/* A failed OpenSSL call must not end in a key with OpenSSL's defaults:
+ * print the error queue (see _openssl_error()) and throw. An empty code
+ * throws errorEx, which the key service records as internal_error. */
+static void keygenCheck(int ret, const QString &code, const QString &msg)
+{
+	if (ret > 0)
+		return;
+	openssl_error();
+	if (code.isEmpty())
+		throw errorEx(msg);
+	throw serviceError(code, msg);
+}
+
 void pki_evp::generate(const keyjob &task)
 {
 	Entropy::seed_rng();
 	XcaProgress progress;
 
-	EVP_PKEY *param_key = nullptr;
+	EVP_PKEY *param_key = nullptr, *pkey = nullptr;
+	const QString badSize = tr("Invalid key size: %1").arg(task.size);
+	const QString failed = tr("Key generation failed");
 
 	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(task.ktype.type, NULL);
 	Q_CHECK_PTR(ctx);
 	EVP_PKEY_CTX_set_app_data(ctx, &progress);
 
+    try {
+	/* Parameters need an initialised operation: set before
+	 * EVP_PKEY_keygen_init(), OpenSSL rejects them (BTD-94) */
 	switch (task.ktype.type) {
 	case EVP_PKEY_RSA:
-		EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, task.size);
+		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
+		keygenCheck(EVP_PKEY_CTX_set_rsa_keygen_bits(ctx, task.size),
+			"invalid_key_size", badSize);
 		break;
 	case EVP_PKEY_DSA:
-		EVP_PKEY_paramgen_init(ctx);
-		EVP_PKEY_CTX_set_dsa_paramgen_bits(ctx, task.size);
-		EVP_PKEY_generate(ctx, &param_key);
+		keygenCheck(EVP_PKEY_paramgen_init(ctx), QString(), failed);
+		keygenCheck(EVP_PKEY_CTX_set_dsa_paramgen_bits(ctx, task.size),
+			"invalid_key_size", badSize);
+		keygenCheck(EVP_PKEY_generate(ctx, &param_key),
+			"invalid_key_size", badSize);
 
 		EVP_PKEY_CTX_free(ctx);
 		ctx = EVP_PKEY_CTX_new_from_pkey(NULL, param_key, NULL);
+		Q_CHECK_PTR(ctx);
+		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
 		break;
 #ifndef OPENSSL_NO_EC
 	case EVP_PKEY_EC:
-		EVP_PKEY_paramgen_init(ctx);
-		EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx, task.ec_nid);
-		EVP_PKEY_generate(ctx, &param_key);
+		keygenCheck(EVP_PKEY_paramgen_init(ctx), QString(), failed);
+		keygenCheck(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx,
+			task.ec_nid), "invalid_curve", tr("Unknown EC curve"));
+		keygenCheck(EVP_PKEY_generate(ctx, &param_key),
+			"invalid_curve", tr("Unknown EC curve"));
 		EVP_PKEY_CTX_free(ctx);
 		ctx = EVP_PKEY_CTX_new_from_pkey(NULL, param_key, NULL);
+		Q_CHECK_PTR(ctx);
+		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
 		break;
 	case EVP_PKEY_ED25519:
-		// ED25519 and ED448 need no extra treatment
+		// ED25519 and ED448 have no parameters
+		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
 		break;
 	default:
 		throw errorEx(tr("Unknown Keytype %1").arg(task.ktype.type));
 #endif
 	}
-	EVP_PKEY *pkey = nullptr;
-	EVP_PKEY_keygen_init(ctx);
-	EVP_PKEY_keygen(ctx, &pkey);
+	keygenCheck(EVP_PKEY_keygen(ctx, &pkey), QString(), failed);
+
+	/* No silent fallback to another size */
+	if ((task.ktype.type == EVP_PKEY_RSA ||
+	     task.ktype.type == EVP_PKEY_DSA) &&
+	    EVP_PKEY_get_bits(pkey) != task.size)
+		throw serviceError("invalid_key_size",
+			tr("Generated a %1 bit key instead of %2 bit")
+			.arg(EVP_PKEY_get_bits(pkey)).arg(task.size));
+    }
+    catch (...) {
+	EVP_PKEY_CTX_free(ctx);
+	EVP_PKEY_free(param_key);
+	EVP_PKEY_free(pkey);
+	throw;
+    }
 	EVP_PKEY_CTX_free(ctx);
 	isPub = false;
 	pkiSource = generated;

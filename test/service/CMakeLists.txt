@@ -6,6 +6,7 @@ set(SERVICE_TEST_DIR ${PROJECT_SOURCE_DIR}/test/service)
 add_library(xcaservicetest STATIC
 	${SERVICE_TEST_DIR}/ServiceTestCase.cpp
 	${SERVICE_TEST_DIR}/ServiceTestCase.h
+	${PROJECT_SOURCE_DIR}/test/TestEnv.cpp
 	${PROJECT_BINARY_DIR}/local.h)
 target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcalib)
 
@@ -90,6 +91,12 @@ set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
 ServiceTest(test_service_request)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_request PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# Key sizes as openssl pkey reads them (BTD-94)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_key PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 

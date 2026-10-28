@@ -17,6 +17,7 @@
 
 #include "lib/PwDialogCore.h"
 #include "lib/XcaWarningCore.h"
+#include "test/TestEnv.h"
 
 class Entropy;
 
@@ -100,21 +101,12 @@ class ServiceTestCase : public QObject
 	void cleanup();
 };
 
-/* Process-wide isolation: HOME and the XDG directories point into a
- * temporary directory, so settings.ini, dbhistory and .rnd never reach
- * the real user profile. Removed when the test binary exits. */
-class ServiceTestEnv
-{
-	QTemporaryDir home;
-
-  public:
-	ServiceTestEnv();
-};
-
 #define XCA_SERVICE_TEST_MAIN(TestClass) \
 int main(int argc, char *argv[]) \
 { \
-	ServiceTestEnv env; \
+	TestEnv env; \
+	if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) \
+		qputenv("QT_QPA_PLATFORM", "offscreen"); \
 	QApplication app(argc, argv); \
 	TestClass tc; \
 	QTEST_SET_MAIN_SOURCE_PATH \
