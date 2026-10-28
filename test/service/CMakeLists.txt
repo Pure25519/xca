@@ -29,6 +29,13 @@ target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# xca --no-gui: no colour codes off a terminal, no false parser warning
+add_test(NAME test_cli_plain_output
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_plain_output
+		-P ${SERVICE_TEST_DIR}/cli_plain_output.cmake)
+set_tests_properties(test_cli_plain_output PROPERTIES LABELS service)
+
 # The harness must fail a test on an unexpected prompt
 add_test(NAME test_service_harness_selfcheck
 	COMMAND test_service_harness selfcheckUnexpectedPrompt)

@@ -310,7 +310,9 @@ int arguments::parse(int argc, char *argv[])
 	QStringList found = parser.optionNames();
 	foreach(const arg_option &opt, opts) {
 		if (found.contains(opt.long_opt)) {
-			 found_options[opt.long_opt] = parser.value(opt.long_opt);
+			/* value() of a flag warns "option not expecting values" */
+			found_options[opt.long_opt] = opt.arg_type == no_argument ?
+				QString() : parser.value(opt.long_opt);
 			if (opt.need_db)
 				need_db = true;
 		}
