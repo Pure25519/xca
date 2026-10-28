@@ -90,6 +90,10 @@ writer) is in the header comment of `lib/audit.h`; `appendInRolledBackTransactio
 `db_x509::newCert(ctx, IssuanceSpec)` (BTD-31) and is the reference for service functions with a
 value object, a typed error and an audit entry (pattern: `doc/service-pattern.md`); it needs the
 `openssl` program for the CSR and `openssl verify` and skips those parts without it.
+`test_service_request.cpp` covers key generation through `db_key::newKey(ctx, keyjob, name)` and
+request creation through `db_x509req::newRequest(ctx, RequestSpec)` (BTD-32): RSA and EC keys, a
+CSR with SAN and EKU for each, checked with `openssl req -verify` (skipped without the `openssl`
+program), one audit entry per operation and per rejection.
 `test_service_revocation.cpp` covers revocation and CRL generation (BTD-33): every CRL is checked
 with `openssl crl -CAfile`, the empty CRL with `openssl asn1parse`, and each test ends with
 `AuditLog::verify()` reporting no unaudited revocation row.

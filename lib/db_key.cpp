@@ -12,6 +12,7 @@
 #include "pki_scard.h"
 #include "pki_x509super.h"
 
+#include "audit.h"
 #include "exception.h"
 #include "pkcs11.h"
 
@@ -147,36 +148,117 @@ pki_base* db_key::insert(pki_base *item)
 	return insertPKI(lkey);
 }
 
+void db_key::keyParams(AuditParams &params, pki_key *key)
+{
+	params.set("key_type", key->getKeyTypeString());
+	params.set("key_size", EVP_PKEY_bits(key->getPubKey()));
+#ifndef OPENSSL_NO_EC
+	if (key->getKeyType() == EVP_PKEY_EC)
+		params.set("curve", OBJ_nid2sn(key->ecParamNid()));
+#endif
+}
+
+static AuditParams keyjobParams(const keyjob &task, const QString &name)
+{
+	AuditParams p;
+	p.set("name", name);
+	if (!task.ktype.name.isEmpty())
+		p.set("key_type", task.ktype.name);
+	if (task.isEC() && task.ec_nid != NID_undef)
+		p.set("curve", OBJ_nid2sn(task.ec_nid));
+	else if (!task.isED25519())
+		p.set("key_size", task.size);
+	return p;
+}
+
+pki_key *db_key::generate(const keyjob &task, const QString &name,
+			AuditParams &params, const ServiceContext &ctx)
+{
+	pki_key *key = nullptr, *stored = nullptr;
+
+	if (task.ktype.type == -1)
+		throw serviceError("invalid_key_type", tr("Unknown key type"));
+	if (!task.isEC() && !task.isED25519() && task.size < 32)
+		throw serviceError("invalid_key_size", tr("Key size too small !"));
+	if (!keyjob(task).isValid())    /* isValid() is not const */
+		throw serviceError("invalid_curve", tr("Unknown EC curve"));
+
+    try {
+	if (task.isToken()) {
+		key = new pki_scard(name);
+	} else {
+		key = new pki_evp(name);
+	}
+	/* outside the transaction: may take long and may use a token */
+	key->generate(task);
+	key->pkiSource = generated;
+	if (key->getIntName().isEmpty())
+		key->autoIntName(name);
+
+	Transaction;
+	TransThrow();
+
+	keyParams(params, key);
+	params.set("name", key->getIntName());
+	params.set("fingerprint", key->fingerprint("der sha256"));
+
+	if (getByReference(key))
+		throw serviceError("duplicate_key",
+			tr("The key already exists in the database"));
+	stored = dynamic_cast<pki_key*>(insert(key));
+	/* insert() keeps the key in the store or deletes it */
+	key = nullptr;
+	if (!stored)
+		throw serviceError("database_error",
+			tr("The key could not be stored"));
+	AuditLog::append(ctx, "key.generate", "key",
+			stored->getSqlItemId().toString(), params);
+	if (!TransCommit())
+		throw serviceError("database_error",
+			tr("Failed to commit the database transaction"));
+    }
+    catch (...) {
+	delete key;
+	throw;
+    }
+    return stored;
+}
+
+pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
+			const QString &name)
+{
+	AuditParams params = keyjobParams(task, name);
+	try {
+		return generate(task, name, params, ctx);
+	} catch (serviceError &err) {
+		/* after the rollback, so the entry is kept (lib/audit.h) */
+		AuditLog::append(ctx, "key.generate", "key",
+				QString(), params, "failure", err.code);
+		throw;
+	} catch (...) {
+		/* errorEx (OpenSSL, token, database) and anything else */
+		AuditLog::append(ctx, "key.generate", "key",
+				QString(), params, "failure", "internal_error");
+		throw;
+	}
+}
+
 pki_key *db_key::newKey(const keyjob &task, const QString &name)
 {
 	pki_key *key = NULL;
 
-	if (!task.isEC() && !task.isED25519()) {
-		if (task.size < 32) {
-			XCA_WARN(tr("Key size too small !"));
+	if (!task.isEC() && !task.isED25519() && task.size >= 32 &&
+	    (task.size < 1024 || task.size > 8192))
+	{
+		if (!XCA_YESNO(tr("You are sure to create a key of the size: %1 ?").arg(task.size)))
 			return NULL;
-		}
-		if (task.size < 1024 || task.size > 8192)
-			if (!XCA_YESNO(tr("You are sure to create a key of the size: %1 ?").arg(task.size))) {
-				return NULL;
-			}
 	}
 	try {
-		if (task.isToken()) {
-			key = new pki_scard(name);
-		} else {
-			key = new pki_evp(name);
-		}
-		key->generate(task);
-		key->pkiSource = generated;
-		if (key->getIntName().isEmpty())
-			key->autoIntName(name);
-		key = dynamic_cast<pki_key*>(insert(key));
+		key = newKey(ServiceContext::localUser(
+				ServiceContext::processChannel), task, name);
 		emit keyDone(key);
 		createSuccess(key);
-
 	} catch (errorEx &err) {
-		delete key;
 		key = NULL;
 		XCA_ERROR(err);
 	}

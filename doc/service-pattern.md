@@ -34,6 +34,26 @@ Known limit until BTD-50: a database error after the object was inserted (for ex
 success entry is appended) rolls the transaction back, but the object stays in the in-memory store
 until the database is reopened. The `failure` entry is written; the caller sees the error.
 
+## Service functions so far
+
+| Ticket | Service function | Value object | Audit action | Error codes |
+|---|---|---|---|---|
+| BTD-31 | `db_x509::newCert(ctx, IssuanceSpec)` | `IssuanceSpec` (`lib/issuance.h`) | `certificate.issue` | see above |
+| BTD-32 | `db_key::newKey(ctx, keyjob, name)` | `keyjob` (`lib/pki_key.h`, already a value) | `key.generate` | `invalid_key_type`, `invalid_key_size`, `invalid_curve`, `duplicate_key`, `database_error` |
+| BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
+
+Where an existing value-based entry point asked a question or showed a message (key generation:
+"Key size too small", the question before an RSA/DSA size outside 1024..8192, the success
+message), it stays as the interactive wrapper for the GUI and `xca --no-gui` and calls the service
+function with `ServiceContext::localUser(ServiceContext::processChannel)`; the rejection itself
+moved into the service function, so the wrapper only asks and reports.
+
+A request's extensions are built in the context of a temporary self-signed certificate with the
+spec's subject and key (`RequestSpec::buildExtensions()`), as the dialog did when its temporary
+context was current. "hash" (subject key identifier) and `DNS:copycn` therefore always refer to
+the request; the dialog's own context is set up only by some widget events
+(`NewX509::setupTmpCtx()`).
+
 ## Moving GUI code
 
 - Code that builds something from widget values moves into the value object's file and works on

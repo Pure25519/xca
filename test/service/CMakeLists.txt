@@ -86,6 +86,13 @@ add_test(NAME test_cli_exit_codes
 		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
 set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
 
+# Key generation and request creation (BTD-32); openssl req -verify
+ServiceTest(test_service_request)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_request PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)

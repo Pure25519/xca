@@ -13,11 +13,16 @@
 
 class pki_temp;
 class pki_x509req;
+class AuditParams;
+class RequestSpec;
+class ServiceContext;
 
 class db_x509req: public db_x509super
 {
 	Q_OBJECT
 
+		pki_x509req *create(const RequestSpec &spec, AuditParams &params,
+				const ServiceContext &ctx);
 	protected:
 		dbheaderList getHeaders();
 	public:
@@ -27,11 +32,20 @@ class db_x509req: public db_x509super
 		void fillContextMenu(QMenu *menu, const QModelIndex &index);
 		QList<pki_x509req*> getAllRequests();
 		void resetX509count();
+		/* Creates one certificate signing request (BTD-32). Throws
+		 * serviceError for a rejected spec and errorEx for anything
+		 * else; writes exactly one audit entry request.create either
+		 * way (error code internal_error for anything but a
+		 * serviceError). Call it outside a transaction. */
+		pki_x509req *newRequest(const ServiceContext &ctx,
+				const RequestSpec &spec);
 		void setSigned(QModelIndex index, bool signe);
 		void exportItem(const QModelIndex &index,
 				const pki_export *xport, XFile &file) const;
 
 	public slots:
+		/* GUI: the New Request dialog, defined in
+		 * widgets/NewX509_request.cpp; it fills a RequestSpec */
 		void newItem(pki_temp *temp, pki_x509req *orig = NULL);
 		void newItem();
 };
