@@ -20,8 +20,19 @@
 #include "lib/pki_evp.h"
 
 #include "main.h"
+#include "TestEnv.h"
 
 char segv_data[1024];
+
+static TestEnv *testEnv;
+
+/* Called by QTEST_MAIN before the QApplication: testxca and
+ * test_automation_ids run at the same time under ctest --parallel and must
+ * not share testdb.xdb, testdata/ or the settings (BTD-83) */
+void test_main::initMain()
+{
+	testEnv = new TestEnv(TestEnv::workInHome);
+}
 
 void test_main::initTestCase()
 {
@@ -51,6 +62,9 @@ void test_main::cleanupTestCase()
 	delete mainwin;
 	pki_export::free_elements();
 	QFile::remove("testdb.xdb");
+	/* While Qt is still up; after main() its globals are gone */
+	delete testEnv;
+	testEnv = nullptr;
 }
 
 void test_main::cleanup()
