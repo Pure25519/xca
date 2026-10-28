@@ -49,7 +49,11 @@ Passwd AuditKey::password()
 				break;
 		}
 	} catch (secretError &err) {
-		/* no source on the command line, or a wrong one */
+		/* A source that is wrong or unreadable is an error; only a
+		 * missing one means "no password" */
+		if (err.why != secretError::missing)
+			throw serviceError("audit_password_rejected",
+						err.getString());
 		qDebug() << err.getString();
 	}
 	if (!pki_evp::validateDatabasePassword(pass))

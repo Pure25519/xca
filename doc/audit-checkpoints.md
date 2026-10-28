@@ -26,8 +26,27 @@ re-encrypts the audit key (`MainWindow::changeDbPass`).
 
 Without the database password (`xca --no-gui` without `--password`, or the unlock dialog
 cancelled) no automatic checkpoint is written, the entry itself is, and the next entry tries
-again; `--audit-export` fails then. Entries after a change that does not chain are never signed
-(`audit_chain_broken`).
+again. Entries after a change that does not chain are never signed (`audit_chain_broken`).
+
+## Export with and without a password
+
+| `--audit-export` | Result |
+|---|---|
+| with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0 |
+| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries` |
+| with a wrong password source | `audit_password_rejected`, exit 1 |
+| a checkpoint is due and the entries since the last one do not chain | `audit_chain_broken`, exit 1 (only with a password; without one the export reads as it is) |
+
+## Deviations from the ticket (accepted 2026-10-28)
+
+1. **No second checkpoint table.** BTD-37 asked for a checkpoint "as its own record and as a
+   special entry in the chain". The checkpoint is only the chain entry `audit.checkpoint`, which
+   holds everything needed to check it. A copy in a second table can be changed by the same
+   attacker who changes `audit_log`, so it adds no protection, only a consistency check.
+2. **The audit key is not a key item.** BTD-37 asked for the key "stored in the XCA database and
+   marked as audit key". It is stored in its own table `audit_keys` instead of `items` with a
+   marker: no key list, dialog, export, delete, token or password function of XCA reaches it, so
+   only the three signing services need a guard (`audit_key`), not every key path of the GUI.
 
 ## What verify reports
 

@@ -39,7 +39,7 @@
  * whole log rewritten with a new key passes too, only the audit key id
  * pinned from an earlier export reveals it. Without the database password
  * append() writes no checkpoint (the next append() tries again) and the
- * export fails.
+ * export exports without a new checkpoint.
  *
  * Caller contract (service functions of BTD-31..35):
  *  - Every service function receives a ServiceContext and appends exactly
@@ -287,11 +287,16 @@ class AuditLog
 	static AuditVerifyResult verify();
 	/* Signs a checkpoint unless the newest entry is one, then writes
 	 * one canonical JSON object per line, including prev_hash and hash.
+	 * Without a database password source it signs nothing and writes
+	 * nothing to the database (BTD-70); *unsignedEntries receives the
+	 * number of entries after the last checkpoint (0: all covered).
 	 * Throws errorEx for an entry without a canonical form and
-	 * serviceError when the checkpoint cannot be signed. */
-	static QByteArray exportJsonLines(const ServiceContext &ctx);
+	 * serviceError when a checkpoint is due and cannot be signed
+	 * (audit_password_rejected, audit_chain_broken). */
+	static QByteArray exportJsonLines(const ServiceContext &ctx,
+			qint64 *unsignedEntries = nullptr);
 	/* The same for the local user on the channel of this process */
-	static QByteArray exportJsonLines();
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);

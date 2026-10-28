@@ -12,6 +12,7 @@
 #include <QProcess>
 #include <QSqlDatabase>
 #include <QSqlQuery>
+#include <QSqlRecord>
 #include <QTemporaryDir>
 
 #include <cstring>
@@ -24,6 +25,7 @@
 #include <openssl/x509v3.h>
 
 #include "lib/BioByteArray.h"
+#include "lib/PwDialogCore.h"
 #include "lib/audit.h"
 #include "lib/audit_key.h"
 #include "lib/database_model.h"
@@ -64,6 +66,7 @@ class test_service_checkpoint : public ServiceTestCase
 		return q.value(0);
 	}
 	void appendSample(int count);
+	static QMap<QString, QStringList> tableRows();
 	static QList<AuditEntry> byAction(const QString &action);
 	static void recomputeFrom(qint64 seq);
 	static EVP_PKEY *auditPrivateKey();
@@ -83,7 +86,8 @@ class test_service_checkpoint : public ServiceTestCase
 	void unannouncedKey();
 	void auditKeyNotUsableForSigning();
 	void exportSignsCheckpoint();
-	void exportWithoutPasswordFails();
+	void exportWithoutPassword();
+	void exportWithWrongPassword();
 	void noPasswordKeepsEntry();
 	void neverSignsBrokenTail();
 	void keyRotation();
@@ -100,6 +104,29 @@ void test_service_checkpoint::appendSample(int count)
 		AuditLog::append(ctx, "key.generate", "key",
 				QString::number(i), p);
 	}
+}
+
+/* Every row of every table as text, sorted per table */
+QMap<QString, QStringList> test_service_checkpoint::tableRows()
+{
+	QMap<QString, QStringList> rows;
+	QSqlQuery q(QSqlDatabase::database());
+
+	q.exec("SELECT name FROM sqlite_master WHERE type='table'");
+	while (q.next()) {
+		QSqlQuery c(QSqlDatabase::database());
+		c.exec(QString("SELECT * FROM %1").arg(q.value(0).toString()));
+		QStringList list;
+		while (c.next()) {
+			QStringList cols;
+			for (int i = 0; i < c.record().count(); i++)
+				cols << c.value(i).toString();
+			list << cols.join("|");
+		}
+		list.sort();
+		rows[q.value(0).toString()] = list;
+	}
+	return rows;
 }
 
 QList<AuditEntry> test_service_checkpoint::byAction(const QString &action)
@@ -449,21 +476,53 @@ void test_service_checkpoint::exportSignsCheckpoint()
 	QVERIFY(AuditLog::verify().ok());
 }
 
-void test_service_checkpoint::exportWithoutPasswordFails()
+void test_service_checkpoint::exportWithoutPassword()
 {
+	/* As xca --no-gui without --password: the database is open, not
+	 * unlocked, and the password request has no source */
 	appendSample(2);
-	/* As xca --no-gui without --password: the database is open, but
-	 * not unlocked */
 	pki_evp::passwd.cleanse();
-	pwdialog->expect("", pw_cancel);
-	QCOMPARE(errorCode([&]() { AuditLog::exportJsonLines(ctx); }),
-		QString("audit_key_unavailable"));
-	QCOMPARE(AuditLog::entries().size(), 2);
-	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 0);
+	PwDialogHeadless *headless = new PwDialogHeadless();
+	pwdialog->delegateTo(headless);
+	QMap<QString, QStringList> before = tableRows();
+
+	/* Read only (BTD-70): no checkpoint, no key, no row changed */
+	qint64 unsignedEntries = -1;
+	QByteArray out = AuditLog::exportJsonLines(ctx, &unsignedEntries);
+	QCOMPARE(out.count('\n'), 2);
+	QCOMPARE(unsignedEntries, qint64(2));
+	QCOMPARE(tableRows(), before);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.unanchoredEntries, qint64(2));
 
 	/* With the password from the source it is signed */
-	pwdialog->expect(dbPassword);
-	QCOMPARE(AuditLog::exportJsonLines(ctx).count('\n'), 4);
+	headless->setSource(pass_info::DatabasePassword,
+				QString("pass:") + dbPassword);
+	out = AuditLog::exportJsonLines(ctx, &unsignedEntries);
+	QCOMPARE(out.count('\n'), 4);
+	QCOMPARE(unsignedEntries, qint64(0));
+	QVERIFY(QByteArray(out.split('\n')[3]).contains(
+			"\"action\":\"audit.checkpoint\""));
+	QCOMPARE(AuditLog::verify().unanchoredEntries, qint64(0));
+
+	/* Covered already: nothing to sign */
+	QCOMPARE(AuditLog::exportJsonLines(ctx, &unsignedEntries), out);
+	QCOMPARE(unsignedEntries, qint64(0));
+}
+
+void test_service_checkpoint::exportWithWrongPassword()
+{
+	/* A wrong source is an error, not a read-only export */
+	appendSample(1);
+	pki_evp::passwd.cleanse();
+	PwDialogHeadless *headless = new PwDialogHeadless();
+	headless->setSource(pass_info::DatabasePassword, "pass:wrong");
+	pwdialog->delegateTo(headless);
+	QCOMPARE(errorCode([&]() { AuditLog::exportJsonLines(ctx); }),
+		QString("audit_password_rejected"));
+	QCOMPARE(AuditLog::entries().size(), 1);
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 0);
 }
 
 void test_service_checkpoint::noPasswordKeepsEntry()

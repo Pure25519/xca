@@ -627,11 +627,17 @@ static AuditEntry signHead(const ServiceContext &ctx, const QString &key,
  * automatic checkpoint does not roll back the caller's transaction */
 static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate)
 {
-	qint64 last = lastCheckpointSeq();
-	if (checkUnsignedTail(last ? last : 1) == 0)
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT 1 FROM audit_log LIMIT 1");
+	q.exec();
+	throwOnError(q);
+	if (!q.next())
 		throw serviceError("empty_audit_log",
 			QObject::tr("The audit log has no entry to sign"));
+	/* the password first: without it the export reads only */
 	Passwd pass = AuditKey::password();
+	qint64 last = lastCheckpointSeq();
+	checkUnsignedTail(last ? last : 1);
 	QString key = AuditKey::current();
 	AuditEntry e;
 
@@ -662,21 +668,35 @@ AuditEntry AuditLog::rotateKey(const ServiceContext &ctx)
 	return writeCheckpoint(ctx, true);
 }
 
-QByteArray AuditLog::exportJsonLines()
+QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
 {
 	return exportJsonLines(ServiceContext::localUser(
-				ServiceContext::processChannel));
+			ServiceContext::processChannel), unsignedEntries);
 }
 
-QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx)
+QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
+				qint64 *unsignedEntries)
 {
 	QByteArray out;
 	QList<AuditEntry> list = entries();
+	qint64 lastCheckpoint = 0;
 
 	if (!list.isEmpty() && list.last().action != actionCheckpoint) {
-		checkpoint(ctx);
-		list = entries();
+		try {
+			checkpoint(ctx);
+			list = entries();
+		} catch (serviceError &err) {
+			/* No password source: a read-only export without a
+			 * new checkpoint (BTD-70); nothing was written */
+			if (err.code != "audit_key_unavailable")
+				throw;
+		}
 	}
+	for (const AuditEntry &e : list)
+		if (e.action == actionCheckpoint)
+			lastCheckpoint = e.seq;
+	if (unsignedEntries)
+		*unsignedEntries = list.size() - lastCheckpoint;
 	for (const AuditEntry &e : list) {
 		try {
 			out += canonicalJson(e.toMap(true)) + "\n";
