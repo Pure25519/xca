@@ -1,0 +1,228 @@
+/* vi: set sw=4 ts=4:
+ *
+ * Copyright (C) 2001 - 2020 Christian Hohnstaedt.
+ *
+ * All rights reserved.
+ *
+ * Extension building of the New Certificate dialog, moved here from
+ * widgets/NewX509_ext.cpp (BTD-31) so that it works on an ExtensionSpec.
+ */
+
+#include "issuance.h"
+
+#include <QCoreApplication>
+
+#include <openssl/conf.h>
+
+#include "BioByteArray.h"
+#include "func_base.h"
+
+/* Drop the "<token>:copy" entry that only means something in a
+ * certificate. splitSanEntries() keeps commas inside single values. */
+static QString stripCopyToken(const QString &s, const QString &token)
+{
+	QStringList sn, sl = splitSanEntries(s);
+	foreach (QString str, sl) {
+		if (str.trimmed() != token)
+			sn += str.trimmed();
+	}
+	return sn.join(", ");
+}
+
+x509v3ext ExtensionSpec::basicConstraintsExt(X509V3_CTX *ctx) const
+{
+	QStringList cont;
+	x509v3ext ext;
+	if (basicCA == bc_ca || basicCA == bc_not_ca) {
+		if (basicCritical)
+			cont << "critical";
+		cont << (basicCA == bc_ca ? "CA:TRUE" : "CA:FALSE");
+		if (basicCA == bc_ca && !pathLen.isEmpty()) {
+			cont << QString("pathlen:") +
+				QString::number(pathLen.toInt());
+		}
+		ext.create(NID_basic_constraints, cont.join(", "), ctx);
+	}
+	return ext;
+}
+
+x509v3ext ExtensionSpec::subjectKeyIdExt(X509V3_CTX *ctx) const
+{
+	x509v3ext ext;
+	if (subjectKeyId)
+		ext.create(NID_subject_key_identifier, "hash", ctx);
+	return ext;
+}
+
+x509v3ext ExtensionSpec::ocspMustStapleExt(X509V3_CTX *ctx) const
+{
+	x509v3ext ext;
+	if (ocspMustStaple)
+		ext.create(NID_tlsfeature, "status_request", ctx);
+	return ext;
+}
+
+x509v3ext ExtensionSpec::authorityKeyIdExt(X509V3_CTX *ctx,
+					bool selfSigned) const
+{
+	x509v3ext ext;
+	if (!authorityKeyId || selfSigned)
+		return ext;
+
+	ext.create(NID_authority_key_identifier, "keyid,issuer", ctx);
+	return ext;
+}
+
+x509v3ext ExtensionSpec::keyUsageExt(X509V3_CTX *ctx) const
+{
+	QStringList cont = keyUsage;
+	if (keyUsageCritical && cont.count() > 0)
+		cont.prepend("critical");
+
+	return x509v3ext(NID_key_usage, cont.join(", "), ctx);
+}
+
+x509v3ext ExtensionSpec::extKeyUsageExt(X509V3_CTX *ctx) const
+{
+	QStringList cont = extKeyUsage;
+	if (extKeyUsageCritical && cont.count() > 0)
+		cont.prepend("critical");
+
+	return x509v3ext(NID_ext_key_usage, cont.join(", "), ctx);
+}
+
+x509v3ext ExtensionSpec::nameConstraintsExt(X509V3_CTX *ctx) const
+{
+	return x509v3ext(NID_name_constraints, nameConstraints, ctx);
+}
+
+x509v3ext ExtensionSpec::subjectAltNameExt(X509V3_CTX *ctx,
+					bool forRequest) const
+{
+	QString s = subjectAltName;
+	if (forRequest)
+		s = stripCopyToken(s, "email:copy");
+	return x509v3ext(NID_subject_alt_name, s, ctx);
+}
+
+x509v3ext ExtensionSpec::issuerAltNameExt(X509V3_CTX *ctx,
+					bool forRequest) const
+{
+	QString s = issuerAltName;
+	if (forRequest)
+		s = stripCopyToken(s, "issuer:copy");
+	return x509v3ext(NID_issuer_alt_name, s, ctx);
+}
+
+x509v3ext ExtensionSpec::crlDistPointsExt(X509V3_CTX *ctx) const
+{
+	return x509v3ext(NID_crl_distribution_points, crlDistPoints, ctx);
+}
+
+x509v3ext ExtensionSpec::authInfoAccessExt(X509V3_CTX *ctx) const
+{
+	return x509v3ext(NID_info_access, authInfoAccess, ctx);
+}
+
+extList ExtensionSpec::advancedExts(X509V3_CTX *ctx) const
+{
+	CONF *conf;
+	extList elist;
+	long err_line=0;
+	STACK_OF(X509_EXTENSION) **sk, *sk_tmp = NULL;
+	const STACK_OF(X509_EXTENSION) *csk;
+	const char *ext_name = "default";
+	int ret, start;
+
+	if (advanced.isEmpty())
+		return elist;
+
+	conf = NCONF_new(NULL);
+	ret = NCONF_load_bio(conf, BioByteArray(advanced.toLatin1()).ro(),
+				&err_line);
+	if (ret != 1) {
+		/* translation context of the dialog the code came from */
+		openssl_error_msg(QCoreApplication::translate("NewX509",
+				"Configfile error on line %1\n").arg(err_line));
+		NCONF_free(conf);
+		return elist;
+	}
+
+	if (ctx->subject_cert) {
+		csk = X509_get0_extensions(ctx->subject_cert);
+		start = csk? sk_X509_EXTENSION_num(csk): 0;
+	} else {
+		sk = &sk_tmp;
+		start = 0;
+	}
+
+	X509V3_set_nconf(ctx, conf);
+
+	if (ctx->subject_cert) {
+		if (X509V3_EXT_add_nconf(conf, ctx,
+				(char *) ext_name, ctx->subject_cert))
+			openssl_error();
+		csk = X509_get0_extensions(ctx->subject_cert);
+	} else {
+		if (X509V3_EXT_add_nconf_sk(conf, ctx, (char *)ext_name, sk))
+			openssl_error();
+		csk = *sk;
+	}
+
+	elist.setStack(csk, start);
+	if (!ctx->subject_cert)
+		sk_X509_EXTENSION_pop_free(sk_tmp, X509_EXTENSION_free);
+
+	X509V3_set_nconf(ctx, NULL);
+	NCONF_free(conf);
+	openssl_error();
+	return elist;
+}
+
+extList ExtensionSpec::standardExts(X509V3_CTX *ctx, bool selfSigned,
+					bool forRequest) const
+{
+	extList ne;
+
+	ne << basicConstraintsExt(ctx);
+	ne << subjectKeyIdExt(ctx);
+	ne << authorityKeyIdExt(ctx, selfSigned);
+	ne << keyUsageExt(ctx);
+	ne << extKeyUsageExt(ctx);
+	ne << nameConstraintsExt(ctx);
+	ne << subjectAltNameExt(ctx, forRequest);
+	ne << issuerAltNameExt(ctx, forRequest);
+	ne << crlDistPointsExt(ctx);
+	ne << authInfoAccessExt(ctx);
+	ne << ocspMustStapleExt(ctx);
+	openssl_error();
+	return ne;
+}
+
+extList ExtensionSpec::netscapeExts(X509V3_CTX *ctx) const
+{
+	x509v3ext ext;
+	extList el;
+
+	el << x509v3ext(NID_netscape_cert_type, nsCertType.join(", "), ctx);
+	el << ext.create_ia5(NID_netscape_base_url, nsBaseUrl, ctx);
+	el << ext.create_ia5(NID_netscape_revocation_url, nsRevocationUrl, ctx);
+	el << ext.create_ia5(NID_netscape_ca_revocation_url, nsCARevocationUrl, ctx);
+	el << ext.create_ia5(NID_netscape_renewal_url, nsRenewalUrl, ctx);
+	el << ext.create_ia5(NID_netscape_ca_policy_url, nsCaPolicyUrl, ctx);
+	el << ext.create_ia5(NID_netscape_ssl_server_name, nsSslServerName, ctx);
+	el << ext.create_ia5(NID_netscape_comment, nsComment, ctx);
+	return el;
+}
+
+extList ExtensionSpec::build(X509V3_CTX *ctx, bool selfSigned,
+				bool forRequest) const
+{
+	extList ne;
+	ne = standardExts(ctx, selfSigned, forRequest);
+	ne += advancedExts(ctx);
+	if (netscape)
+		ne += netscapeExts(ctx);
+	ne.delInvalid();
+	return ne;
+}

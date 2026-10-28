@@ -5,7 +5,7 @@ CertDetail.h		NewCrl.h		XcaDialog.cpp
 CertExtend.cpp		NewKey.cpp		XcaDialog.h
 CertExtend.h		NewKey.h		XcaHeaderView.cpp
 CertTreeView.cpp	NewX509.cpp		XcaHeaderView.h
-CertTreeView.h		NewX509.h
+CertTreeView.h		NewX509.h		NewX509_issue.cpp
 CrlDetail.cpp		NewX509_ext.cpp		XcaProxyModel.cpp
 CrlDetail.h		OidResolver.cpp		XcaProxyModel.h
 CrlTreeView.cpp		OidResolver.h		XcaTreeView.cpp

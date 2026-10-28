@@ -8,6 +8,7 @@
 #include <QTest>
 
 #include "x509rev.h"
+#include "openssl_compat.h"
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
@@ -43,7 +44,7 @@ QString test_x509rev::invalidityDate(X509_REVOKED *rev)
 	if (!gt)
 		return QString();
 	QString s = QString::fromLatin1(
-		(const char *)ASN1_STRING_get0_data(gt), ASN1_STRING_length(gt));
+		(const char *)ASN1_STRING_get0_data(gt), ASN1_STRING_get_length(gt));
 	ASN1_GENERALIZEDTIME_free(gt);
 	return s;
 }
