@@ -37,6 +37,7 @@ class test_main: public QObject
 	void revoke();
 	void testValidity();
 	void automationIds();
+	void issuanceExtensions();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

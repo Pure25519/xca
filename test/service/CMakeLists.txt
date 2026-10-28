@@ -56,3 +56,10 @@ if(OPENSSL_PROGRAM)
 else()
   message(STATUS "openssl program not found: test_cli_password_sources skipped")
 endif()
+
+# Certificate issuance (BTD-31); checks the chain with openssl verify
+ServiceTest(test_service_issuance)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_issuance PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()

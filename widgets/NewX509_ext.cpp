@@ -16,257 +16,183 @@
 
 #include "MainWindow.h"
 #include "lib/x509v3ext.h"
-#include "lib/BioByteArray.h"
+#include "lib/pki_temp.h"
+#include "lib/pki_x509req.h"
+#include "lib/settings.h"
 #include "lib/func.h"
 
-x509v3ext NewX509::getBasicConstraints()
+ExtensionSpec NewX509::getExtensionSpec()
 {
-	QStringList cont;
-	x509v3ext ext;
-	QString ca[] = { "", "CA:TRUE", "CA:FALSE" };
-	if (basicCA->currentIndex() > 0) {
-		if (bcCritical->isChecked())
-			cont << "critical";
-		cont << ca[basicCA->currentIndex()];
-		if (basicCA->currentIndex() == 1 &&
-		   !basicPath->text().isEmpty())
-		{
-			cont << QString("pathlen:") +
-				QString::number(basicPath->text().toInt());
-		}
-		ext.create(NID_basic_constraints, cont.join(", "), &ext_ctx);
-	}
-	return ext;
-}
-
-x509v3ext NewX509::getSubKeyIdent()
-{
-	x509v3ext ext;
-	if (subKey->isChecked())
-		ext.create(NID_subject_key_identifier, "hash", &ext_ctx);
-	return ext;
-}
-
-x509v3ext NewX509::getOCSPstaple()
-{
-	x509v3ext ext;
-	if (OCSPstaple->isChecked())
-		ext.create(NID_tlsfeature,
-			"status_request",
-			&ext_ctx);
-	return ext;
-}
-
-x509v3ext NewX509::getAuthKeyIdent()
-{
-	x509v3ext ext;
-	if (!authKey->isChecked() || !authKey->isEnabled() || selfSignRB->isChecked())
-		return ext;
-
-	QString x = "keyid,issuer";
-	ext.create(NID_authority_key_identifier, x, &ext_ctx);
-	return ext;
-}
-
-x509v3ext NewX509::getKeyUsage()
-{
-	QString keyusage[] = {
+	static const QString keyusage[] = {
 		"digitalSignature", "nonRepudiation", "keyEncipherment",
 		"dataEncipherment", "keyAgreement", "keyCertSign",
 		"cRLSign", "encipherOnly", "decipherOnly"
 	};
+	static const QString certTypeList[] = {
+		"client", "server",  "email", "objsign",
+		"sslCA",  "emailCA", "objCA" };
+	ExtensionSpec e;
+	int i, rows;
 
-	QStringList cont;
-
-	int rows = keyUsage->count();
-	for (int i=0; i<rows; i++) {
-		if (keyUsage->item(i)->isSelected())
-			cont << keyusage[i];
+	switch (basicCA->currentIndex()) {
+	case 1: e.basicCA = ExtensionSpec::bc_ca; break;
+	case 2: e.basicCA = ExtensionSpec::bc_not_ca; break;
+	default: e.basicCA = ExtensionSpec::bc_absent; break;
 	}
-	if (kuCritical->isChecked() && cont.count() > 0)
-		cont.prepend("critical");
+	e.basicCritical = bcCritical->isChecked();
+	e.pathLen = basicPath->text();
+	e.subjectKeyId = subKey->isChecked();
+	e.authorityKeyId = authKey->isChecked() && authKey->isEnabled();
 
-	return x509v3ext(NID_key_usage, cont.join(", "), &ext_ctx);
+	rows = keyUsage->count();
+	for (i=0; i<rows; i++) {
+		if (keyUsage->item(i)->isSelected())
+			e.keyUsage << keyusage[i];
+	}
+	e.keyUsageCritical = kuCritical->isChecked();
+	rows = ekeyUsage->count();
+	for (i=0; i<rows; i++) {
+		if (ekeyUsage->item(i)->isSelected())
+			e.extKeyUsage << QString(OBJ_nid2sn(extkeyuse_nid[i]));
+	}
+	e.extKeyUsageCritical = ekuCritical->isChecked();
+
+	e.nameConstraints = nameCons->text();
+	e.subjectAltName = subAltName->text();
+	e.issuerAltName = issAltName->text();
+	e.crlDistPoints = crlDist->text();
+	e.authInfoAccess = authInfAcc->text();
+	e.ocspMustStaple = OCSPstaple->isChecked();
+
+	e.advanced = nconf_data->isReadOnly() ? v3ext_backup :
+					nconf_data->toPlainText();
+
+	e.netscape = !Settings["disable_netscape"];
+	rows = nsCertType->count();
+	for (i=0; i<rows; i++) {
+		if (nsCertType->item(i)->isSelected())
+			e.nsCertType << certTypeList[i];
+	}
+	e.nsBaseUrl = nsBaseUrl->text();
+	e.nsRevocationUrl = nsRevocationUrl->text();
+	e.nsCARevocationUrl = nsCARevocationUrl->text();
+	e.nsRenewalUrl = nsRenewalUrl->text();
+	e.nsCaPolicyUrl = nsCaPolicyUrl->text();
+	e.nsSslServerName = nsSslServerName->text();
+	e.nsComment = nsComment->text();
+	return e;
+}
+
+IssuanceSpec NewX509::getIssuanceSpec()
+{
+	IssuanceSpec spec;
+
+	if (fromReqCB->isChecked()) {
+		spec.request = getSelectedReq();
+		if (!spec.request)
+			return spec;
+		spec.name = spec.request->getIntName();
+	} else {
+		spec.key = getSelectedKey();
+		spec.name = description->text();
+	}
+	spec.subject = getX509name();
+	if (foreignSignRB->isChecked())
+		spec.signer = getSelectedSigner();
+	spec.notBefore = notBefore->getDate();
+	if (noWellDefinedExpDate->isChecked())
+		spec.notAfter.setUndefined();
+	else
+		spec.notAfter = notAfter->getDate();
+	spec.hashAlgo = hashAlgo->current();
+	spec.extensions = getExtensionSpec();
+	spec.copyRequestExtensions = fromReqCB->isChecked() &&
+					copyReqExtCB->isChecked();
+	spec.comment = comment->toPlainText();
+	pki_temp *temp = currentTemplate();
+	if (temp)
+		spec.templateName = temp->getIntName();
+	spec.source = getPkiSource();
+	return spec;
+}
+
+/* The single extensions for the validation view and the check icons */
+x509v3ext NewX509::getBasicConstraints()
+{
+	return getExtensionSpec().basicConstraintsExt(&ext_ctx);
+}
+
+x509v3ext NewX509::getSubKeyIdent()
+{
+	return getExtensionSpec().subjectKeyIdExt(&ext_ctx);
+}
+
+x509v3ext NewX509::getOCSPstaple()
+{
+	return getExtensionSpec().ocspMustStapleExt(&ext_ctx);
+}
+
+x509v3ext NewX509::getAuthKeyIdent()
+{
+	return getExtensionSpec().authorityKeyIdExt(&ext_ctx,
+					selfSignRB->isChecked());
+}
+
+x509v3ext NewX509::getKeyUsage()
+{
+	return getExtensionSpec().keyUsageExt(&ext_ctx);
 }
 
 x509v3ext NewX509::getEkeyUsage()
 {
-	QStringList cont;
-
-	int rows = ekeyUsage->count();
-	for (int i=0; i<rows; i++) {
-		if (ekeyUsage->item(i)->isSelected())
-			cont << QString(OBJ_nid2sn(extkeyuse_nid[i]));
-	}
-	if (ekuCritical->isChecked() && cont.count() > 0)
-		cont.prepend("critical");
-
-	return x509v3ext(NID_ext_key_usage, cont.join(", "), &ext_ctx);
+	return getExtensionSpec().extKeyUsageExt(&ext_ctx);
 }
 
 x509v3ext NewX509::getNameConstraints()
 {
-	return x509v3ext(NID_name_constraints, nameCons->text(), &ext_ctx);
+	return getExtensionSpec().nameConstraintsExt(&ext_ctx);
 }
 
 x509v3ext NewX509::getSubAltName()
 {
-	QString s = subAltName->text();
-	if (pt == x509_req) {
-		/* Strip the "email:copy" token that is only meaningful in a
-		 * certificate (not a CSR).  Use splitSanEntries() so that
-		 * commas *within* individual values are not mistaken for entry
-		 * separators. */
-		QStringList sn, sl = splitSanEntries(s);
-		foreach (QString str, sl) {
-			if (str.trimmed() != "email:copy")
-				sn += str.trimmed();
-		}
-		s = sn.join(", ");
-	}
-	return x509v3ext(NID_subject_alt_name, s, &ext_ctx);
+	return getExtensionSpec().subjectAltNameExt(&ext_ctx, pt == x509_req);
 }
 
 x509v3ext NewX509::getIssAltName()
 {
-	QString s = issAltName->text();
-	if (pt == x509_req) {
-		/* Strip the "issuer:copy" token that is only meaningful in a
-		 * certificate (not a CSR). */
-		QStringList sn, sl = splitSanEntries(s);
-		foreach (QString str, sl) {
-			if (str.trimmed() != "issuer:copy")
-				sn += str.trimmed();
-		}
-		s = sn.join(", ");
-	}
-	return x509v3ext(NID_issuer_alt_name, s, &ext_ctx);
+	return getExtensionSpec().issuerAltNameExt(&ext_ctx, pt == x509_req);
 }
 
 x509v3ext NewX509::getCrlDist()
 {
-	return x509v3ext(NID_crl_distribution_points, crlDist->text(), &ext_ctx);
+	return getExtensionSpec().crlDistPointsExt(&ext_ctx);
 }
 
 x509v3ext NewX509::getAuthInfAcc()
 {
-	return x509v3ext(NID_info_access, authInfAcc->text(), &ext_ctx);
+	return getExtensionSpec().authInfoAccessExt(&ext_ctx);
 }
 
 extList NewX509::getAdvanced()
 {
-	QString conf_str;
-	CONF *conf;
-	extList elist;
-	long err_line=0;
-	STACK_OF(X509_EXTENSION) **sk, *sk_tmp = NULL;
-	const STACK_OF(X509_EXTENSION) *csk;
-	const char *ext_name = "default";
-	int ret, start;
-
-	if (nconf_data->isReadOnly()) {
-		conf_str = v3ext_backup;
-	} else {
-		conf_str = nconf_data->toPlainText();
-	}
-	if (conf_str.isEmpty())
-		return elist;
-
-	conf = NCONF_new(NULL);
-	ret = NCONF_load_bio(conf, BioByteArray(conf_str.toLatin1()).ro(),
-				&err_line);
-	if (ret != 1) {
-		openssl_error_msg(tr("Configfile error on line %1\n").
-				arg(err_line));
-		return elist;
-	}
-
-	if (ext_ctx.subject_cert) {
-		csk = X509_get0_extensions(ext_ctx.subject_cert);
-		start = csk? sk_X509_EXTENSION_num(csk): 0;
-	} else {
-		sk = &sk_tmp;
-		start = 0;
-	}
-
-	X509V3_set_nconf(&ext_ctx, conf);
-
-	if (ext_ctx.subject_cert) {
-		if (X509V3_EXT_add_nconf(conf, &ext_ctx,
-				(char *) ext_name, ext_ctx.subject_cert))
-			openssl_error();
-		csk = X509_get0_extensions(ext_ctx.subject_cert);
-	} else {
-		if (X509V3_EXT_add_nconf_sk(conf, &ext_ctx, (char *)ext_name, sk))
-			openssl_error();
-		csk = *sk;
-	}
-
-	elist.setStack(csk, start);
-	if (!ext_ctx.subject_cert)
-		sk_X509_EXTENSION_pop_free(sk_tmp, X509_EXTENSION_free);
-
-	X509V3_set_nconf(&ext_ctx, NULL);
-	NCONF_free(conf);
-	openssl_error();
-	return elist;
+	return getExtensionSpec().advancedExts(&ext_ctx);
 }
 
 extList NewX509::getGuiExt()
 {
-	extList ne;
-
-	ne << getBasicConstraints();
-	ne << getSubKeyIdent();
-	ne << getAuthKeyIdent();
-	ne << getKeyUsage();
-	ne << getEkeyUsage();
-	ne << getNameConstraints();
-	ne << getSubAltName();
-	ne << getIssAltName();
-	ne << getCrlDist();
-	ne << getAuthInfAcc();
-	ne << getOCSPstaple();
-	openssl_error();
-	return ne;
+	return getExtensionSpec().standardExts(&ext_ctx,
+				selfSignRB->isChecked(), pt == x509_req);
 }
 
 extList NewX509::getAllExt()
 {
-	extList ne;
-	ne = getGuiExt();
-	ne += getAdvanced();
-	if (!Settings["disable_netscape"])
-		ne += getNetscapeExt();
-	ne.delInvalid();
-	return ne;
+	return getExtensionSpec().build(&ext_ctx,
+				selfSignRB->isChecked(), pt == x509_req);
 }
 
 extList NewX509::getNetscapeExt()
 {
-	QString certTypeList[] = {
-		"client", "server",  "email", "objsign",
-		"sslCA",  "emailCA", "objCA" };
-
-	QStringList cont;
-	x509v3ext ext;
-	extList el;
-
-	int rows = nsCertType->count();
-	for (int i=0; i<rows; i++) {
-		if (nsCertType->item(i)->isSelected())
-			cont << certTypeList[i];
-	}
-
-	el << x509v3ext(NID_netscape_cert_type, cont.join(", "), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_base_url, nsBaseUrl->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_revocation_url, nsRevocationUrl->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_ca_revocation_url, nsCARevocationUrl->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_renewal_url, nsRenewalUrl->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_ca_policy_url, nsCaPolicyUrl->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_ssl_server_name, nsSslServerName->text(), &ext_ctx);
-	el << ext.create_ia5(NID_netscape_comment, nsComment->text(), &ext_ctx);
-	return el;
+	return getExtensionSpec().netscapeExts(&ext_ctx);
 }
 
 void NewX509::initCtx(pki_x509 *subj, pki_x509 *iss, pki_x509req *req)
