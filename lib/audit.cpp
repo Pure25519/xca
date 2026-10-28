@@ -31,6 +31,7 @@ const char AuditLog::actionInit[] = "audit.init";
 static const qint64 maxSafeInteger = 9007199254740991LL;
 
 enum ServiceContext::channel ServiceContext::processChannel = ServiceContext::gui;
+bool ServiceContext::processPasswordVerified = false;
 
 ServiceContext::ServiceContext(enum channel c, const QString &actor)
 	: chan(c), actorId(actor)
@@ -61,7 +62,9 @@ void ServiceContext::confirm(const QString &id, const QString &source)
 
 ServiceContext ServiceContext::localUser(enum channel c)
 {
-	return ServiceContext(c, "os:" + osUser());
+	ServiceContext ctx(c, "os:" + osUser());
+	ctx.pwVerified = processPasswordVerified;
+	return ctx;
 }
 
 QString ServiceContext::channelName(enum channel c)
@@ -81,11 +84,12 @@ const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
 		"ca_id", "confirmed", "count", "crl_number", "curve",
-		"der_size", "file", "fingerprint", "format", "hash_algo",
-		"invalidity_date", "issuer", "item_id", "key_size",
-		"key_type", "name", "next_update", "not_after", "not_before",
-		"question", "reason", "reason_bit", "revocation_date",
-		"serial", "subject", "template", "this_update",
+		"db_unlock_verified", "der_size", "file", "fingerprint",
+		"format", "hash_algo", "invalidity_date", "issuer", "item_id",
+		"key_size", "key_type", "name", "next_update", "not_after",
+		"not_before", "question", "reason", "reason_bit",
+		"revocation_date", "serial", "subject", "template",
+		"this_update",
 	};
 	return list;
 }
@@ -418,6 +422,7 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	e.params = params.getValues();
 	if (!ctx.confirmations().isEmpty())
 		e.params["confirmed"] = ctx.confirmations().join(",");
+	e.params["db_unlock_verified"] = ctx.passwordVerified();
 	e.result = result;
 	e.errorCode = errorCode;
 	e.hash = e.computeHash();

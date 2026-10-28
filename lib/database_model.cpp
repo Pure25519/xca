@@ -567,7 +567,9 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 			arg(compressFilename(dbName)));
 	p.setPurpose(pass_info::DatabasePassword);
 
+	ServiceContext::processPasswordVerified = false;
 	pki_evp::passHash = passhash;
+	bool checked = !open_without_password || passhash.isEmpty();
 	if (pki_evp::passHash.isEmpty()) {
 		result = PwDialogCore::execute(&p, &pki_evp::passwd,true,true);
 		if (result != pw_ok)
@@ -593,6 +595,8 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 			pwhash_upgrade();
 		}
 	}
+	/* The password is new or matched pwhash (BTD-78) */
+	ServiceContext::processPasswordVerified = checked;
 	open_without_password = false;
 	if (pki_evp::passwd.isNull())
 		pki_evp::passwd = "";

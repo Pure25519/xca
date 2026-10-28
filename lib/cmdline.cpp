@@ -106,7 +106,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		debug_info::set_debug(all.isEmpty() ? QString("all") : all);
 	}
 	if (console_only) {
-		database_model::open_without_password = true;
+		/* A given database password is checked on open, a wrong one
+		 * ends the command; without one, the public objects can
+		 * still be listed as upstream allows (BTD-78) */
+		database_model::open_without_password = dbpass.isEmpty();
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 
