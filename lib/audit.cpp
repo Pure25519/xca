@@ -77,8 +77,9 @@ const QStringList &AuditParams::allowList()
 		"fingerprint", "format", "hash_algo", "invalidity_date",
 		"issuer", "item_id", "key_size", "key_type", "name",
 		"next_update", "not_after", "not_before", "reason",
-		"reason_bit", "revocation_date", "serial", "subject",
-		"template", "this_update",
+		"reason_bit", "requested_not_after", "revocation_date",
+		"serial", "subject", "template", "this_update",
+		"validity_capped",
 	};
 	return list;
 }

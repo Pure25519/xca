@@ -36,6 +36,7 @@ class test_main: public QObject
 	void exportFormat();
 	void revoke();
 	void testValidity();
+	void proposalUnderUnlimitedCa();
 	void automationIds();
 	void issuanceExtensions();
 

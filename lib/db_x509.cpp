@@ -396,7 +396,12 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 		p.set("ca_id", spec.signer->getSqlItemId().toLongLong());
 	}
 	p.set("not_before", (QDateTime)spec.notBefore);
-	p.set("not_after", (QDateTime)spec.notAfter);
+	/* the end date of the certificate; a cap is never silent */
+	bool capped;
+	p.set("not_after", (QDateTime)spec.effectiveNotAfter(&capped));
+	p.set("validity_capped", capped);
+	if (capped)
+		p.set("requested_not_after", (QDateTime)spec.notAfter);
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
@@ -456,9 +461,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert->setIssuer(signcert->getSubject());
 	cert->setSerial(getUniqueSerial(spec.signer));
 
-	// Step 3 - Choose the Date
+	// Step 3 - Choose the Date, capped at the issuer chain
 	cert->setNotBefore(spec.notBefore);
-	cert->setNotAfter(spec.notAfter);
+	cert->setNotAfter(spec.effectiveNotAfter());
 
 	// STEP 4 handle extensions
 
