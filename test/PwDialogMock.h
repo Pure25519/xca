@@ -8,6 +8,7 @@
 #ifndef __PWDIALOGMOCK_H
 #define __PWDIALOGMOCK_H
 #include <QDebug>
+#include <QThread>
 
 #include "lib/debug_info.h"
 #include "lib/PwDialogCore.h"
@@ -48,6 +49,17 @@ class PwDialogMock: public PwDialogUI_i
 					<< "Password:" << pwe->pass_return;
 		*passwd = pwe->pass_return;
 		return pwe->result;
+	}
+
+	int selectToken(const QStringList &, QWidget *)
+	{
+		return -1;
+	}
+
+	void pinPadLogin(pass_info *, QThread *login)
+	{
+		login->start();
+		login->wait();
 	}
 
 	~PwDialogMock()

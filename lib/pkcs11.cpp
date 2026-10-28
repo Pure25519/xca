@@ -23,9 +23,6 @@
 #include "PwDialogCore.h"
 #include "XcaWarningCore.h"
 
-#pragma message ("split PwDialog into console and GUI")
-#include "ui_SelectToken.h"
-#include <QPushButton>
 
 void waitcursor(int start, int line)
 {
@@ -205,21 +202,6 @@ class pinPadLoginThread: public QThread
 	}
 };
 
-static QDialog *newPinPadBox()
-{
-	QDialog *box = new QDialog(NULL, Qt::WindowStaysOnTopHint);
-	box->setWindowTitle(XCA_TITLE);
-	QHBoxLayout *h = new QHBoxLayout(box);
-	QLabel *l = new QLabel();
-	l->setPixmap(QPixmap(":scardImg"));
-	l->setMaximumSize(QSize(95, 40));
-	l->setScaledContents(true);
-	h->addWidget(l);
-	l = new QLabel(QObject::tr("Please enter the PIN on the PinPad"));
-	h->addWidget(l);
-	return box;
-}
-
 bool pkcs11::tokenLoginForModification()
 {
 	 tkInfo ti = tokenInfo();
@@ -236,22 +218,15 @@ QString pkcs11::tokenLogin(const QString &name, bool so, bool force)
 		QObject::tr("Please enter the PIN of the token %1");
 
 	pass_info p(XCA_TITLE, text.arg(name));
-	p.setPin();
+	p.setPin(so);
 	need_login = needsLogin(so);
 	if (force || need_login) {
 		if (!need_login)
 			logout();
 		if (tokenInfo().protAuthPath()) {
 			pin = ""; // Indicate success
-			QDialog *pinpadbox = newPinPadBox();
-			pinpadbox->show();
 			pinPadLoginThread ppt(this, so);
-			ppt.start();
-			while(!ppt.wait(20)) {
-				qApp->processEvents();
-				pinpadbox->raise();
-			}
-			delete pinpadbox;
+			PwDialogCore::pinPadLogin(&p, &ppt);
 			if (!ppt.err.isEmpty())
 				throw errorEx(ppt.err);
 		} else {
@@ -293,20 +268,10 @@ bool pkcs11::selectToken(slotid *slot, QWidget *w)
 		*slot = p11_slots[slotsWithToken[0]];
 		return true;
 	}
-	Ui::SelectToken ui;
-	QDialog *select_slot = new QDialog(w);
-	ui.setupUi(select_slot);
-	ui.image->setPixmap(QPixmap(":scardImg"));
-	ui.tokenBox->addItems(slotnames);
-	ui.buttonBox->button(QDialogButtonBox::Ok)->setText(QObject::tr("Select"));
-	select_slot->setWindowTitle(XCA_TITLE);
-	if (select_slot->exec() == 0) {
-		delete select_slot;
+	int selected = PwDialogCore::selectToken(slotnames, w);
+	if (selected < 0 || selected >= slotsWithToken.count())
 		return false;
-	}
-	int selected = ui.tokenBox->currentIndex();
 	*slot = p11_slots[slotsWithToken[selected]];
-	delete select_slot;
 	return true;
 }
 
@@ -345,7 +310,7 @@ void pkcs11::changePin(const slotid &slot, bool so)
 
 	QString msg = so ? newSoPinTxt : newPinTxt;
 	pass_info p(XCA_TITLE, msg.arg(ti.label()) + "\n" + ti.pinInfo());
-	p.setPin();
+	p.setPin(so);
 
 	if (PwDialogCore::execute(&p, &newPin, true) == 1) {
 		pinp = pin.toLatin1();

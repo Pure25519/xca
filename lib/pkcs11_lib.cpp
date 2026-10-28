@@ -13,9 +13,6 @@
 #include "pass_info.h"
 
 #include <openssl/rand.h>
-#include <QMessageBox>
-
-#include "ui_SelectToken.h"
 
 pkcs11_lib::pkcs11_lib(const QString &f)
 {

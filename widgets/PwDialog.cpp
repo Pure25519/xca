@@ -11,8 +11,11 @@
 #include "lib/exception.h"
 #include "XcaWarning.h"
 #include "PwDialog.h"
+#include "ui_SelectToken.h"
 
 #include <QDebug>
+#include <QPushButton>
+#include <QThread>
 
 static int hex2bin(QString &x, Passwd *final)
 {
@@ -45,6 +48,52 @@ enum open_result PwDialogUI::execute(pass_info *p, Passwd *passwd,
 	if (result == pw_exit)
 		throw pw_exit;
 	return result;
+}
+
+int PwDialogUI::selectToken(const QStringList &names, QWidget *w)
+{
+	Ui::SelectToken ui;
+	QDialog *select_slot = new QDialog(w);
+	ui.setupUi(select_slot);
+	ui.image->setPixmap(QPixmap(":scardImg"));
+	ui.tokenBox->addItems(names);
+	ui.buttonBox->button(QDialogButtonBox::Ok)->setText(QObject::tr("Select"));
+	select_slot->setWindowTitle(XCA_TITLE);
+	if (select_slot->exec() == 0) {
+		delete select_slot;
+		return -1;
+	}
+	int selected = ui.tokenBox->currentIndex();
+	delete select_slot;
+	return selected;
+}
+
+static QDialog *newPinPadBox()
+{
+	QDialog *box = new QDialog(NULL, Qt::WindowStaysOnTopHint);
+	box->setWindowTitle(XCA_TITLE);
+	QHBoxLayout *h = new QHBoxLayout(box);
+	QLabel *l = new QLabel();
+	l->setPixmap(QPixmap(":scardImg"));
+	l->setMaximumSize(QSize(95, 40));
+	l->setScaledContents(true);
+	h->addWidget(l);
+	l = new QLabel(QObject::tr("Please enter the PIN on the PinPad"));
+	h->addWidget(l);
+	return box;
+}
+
+void PwDialogUI::pinPadLogin(pass_info *p, QThread *login)
+{
+	(void)p;
+	QDialog *pinpadbox = newPinPadBox();
+	pinpadbox->show();
+	login->start();
+	while(!login->wait(20)) {
+		qApp->processEvents();
+		pinpadbox->raise();
+	}
+	delete pinpadbox;
 }
 
 PwDialog::PwDialog(pass_info *p, bool write)

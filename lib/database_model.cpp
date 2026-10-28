@@ -155,6 +155,8 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		throw open_abort;
 
 	Passwd passwd(pass);
+	pass_info p(XCA_TITLE, QString());
+	p.setPurpose(pass_info::SqlPassword);
 	do {
 		try {
 			openDatabase(dbName, passwd);
@@ -165,7 +167,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			if (!passwd.isEmpty())
 				XCA_ERROR(err);
 			DbMap params = splitRemoteDbName(dbName);
-			pass_info p(XCA_TITLE, tr("Please enter the password to access the database server %2 as user '%1'.")
+			p.setDescription(tr("Please enter the password to access the database server %2 as user '%1'.")
 					.arg(params["user"]).arg(params["host"]));
 			result = PwDialogCore::execute(&p, &passwd);
 			if (result != pw_ok)
@@ -176,11 +178,22 @@ database_model::database_model(const QString &name, const Passwd &pass)
 	Entropy::seed_rng();
 	initSqlDB();
 
-	result = initPass(dbName, Settings["pwhash"]);
-	if (result == pw_exit)
-		throw pw_exit;
-	if (result != pw_ok && Settings["pwhash"].empty())
-		throw open_abort;
+	try {
+		result = initPass(dbName, Settings["pwhash"]);
+		if (result == pw_exit)
+			throw pw_exit;
+		if (result != pw_ok && Settings["pwhash"].empty())
+			throw open_abort;
+	} catch (...) {
+		/* No destructor runs for a failed constructor: close the
+		 * connection here, or the next open() inherits its state */
+		QString connName = QSqlDatabase::database().connectionName();
+		QSqlDatabase::database().close();
+		pki_evp::passwd.cleanse();
+		QSqlDatabase::removeDatabase(connName);
+		Settings.clear();
+		throw;
+	}
 
 	/* Assure initialisation order:
 	 * keys first, followed by x509[req], and crls last.
@@ -513,6 +526,7 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 			"that will be used to encrypt your private keys "
 			"in the database:\n%1").
 			arg(compressFilename(dbName)));
+	p.setPurpose(pass_info::DatabasePassword);
 
 	pki_evp::passHash = passhash;
 	if (pki_evp::passHash.isEmpty()) {

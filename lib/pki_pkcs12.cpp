@@ -35,6 +35,7 @@ pki_pkcs12::pki_pkcs12(const QString &fname)
 	EVP_PKEY *mykey = NULL;
 	X509 *mycert = NULL;
 	pass_info p(XCA_TITLE, tr("Please enter the password to decrypt the PKCS#12 file:\n%1").arg(compressFilename(fname)));
+	p.setPurpose(pass_info::ImportPassword);
 	const X509_ALGOR *macalgid = NULL;
 	const ASN1_INTEGER *maciter = NULL;
 	const ASN1_OBJECT *macobj = NULL;
@@ -140,6 +141,7 @@ void pki_pkcs12::writePKCS12(XFile &file, encAlgo &encAlgo) const
 		tr("Please enter the password to encrypt the key of certificate '%1' "
 		   "in the PKCS#12 file:\n%2")
 			.arg(cert->getIntName()).arg(nativeSeparator(file.fileName())));
+	p.setPurpose(pass_info::ExportPassword);
 
 	if (PwDialogCore::execute(&p, &pass, true) != 1)
 		return;

@@ -46,27 +46,14 @@ static int cmd_help(int exitcode = EXIT_SUCCESS, const char *msg = NULL)
 	return exitcode;
 }
 
-static Passwd acquire_password(QString source)
+static Passwd acquire_password(const QString &source)
 {
-	Passwd pass;
-	pass.append(source.toUtf8());
+	if (PwDialogHeadless::isSource(source))
+		return PwDialogHeadless::readSource(source);
 
-	if (source == "stdin")
-		source = "fd:0";
-	if (source.startsWith("pass:")) {
-		pass = source.mid(5).toLatin1();
-	} else if (source.startsWith("file:")) {
-		XFile f(source.mid(5));
-		f.open_read();
-		pass = f.readLine(128).trimmed();
-	} else if (source.startsWith("env:")) {
-		pass = getenv(source.mid(4).toLocal8Bit());
-	} else if (source.startsWith("fd:")) {
-		int fd = source.mid(3).toInt();
-		QFile f;
-		f.open(fd, QIODevice::ReadOnly);
-		pass = f.readLine(128).trimmed();
-	}
+	/* Empty, or a password without source prefix */
+	Passwd pass;
+	pass = source.toUtf8();
 	return pass;
 }
 
@@ -84,6 +71,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (argc > 0)
 		xca_name = argv[0];
 	arguments cmd_opts(argc, argv);
+	/* Without a GUI, a password nobody provided ends the command */
+	PwDialogCore::headless()->setInteractive(cmd_opts.has("interactive"));
 	PwDialogCore::cmdline_passwd = acquire_password(cmd_opts["password"]);
 	Passwd sqlpw = acquire_password(cmd_opts["sqlpass"]);
 

@@ -32,16 +32,23 @@ class ServiceViolations
 };
 
 /* Password and PIN source: answers only the prompts a test expects,
- * in order. Any other prompt is a violation and is aborted. */
+ * in order. Any other prompt is a violation and is aborted.
+ * delegateTo() hands all requests of the current test function to
+ * another implementation, e.g. PwDialogHeadless; reset() ends that. */
 class StrictPwDialog : public PwDialogUI_i
 {
 	QList<QPair<Passwd, enum open_result> > expected{};
+	PwDialogUI_i *delegate{};
 
   public:
+	~StrictPwDialog();
 	void expect(const QByteArray &pass, enum open_result result = pw_ok);
+	void delegateTo(PwDialogUI_i *d);
 	void reset();
 	enum open_result execute(pass_info *p, Passwd *passwd,
 				bool write = false, bool abort = false) override;
+	int selectToken(const QStringList &names, QWidget *w) override;
+	void pinPadLogin(pass_info *p, QThread *login) override;
 };
 
 /* Replaces the message boxes of xcaWarning: questions are answered from
