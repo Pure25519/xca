@@ -531,7 +531,10 @@ void test_service_importexport::clipboardPrivateKey()
  * (pki_evp::pem()), the entry said encrypted=true. privateExportAudit
  * checked the number, the parameter names and the absence of secrets of
  * the entries, not this value, and clipboardPrivateKey used only the key
- * format 20.
+ * format 20. Likewise a PKCS#12 file with an empty password (accepted
+ * from the password dialog, a password source is never empty) was
+ * audited as encrypted=true, although anyone reads the key; no test
+ * exported with an empty password.
  *
  * Every private key format, as written and as audited:
  *   format                     target           encrypted
@@ -540,7 +543,9 @@ void test_service_importexport::clipboardPrivateKey()
  *    7 PEM + PKCS#8            file             yes (AES-256-CBC)
  *    7 PEM + PKCS#8            clipboard        no
  *   14 PKCS #12 chain          file             yes
+ *   14 PKCS #12 chain          file, empty pw   no
  *   15 PKCS #12                file             yes
+ *   15 PKCS #12                file, empty pw   no
  *   20 PEM private             file, clipboard  no
  *   21 PEM encrypted           file             yes (AES-256-CBC)
  *   22 SSH2 private            file             no
@@ -549,33 +554,47 @@ void test_service_importexport::clipboardPrivateKey()
  *   28 PKCS #8 encrypted       file             yes (AES-256-CBC)
  *   29 PKCS #8                 file, clipboard  no
  *   50 JSON Web Key private    file             no
+ *  7, 21, 28 with an empty password: rejected (missing_password), no
+ *   key.export_private
  * Checked with the openssl program: an encrypted key reads with the
  * export password and not with a wrong one; PKCS#12 holds the key in a
- * shrouded key bag; a private JWK has its "d" member in clear. */
+ * shrouded key bag that does not open with an empty password; a private
+ * JWK has its "d" member in clear. */
 void test_service_importexport::privateExportEncrypted_data()
 {
 	QTest::addColumn<bool>("isCert");
 	QTest::addColumn<int>("format");
 	QTest::addColumn<bool>("clipboard");
 	QTest::addColumn<bool>("encrypted");
+	QTest::addColumn<bool>("emptyPassword");
 
-	QTest::newRow("4 OpenVPN") << true << 4 << false << false;
-	QTest::newRow("6 PEM + key") << true << 6 << false << false;
-	QTest::newRow("6 PEM + key, clipboard") << true << 6 << true << false;
-	QTest::newRow("7 PEM + PKCS#8") << true << 7 << false << true;
-	QTest::newRow("7 PEM + PKCS#8, clipboard") << true << 7 << true << false;
-	QTest::newRow("14 PKCS#12 chain") << true << 14 << false << true;
-	QTest::newRow("15 PKCS#12") << true << 15 << false << true;
-	QTest::newRow("20 PEM private") << false << 20 << false << false;
-	QTest::newRow("20 PEM private, clipboard") << false << 20 << true << false;
-	QTest::newRow("21 PEM encrypted") << false << 21 << false << true;
-	QTest::newRow("22 SSH2 private") << false << 22 << false << false;
-	QTest::newRow("25 DER private") << false << 25 << false << false;
-	QTest::newRow("26 PVK private") << false << 26 << false << false;
-	QTest::newRow("28 PKCS#8 encrypted") << false << 28 << false << true;
-	QTest::newRow("29 PKCS#8") << false << 29 << false << false;
-	QTest::newRow("29 PKCS#8, clipboard") << false << 29 << true << false;
-	QTest::newRow("50 JWK private") << false << 50 << false << false;
+	QTest::newRow("4 OpenVPN") << true << 4 << false << false << false;
+	QTest::newRow("6 PEM + key") << true << 6 << false << false << false;
+	QTest::newRow("6 PEM + key, clipboard") << true << 6 << true << false << false;
+	QTest::newRow("7 PEM + PKCS#8") << true << 7 << false << true << false;
+	QTest::newRow("7 PEM + PKCS#8, clipboard") << true << 7 << true << false << false;
+	QTest::newRow("14 PKCS#12 chain") << true << 14 << false << true << false;
+	QTest::newRow("15 PKCS#12") << true << 15 << false << true << false;
+	QTest::newRow("20 PEM private") << false << 20 << false << false << false;
+	QTest::newRow("20 PEM private, clipboard") << false << 20 << true << false << false;
+	QTest::newRow("21 PEM encrypted") << false << 21 << false << true << false;
+	QTest::newRow("22 SSH2 private") << false << 22 << false << false << false;
+	QTest::newRow("25 DER private") << false << 25 << false << false << false;
+	QTest::newRow("26 PVK private") << false << 26 << false << false << false;
+	QTest::newRow("28 PKCS#8 encrypted") << false << 28 << false << true << false;
+	QTest::newRow("29 PKCS#8") << false << 29 << false << false << false;
+	QTest::newRow("29 PKCS#8, clipboard") << false << 29 << true << false << false;
+	QTest::newRow("50 JWK private") << false << 50 << false << false << false;
+	QTest::newRow("7 PEM + PKCS#8, empty password")
+		<< true << 7 << false << false << true;
+	QTest::newRow("14 PKCS#12 chain, empty password")
+		<< true << 14 << false << false << true;
+	QTest::newRow("15 PKCS#12, empty password")
+		<< true << 15 << false << false << true;
+	QTest::newRow("21 PEM encrypted, empty password")
+		<< false << 21 << false << false << true;
+	QTest::newRow("28 PKCS#8 encrypted, empty password")
+		<< false << 28 << false << false << true;
 }
 
 void test_service_importexport::privateExportEncrypted()
@@ -587,7 +606,9 @@ void test_service_importexport::privateExportEncrypted()
 	QFETCH(int, format);
 	QFETCH(bool, clipboard);
 	QFETCH(bool, encrypted);
+	QFETCH(bool, emptyPassword);
 	QString passin = QString("env:%1").arg(exportVar);
+	const pki_export *xport = pki_export::by_id(format);
 
 	importChain();
 	pki_x509 *leaf = cert("BTD34 Leaf");
@@ -613,6 +634,21 @@ void test_service_importexport::privateExportEncrypted()
 		spec.items << item;
 		spec.clipboard = true;
 		out = db->exportItems(ctx, spec);
+	} else if (emptyPassword) {
+		/* The password dialog returns an empty password */
+		pwdialog->expect(QByteArray());
+		try {
+			out = exportTo(db, item, format, QString());
+			QVERIFY2(xport->match_all(F_PKCS12),
+				"empty password accepted");
+		} catch (serviceError &err) {
+			QVERIFY(!xport->match_all(F_PKCS12));
+			QCOMPARE(err.code, QString("missing_password"));
+			QCOMPARE(entries("key.export_private").size(), 0);
+			QCOMPARE(entries("object.export").last().errorCode,
+				QString("missing_password"));
+			return;
+		}
 	} else {
 		out = exportTo(db, item, format, QString(), passin);
 	}
@@ -626,12 +662,17 @@ void test_service_importexport::privateExportEncrypted()
 	f.close();
 
 	bool written;
-	const pki_export *xport = pki_export::by_id(format);
 	if (xport->match_all(F_PKCS12)) {
-		QString info = opensslOk({ "pkcs12", "-in", name, "-info",
-				"-noenc", "-passin", passin });
-		QVERIFY(info.contains("PRIVATE KEY"));
-		written = info.contains("Shrouded Keybag");
+		if (!emptyPassword) {
+			QString info = opensslOk({ "pkcs12", "-in", name,
+				"-info", "-noenc", "-passin", passin });
+			QVERIFY(info.contains("PRIVATE KEY"));
+			QVERIFY(info.contains("Shrouded Keybag"));
+		}
+		int rc;
+		QString info = openssl({ "pkcs12", "-in", name, "-info",
+				"-noenc", "-passin", "pass:" }, &rc);
+		written = !(rc == 0 && info.contains("PRIVATE KEY"));
 	} else if (xport->match_all(F_JWK)) {
 		QJsonObject jwk = QJsonDocument::fromJson(out).object();
 		QVERIFY(jwk.contains("kty"));

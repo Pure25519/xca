@@ -437,8 +437,10 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			p.set("name", key->getIntName());
 			p.set("fingerprint", key->fingerprint("der sha256"));
 			/* as written: the clipboard text is never encrypted,
-			 * also with the format "PEM + PKCS#8" (pki_evp::pem) */
-			p.set("encrypted", encrypted);
+			 * also with the format "PEM + PKCS#8" (pki_evp::pem);
+			 * a PKCS#12 file with an empty password protects
+			 * nothing */
+			p.set("encrypted", encrypted && !pass.isEmpty());
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}
