@@ -11,6 +11,7 @@
 #include "func.h"
 #include "exception.h"
 #include "asn1time.h"
+#include "openssl_compat.h"
 #include <openssl/x509.h>
 #include <openssl/err.h>
 #include <openssl/opensslv.h>
@@ -51,7 +52,7 @@ int a1time::from_asn1(const ASN1_TIME *a)
 	if (!gt)
 		return -1;
 	t = QString::fromLatin1((char*)ASN1_STRING_get0_data(gt),
-                            ASN1_STRING_length(gt));
+                            ASN1_STRING_get_length(gt));
 	ASN1_GENERALIZEDTIME_free(gt);
 	return fromPlain(t);
 }
@@ -78,7 +79,9 @@ int a1time::set_asn1(const QString &str, int type) const
 		if (!atime)
 			return -1;
     }
-	if (ASN1_STRING_set(atime, str.toLatin1(), str.length()))
+	QByteArray ba = str.toLatin1();
+	if (!ASN1_STRING_set1_data(atime, (const uint8_t *)ba.constData(),
+				   ba.size()))
 		return -1;
 	return 0;
 }

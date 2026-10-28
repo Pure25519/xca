@@ -8,6 +8,7 @@
 
 #include "asn1int.h"
 #include "func_base.h"
+#include "openssl_compat.h"
 #include "exception.h"
 #include "limits.h"
 #include <openssl/err.h>
@@ -67,7 +68,7 @@ a1int &a1int::set(long l)
 QString a1int::toQString(int dec) const
 {
 	QString r;
-	if (ASN1_STRING_length(in.get()) == 0) {
+	if (ASN1_STRING_get_length(in.get()) == 0) {
 		return r;
 	}
 	QSharedPointer<BIGNUM> bn(ASN1_INTEGER_to_BN(get0(), NULL), BN_free);

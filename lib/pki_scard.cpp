@@ -9,6 +9,7 @@
 #include "pki_scard.h"
 #include "pass_info.h"
 #include "pk11_attribute.h"
+#include "openssl_compat.h"
 #include "exception.h"
 #include "db_base.h"
 #include "pkcs11.h"
@@ -191,7 +192,7 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 		pki_openssl_error();
 		pkey = EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, NULL,
 			(const uint8_t *)ASN1_STRING_get0_data(os),
-			ASN1_STRING_length(os));
+			ASN1_STRING_get_length(os));
 		pki_openssl_error();
 		ASN1_OCTET_STRING_free(os);
 		pki_openssl_error();
@@ -437,7 +438,8 @@ void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
 		/* Public Key */
 		QByteArray ba = QByteArrayParam(OSSL_PKEY_PARAM_EC_GENERATOR);
 		ASN1_OCTET_STRING *os = ASN1_OCTET_STRING_new();
-		ASN1_STRING_set(os, ba.data(), ba.size());
+		ASN1_STRING_set1_data(os, (const uint8_t *)ba.constData(),
+				      ba.size());
 		ba = i2d_bytearray(I2D_VOID(i2d_ASN1_OCTET_STRING), os);
 		ASN1_OCTET_STRING_free(os);
 		pki_openssl_error();
