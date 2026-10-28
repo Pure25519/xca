@@ -27,6 +27,9 @@ class test_main: public QObject
 	void dbstatus();
 	static const QMap<QString, QString> pemdata;
 
+  public:
+	static void initMain();
+
   private slots:
 	void initTestCase();
 	void cleanupTestCase();
