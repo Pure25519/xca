@@ -10,6 +10,7 @@
 #include "func.h"
 #include "exception.h"
 #include "database_model.h"
+#include "audit_key.h"
 #include <QDir>
 
 pki_crl::pki_crl(const QString &name)
@@ -241,6 +242,7 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 	EVP_PKEY *pkey;
 	if (!key || key->isPubKey())
 		return;
+	AuditKey::refuseSigning(key);
 	X509_CRL_sort(crl);
 	pkey = key->decryptKey();
 	X509_CRL_sign(crl, pkey, digest.MD());

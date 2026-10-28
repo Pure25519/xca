@@ -39,6 +39,7 @@
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
+#include "lib/pki_x509req.h"
 #include "lib/request.h"
 #include "lib/settings.h"
 
@@ -438,6 +439,26 @@ void test_service_checkpoint::auditKeyNotUsableForSigning()
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_crl>()->newCrl(ctx, job);
 	}), QString("audit_key"));
+
+	/* The signing primitives refuse it too, whoever calls them: renewal
+	 * (db_x509::certRenewal) signs a copy of the certificate with the
+	 * issuer's key outside of the services */
+	pki_x509 renewed(ca);
+	renewed.setNotAfter(a1time(now.addDays(60)));
+	pki_crl rawCrl;
+	rawCrl.createCrl("raw crl", ca);
+	pki_x509req rawReq;
+	QStringList primitives;
+	primitives << errorCode([&]() {
+		renewed.sign(ca->getRefKey(), ca->getDigest());
+	}) << errorCode([&]() {
+		rawCrl.sign(imported, digest(NID_undef));
+	}) << errorCode([&]() {
+		rawReq.createReq(imported, req.subject, digest(NID_undef),
+				extList());
+	});
+	QCOMPARE(primitives, QStringList({ "audit_key", "audit_key",
+		"audit_key" }));
 
 	/* Each rejection is audited; the chain and its checkpoint hold */
 	QStringList codes;
