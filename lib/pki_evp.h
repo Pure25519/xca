@@ -62,17 +62,19 @@ class pki_evp: public pki_key
 		EVP_PKEY *priv2pub(EVP_PKEY* key);
 		static QString removeTypeFromIntName(QString n);
 		void fromPEMbyteArray(const QByteArray &ba, const QString &name);
-		void fload(const QString &fname);
+		void fromBytes(const QByteArray &ba, const QString &fname);
 		virtual bool pem(BioByteArray &b, const pki_export *xport);
 		EVP_PKEY *load_ssh_ed25519_privatekey(const QByteArray &ba,
 						const pass_info &p);
 		void writeDefault(const QString &dirname) const;
-		void writeKey(XFile &file, const EVP_CIPHER *enc,
-				pem_password_cb *cb, bool pem) const;
-		void writePKCS8(XFile &file, const EVP_CIPHER *enc,
-				pem_password_cb *cb, bool pem) const;
-		void writePVKprivate(XFile &file) const;
-		void writeSSH2private(XFile &file) const;
+		/* enc NULL: unencrypted, pass is ignored. No prompt: the
+		 * caller provides the password (BTD-34) */
+		void writeKey(QIODevice &file, const EVP_CIPHER *enc,
+				const Passwd &pass, bool pem) const;
+		void writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
+				const Passwd &pass, bool pem) const;
+		void writePVKprivate(QIODevice &file) const;
+		void writeSSH2private(QIODevice &file) const;
 		void write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const;
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool verify(EVP_PKEY *pkey) const;

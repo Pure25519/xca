@@ -19,10 +19,14 @@
 #endif
 
 #include "lib/arguments.h"
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
 #include "lib/xfile.h"
+#include "lib/audit.h"
+#include "lib/importexport.h"
+#include "lib/pki_export.h"
 
 #include "ServiceTestCase.h"
 
@@ -126,6 +130,7 @@ class test_service_secrets : public ServiceTestCase
 	void databasePassword();
 	void databasePasswordMissing();
 	void databasePasswordRejected();
+	void passwordCheckInAuditContext();
 
 	void keyPassword_data();
 	void keyPassword();
@@ -265,6 +270,35 @@ void test_service_secrets::databasePasswordRejected()
 	QVERIFY(!Database.isOpen());
 }
 
+/* BTD-78: the audit context says whether the database password was
+ * checked against pwhash on open */
+void test_service_secrets::passwordCheckInAuditContext()
+{
+	/* The harness opened the database with its password */
+	QVERIFY(ServiceContext::processPasswordVerified);
+	AuditLog::append(ServiceContext::localUser(ServiceContext::cli),
+			"test.checked", "key", "1");
+	QCOMPARE(AuditLog::entries().last().params["db_unlock_verified"],
+			QVariant(true));
+
+	/* xca --no-gui without a password source opens unchecked */
+	Database.close();
+	database_model::open_without_password = true;
+	Database.open(dbFile);
+	QVERIFY(Database.isOpen());
+	QVERIFY(!database_model::open_without_password);
+	QVERIFY(!ServiceContext::processPasswordVerified);
+	AuditLog::append(ServiceContext::localUser(ServiceContext::cli),
+			"test.unchecked", "key", "1");
+	QCOMPARE(AuditLog::entries().last().params["db_unlock_verified"],
+			QVariant(false));
+
+	/* Any other caller has to prove it itself */
+	QVERIFY(!ServiceContext(ServiceContext::rest,
+			"apikey:test").passwordVerified());
+	QVERIFY(AuditLog::verify().ok());
+}
+
 void test_service_secrets::keyPassword_data()
 {
 	readSource_data();
@@ -324,30 +358,29 @@ void test_service_secrets::keyPasswordMissing()
 
 void test_service_secrets::exportPasswordMissing()
 {
-	/* The export password is asked in OpenSSL's password callback:
-	 * the error must come back typed, not as an OpenSSL error */
+	/* The export password comes from the headless source of the
+	 * purpose ExportPassword (BTD-34: asked by the export service,
+	 * no longer in OpenSSL's callback): no source is a typed error */
 	pki_evp *key = newKey();
 	QVERIFY(key);
 	PwDialogHeadless *h = useHeadless();
 	QString fname = secretDir.filePath("export.pem");
+	ExportSpec spec;
+	spec.items << key;
+	spec.format = pki_export::by_id(21);	/* PEM encrypted */
+	spec.fileName = fname;
+	ServiceContext ctx = ServiceContext::localUser(ServiceContext::cli);
 
 	try {
-		XFile file(fname);
-		file.open_key();
-		key->writeKey(file, EVP_aes_256_cbc(),
-				PwDialogCore::pwCallback, true);
-		QFAIL("writeKey() did not throw");
-	} catch (secretError &e) {
-		QCOMPARE(e.why, secretError::missing);
+		Database.model<db_key>()->exportItems(ctx, spec);
+		QFAIL("exportItems() did not throw");
+	} catch (serviceError &e) {
+		QCOMPARE(e.code, QString("missing_password"));
 	}
+	QVERIFY(!QFile::exists(fname));
 
 	h->setSource(pass_info::ExportPassword, makeSource("env", "export-pass"));
-	{
-		XFile file(fname);
-		file.open_key();
-		key->writeKey(file, EVP_aes_256_cbc(),
-				PwDialogCore::pwCallback, true);
-	}
+	Database.model<db_key>()->exportItems(ctx, spec);
 	QFile f(fname);
 	QVERIFY(f.open(QIODevice::ReadOnly));
 	QByteArray pem = f.readAll();
@@ -466,14 +499,19 @@ void test_service_secrets::callbackSecretTooLong()
 	 * not cut silently, also from the GUI */
 	pki_evp *key = newKey();
 	QVERIFY(key);
-	pwdialog->expect(QByteArray(2000, 'a'));
 	QString fname = secretDir.filePath("export.pem");
-	try {
+	{
 		XFile file(fname);
 		file.open_key();
-		key->writeKey(file, EVP_aes_256_cbc(),
-				PwDialogCore::pwCallback, true);
-		QFAIL("writeKey() did not throw");
+		key->writeKey(file, EVP_aes_256_cbc(), Passwd() = "short", true);
+	}
+	/* Reading it asks in OpenSSL's callback (BTD-34: the export
+	 * password no longer goes through it) */
+	pwdialog->expect(QByteArray(2000, 'a'));
+	try {
+		pki_evp imported;
+		imported.fload(fname);
+		QFAIL("fload() did not throw");
 	} catch (secretError &e) {
 		QCOMPARE(e.why, secretError::unreadable);
 	}

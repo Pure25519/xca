@@ -115,12 +115,13 @@ pki_base *db_crl::insert(pki_base *item)
 	return crl;
 }
 
-void db_crl::exportItems(const QModelIndexList &indexes,
-			const pki_export *xport, XFile &file) const
+void db_crl::writeItems(const QList<pki_base *> &items,
+			const pki_export *xport, QIODevice &file,
+			const Passwd &) const
 {
 	QStringList vcal;
-	foreach(QModelIndex idx, indexes) {
-		pki_crl *crl = fromIndex<pki_crl>(idx);
+	foreach(pki_base *pki, items) {
+		pki_crl *crl = dynamic_cast<pki_crl *>(pki);
 		if (!crl)
 			continue;
 		if (xport->match_all(F_CAL))

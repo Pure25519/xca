@@ -24,6 +24,7 @@
 #include "db_x509.h"
 #include "db_crl.h"
 #include "audit.h"
+#include "XcaWarningCore.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -88,6 +89,9 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::SqlPassword, sqlpass);
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
+		/* Questions likewise: "yes" only if confirmed here */
+		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
+				cmd_opts["confirm"].split(","));
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())
@@ -102,7 +106,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		debug_info::set_debug(all.isEmpty() ? QString("all") : all);
 	}
 	if (console_only) {
-		database_model::open_without_password = true;
+		/* A given database password is checked on open, a wrong one
+		 * ends the command; without one, the public objects can
+		 * still be listed as upstream allows (BTD-78) */
+		database_model::open_without_password = dbpass.isEmpty();
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 
@@ -202,7 +209,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (cmd_opts.has("audit-export")) {
 		QString filename = cmd_opts["audit-export"];
 		try {
-			QByteArray lines = AuditLog::exportJsonLines();
+			qint64 unsignedEntries = 0;
+			QByteArray lines = AuditLog::exportJsonLines(&unsignedEntries);
+			/* Without --password the export only reads (BTD-70) */
+			if (unsignedEntries > 0)
+				console_write(stderr, QObject::tr(
+					"Warning: no database password given, no audit checkpoint signed; "
+					"the newest %1 audit entries are not covered by a checkpoint "
+					"(unanchored_entries of --audit-verify). Use --password to sign one.\n")
+					.arg(unsignedEntries).toUtf8());
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
@@ -324,8 +339,20 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		f.close();
 	}
 	if (cmd_opts.has("import")) {
-		Database.insert(cmdline_items);
+		ImportSpec spec;
+		/* importItems() takes the items over */
+		spec.items << cmdline_items;
 		*_cmdline_items = nullptr;
+		try {
+			ImportResult result = Database.importItems(
+				ServiceContext::localUser(ServiceContext::cli),
+				spec);
+			foreach(pki_base *pki, result.existing)
+				XCA_INFO(importExistsMessage(pki));
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	return exitcode;
 }

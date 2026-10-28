@@ -24,6 +24,8 @@ const QList<arg_option> arguments::opts = {
 		"Write the audit log as JSON Lines to <file>, '-' for standard output."),
 	arg_option("audit-verify", NULL, no_argument, true, true,
 		"Verify the hash chain of the audit log and the revocations against it. Prints a JSON report and exits with 1 if the check fails."),
+	arg_option("confirm", "id-list", required_argument, false, false,
+		"Answer the questions in the comma separated id-list with 'yes' (e.g. key.size for an RSA or DSA key outside 1024..8192 bit). Without GUI any other question ends the command with an error; the error names the id."),
 	arg_option("crlgen", "ca-identifier", required_argument, true, true,
 		"Generate CRL for <ca>. Use the 'name' option to set the internal name of the new CRL."),
 	arg_option("database", "database", file_argument, false, false,
@@ -57,7 +59,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("no-gui", NULL, no_argument, true, false,
 		"Do not start the GUI. Alternatively set environment variable XCA_NO_GUI=1 or call xca as 'xca-console' symlink."),
 	arg_option("password", "password", required_argument, false, false,
-		"Database password for unlocking the database. Without GUI it also answers every request for the database password and for keys with their own password. See below for password format options."),
+		"Database password for unlocking the database. Without GUI it is checked when the database is opened, a wrong one ends the command with an error; without this option only the public objects can be listed. It also answers every request for the database password and for keys with their own password. See below for password format options."),
 	arg_option("pem", NULL, no_argument, true, false,
 		"Print PEM representation of provided files. Prints only the public part of private keys."),
 	arg_option("pem-file", NULL, file_argument, true, false,
@@ -74,6 +76,8 @@ const QList<arg_option> arguments::opts = {
 		"Print debug log on stderr. Same as setting XCA_DEBUG=all. See XCA_DEBUG"),
 	arg_option("version", NULL, no_argument, true, false,
 		"Print version information and exit."),
+	arg_option("yes", NULL, no_argument, false, false,
+		"Answer every question with 'yes'. Without GUI and without this option or --confirm a question ends the command with an error and nothing is changed."),
 };
 
 /* Options whose value is a password source: loggable() masks them.

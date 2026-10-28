@@ -70,7 +70,7 @@ void test_service_harness::unexpectedPromptIsRecorded()
 
 	QCOMPARE(PwDialogCore::execute(&p, &pass), pw_cancel);
 	QVERIFY(pass.isEmpty());
-	QCOMPARE(XCA_YESNO("harness question"), false);
+	QCOMPARE(XCA_YESNO("harness.question", "harness question"), false);
 	XCA_INFO("harness information");
 
 	QStringList v = ServiceViolations::take();

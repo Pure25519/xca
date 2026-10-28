@@ -21,6 +21,9 @@ class load_base
 		load_base();
 		virtual ~load_base();
 		virtual pki_base *loadItem(const QString &s);
+		/* The same for the content of a file (BTD-34) */
+		virtual pki_base *loadData(const QByteArray &ba,
+				const QString &name);
 		virtual pki_base *newItem();
 };
 
@@ -57,6 +60,7 @@ class load_pkcs12: public load_base
 	public:
 		load_pkcs12();
 		pki_base *loadItem(const QString &s);
+		pki_base *loadData(const QByteArray &ba, const QString &name);
 };
 
 class load_temp: public load_base

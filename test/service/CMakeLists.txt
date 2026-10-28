@@ -30,6 +30,9 @@ target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# Signed audit checkpoints (BTD-37); signatures checked with openssl pkeyutl
+ServiceTest(test_service_checkpoint)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -52,6 +55,20 @@ add_test(NAME test_cli_missing_password
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
+# xca --no-gui answers questions only with --yes or --confirm (BTD-71)
+add_test(NAME test_cli_confirmations
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_confirmations
+		-P ${SERVICE_TEST_DIR}/cli_confirmations.cmake)
+set_tests_properties(test_cli_confirmations PROPERTIES LABELS service)
+
+# xca --no-gui checks a given database password on open (BTD-78)
+add_test(NAME test_cli_password_verify
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_verify
+		-P ${SERVICE_TEST_DIR}/cli_password_verify.cmake)
+set_tests_properties(test_cli_password_verify PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -70,6 +87,11 @@ if(OPENSSL_PROGRAM)
   set_tests_properties(test_cli_password_sources PROPERTIES LABELS service)
 else()
   message(STATUS "openssl program not found: test_cli_password_sources skipped")
+endif()
+
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_checkpoint PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
 # Certificate issuance (BTD-31); checks the chain with openssl verify
@@ -94,9 +116,22 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Key sizes as openssl pkey reads them (BTD-94)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_key PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_revocation PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# Import and export (BTD-34); files made and checked with the openssl program
+ServiceTest(test_service_importexport)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_importexport PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()

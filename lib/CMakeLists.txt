@@ -40,9 +40,10 @@ PwDialogCore.cpp	PwDialogCore.h		digest.h
 digest.cpp		pki_export.cpp		debug_info.h
 func_base.cpp		func_base.h		debug_info.cpp
 cmdline.cpp   pkcs11_provider.cpp
-audit.cpp	audit.h
+audit.cpp	audit.h	audit_key.cpp	audit_key.h
 issuance.cpp	issuance.h
 request.cpp	request.h
+importexport.cpp	importexport.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)

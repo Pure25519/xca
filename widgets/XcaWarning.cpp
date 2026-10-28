@@ -50,14 +50,16 @@ void xcaWarningGui::warning(const QString &msg)
 	showBox(msg, QMessageBox::Warning, QMessageBox::Ok);
 }
 
-bool xcaWarningGui::yesno(const QString &msg)
+bool xcaWarningGui::yesno(const QString &id, const QString &msg)
 {
+	(void)id;
 	return showBox(msg, QMessageBox::Question,
 		QMessageBox::Yes | QMessageBox::No) == QMessageBox::Yes;
 }
 
-bool xcaWarningGui::okcancel(const QString &msg)
+bool xcaWarningGui::okcancel(const QString &id, const QString &msg)
 {
+	(void)id;
 	return showBox(msg, QMessageBox::Warning,
 		QMessageBox::Ok | QMessageBox::Cancel) == QMessageBox::Ok;
 }

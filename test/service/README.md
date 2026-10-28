@@ -39,6 +39,9 @@ Token selection and PIN pad logins are always unexpected.
 To test the headless path, hand the requests of one test function to a `PwDialogHeadless`
 configured with sources: `pwdialog->delegateTo(h)` (takes ownership; `cleanup()` ends it).
 `test_service_secrets.cpp` shows it.
+Questions work the same way: `warning->delegateTo(new xcaWarningCore())` answers them as
+`xca --no-gui` does, from `xcaWarningCore::setConfirmations()` (`--yes`, `--confirm`);
+`cleanup()` ends it and clears the confirmations. `test_service_key.cpp` shows it.
 The ctest `test_service_harness_selfcheck` proves that an unexpected prompt really turns a test red.
 
 ## Adding tests for a service ticket
@@ -81,6 +84,10 @@ Rules:
 
 `test_service_key.cpp` is the reference example (key generation via
 `db_key::newKey(keyjob, name)`), `test_service_harness.cpp` tests the harness itself.
+`test_service_key.cpp` also checks the size of every generated key type in the key, in the audit
+entry and with `openssl pkey -text` (skipped without the `openssl` program), and that a size
+OpenSSL rejects fails with `invalid_key_size` (BTD-94). Test RSA with more than 2048 bit: 2048 is
+OpenSSL's default and passes even when the requested size is ignored.
 `test_service_audit.cpp` covers the audit log (BTD-29); its fixture is described in
 `data/README.md`. Audit entries land in the per-test database, so a test reads them with
 `AuditLog::entries()` right after the call. The caller contract for service functions (one
@@ -97,3 +104,9 @@ program), one audit entry per operation and per rejection.
 `test_service_revocation.cpp` covers revocation and CRL generation (BTD-33): every CRL is checked
 with `openssl crl -CAfile`, the empty CRL with `openssl asn1parse`, and each test ends with
 `AuditLog::verify()` reporting no unaudited revocation row.
+`test_service_importexport.cpp` covers import and export (BTD-34): a CA and an end entity made
+with the `openssl` program are imported, exported as certificate (PEM, DER), key (PEM, DER,
+encrypted PKCS#8), PKCS#12 chain and PKCS#7 chain, read back with `openssl` and imported again;
+passwords come from `env:` sources. It checks that every private key export writes
+`key.export_private` without key material or password, and that a CRL import audits the
+revocation rows it adds (skipped without the `openssl` program).

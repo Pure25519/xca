@@ -24,6 +24,8 @@ pki_export::select(enum pki_type pki_type, int disable)
 {
 	QList<const pki_export*> ret;
 
+	if (elements.isEmpty())
+		init_elements();
 	foreach(const pki_export *exp, elements) {
 		if (exp->pki_type == pki_type)
 			qDebug() << exp->id << QString("Disable %1 %2").arg(disable, 0, 16).arg(disable & exp->flags, 0, 16);
@@ -35,6 +37,10 @@ pki_export::select(enum pki_type pki_type, int disable)
 
 const pki_export *pki_export::by_id(int id)
 {
+	/* Headless callers (command line, service tests) have no
+	 * MainWindow that initialises the formats (BTD-34) */
+	if (elements.isEmpty())
+		init_elements();
 	foreach(const pki_export *exp, elements) {
 		if (exp->id == id)
 			return exp;

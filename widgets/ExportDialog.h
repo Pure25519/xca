@@ -10,6 +10,7 @@
 
 #include "ui_ExportDialog.h"
 #include "lib/pki_export.h"
+#include "lib/importexport.h"
 #include <QModelIndexList>
 
 class QPixmap;
@@ -30,6 +31,9 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
 		     const QString &help_ctx = QString());
 	~ExportDialog();
 	const pki_export *export_type(int idx = -1) const;
+	/* The chosen format and file name for the items; with
+	 * "separate files" the file name is the directory */
+	ExportSpec exportSpec(const QList<pki_base *> &items) const;
 	static bool mayWriteFile(const QString &fname, bool inSeparateFiles);
 	void setupExportFormat(int disable_flag);
 

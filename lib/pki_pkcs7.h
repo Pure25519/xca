@@ -34,9 +34,9 @@ class pki_pkcs7: public pki_multi
 		void signFile(pki_x509 *crt, const QString &filename);
 		void signCert(pki_x509 *crt, pki_x509 *contCert);
 		void encryptFile(pki_x509 *crt, const QString &filename);
-		void writeP7(XFile &file, bool PEM);
+		void writeP7(QIODevice &file, bool PEM);
 		void fromPEM_BIO(BIO *bio, const QString &name);
 		void fromPEMbyteArray(const QByteArray &, const QString &);
-		void fload(const QString &name);
+		void fromBytes(const QByteArray &ba, const QString &name);
 };
 #endif

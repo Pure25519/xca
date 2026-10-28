@@ -17,6 +17,7 @@
 
 PwDialogUI_i *PwDialogCore::pwdialog;
 PwDialogHeadless PwDialogCore::headlessUI;
+PasswordSourceScope *PwDialogCore::scope;
 Passwd PwDialogCore::cmdline_passwd;
 
 PwDialogUI_i *PwDialogCore::ui()
@@ -28,12 +29,41 @@ enum open_result PwDialogCore::execute(pass_info *p, Passwd *passwd,
 					bool write, bool abort)
 {
 	p->newAttempt();
+	PwDialogUI_i *source = PasswordSourceScope::answering(p->getPurpose());
+	if (source)
+		return source->execute(p, passwd, write, abort);
 	if (!cmdline_passwd.isEmpty()) {
 		*passwd = cmdline_passwd;
 		cmdline_passwd.cleanse();
 		return pw_ok;
 	}
 	return ui()->execute(p, passwd, write, abort);
+}
+
+PasswordSourceScope::PasswordSourceScope(enum pass_info::purpose p,
+					const QString &source)
+	: purpose(p), active(!source.isEmpty())
+{
+	if (!active)
+		return;
+	headless.setSource(p, source);
+	outer = PwDialogCore::scope;
+	PwDialogCore::scope = this;
+}
+
+PasswordSourceScope::~PasswordSourceScope()
+{
+	if (active)
+		PwDialogCore::scope = outer;
+}
+
+PwDialogUI_i *PasswordSourceScope::answering(enum pass_info::purpose p)
+{
+	for (PasswordSourceScope *s = PwDialogCore::scope; s; s = s->outer) {
+		if (s->purpose == p)
+			return &s->headless;
+	}
+	return nullptr;
 }
 
 int PwDialogCore::selectToken(const QStringList &names, QWidget *w)

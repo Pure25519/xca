@@ -156,7 +156,7 @@ void KeyTreeView::toToken()
 		card->pkiSource = key->pkiSource;
 		QString msg = tr("Shall the original key '%1' be replaced by the key on the token?\nThis will delete the key '%1' and make it unexportable").
 			arg(key->getIntName());
-		if (XCA_YESNO(msg)) {
+		if (XCA_YESNO("token.replace_key", msg)) {
 			keys()->deletePKI(currentIdx);
 			keys()->insertPKI(card);
 			card = NULL;
@@ -207,6 +207,6 @@ ExportDialog *KeyTreeView::exportDialog(const QModelIndexList &indexes)
 		tr("SSH Private Keys ( *.priv )") + ";;" +
 		tr("Microsoft PVK Keys ( *.pvk )"), indexes,
 		QPixmap(key->isToken() ? ":scardImg" : ":keyImg"),
-		pki_export::select(asym_key, basemodel->exportFlags(indexes)),
+		pki_export::select(asym_key, basemodel->exportFlags(items(indexes))),
 		"keyexport");
 }
