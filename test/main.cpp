@@ -12,6 +12,7 @@
 #include <openssl/provider.h>
 
 #include "widgets/MainWindow.h"
+#include "widgets/AutomationId.h"
 #include "ui_MainWindow.h"
 
 #include "lib/debug_info.h"
@@ -33,6 +34,7 @@ void test_main::initTestCase()
 	Settings.clear();
 	initOIDs();
 
+	AutomationId::install();
 	mainwin = new MainWindow();
 	mainwin->show();
 

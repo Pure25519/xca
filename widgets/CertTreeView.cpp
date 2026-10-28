@@ -13,6 +13,7 @@
 #include "RevocationList.h"
 #include "ExportDialog.h"
 #include "NewCrl.h"
+#include "AutomationId.h"
 #include "lib/database_model.h"
 #include "lib/db_crl.h"
 #include "lib/load_obj.h"
@@ -32,14 +33,17 @@ void CertTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 	X509SuperTreeView::fillContextMenu(menu, subExport, index, indexes);
 
 	QAction *a = menu->addAction(tr("Hide unusable certificates"));
+	a->setObjectName(ctxId("hideUnusable"));
 	a->setCheckable(true);
 	a->setChecked(Settings["hide_unusable"]);
 
 	connect(a, SIGNAL(triggered(bool)),
 		this, SLOT(toggleHideExpired(bool)));
 
-	menu->addAction(tr("Import PKCS#12"), this, SLOT(loadPKCS12()));
-	menu->addAction(tr("Import from PKCS#7"), this, SLOT(loadPKCS7()));
+	setAutomationId(menu->addAction(tr("Import PKCS#12"), this,
+			SLOT(loadPKCS12())), ctxId("importPkcs12"));
+	setAutomationId(menu->addAction(tr("Import from PKCS#7"), this,
+			SLOT(loadPKCS7())), ctxId("importPkcs7"));
 
 	pki_x509 *cert = db_base::fromIndex<pki_x509>(index);
 
@@ -67,40 +71,49 @@ void CertTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 	}
 
 	if (!multi) {
-		transform->addAction(tr("Request"), this, SLOT(toRequest()))->
+		setAutomationId(transform->addAction(tr("Request"), this,
+			SLOT(toRequest())), ctxId("transform_request"))->
 			setEnabled(privkey && privkey->isPrivKey());
-		subExport->addAction(tr("Security token"), this,
-			SLOT(toToken()))->setEnabled(hasScard);
-		subExport->addAction(tr("Other token"), this,
-			SLOT(toOtherToken()))->setEnabled(
-					hasScard && privkey && privkey->isToken());
+		setAutomationId(subExport->addAction(tr("Security token"), this,
+			SLOT(toToken())), ctxId("export_token"))->
+			setEnabled(hasScard);
+		setAutomationId(subExport->addAction(tr("Other token"), this,
+			SLOT(toOtherToken())), ctxId("export_otherToken"))->
+			setEnabled(hasScard && privkey && privkey->isToken());
 
-		transform->addAction(tr("Similar Certificate"), this,
-			SLOT(toCertificate()));
+		setAutomationId(transform->addAction(tr("Similar Certificate"), this,
+			SLOT(toCertificate())), ctxId("transform_similarCertificate"));
 
-		menu->addAction(tr("Delete from Security token"), this,
-			SLOT(deleteFromToken()))->setEnabled(hasScard);
+		setAutomationId(menu->addAction(tr("Delete from Security token"),
+			this, SLOT(deleteFromToken())), ctxId("deleteFromToken"))->
+			setEnabled(hasScard);
 
-		subCa = menu->addMenu(tr("CA"));
-		subCa->addAction(tr("Properties"), this, SLOT(caProperties()));
-		subCa->addAction(tr("Generate CRL"), this, SLOT(genCrl()));
-		subCa->addAction(tr("Manage revocations"), this,
-			SLOT(manageRevocations()));
+		subCa = setAutomationId(menu->addMenu(tr("CA")), ctxId("ca"));
+		setAutomationId(subCa->addAction(tr("Properties"), this,
+			SLOT(caProperties())), ctxId("ca_properties"));
+		setAutomationId(subCa->addAction(tr("Generate CRL"), this,
+			SLOT(genCrl())), ctxId("ca_generateCrl"));
+		setAutomationId(subCa->addAction(tr("Manage revocations"), this,
+			SLOT(manageRevocations())), ctxId("ca_manageRevocations"));
 		subCa->setEnabled(cert->canSign());
 
-		menu->addAction(tr("Import OpenVPN tls-auth key"), this,
-			SLOT(loadTaKey()))->setEnabled(cert->isCA());
+		setAutomationId(menu->addAction(tr("Import OpenVPN tls-auth key"),
+			this, SLOT(loadTaKey())), ctxId("importTaKey"))->
+			setEnabled(cert->isCA());
 	}
 	if (parent == cert && parent->canSign())
-		menu->addAction(tr("Renewal"), this, SLOT(certRenewal()));
+		setAutomationId(menu->addAction(tr("Renewal"), this,
+			SLOT(certRenewal())), ctxId("renewal"));
 	if (sameParent && parentCanSign) {
 		QString n = multi ? QString(" [%1]").arg(indexes.size()) : "";
-		menu->addAction(tr("Renewal") +n, this, SLOT(certRenewal()));
+		setAutomationId(menu->addAction(tr("Renewal") +n, this,
+			SLOT(certRenewal())), ctxId("renewal"));
 		if (allUnrevoked)
-			menu->addAction(tr("Revoke") +n, this, SLOT(revoke()));
+			setAutomationId(menu->addAction(tr("Revoke") +n, this,
+				SLOT(revoke())), ctxId("revoke"));
 		if (allRevoked)
-			menu->addAction(tr("Unrevoke") +n, this,
-				SLOT(unRevoke()));
+			setAutomationId(menu->addAction(tr("Unrevoke") +n, this,
+				SLOT(unRevoke())), ctxId("unrevoke"));
 	}
 }
 

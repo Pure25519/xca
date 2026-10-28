@@ -25,6 +25,7 @@
 #include "XcaApplication.h"
 #include "ExportDialog.h"
 #include "ImportMulti.h"
+#include "AutomationId.h"
 #include "lib/load_obj.h"
 #include "lib/pass_info.h"
 #include "lib/PwDialogCore.h"
@@ -380,6 +381,56 @@ void XcaTreeView::showItem(pki_base *pki)
 		showPki(pki);
 }
 
+QString XcaTreeView::ctxId(const QString &action) const
+{
+	QString id = "ctx_" + objectName().remove(QRegularExpression("View$"));
+	return action.isEmpty() ? id : id + "_" + action;
+}
+
+/* Automation ID of a column entry: col_<OpenSSL short name> for the
+ * subject and extension columns, a fixed name for the others */
+static QString columnId(const dbheader *hd)
+{
+	static const QMap<int, QString> names {
+		{ HD_internal_name, "internalName" },
+		{ HD_subject_name, "subject" },
+		{ HD_subject_hash, "subjectHash" },
+		{ HD_x509key_name, "keyName" },
+		{ HD_counter, "counter" },
+		{ HD_x509_sigalg, "signatureAlgorithm" },
+		{ HD_creation, "creation" },
+		{ HD_comment, "comment" },
+		{ HD_source, "source" },
+		{ HD_primary_key, "primaryKey" },
+		{ HD_cert_serial, "serial" },
+		{ HD_cert_notBefore, "notBefore" },
+		{ HD_cert_notAfter, "notAfter" },
+		{ HD_cert_revocation, "revocation" },
+		{ HD_cert_ca, "ca" },
+		{ HD_cert_md5fp, "md5Fingerprint" },
+		{ HD_cert_sha1fp, "sha1Fingerprint" },
+		{ HD_cert_sha256fp, "sha256Fingerprint" },
+		{ HD_cert_crl_expire, "crlExpiration" },
+		{ HD_req_signed, "signed" },
+		{ HD_req_unstr_name, "unstructuredName" },
+		{ HD_req_chall_pass, "challengePassword" },
+		{ HD_req_certs, "certificateCount" },
+		{ HD_crl_signer, "signer" },
+		{ HD_crl_revoked, "revoked" },
+		{ HD_crl_lastUpdate, "lastUpdate" },
+		{ HD_crl_nextUpdate, "nextUpdate" },
+		{ HD_crl_crlnumber, "crlNumber" },
+		{ HD_key_type, "keyType" },
+		{ HD_key_size, "keySize" },
+		{ HD_key_use, "keyUse" },
+		{ HD_key_passwd, "keyPassword" },
+		{ HD_key_curve, "keyCurve" },
+	};
+	if (hd->id > 0)
+		return "col_" + AutomationId::sanitize(OBJ_nid2sn(hd->id));
+	return "col_" + names.value(hd->id, QString("id%1").arg(-hd->id));
+}
+
 static void addSubmenu(tipMenu *menu, tipMenu *sub)
 {
 	if (sub->isEmpty())
@@ -401,13 +452,21 @@ void XcaTreeView::contextMenu(QContextMenuEvent *e, QMenu *parent, int col)
 	v3ext = new tipMenu(tr("X509v3 Extensions"), mainwin);
 	v3ns = new tipMenu(tr("Netscape extensions"), mainwin);
 	keyprop = new tipMenu(tr("Key properties"), mainwin);
-	menu->addAction(tr("Reset"), basemodel, SLOT(columnResetDefaults()));
+	setAutomationId(menu, ctxId("columns"));
+	setAutomationId(dn, ctxId("columns_subject"));
+	setAutomationId(v3ext, ctxId("columns_v3ext"));
+	setAutomationId(v3ns, ctxId("columns_netscape"));
+	setAutomationId(keyprop, ctxId("columns_key"));
+	setAutomationId(menu->addAction(tr("Reset"), basemodel,
+			SLOT(columnResetDefaults())), ctxId("columns_reset"));
 	if (col >= 0 && col < allHeaders.size()) {
 		curr_hd = allHeaders[col];
-		menu->addAction(tr("Hide Column"), this,SLOT(columnRemove()));
+		setAutomationId(menu->addAction(tr("Hide Column"), this,
+				SLOT(columnRemove())), ctxId("columns_hide"));
 		if (curr_hd->id > 0)
-			menu->addAction(tr("Details"), this,
-						SLOT(headerDetails()));
+			setAutomationId(menu->addAction(tr("Details"), this,
+						SLOT(headerDetails())),
+					ctxId("columns_details"));
 	}
 	menu->addSeparator();
 	foreach(hd, allHeaders) {
@@ -431,6 +490,7 @@ void XcaTreeView::contextMenu(QContextMenuEvent *e, QMenu *parent, int col)
 				break;
 		}
 		a = current->addAction(hd->getName());
+		a->setObjectName(columnId(hd));
 		a->setCheckable(true);
 		a->setChecked(hd->show);
 		a->setToolTip(hd->getTooltip());
@@ -547,28 +607,38 @@ void XcaTreeView::showContextMenu(QContextMenuEvent *e,
 	QModelIndexList indexes = getSelectedIndexes();
 	QModelIndex index;
 
+	menu->setObjectName(ctxId());
 	index = idx.isValid() ? idx : currentIndex();
-	menu->addAction(tr("New"), this, SLOT(newItem()));
-	menu->addAction(tr("Import"), this, SLOT(load()));
-	menu->addAction(tr("Paste PEM data"), mainwin, SLOT(pastePem()))->
+	setAutomationId(menu->addAction(tr("New"), this, SLOT(newItem())),
+			ctxId("new"));
+	setAutomationId(menu->addAction(tr("Import"), this, SLOT(load())),
+			ctxId("import"));
+	setAutomationId(menu->addAction(tr("Paste PEM data"), mainwin,
+			SLOT(pastePem())), ctxId("pastePem"))->
 			setShortcut(QKeySequence::Paste);
 
 	if (indexes.size() == 1) {
-		menu->addAction(tr("Rename"), this, SLOT(editIdx()));
-		menu->addAction(tr("Properties"), this, SLOT(editComment()));
+		setAutomationId(menu->addAction(tr("Rename"), this,
+				SLOT(editIdx())), ctxId("rename"));
+		setAutomationId(menu->addAction(tr("Properties"), this,
+				SLOT(editComment())), ctxId("properties"));
 	}
 	if (indexes.size() > 0) {
-		menu->addAction(tr("Delete"), this, SLOT(deleteItems()))->
+		setAutomationId(menu->addAction(tr("Delete"), this,
+				SLOT(deleteItems())), ctxId("delete"))->
 				setShortcut(QKeySequence::Delete);
-		subExport = menu->addMenu(tr("Export"));
+		subExport = setAutomationId(menu->addMenu(tr("Export")),
+				ctxId("export"));
 		const pki_export *xport = pki_export::by_id(Settings[ClipboardSettings]);
 		QString clipboard = tr("Clipboard");
 		if (xport)
 			clipboard = QString("%1 (%2)").arg(clipboard).arg(xport->desc);
 
-		subExport->addAction(clipboard, this,
-				SLOT(pem2clipboard()))->setShortcut(QKeySequence::Copy);
-		subExport->addAction(tr("File"), this, SLOT(exportItems()))->
+		setAutomationId(subExport->addAction(clipboard, this,
+				SLOT(pem2clipboard())), ctxId("export_clipboard"))->
+				setShortcut(QKeySequence::Copy);
+		setAutomationId(subExport->addAction(tr("File"), this,
+				SLOT(exportItems())), ctxId("export_file"))->
 				setShortcut(QKeySequence::Save);
 	}
 
@@ -631,10 +701,12 @@ void XcaTreeView::clipboardFormatMenu(QMenu *menu)
 
 	QActionGroup *group = new QActionGroup(menu);
 	QMenu *clipboard = menu->addMenu(tr("Clipboard format"));
+	setAutomationId(clipboard, ctxId("clipboardFormat"));
 	foreach(const pki_export *x, pki_export::select(ClipboardPki_type, 0)) {
 		if (!(x->flags & F_CLIPBOARD))
 			continue;
 		QAction *a = clipboard->addAction(x->desc);
+		a->setObjectName(ctxId(QString("clipboardFormat_%1").arg(x->id)));
 		a->setData(x->id);
 		a->setCheckable(true);
 		a->setChecked(exp_type == x->id);

@@ -13,6 +13,7 @@
 #include "NewKey.h"
 #include "ExportDialog.h"
 #include "XcaWarning.h"
+#include "AutomationId.h"
 #include <QAbstractItemView>
 #include <QMenu>
 
@@ -28,12 +29,12 @@ void KeyTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 	if (!multi && key && key->isPrivKey() && !key->isToken()) {
 		switch (key->getOwnPass()) {
 		case pki_key::ptCommon:
-			menu->addAction(tr("Change password"), this,
-					SLOT(setOwnPass()));
+			setAutomationId(menu->addAction(tr("Change password"), this,
+					SLOT(setOwnPass())), ctxId("changePassword"));
 			break;
 		case pki_key::ptPrivate:
-			menu->addAction(tr("Reset password"), this,
-					SLOT(resetOwnPass()));
+			setAutomationId(menu->addAction(tr("Reset password"), this,
+					SLOT(resetOwnPass())), ctxId("resetPassword"));
 			break;
 		default:
 			break;
@@ -44,15 +45,15 @@ void KeyTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 		return;
 
 	if (key->isToken()) {
-		menu->addAction(tr("Change PIN"), this,
-			SLOT(changePin()));
-		menu->addAction(tr("Init PIN with SO PIN (PUK)"), this,
-			SLOT(initPin()));
-		menu->addAction(tr("Change SO PIN (PUK)"), this,
-			SLOT(changeSoPin()));
+		setAutomationId(menu->addAction(tr("Change PIN"), this,
+			SLOT(changePin())), ctxId("changePin"));
+		setAutomationId(menu->addAction(tr("Init PIN with SO PIN (PUK)"), this,
+			SLOT(initPin())), ctxId("initPin"));
+		setAutomationId(menu->addAction(tr("Change SO PIN (PUK)"), this,
+			SLOT(changeSoPin())), ctxId("changeSoPin"));
 	} else if (subExport) {
-		subExport->addAction(tr("Security token"),
-			this, SLOT(toToken()));
+		setAutomationId(subExport->addAction(tr("Security token"),
+			this, SLOT(toToken())), ctxId("export_token"));
 	}
 }
 
