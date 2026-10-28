@@ -349,7 +349,7 @@ bool pki_key::compare(const pki_base *ref) const
 	return r == 1;
 }
 
-void pki_key::writePublic(XFile &file, bool pem) const
+void pki_key::writePublic(QIODevice &file, bool pem) const
 {
 	BioByteArray b;
 	if (pem) {
@@ -722,11 +722,11 @@ QByteArray pki_key::SSH2publicQByteArray(bool raw) const
 	return txt + "\n";
 }
 
-void pki_key::writeSSH2public(XFile &file) const
+void pki_key::writeSSH2public(QIODevice &file) const
 {
 	QByteArray txt = SSH2publicQByteArray();
 	if (file.write(txt) != txt.size())
-		throw errorEx(tr("Failed writing to %1").arg(file.fileName()));
+		throw errorEx(tr("Failed writing to %1").arg(deviceName(file)));
 }
 
 bool pki_key::verify(EVP_PKEY *pkey) const

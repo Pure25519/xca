@@ -165,13 +165,9 @@ void pki_x509req::fromPEM_BIO(BIO *bio, const QString &name)
 	request = req;
 }
 
-void pki_x509req::fload(const QString &fname)
+void pki_x509req::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_REQ *_req;
-	XFile file(fname);
-	file.open_read();
-	QByteArray ba(file.readAll());
-
 	_req = PEM_read_bio_X509_REQ(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_req) {
 		pki_ign_openssl_error();
@@ -238,7 +234,7 @@ void pki_x509req::writeDefault(const QString &dirname) const
 	writeReq(file, true);
 }
 
-void pki_x509req::writeReq(XFile &file, bool pem) const
+void pki_x509req::writeReq(QIODevice &file, bool pem) const
 {
 	BioByteArray b;
 	if (!request)

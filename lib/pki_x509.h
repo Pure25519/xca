@@ -64,7 +64,7 @@ class pki_x509 : public pki_x509super
 		{
 			issuerSqlId = s ? s->getSqlItemId() : QVariant();
 		}
-		void fload(const QString &fname);
+		void fromBytes(const QByteArray &ba, const QString &fname);
 		void load_token(pkcs11 &p11, CK_OBJECT_HANDLE object);
 		void store_token(bool alwaysSelect);
 		void fromPEM_BIO(BIO *bio, const QString &name);
@@ -84,7 +84,7 @@ class pki_x509 : public pki_x509super
 
 		bool isCA() const;
 		bool canSign() const;
-		void writeCert(XFile &file, bool PEM) const;
+		void writeCert(QIODevice &file, bool PEM) const;
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		QString getIndexEntry();
 		bool verify(pki_x509 *signer);

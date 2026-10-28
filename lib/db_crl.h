@@ -44,7 +44,8 @@ class db_crl: public db_x509name
 		 * the result's i2d().size(). Call it outside a transaction. */
 		pki_crl *newCrl(const ServiceContext &ctx, const crljob &task,
 				QString name = QString());
-		void exportItems(const QModelIndexList &indexes,
-			const pki_export *xport, XFile &file) const;
+		void writeItems(const QList<pki_base *> &items,
+			const pki_export *xport, QIODevice &file,
+			const Passwd &pass) const;
 };
 #endif

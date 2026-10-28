@@ -59,4 +59,12 @@ class XFile : public QFile
 		}
 };
 
+/* The file name of a device for messages, empty for a buffer:
+ * the export writers take any QIODevice (BTD-34) */
+static inline QString deviceName(const QIODevice &dev)
+{
+	const QFileDevice *f = qobject_cast<const QFileDevice *>(&dev);
+	return f ? f->fileName() : QString();
+}
+
 #endif

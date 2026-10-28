@@ -94,7 +94,7 @@ void pki_pkcs7::signCert(pki_x509 *crt, pki_x509 *contCert)
 	openssl_error();
 }
 
-void pki_pkcs7::writeP7(XFile &file, bool PEM)
+void pki_pkcs7::writeP7(QIODevice &file, bool PEM)
 {
 	if (!p7) {
 		p7 = PKCS7_new();
@@ -167,13 +167,9 @@ void pki_pkcs7::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	pki_base::fromPEMbyteArray(ba, name);
 }
 
-void pki_pkcs7::fload(const QString &name)
+void pki_pkcs7::fromBytes(const QByteArray &ba, const QString &name)
 {
 	PKCS7 *myp7;
-	XFile file(name);
-	file.open_read();
-	QByteArray ba(file.readAll());
-
 	myp7 = PEM_read_bio_PKCS7(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!myp7) {
 		ign_openssl_error();

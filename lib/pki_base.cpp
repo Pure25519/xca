@@ -52,7 +52,14 @@ void pki_base::deleteFromToken() { }
 void pki_base::deleteFromToken(const slotid &) { }
 void pki_base::writeDefault(const QString&) const { }
 void pki_base::fromPEM_BIO(BIO *, const QString &) { }
-void pki_base::fload(const QString &) { }
+void pki_base::fload(const QString &fname)
+{
+	XFile file(fname);
+	file.open_read();
+	fromBytes(file.readAll(), fname);
+}
+
+void pki_base::fromBytes(const QByteArray &, const QString &) { }
 int pki_base::renameOnToken(const slotid &, const QString &)
 {
 	return 0;
@@ -508,7 +515,7 @@ QString pki_base::base64UrlEncode(const BIGNUM *bn, int bits) const
 	return big.base64UrlEncode();
 }
 
-void pki_base::exportToJWK(XFile &file, const pki_export *xport) const
+void pki_base::exportToJWK(QIODevice &file, const pki_export *xport) const
 {
 	QJsonObject json;
 	fillJWK(json, xport);

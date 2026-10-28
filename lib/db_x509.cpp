@@ -531,12 +531,11 @@ pki_x509 *db_x509::newCert(const ServiceContext &ctx,
 	}
 }
 
-int db_x509::exportFlags(const QModelIndex &idx) const
+int db_x509::exportFlags(pki_base *pki) const
 {
-	QStringList filt;
 	int disable_flags = 0;
 
-	pki_x509 *crt = fromIndex<pki_x509>(idx);
+	pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
 	if (!crt)
 		return 0;
 
@@ -559,7 +558,66 @@ int db_x509::exportFlags(const QModelIndex &idx) const
 	return disable_flags;
 }
 
-void db_x509::writeTaggedPEM(const BioByteArray &b, const QString &tag, XFile &file)
+const pki_export *db_x509::clipboardFormat() const
+{
+	return pki_export::by_id(Settings["CertFormat"]);
+}
+
+/* The certificate and its issuers up to the self-signed root */
+static QList<pki_base *> certChain(pki_x509 *crt)
+{
+	QList<pki_base *> chain;
+	for (pki_x509 *oldcrt = nullptr; crt && crt != oldcrt;
+				oldcrt = crt, crt = crt->getSigner())
+		chain << crt;
+	return chain;
+}
+
+/* The certificates a format writes: the chain of the first item, all
+ * certificates of the database, or the items */
+QList<pki_base *> db_x509::exportedObjects(const QList<pki_base *> &items,
+			const pki_export *xport) const
+{
+	QList<pki_base *> certs;
+
+	if (xport->match_all(F_CHAIN)) {
+		certs = certChain(items.isEmpty() ? nullptr :
+				dynamic_cast<pki_x509 *>(items[0]));
+	} else if (xport->flags & (F_UNREVOKED | F_ALL | F_UNUSABLE)) {
+		foreach(pki_x509 *pki, Store.getAll<pki_x509>()) {
+			if (xport->match_all(F_UNUSABLE) ? pki->unusable() :
+			    xport->match_all(F_ALL) || !pki->isRevoked())
+				certs << pki;
+		}
+	} else {
+		foreach(pki_base *pki, items) {
+			if (dynamic_cast<pki_x509 *>(pki))
+				certs << pki;
+		}
+	}
+	return certs;
+}
+
+/* Formats with F_PRIVATE write the key of the item; the clipboard text
+ * writes it for every item */
+QList<pki_key *> db_x509::exportedPrivateKeys(const QList<pki_base *> &items,
+			const pki_export *xport) const
+{
+	QList<pki_key *> keys;
+
+	if (!xport || !xport->match_all(F_PRIVATE))
+		return keys;
+	foreach(pki_base *pki, items) {
+		pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
+		pki_key *key = crt ? crt->getRefKey() : nullptr;
+		if (key && key->isPrivKey() && !key->isToken() &&
+		    !keys.contains(key))
+			keys << key;
+	}
+	return keys;
+}
+
+void db_x509::writeTaggedPEM(const BioByteArray &b, const QString &tag, QIODevice &file)
 {
 	if (b.size() > 0) {
 		file.write(QString("<%1>\n").arg(tag).toLatin1());
@@ -568,36 +626,28 @@ void db_x509::writeTaggedPEM(const BioByteArray &b, const QString &tag, XFile &f
 	}
 }
 
-void db_x509::exportItems(const QModelIndexList &list,
-			const pki_export *xport, XFile &file) const
+void db_x509::writeItems(const QList<pki_base *> &list,
+			const pki_export *xport, QIODevice &file,
+			const Passwd &pass) const
 {
 	if (list.empty())
 		return;
 
-	pki_x509 *oldcrt = nullptr, *crt = fromIndex<pki_x509>(list[0]);
+	pki_x509 *crt = dynamic_cast<pki_x509 *>(list[0]);
+	if (!crt)
+		return;
 
 	QList<pki_x509*> certs;
-	foreach(QModelIndex idx, list) {
-		pki_x509 *x = fromIndex<pki_x509>(idx);
+	foreach(pki_base *pki, list) {
+		pki_x509 *x = dynamic_cast<pki_x509 *>(pki);
 		if (x)
 			certs << x;
 	}
 
 	if (xport->match_all(F_PEM)) {
-		if (xport->match_all(F_CHAIN)) {
-			for (; crt && crt != oldcrt; oldcrt = crt, crt = crt->getSigner())
-				crt->writeCert(file, true);
-		} else if (xport->match_all(F_UNREVOKED)) {
-			foreach(pki_x509 *pki, Store.getAll<pki_x509>())
-				if (!pki->isRevoked())
-					pki->writeCert(file, true);
-		} else if (xport->match_all(F_UNUSABLE)) {
-			foreach(pki_x509 *pki, Store.getAll<pki_x509>())
-				if (pki->unusable())
-					pki->writeCert(file, true);
-		} else if (xport->match_all(F_ALL)) {
-			foreach(pki_x509 *pki, Store.getAll<pki_x509>())
-				pki->writeCert(file, true);
+		if (xport->flags & (F_CHAIN | F_UNREVOKED | F_UNUSABLE | F_ALL)) {
+			foreach(pki_base *pki, exportedObjects(list, xport))
+				static_cast<pki_x509 *>(pki)->writeCert(file, true);
 		} else {
 			if (xport->match_all(F_PRIVATE)) {
 				pki_evp *pkey = (pki_evp *)crt->getRefKey();
@@ -609,9 +659,9 @@ void db_x509::exportItems(const QModelIndexList &list,
 							arg(crt->getIntName()));
 				if (xport->match_all(F_PKCS8)) {
 					pkey->writePKCS8(file, EVP_aes_256_cbc(),
-						PwDialogCore::pwCallback, true);
+						pass, true);
 				} else {
-					pkey->writeKey(file, NULL, NULL, true);
+					pkey->writeKey(file, NULL, pass, true);
 				}
 			}
 			foreach(crt, certs)
@@ -622,8 +672,8 @@ void db_x509::exportItems(const QModelIndexList &list,
 		pki_evp *pkey = (pki_evp *)crt->getRefKey();
 		if (pkey)
 			pkey->pem(key, pki_export::by_id(20)); // PEM unencrypted
-		for (; crt && crt != oldcrt; oldcrt = crt, crt = crt->getSigner())
-		{
+		foreach(pki_base *pki, exportedObjects(list, xport)) {
+			crt = static_cast<pki_x509 *>(pki);
 			if (crt == crt->getSigner())
 				crt->pem(ca);
 			else if (cert.size() == 0)
@@ -635,9 +685,10 @@ void db_x509::exportItems(const QModelIndexList &list,
 		writeTaggedPEM(extra, "extra-certs", file);
 		writeTaggedPEM(cert, "cert", file);
 		writeTaggedPEM(key, "key", file);
+		/* the tls-auth key of the last certificate of the chain */
 		writeTaggedPEM(crt->getTaKey().toLatin1(), "tls-auth", file);
 	} else if (xport->match_all(F_PKCS7)) {
-		writePKCS7(crt, file, xport->flags, list);
+		writePKCS7(exportedObjects(list, xport), file);
 	} else if (xport->match_all(F_INDEX)) {
 		writeIndex(file, certs);
 	} else if (xport->match_all(F_CAL)) {
@@ -650,28 +701,30 @@ void db_x509::exportItems(const QModelIndexList &list,
 	} else if (xport->match_all(F_TAKEY)) {
 		file.write(crt->getTaKey().toLatin1());
 	} else {
-		qDebug() << "exportItems: db_base";
-		db_base::exportItems(list, xport, file);
+		qDebug() << "writeItems: db_base";
+		db_base::writeItems(list, xport, file, pass);
 	}
 }
 
-void db_x509::exportItem(const QModelIndex &index,
-			const pki_export *xport, XFile &file) const
+void db_x509::writeItem(pki_base *pki, const pki_export *xport,
+			QIODevice &file, const Passwd &pass) const
 {
-	pki_x509 *crt = fromIndex<pki_x509>(index);
+	pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
+	if (!crt)
+		return;
 
 	if (xport->match_all(F_DER)) {
 		crt->writeCert(file, false);
 	} else if (xport->match_all(F_PKCS12)) {
-		writePKCS12(crt, file, xport->match_all(F_CHAIN));
+		writePKCS12(crt, file, xport->match_all(F_CHAIN), pass);
 	} else if (xport->match_all(F_CONFIG)) {
 		crt->opensslConf(file);
 	} else {
-		db_base::exportItem(index, xport, file);
+		db_base::writeItem(pki, xport, file, pass);
 	}
 }
 
-void db_x509::writeIndex(XFile &file, QList<pki_x509*> items) const
+void db_x509::writeIndex(QIODevice &file, QList<pki_x509*> items) const
 {
 	QString index;
 	foreach(pki_x509 *cert, items) {
@@ -681,74 +734,31 @@ void db_x509::writeIndex(XFile &file, QList<pki_x509*> items) const
 	file.write(index.toUtf8());
 }
 
-void db_x509::writePKCS12(pki_x509 *cert, XFile &file, bool chain) const
+void db_x509::writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
+			const Passwd &pass) const
 {
-	QStringList filt;
-	pki_pkcs12 *p12 = NULL;
-	try {
-		pki_evp *privkey = (pki_evp *)cert->getRefKey();
-		if (!privkey || privkey->isPubKey()) {
-			XCA_WARN(tr("There was no key found for the Certificate: '%1'").arg(cert->getIntName()));
-			return;
-		}
-		if (privkey->isToken()) {
-			XCA_WARN(tr("Not possible for the token-key Certificate '%1'").arg(cert->getIntName()));
-			return;
-		}
-		p12 = new pki_pkcs12(cert->getIntName(), cert, privkey);
-		pki_x509 *signer = cert->getSigner();
-		while ((signer != NULL ) && (signer != cert) && chain) {
-			p12->append_item(signer);
-			cert = signer;
-			signer = signer->getSigner();
-		}
-		encAlgo encAlgo((QString) Settings["pkcs12_enc_algo"]);
-		p12->writePKCS12(file, encAlgo);
+	pki_evp *privkey = (pki_evp *)cert->getRefKey();
+	if (!privkey || privkey->isPubKey())
+		throw errorEx(tr("There was no key found for the Certificate: '%1'").arg(cert->getIntName()));
+	if (privkey->isToken())
+		throw errorEx(tr("Not possible for the token-key Certificate '%1'").arg(cert->getIntName()));
+
+	pki_pkcs12 p12(cert->getIntName(), cert, privkey);
+	if (chain) {
+		foreach(pki_base *signer, certChain(cert).mid(1))
+			p12.append_item(signer);
 	}
-	catch (errorEx &err) {
-		XCA_ERROR(err);
-	}
-	delete p12;
+	encAlgo encAlgo((QString) Settings["pkcs12_enc_algo"]);
+	p12.writePKCS12(file, encAlgo, pass);
 }
 
-void db_x509::writePKCS7(pki_x509 *cert, XFile &file, int flags,
-			const QModelIndexList &list) const
+void db_x509::writePKCS7(const QList<pki_base *> &certs, QIODevice &file) const
 {
-	pki_pkcs7 *p7 = new pki_pkcs7(QString());
+	pki_pkcs7 p7;
 
-	try {
-		if (flags & F_CHAIN) {
-			while (cert) {
-				p7->append_item(cert);
-				if (cert->getSigner() == cert)
-					break;
-				cert = cert->getSigner();
-			}
-		} else if (flags & (F_UNREVOKED | F_ALL)) {
-			foreach(pki_x509 *cer, Store.getAll<pki_x509>()) {
-				if ((flags & F_ALL) || !cer->isRevoked())
-					p7->append_item(cer);
-			}
-		} else if (flags & F_UNUSABLE) {
-			foreach(pki_x509 *cer, Store.getAll<pki_x509>()) {
-				if (cer->unusable())
-					p7->append_item(cer);
-			}
-		} else if (flags) {
-			foreach(QModelIndex idx, list) {
-				cert = fromIndex<pki_x509>(idx);
-				if (cert)
-					p7->append_item(cert);
-			}
-		} else {
-			p7->append_item(cert);
-		}
-		p7->writeP7(file, false);
-	}
-	catch (errorEx &err) {
-		XCA_ERROR(err);
-	}
-	delete p7;
+	foreach(pki_base *pki, certs)
+		p7.append_item(pki);
+	p7.writeP7(file, false);
 }
 
 /* Revocation (BTD-33) */
