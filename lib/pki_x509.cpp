@@ -16,6 +16,7 @@
 #include "base.h"
 #include "exception.h"
 #include "pass_info.h"
+#include "audit_key.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -666,6 +667,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 	if (!signkey) {
 		my_error(tr("There is no key for signing !"));
 	}
+	AuditKey::refuseSigning(signkey);
 	tkey = signkey->decryptKey();
 	pki_openssl_error();
 	X509_sign(cert, tkey, digest.MD());

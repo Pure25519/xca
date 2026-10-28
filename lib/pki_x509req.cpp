@@ -15,6 +15,7 @@
 #include "db_base.h"
 #include "x509name.h"
 #include "exception.h"
+#include "audit_key.h"
 #include "openssl_compat.h"
 #include <openssl/bio.h>
 
@@ -109,6 +110,7 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 		my_error(tr("Signing key not valid (public key)"));
 		return;
 	}
+	AuditKey::refuseSigning(key);
 
 	X509_REQ_set_version(request, 0L);
 	X509_REQ_set_pubkey(request, key->getPubKey());
