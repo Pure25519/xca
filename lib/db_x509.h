@@ -14,10 +14,15 @@
 #include "asn1int.h"
 #include "x509rev.h"
 
+#include <functional>
+
 class pki_x509req;
 class pki_x509;
 class pki_temp;
 class pki_crl;
+class AuditParams;
+class IssuanceSpec;
+class ServiceContext;
 
 class db_x509: public db_x509super
 {
@@ -25,6 +30,8 @@ class db_x509: public db_x509super
 
 		static void writeTaggedPEM(const BioByteArray &b,
 						const QString &tag, XFile &file);
+		pki_x509 *issue(const IssuanceSpec &spec, AuditParams &params,
+				const ServiceContext &ctx);
 	protected:
 		dbheaderList getHeaders();
 		void dereferenceIssuer();
@@ -45,14 +52,28 @@ class db_x509: public db_x509super
 		void writeIndex(XFile &file, QList<pki_x509*> items) const;
 		pki_base *insert(pki_base *item);
 		void markRequestSigned(pki_x509req *req, pki_x509 *cert);
-		pki_x509 *newCert(NewX509 *dlg);
+		/* Issues one certificate (BTD-31). Throws serviceError for a
+		 * rejected spec and errorEx for anything else; writes exactly
+		 * one audit entry certificate.issue either way (error code
+		 * internal_error for anything but a serviceError). Call it
+		 * outside a transaction: a failure entry appended inside the
+		 * caller's transaction would be rolled back with it. */
+		pki_x509 *newCert(const ServiceContext &ctx,
+				const IssuanceSpec &spec);
+		/* GUI: New Certificate dialog preset from a certificate,
+		 * also newItem() and the newCert() slots below: defined in
+		 * widgets/NewX509_issue.cpp, they fill an IssuanceSpec */
 		void newCert(pki_x509 *cert);
 		void writePKCS12(pki_x509 *cert, XFile &file, bool chain) const;
 		void writePKCS7(pki_x509 *cert, XFile &file, int flags,
 				const QModelIndexList &list) const;
 		void fillContextMenu(QMenu *menu, const QModelIndex &index);
 		void inToCont(pki_base *pki);
-		a1int getUniqueSerial(pki_x509 *signer);
+		/* Serial number rule of BTD-31, see randomSerial() */
+		static a1int randomSerial();
+		bool serialInUse(pki_x509 *signer, const a1int &serial);
+		a1int getUniqueSerial(pki_x509 *signer,
+			const std::function<a1int()> &draw = randomSerial);
 		void toToken(QModelIndex idx, bool alwaysSelect);
 		void toRequest(QModelIndex idx);
 		void updateCaProperties(pki_x509 *cert);

@@ -72,4 +72,19 @@ class secretError: public errorEx
 		{
 		}
 };
+
+/* A rejected service call (BTD-31, pattern for BTD-32..35).
+ * code is the stable snake_case reason that also goes into the
+ * error_code of the audit entry, e.g. "no_private_signing_key";
+ * the message is for humans. */
+class serviceError: public errorEx
+{
+	public:
+		QString code;
+
+		serviceError(const QString &c, const QString &txt)
+			: errorEx(txt), code(c)
+		{
+		}
+};
 #endif

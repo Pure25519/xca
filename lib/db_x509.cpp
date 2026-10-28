@@ -9,6 +9,7 @@
 #include "db_x509req.h"
 #include "db_crl.h"
 #include "pki_x509.h"
+#include "pki_x509req.h"
 #include "pki_crl.h"
 #include "pki_temp.h"
 #include "pki_pkcs12.h"
@@ -18,15 +19,15 @@
 #include "pass_info.h"
 #include "database_model.h"
 #include "entropy.h"
+#include "audit.h"
+#include "issuance.h"
 
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
 
 #pragma message ("drop UI dependencies")
-#include "ui_NewX509.h"
 #include "widgets/CertExtend.h"
 #include "widgets/RevocationList.h"
-#include "widgets/NewX509.h"
 #include "widgets/MainWindow.h"
 
 #include "ui_RevocationList.h"
@@ -284,45 +285,67 @@ void db_x509::writeIndex(const QString &fname, bool hierarchy) const
 	}
 }
 
-static a1int randomSerial()
+a1int db_x509::randomSerial()
 {
-	unsigned char buf[SHA512_DIGEST_LENGTH];
-	unsigned char md[SHA512_DIGEST_LENGTH];
+	/* Rule 2 of the certstrap triage (BTD-31): positive, at least 64 bit
+	 * from the CSPRNG, at most 20 octets. serial_len / 8 octets, at least
+	 * 9: the first one is 0x01..0x7f, so the value is positive and keeps
+	 * its length, the others are random (>= 70 random bits). */
+	unsigned char buf[20];
+	int len = qBound(9, (int)Settings["serial_len"] / 8, 20);
 
 	Entropy::seed_rng();
+	do {
+		if (RAND_bytes(buf, len) != 1) {
+			ign_openssl_error();
+			throw serviceError("random_failure",
+				tr("The random number generator failed"));
+		}
+		buf[0] &= 0x7f;
+	} while (buf[0] == 0);
 
-	RAND_bytes(buf, SHA512_DIGEST_LENGTH);
-	SHA512(buf, SHA512_DIGEST_LENGTH, md);
 	a1int serial;
-	if (md[0] && md[0] < 0x80)
-		serial.setRaw(md, (int)Settings["serial_len"] / 8);
+	serial.setRaw(buf, len);
 	return serial;
 }
 
-a1int db_x509::getUniqueSerial(pki_x509 *signer)
+bool db_x509::serialInUse(pki_x509 *signer, const a1int &serial)
+{
+	x509rev rev;
+
+	if (signer->getSerial() == serial)
+		return true;
+	rev.setSerial(serial);
+	if (signer->getRevList().contains(rev))
+		return true;
+	if (signer->getBySerial(serial))
+		return true;
+
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT COUNT(*) FROM certs WHERE issuer=? AND serial=?");
+	q.bindValue(0, signer->getSqlItemId());
+	q.bindValue(1, serial.toHex());
+	q.exec();
+	if (q.lastError().isValid())
+		throw errorEx(q.lastError());
+	return q.first() && q.value(0).toInt() > 0;
+}
+
+a1int db_x509::getUniqueSerial(pki_x509 *signer,
+				const std::function<a1int()> &draw)
 {
 	// returns an unused unique serial
-	a1int serial, signer_serial;
-	x509rev rev;
-	x509revList revList;
-	if (signer) {
-		signer_serial = signer->getSerial();
-		revList = signer->getRevList();
-	}
+	a1int serial;
 	for (int i=0; ; i++) {
 		if (i > 100)
-			throw errorEx(tr("Failed to retrieve unique random serial"));
-		serial = randomSerial();
+			throw serviceError("serial_exhausted",
+				tr("Failed to retrieve unique random serial"));
+		serial = draw();
 		if (serial == a1int(0L))
 			continue;
 		if (!signer)
 			break;
-		if (signer_serial == serial)
-			continue;
-		rev.setSerial(serial);
-		if (revList.contains(rev))
-			continue;
-		if (signer->getBySerial(serial))
+		if (serialInUse(signer, serial))
 			continue;
 		break;
 	}
@@ -370,177 +393,149 @@ void db_x509::markRequestSigned(pki_x509req *req, pki_x509 *cert)
 	TransCommit();
 }
 
-void db_x509::newItem()
+static AuditParams issuanceParams(const IssuanceSpec &spec)
 {
-	NewX509 *dlg = new NewX509();
-	dlg->setCert();
-	pki_x509 *sigcert = Store.lookupPki<pki_x509>(selected);
-	qDebug() << "SIGCERT" << (sigcert ? sigcert->getIntName() : "NULL");
-	dlg->defineSigner(sigcert, true);
-	if (dlg->exec()) {
-		newCert(dlg);
+	AuditParams p;
+	p.set("name", spec.name);
+	p.set("subject", spec.subject.oneLine());
+	if (spec.signer) {
+		p.set("issuer", spec.signer->getSubject().oneLine());
+		p.set("ca_id", spec.signer->getSqlItemId().toLongLong());
 	}
-	delete dlg;
+	p.set("not_before", (QDateTime)spec.notBefore);
+	p.set("not_after", (QDateTime)spec.notAfter);
+	p.set("hash_algo", spec.hashAlgo.name());
+	if (!spec.templateName.isEmpty())
+		p.set("template", spec.templateName);
+	return p;
 }
 
-void db_x509::newCert(pki_x509req *req)
+pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
+			const ServiceContext &ctx)
 {
-	NewX509 *dlg = new NewX509();
-	pki_x509 *sigcert = Store.lookupPki<pki_x509>(selected);
-	qDebug() << "SIGCERT" << (sigcert ? sigcert->getIntName() : "NULL");
-	dlg->setCert();
-	dlg->defineRequest(req);
-	dlg->defineSigner(sigcert, true);
-	if (dlg->exec()) {
-		newCert(dlg);
-	}
-	delete dlg;
-}
-
-void db_x509::newCert(pki_temp *temp)
-{
-	NewX509 *dlg = new NewX509();
-	dlg->setCert();
-	dlg->defineTemplate(temp);
-	if (dlg->exec()) {
-		newCert(dlg);
-	}
-	delete dlg;
-}
-
-void db_x509::newCert(pki_x509 *cert)
-{
-	NewX509 *dlg = new NewX509();
-	dlg->setCert();
-	dlg->fromX509super(cert, false);
-	if (dlg->exec()) {
-		newCert(dlg);
-	}
-	delete dlg;
-}
-
-pki_x509 *db_x509::newCert(NewX509 *dlg)
-{
-	pki_x509 *cert = NULL;
-	pki_x509 *signcert = NULL;
-	pki_x509req *req = NULL;
-	pki_key *signkey = NULL, *clientkey = NULL, *tempkey = NULL;
-	a1int serial;
-	QString intname;
+	pki_x509 *cert = nullptr, *stored = nullptr, *signcert;
+	pki_key *signkey, *clientkey = spec.key, *tempkey = nullptr;
+	X509V3_CTX ext_ctx{};
 
     try {
 	Transaction;
-	// Step 1 - Subject and key
-	if (!dlg->fromReqCB->isChecked()) {
-		clientkey = dlg->getSelectedKey();
-		if (!clientkey)
-			return NULL;
-		intname = dlg->description->text();
-	} else {
-		// A PKCS#10 Request was selected
-		req = dlg->getSelectedReq();
-		if (!req)
-			return NULL;
-		clientkey = req->getRefKey();
-		if (clientkey == NULL) {
-			clientkey = req->getPubKey();
-			tempkey = clientkey;
-		}
-		intname = req->getIntName();
-	}
 	TransThrow();
 
-	if (clientkey == NULL)
-		throw errorEx(tr("Invalid public key"));
+	// Step 1 - Subject and key
+	if (spec.request) {
+		clientkey = spec.request->getRefKey();
+		if (clientkey == nullptr) {
+			clientkey = spec.request->getPubKey();
+			tempkey = clientkey;
+		}
+	} else if (!clientkey) {
+		throw serviceError("missing_key",
+			tr("Neither a key nor a certificate signing request was given"));
+	}
+	if (clientkey == nullptr)
+		throw serviceError("invalid_public_key", tr("Invalid public key"));
+
 	// initially create cert
 	cert = new pki_x509();
-	cert->setIntName(intname);
-	cert->setSubject(dlg->getX509name());
+	cert->setIntName(spec.name.isEmpty() && spec.request ?
+			spec.request->getIntName() : spec.name);
+	cert->setSubject(spec.subject);
 	cert->setPubKey(clientkey);
 
 	// Step 2 - select Signing
-	if (dlg->foreignSignRB->isChecked()) {
-		signcert = dlg->getSelectedSigner();
-		if (!signcert) {
-			delete cert;
-			return NULL;
-		}
-		serial = getUniqueSerial(signcert);
+	if (spec.signer) {
+		signcert = spec.signer;
 		signkey = signcert->getRefKey();
 	} else {
 		signcert = cert;
 		signkey = clientkey;
-		serial = getUniqueSerial(NULL);
 	}
-
-	dlg->initCtx(cert, signcert, NULL);
 	// if we can not sign
-	if (! signkey || signkey->isPubKey()) {
-		delete cert;
-		throw errorEx(tr("The key you selected for signing is not a private one."));
-	}
+	if (! signkey || signkey->isPubKey())
+		throw serviceError("no_private_signing_key",
+			tr("The key you selected for signing is not a private one."));
+
+	X509V3_set_ctx_nodb(&ext_ctx);
+	X509V3_set_ctx(&ext_ctx, signcert->getCert(), cert->getCert(),
+			NULL, NULL, 0);
 
 	// set the issuers name
 	cert->setIssuer(signcert->getSubject());
-	cert->setSerial(serial);
+	cert->setSerial(getUniqueSerial(spec.signer));
 
 	// Step 3 - Choose the Date
-	// Date handling
-	cert->setNotBefore(dlg->notBefore->getDate());
-	a1time a;
-	if (dlg->noWellDefinedExpDate->isChecked())
-		a.setUndefined();
-	else
-		a = dlg->notAfter->getDate();
-
-	cert->setNotAfter(a);
+	cert->setNotBefore(spec.notBefore);
+	cert->setNotAfter(spec.notAfter);
 
 	// STEP 4 handle extensions
 
 	// apply all extensions to the subject cert in the context
-	dlg->getAllExt();
+	spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
 
 	// apply extensions from CSR if requested
-	if (dlg->copyReqExtCB->isChecked() && dlg->fromReqCB->isChecked()) {
-		extList el = req->getV3ext();
+	if (spec.copyRequestExtensions && spec.request) {
+		extList el = spec.request->getV3ext();
 		int m = el.count();
 		for (int i=0; i<m; i++)
 			cert->addV3ext(el[i], true);
 	}
 
 	// and finally sign the request
-	cert->sign(signkey, dlg->hashAlgo->current());
+	cert->sign(signkey, spec.hashAlgo);
 
 	// set the comment field
-	cert->setComment(dlg->comment->toPlainText());
-	cert->pkiSource = dlg->getPkiSource();
-	cert = dynamic_cast<pki_x509*>(insert(cert));
-	createSuccess(cert);
-	if (cert && clientkey->isToken()) {
-		pki_scard *card = (pki_scard*)clientkey;
-		if (XCA_YESNO(tr("Store the certificate to the key on the token '%1 (#%2)' ?").
-			arg(card->getCardLabel()).arg(card->getSerial())))
-		{
-			try {
-				cert->store_token(false);
-			} catch (errorEx &err) {
-				XCA_ERROR(err);
-			}
-		}
-	}
-	delete tempkey;
-	markRequestSigned(req, cert);
-	TransCommit();
-    }
+	cert->setComment(spec.comment);
+	cert->pkiSource = spec.source;
 
-    catch (errorEx &err) {
-		XCA_ERROR(err);
-		delete cert;
-		if (tempkey != NULL)
-			delete(tempkey);
-		cert = NULL;
+	params.set("serial", cert->getSerial().toHex());
+	params.set("subject", cert->getSubject().oneLine());
+	params.set("name", cert->getIntName());
+	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
+
+	if (getByReference(cert))
+		throw serviceError("duplicate_certificate",
+			tr("The certificate already exists in the database"));
+	pki_x509 *inserted = dynamic_cast<pki_x509*>(insert(cert));
+	/* insert() keeps the certificate in the store or deletes it */
+	cert = nullptr;
+	if (!inserted)
+		throw serviceError("database_error",
+			tr("The certificate could not be stored"));
+	stored = inserted;
+	delete tempkey;
+	tempkey = nullptr;
+	markRequestSigned(spec.request, stored);
+	AuditLog::append(ctx, "certificate.issue", "certificate",
+			stored->getSqlItemId().toString(), params);
+	if (!TransCommit())
+		throw serviceError("database_error",
+			tr("Failed to commit the database transaction"));
     }
-    return cert;
+    catch (...) {
+	delete cert;
+	delete tempkey;
+	throw;
+    }
+    return stored;
+}
+
+pki_x509 *db_x509::newCert(const ServiceContext &ctx,
+			const IssuanceSpec &spec)
+{
+	AuditParams params = issuanceParams(spec);
+	try {
+		return issue(spec, params, ctx);
+	} catch (serviceError &err) {
+		/* after the rollback, so the entry is kept (lib/audit.h) */
+		AuditLog::append(ctx, "certificate.issue", "certificate",
+				QString(), params, "failure", err.code);
+		throw;
+	} catch (...) {
+		/* errorEx (database, OpenSSL, key decryption) and anything else */
+		AuditLog::append(ctx, "certificate.issue", "certificate",
+				QString(), params, "failure", "internal_error");
+		throw;
+	}
 }
 
 int db_x509::exportFlags(const QModelIndex &idx) const

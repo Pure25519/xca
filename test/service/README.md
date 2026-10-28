@@ -86,3 +86,7 @@ Rules:
 `AuditLog::entries()` right after the call. The caller contract for service functions (one
 entry per operation, `failure`/`denied` appended after the rollback, no retry on a concurrent
 writer) is in the header comment of `lib/audit.h`; `appendInRolledBackTransaction` pins it.
+`test_service_issuance.cpp` covers certificate issuance through
+`db_x509::newCert(ctx, IssuanceSpec)` (BTD-31) and is the reference for service functions with a
+value object, a typed error and an audit entry (pattern: `doc/service-pattern.md`); it needs the
+`openssl` program for the CSR and `openssl verify` and skips those parts without it.
