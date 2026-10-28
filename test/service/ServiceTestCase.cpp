@@ -284,25 +284,3 @@ void ServiceTestCase::cleanup()
 		CCHAR(QString("temporary database directory left: %1").arg(dir)));
 	QVERIFY2(v.isEmpty(), CCHAR(v.join("; ")));
 }
-
-ServiceTestEnv::ServiceTestEnv()
-	: home(QDir::tempPath() + "/xca-service-home-XXXXXX")
-{
-	static const char * const xdg[][2] = {
-		{ "XDG_CONFIG_HOME", "/.config" },
-		{ "XDG_DATA_HOME", "/.local/share" },
-		{ "XDG_CACHE_HOME", "/.cache" },
-		{ "XDG_STATE_HOME", "/.local/state" },
-	};
-	if (!home.isValid())
-		qFatal("Cannot create the temporary HOME of the service tests");
-
-	qputenv("HOME", home.path().toLocal8Bit());
-	for (auto &x : xdg) {
-		QString dir = home.path() + x[1];
-		QDir().mkpath(dir);
-		qputenv(x[0], dir.toLocal8Bit());
-	}
-	if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
-		qputenv("QT_QPA_PLATFORM", "offscreen");
-}

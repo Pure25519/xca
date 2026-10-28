@@ -6,6 +6,7 @@ set(SERVICE_TEST_DIR ${PROJECT_SOURCE_DIR}/test/service)
 add_library(xcaservicetest STATIC
 	${SERVICE_TEST_DIR}/ServiceTestCase.cpp
 	${SERVICE_TEST_DIR}/ServiceTestCase.h
+	${PROJECT_SOURCE_DIR}/test/TestEnv.cpp
 	${PROJECT_BINARY_DIR}/local.h)
 target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcalib)
 
