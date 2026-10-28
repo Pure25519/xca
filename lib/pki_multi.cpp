@@ -98,15 +98,10 @@ static pki_base *pkiByPEM(QString text, int *skip)
 	return NULL;
 }
 
-void pki_multi::fload(const QString &fname)
+void pki_multi::fromBytes(const QByteArray &ba, const QString &name)
 {
-	XFile file(fname);
-	QByteArray ba;
-
-	file.open_read();
-	ba = file.readAll();
-	fromPEMbyteArray(ba, fname);
-};
+	fromPEMbyteArray(ba, name);
+}
 
 void pki_multi::fromPEMbyteArray(const QByteArray &_ba, const QString &name)
 {
@@ -123,6 +118,11 @@ void pki_multi::fromPEMbyteArray(const QByteArray &_ba, const QString &name)
 			item->pkiSource = imported;
 			openssl_error();
 			append_item(item);
+		} catch (secretError &) {
+			/* a missing or rejected password from a source is
+			 * the caller's error, not a damaged item (BTD-34) */
+			delete item;
+			throw;
 		} catch (errorEx &err) {
 			XCA_ERROR(err);
 			delete item;
@@ -140,29 +140,48 @@ void pki_multi::fromPEMbyteArray(const QByteArray &_ba, const QString &name)
 
 void pki_multi::probeAnything(const QString &fname)
 {
-	pki_base *item = NULL;
-	load_base *lb;
-	QList<load_base*> lbs;
-	int old_count = multi.size();
-
 	/* Check for file accessibility to report
 	 * a reasonable error early thrown by file.open_read() */
 	XFile file(fname);
 	file.open_read();
 	file.close();
 
+	probe(fname, [&fname](load_base *lb) {
+		return lb->loadItem(fname);
+	});
+}
+
+void pki_multi::probeData(const QByteArray &ba, const QString &name)
+{
+	probe(name, [&ba, &name](load_base *lb) {
+		return lb->loadData(ba, name);
+	});
+}
+
+void pki_multi::probe(const QString &name,
+		const std::function<pki_base *(load_base *)> &load)
+{
+	pki_base *item = NULL;
+	int old_count = multi.size();
+	QList<load_base*> lbs;
+
 	lbs <<  new load_pem() <<
 		new load_cert() << new load_pkcs7() << new load_pkcs12() <<
 		new load_crl() <<  new load_req() <<   new load_key() <<
 		new load_temp();
 
-	foreach(lb, lbs) {
+	foreach(load_base *lb, lbs) {
 		try {
-			item = lb->loadItem(fname);
+			item = load(lb);
 			if (item) {
 				append_item(item);
 				break;
 			}
+		} catch (secretError &) {
+			/* the password from a source is missing or wrong:
+			 * report that instead of "no PKI data" (BTD-34) */
+			qDeleteAll(lbs);
+			throw;
 		} catch (errorEx &) {
 			continue;
 		} catch (enum open_result r) {
@@ -170,8 +189,8 @@ void pki_multi::probeAnything(const QString &fname)
 				break;
 		}
 	}
-	if (multi.count() == old_count && !fname.isEmpty())
-		failed_files << fname;
+	if (multi.count() == old_count && !name.isEmpty())
+		failed_files << name;
 
 	qDeleteAll(lbs);
 }

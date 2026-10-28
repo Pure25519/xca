@@ -91,6 +91,9 @@ const QList<QString> pki_temp::tmpl_keys = {
 pki_temp::pki_temp(const pki_temp *pk)
 	:pki_x509name(pk->getIntName()), xname(pk->xname),  settings(pk->settings)
 {
+	/* A copy (Duplicate, template from a predefined one) is a template
+	 * too: items.type of its row, the export type check (BTD-34) */
+	pkiType = tmpl;
 }
 
 pki_temp::pki_temp(const QString &d)
@@ -445,7 +448,7 @@ QByteArray pki_temp::toExportData() const
 	return b.byteArray();
 }
 
-void pki_temp::writeTemp(XFile &file) const
+void pki_temp::writeTemp(QIODevice &file) const
 {
 	file.write(PEM_comment() + toExportData());
 }
@@ -478,9 +481,13 @@ void pki_temp::fromExportData(QByteArray data)
 
 void pki_temp::try_fload(XFile &file)
 {
-	QByteArray ba = file.read(4096*1024);
+	fromBytes(file.read(4096*1024), file.fileName());
+}
+
+void pki_temp::fromBytes(const QByteArray &ba, const QString &name)
+{
 	try {
-		fromPEM_BIO(BioByteArray(ba).ro(), file.fileName());
+		fromPEM_BIO(BioByteArray(ba).ro(), name);
 	} catch (errorEx &) {
 		fromExportData(ba);
 	}

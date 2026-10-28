@@ -22,6 +22,10 @@
 class QContextMenuEvent;
 class XcaTreeView;
 class NewX509;
+class ServiceContext;
+class ExportSpec;
+class Passwd;
+class pki_key;
 
 class db_base: public QAbstractItemModel
 {
@@ -64,15 +68,40 @@ class db_base: public QAbstractItemModel
 		virtual void inToCont(pki_base *pki);
 		virtual void remFromCont(const QModelIndex &idx);
 		void changeView();
-		int exportFlags(const QModelIndexList &indexes) const;
-		virtual int exportFlags(const QModelIndex &) const
+		/* The export flags (F_*) the items do not support */
+		int exportFlags(const QList<pki_base *> &items) const;
+		virtual int exportFlags(pki_base *) const
 		{
 			return 0;
 		}
-		virtual void exportItem(const QModelIndex &,
-			const pki_export *, XFile &) const;
-		virtual void exportItems(const QModelIndexList &indexes,
-			const pki_export *xport, XFile &file) const;
+		/* Exports the items (BTD-34). Throws serviceError for a
+		 * rejected spec and errorEx for anything else; one audit entry
+		 * object.export per exported object and key.export_private per
+		 * private key in the output, or one object.export failure. No
+		 * question or message; call it outside a transaction.
+		 * Returns the exported bytes, also when they went to a file. */
+		QByteArray exportItems(const ServiceContext &ctx,
+			const ExportSpec &spec);
+		/* The writers behind exportItems(): no prompt, no audit */
+		virtual void writeItem(pki_base *pki, const pki_export *xport,
+			QIODevice &file, const Passwd &pass) const;
+		virtual void writeItems(const QList<pki_base *> &items,
+			const pki_export *xport, QIODevice &file,
+			const Passwd &pass) const;
+		/* The objects a format writes for the items, e.g. the chain */
+		virtual QList<pki_base *> exportedObjects(
+			const QList<pki_base *> &items,
+			const pki_export *xport) const;
+		/* The private keys a format writes for the items */
+		virtual QList<pki_key *> exportedPrivateKeys(
+			const QList<pki_base *> &items,
+			const pki_export *xport) const;
+		/* The format of pki_base::pem() for the clipboard text, or
+		 * NULL if it never contains a private key */
+		virtual const pki_export *clipboardFormat() const
+		{
+			return nullptr;
+		}
 
 		void dump(const QString &dirname) const;
 		QModelIndex index(int row, int column,
@@ -125,13 +154,12 @@ class db_base: public QAbstractItemModel
 		dbheaderList getAllHeaders() {
 			return allHeaders;
 		}
-		QString pem2QString(QModelIndexList indexes) const;
 
 		void deletePKI(QModelIndex idx);
 		QMimeData *mimeData(const QModelIndexList &indexes) const;
 		void emitDataChanged(pki_base *pki);
 		bool containsType(enum pki_type t) const;
-		void writeVcalendar(XFile &file, QStringList vcal) const;
+		void writeVcalendar(QIODevice &file, QStringList vcal) const;
 
 	public slots:
 		virtual void newItem() { }

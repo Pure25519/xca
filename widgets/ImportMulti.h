@@ -33,6 +33,10 @@ class ImportMulti: public QDialog, private Ui::ImportMulti
 		pki_base *import(const QModelIndex &idx);
 		pki_base *import(pki_base *pki);
 		void importIndexes(const QModelIndexList &indexes);
+		/* Stores the items through database_model::importItems()
+		 * (BTD-34), takes them over, reports items already in the
+		 * database and errors; returns the stored items */
+		static QList<pki_base *> importItems(QList<pki_base *> items);
 		void execute(int force=0, QStringList failed = QStringList());
 		int entries();
 		void tokenInfo(const slotid &s);

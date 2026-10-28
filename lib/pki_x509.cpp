@@ -16,6 +16,7 @@
 #include "base.h"
 #include "exception.h"
 #include "pass_info.h"
+#include "audit_key.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -219,13 +220,9 @@ void pki_x509::fromPEM_BIO(BIO *bio, const QString &fname)
 	cert = _cert;
 }
 
-void pki_x509::fload(const QString &fname)
+void pki_x509::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509 *_cert;
-	XFile file(fname);
-	file.open_read();
-	QByteArray ba(file.readAll());
-
 	_cert = PEM_read_bio_X509(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_cert) {
 		pki_ign_openssl_error();
@@ -666,6 +663,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 	if (!signkey) {
 		my_error(tr("There is no key for signing !"));
 	}
+	AuditKey::refuseSigning(signkey);
 	tkey = signkey->decryptKey();
 	pki_openssl_error();
 	X509_sign(cert, tkey, digest.MD());
@@ -681,7 +679,7 @@ void pki_x509::writeDefault(const QString &dirname) const
 	writeCert(file, true);
 }
 
-void pki_x509::writeCert(XFile &file, bool PEM) const
+void pki_x509::writeCert(QIODevice &file, bool PEM) const
 {
 	if (!cert)
 		return;

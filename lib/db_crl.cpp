@@ -9,7 +9,6 @@
 #include "db_crl.h"
 #include "db_x509.h"
 #include "audit.h"
-#include "audit_key.h"
 #include "exception.h"
 #include "func.h"
 #include "database_model.h"
@@ -116,12 +115,13 @@ pki_base *db_crl::insert(pki_base *item)
 	return crl;
 }
 
-void db_crl::exportItems(const QModelIndexList &indexes,
-			const pki_export *xport, XFile &file) const
+void db_crl::writeItems(const QList<pki_base *> &items,
+			const pki_export *xport, QIODevice &file,
+			const Passwd &) const
 {
 	QStringList vcal;
-	foreach(QModelIndex idx, indexes) {
-		pki_crl *crl = fromIndex<pki_crl>(idx);
+	foreach(pki_base *pki, items) {
+		pki_crl *crl = dynamic_cast<pki_crl *>(pki);
 		if (!crl)
 			continue;
 		if (xport->match_all(F_CAL))
@@ -269,7 +269,6 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			throw serviceError("no_private_signing_key",
 				tr("There is no private key for '%1'")
 					.arg(cert->getIntName()));
-		AuditKey::refuseSigning(signkey);
 		if (task.hashAlgo.isInsecure())
 			throw serviceError("insecure_hash",
 				tr("A CRL is never signed with %1")

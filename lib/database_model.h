@@ -17,6 +17,9 @@
 #include "sql.h"
 #include "db_base.h"
 #include "lib/Passwd.h"
+#include "importexport.h"
+
+class ServiceContext;
 
 typedef QMap<QString, QString> DbMap;
 
@@ -78,6 +81,19 @@ class database_model: public QObject
 			return nullptr;
 		}
 		pki_base *insert(pki_base *pki);
+		/* Imports files, data or read objects (BTD-34): one audit
+		 * entry object.import per object, created or found in the
+		 * database (outcome created, completed or existing), plus
+		 * the revocation entries of the rows a CRL or renewed CA
+		 * adds; or one object.import failure. All in one
+		 * transaction. Throws serviceError (missing_password,
+		 * wrong_password, unreadable_input, no_pki_data,
+		 * nothing_to_import, unsupported_type, database_error) and
+		 * errorEx (internal_error). No question or message, except a
+		 * GUI password dialog when spec has no password source;
+		 * call it outside a transaction. */
+		ImportResult importItems(const ServiceContext &ctx,
+				const ImportSpec &spec);
 
 		static DbMap splitRemoteDbName(const QString &db);
 		static bool isRemoteDB(const QString &db);
@@ -144,6 +160,16 @@ class xca_db
 		pki_base *insert(pki_base *pki)
 		{
 			return db ? db->insert(pki) : NULL;
+		}
+		ImportResult importItems(const ServiceContext &ctx,
+				const ImportSpec &spec)
+		{
+			if (db)
+				return db->importItems(ctx, spec);
+			for (pki_base *pki : spec.items)
+				delete pki;
+			throw serviceError("no_database",
+				QObject::tr("No database is open"));
 		}
 		db_base *modelForPki(const pki_base *pki) const
 		{

@@ -34,6 +34,10 @@ class db_key: public db_base
 		void inToCont(pki_base *pki);
 		void remFromCont(const QModelIndex &idx);
 		pki_base* insert(pki_base *item);
+		/* Stores lkey without a message; oldkey: the public key of the
+		 * database that lkey completes (it takes over its name and
+		 * comment and replaces it). NULL if storing failed. */
+		pki_key *insertKey(pki_key *lkey, pki_key *oldkey);
 		void setOwnPass(QModelIndex idx, enum pki_key::passType);
 		void loadContainer();
 		/* Generates one key pair (BTD-32). Throws serviceError for a
@@ -48,9 +52,10 @@ class db_key: public db_base
 		pki_key *newKey(const keyjob &task, const QString &name);
 		/* Audit parameters key_type, key_size, curve of a key */
 		static void keyParams(AuditParams &params, pki_key *key);
-		int exportFlags(const QModelIndex &index) const;
-		void exportItem(const QModelIndex &index,
-			const pki_export *xport, XFile &file) const;
+		int exportFlags(pki_base *pki) const;
+		void writeItem(pki_base *pki, const pki_export *xport,
+			QIODevice &file, const Passwd &pass) const;
+		const pki_export *clipboardFormat() const;
 		void updateKeyEncryptionScheme();
 
 	signals:

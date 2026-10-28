@@ -10,7 +10,6 @@
 #include "db_key.h"
 #include "pki_x509req.h"
 #include "audit.h"
-#include "audit_key.h"
 #include "exception.h"
 #include "func.h"
 #include "request.h"
@@ -87,7 +86,6 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	if (spec.key->isPubKey())
 		throw serviceError("no_private_key",
 			tr("The key you selected for signing is not a private one."));
-	AuditKey::refuseSigning(spec.key);
 
 	req = new pki_x509req();
 	req->pkiSource = spec.source;
@@ -144,10 +142,10 @@ pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
 	}
 }
 
-void db_x509req::exportItem(const QModelIndex &index,
-		const pki_export *xport, XFile &file) const
+void db_x509req::writeItem(pki_base *pki, const pki_export *xport,
+		QIODevice &file, const Passwd &) const
 {
-	pki_x509req *req = fromIndex<pki_x509req>(index);
+	pki_x509req *req = dynamic_cast<pki_x509req *>(pki);
 	if (!req)
 		return;
 

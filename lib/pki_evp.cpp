@@ -354,7 +354,7 @@ EVP_PKEY *pki_evp::load_ssh_ed25519_privatekey(const QByteArray &ba,
 	return pkey;
 }
 
-void pki_evp::fload(const QString &fname)
+void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	pass_info p(XCA_TITLE, tr("Please enter the password to decrypt the private key from file:\n%1").
 		arg(compressFilename(fname)));
@@ -362,9 +362,6 @@ void pki_evp::fload(const QString &fname)
 	pem_password_cb *cb = PwDialogCore::pwCallback;
 
 	pki_ign_openssl_error();
-	XFile file(fname);
-	file.open_read();
-	QByteArray ba = file.readAll();
 	EVP_PKEY *pkey;
 
 	do {
@@ -804,31 +801,32 @@ void pki_evp::fillJWK(QJsonObject &json, const pki_export *xport) const
 	EVP_PKEY_free(pkey);
 };
 
-void pki_evp::writePKCS8(XFile &file, const EVP_CIPHER *enc,
-		pem_password_cb *cb, bool pem) const
+void pki_evp::writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
+		const Passwd &pass, bool pem) const
 {
-	pass_info p(XCA_TITLE,
-		tr("Please enter the password to protect the PKCS#8 key '%1' in file:\n%2")
-			.arg(getIntName()).arg(nativeSeparator(file.fileName())));
-	p.setPurpose(pass_info::ExportPassword);
 	EVP_PKEY *pkey = decryptKey();
 	if (!pkey) {
 		pki_openssl_error();
 		return;
 	}
+	/* With a cipher, kstr is never NULL: OpenSSL must not fall back
+	 * to its own terminal prompt */
+	char *kstr = enc ? (char *)pass.constData() : NULL;
+	int klen = enc ? pass.size() : 0;
 	BioByteArray b;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, NULL, 0, cb, &p);
+		PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, kstr, klen,
+						NULL, NULL);
 	} else {
-		i2d_PKCS8PrivateKey_bio(b, pkey, enc, NULL, 0, cb, &p);
+		i2d_PKCS8PrivateKey_bio(b, pkey, enc, kstr, klen, NULL, NULL);
 	}
 	EVP_PKEY_free(pkey);
-	p.throwError();
+	pki_openssl_error();
 	file.write(b);
 }
 
-void pki_evp::writePVKprivate(XFile &file) const
+void pki_evp::writePVKprivate(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
 	if (!pkey) {
@@ -849,28 +847,17 @@ void pki_evp::writePVKprivate(XFile &file) const
 	file.write(b);
 }
 
-static int mycb(char *buf, int size, int, void *)
-{
-	strncpy(buf, pki_evp::passwd, size);
-	return strlen(pki_evp::passwd);
-}
-
 void pki_evp::writeDefault(const QString &dirname) const
 {
 	XFile file(get_dump_filename(dirname, ".pem"));
 	file.open_key();
 	writeKey(file, pki_evp::passwd.isEmpty() ? NULL : EVP_aes_256_cbc(),
-			mycb, true);
+			pki_evp::passwd, true);
 }
 
-void pki_evp::writeKey(XFile &file, const EVP_CIPHER *enc,
-			pem_password_cb *cb, bool pem) const
+void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,
+			const Passwd &pass, bool pem) const
 {
-	pass_info p(XCA_TITLE,
-		tr("Please enter the password to protect the private key '%1' in file:\n%2")
-			.arg(getIntName()).arg(nativeSeparator(file.fileName())));
-	p.setPurpose(pass_info::ExportPassword);
-
 	if (isPubKey()) {
 		writePublic(file, pem);
 		return;
@@ -884,12 +871,12 @@ void pki_evp::writeKey(XFile &file, const EVP_CIPHER *enc,
 	if (pem) {
 		b += PEM_comment();
 		PEM_write_bio_PrivateKey_traditional(b, pkey, enc,
-						NULL, 0, cb, &p);
+			enc ? pass.constUchar() : NULL, enc ? pass.size() : 0,
+			NULL, NULL);
 	} else {
 		i2d_PrivateKey_bio(b, pkey);
 	}
 	EVP_PKEY_free(pkey);
-	p.throwError();
 	pki_openssl_error();
 	file.write(b);
 }
@@ -930,7 +917,7 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 	(void)pkey;
 #endif
 }
-void pki_evp::writeSSH2private(XFile &file) const
+void pki_evp::writeSSH2private(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
 	if (!pkey) {
@@ -944,7 +931,7 @@ void pki_evp::writeSSH2private(XFile &file) const
 		file.write(b);
 	} else
 #endif
-		writeKey(file, nullptr, nullptr, true);
+		writeKey(file, nullptr, Passwd(), true);
 
 	EVP_PKEY_free(pkey);
 }

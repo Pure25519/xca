@@ -77,6 +77,6 @@ ExportDialog *ReqTreeView::exportDialog(const QModelIndexList &indexes)
 		tr("Certificate request export"),
 		tr("Certificate request ( *.pem *.der *.csr )"),
 		indexes, QPixmap(":csrImg"),
-		pki_export::select(x509_req, basemodel->exportFlags(indexes)),
+		pki_export::select(x509_req, basemodel->exportFlags(items(indexes))),
 		"csrexport");
 }

@@ -128,3 +128,10 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_revocation PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# Import and export (BTD-34); files made and checked with the openssl program
+ServiceTest(test_service_importexport)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_importexport PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()

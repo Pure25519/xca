@@ -190,6 +190,15 @@ const pki_export *ExportDialog::export_type(int idx) const
 	return idx ? pki_export::by_id(idx) : NULL;
 }
 
+ExportSpec ExportDialog::exportSpec(const QList<pki_base *> &items) const
+{
+	ExportSpec spec;
+	spec.items = items;
+	spec.format = export_type();
+	spec.fileName = filename->text();
+	return spec;
+}
+
 void ExportDialog::on_exportFormat_highlighted(int index)
 {
 	const pki_export *x = export_type(index);

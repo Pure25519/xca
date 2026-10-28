@@ -67,7 +67,7 @@ class pki_crl: public pki_x509name
 		pki_crl(const QString &name = QString());
 		~pki_crl();
 		void fromPEM_BIO(BIO *bio, const QString &name);
-		void fload(const QString &fname);
+		void fromBytes(const QByteArray &ba, const QString &fname);
 		QString getSigAlg() const;
 		void writeDefault(const QString &dirname) const;
 		void createCrl(const QString d, pki_x509 *iss);
@@ -75,7 +75,7 @@ class pki_crl: public pki_x509name
 		void addExt(int nid, QString value);
 		void addV3ext(const x509v3ext &e);
 		void sign(pki_key *key, const digest &digest);
-		void writeCrl(XFile &file, bool pem = true) const;
+		void writeCrl(QIODevice &file, bool pem = true) const;
 		pki_x509 *getIssuer() const;
 		QString getIssuerName() const;
 		void setIssuer(pki_x509 *iss);

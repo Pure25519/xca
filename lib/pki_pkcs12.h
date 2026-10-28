@@ -10,6 +10,8 @@
 
 #include "pki_multi.h"
 
+class Passwd;
+
 class pki_key;
 class pki_x509;
 
@@ -49,10 +51,13 @@ class pki_pkcs12: public pki_multi
 		QString alias{}, algorithm{};
 		pki_x509 *cert{};
 		pki_key *key{};
+		void parse(const QByteArray &ba, const QString &fname);
 
 	public:
 		pki_pkcs12(const QString &d, pki_x509 *acert, pki_key *akey);
 		pki_pkcs12(const QString &fname);
+		/* The content of a PKCS#12 file (BTD-34) */
+		pki_pkcs12(const QByteArray &ba, const QString &name);
 
 		pki_key *getKey() const
 		{
@@ -62,7 +67,9 @@ class pki_pkcs12: public pki_multi
 		{
 			return cert;
 		}
-		void writePKCS12(XFile &file, encAlgo &encAlgo) const;
+		/* No prompt: the caller provides the password (BTD-34) */
+		void writePKCS12(QIODevice &file, encAlgo &encAlgo,
+				const Passwd &pass) const;
 		void collect_properties(QMap<QString, QString> &prp) const;
 };
 #endif

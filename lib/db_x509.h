@@ -29,7 +29,7 @@ class db_x509: public db_x509super
 	Q_OBJECT
 
 		static void writeTaggedPEM(const BioByteArray &b,
-						const QString &tag, XFile &file);
+						const QString &tag, QIODevice &file);
 		pki_x509 *issue(const IssuanceSpec &spec, AuditParams &params,
 				const ServiceContext &ctx);
 	protected:
@@ -49,7 +49,7 @@ class db_x509: public db_x509super
 		QList<pki_x509*> getAllIssuers();
 		QList<pki_x509*> getCerts(bool unrevoked);
 		void writeIndex(const QString &fname, bool hierarchy) const;
-		void writeIndex(XFile &file, QList<pki_x509*> items) const;
+		void writeIndex(QIODevice &file, QList<pki_x509*> items) const;
 		pki_base *insert(pki_base *item);
 		void markRequestSigned(pki_x509req *req, pki_x509 *cert);
 		/* Issues one certificate (BTD-31). Throws serviceError for a
@@ -64,9 +64,10 @@ class db_x509: public db_x509super
 		 * also newItem() and the newCert() slots below: defined in
 		 * widgets/NewX509_issue.cpp, they fill an IssuanceSpec */
 		void newCert(pki_x509 *cert);
-		void writePKCS12(pki_x509 *cert, XFile &file, bool chain) const;
-		void writePKCS7(pki_x509 *cert, XFile &file, int flags,
-				const QModelIndexList &list) const;
+		void writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
+				const Passwd &pass) const;
+		void writePKCS7(const QList<pki_base *> &certs,
+				QIODevice &file) const;
 		void fillContextMenu(QMenu *menu, const QModelIndex &index);
 		void inToCont(pki_base *pki);
 		/* Serial number rule of BTD-31, see randomSerial() */
@@ -112,10 +113,19 @@ class db_x509: public db_x509super
 		 * ambiguous_serial. */
 		pki_x509 *certBySerial(pki_x509 *issuer,
 				const QString &serial) const;
-		int exportFlags(const QModelIndex &idx) const;
-		void exportItems(const QModelIndexList &indexes,
-				const pki_export *xport, XFile &file) const;
-		void exportItem(const QModelIndex &, const pki_export *, XFile &) const;
+		int exportFlags(pki_base *pki) const;
+		void writeItems(const QList<pki_base *> &items,
+				const pki_export *xport, QIODevice &file,
+				const Passwd &pass) const;
+		void writeItem(pki_base *pki, const pki_export *xport,
+				QIODevice &file, const Passwd &pass) const;
+		QList<pki_base *> exportedObjects(
+				const QList<pki_base *> &items,
+				const pki_export *xport) const;
+		QList<pki_key *> exportedPrivateKeys(
+				const QList<pki_base *> &items,
+				const pki_export *xport) const;
+		const pki_export *clipboardFormat() const;
 
 	public slots:
 		void newItem();

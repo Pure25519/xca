@@ -109,10 +109,10 @@ bool db_temp::alterTemp(pki_temp *temp)
 	return true;
 }
 
-void db_temp::exportItem(const QModelIndex &index,
-                        const pki_export *, XFile &file) const
+void db_temp::writeItem(pki_base *pki, const pki_export *,
+			QIODevice &file, const Passwd &) const
 {
-	pki_temp *temp = fromIndex<pki_temp>(index);
+	pki_temp *temp = dynamic_cast<pki_temp *>(pki);
 	if (temp)
 		temp->writeTemp(file);
 }
