@@ -16,6 +16,7 @@
 class test_asn1time: public QObject
 {
     Q_OBJECT
+    static QString withoutZone(const QString &pretty);
 private slots:
     void construct_op();
     void output();
@@ -54,19 +55,23 @@ void test_asn1time::output()
 
 #if !defined(Q_OS_WIN32)
 	a.setTimeZone(QTimeZone("UTC"));
-	#if (QT_VERSION >= QT_VERSION_CHECK(6, 7, 0))
-		#define UTC "GMT"
-	#else
-		#define UTC "UTC"
-	#endif
-	QCOMPARE(a.toPretty(), "Monday, 25 November 2019 15:30:15 " UTC);
+	QCOMPARE(withoutZone(a.toPretty()), "Monday, 25 November 2019 15:30:15");
 
 	a.setTimeZone(QTimeZone("Europe/Berlin"));
-	QCOMPARE(a.toPretty(), "Monday, 25 November 2019 14:30:15 " UTC);
+	QCOMPARE(withoutZone(a.toPretty()), "Monday, 25 November 2019 14:30:15");
 
 	a.setTimeZone(QTimeZone("UTC+07:00"));
-	QCOMPARE(a.toPretty(), "Monday, 25 November 2019 08:30:15 " UTC);
+	QCOMPARE(withoutZone(a.toPretty()), "Monday, 25 November 2019 08:30:15");
 #endif
+}
+
+/* The abbreviation of the UTC zone is "GMT" or "UTC",
+ * depending on the Qt and ICU versions. Accept both. */
+QString test_asn1time::withoutZone(const QString &pretty)
+{
+	if (pretty.endsWith(" GMT") || pretty.endsWith(" UTC"))
+		return pretty.chopped(4);
+	return pretty;
 }
 
 QTEST_MAIN(test_asn1time)
