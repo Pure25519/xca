@@ -6,6 +6,7 @@
 
 #include <openssl/evp.h>
 
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
@@ -27,6 +28,10 @@ class test_service_key : public ServiceTestCase
 	void newKey();
 	void newKeySmallRsaConfirmed();
 	void newKeySmallRsaDeclined();
+	void newKeySmallRsaHeadless_data();
+	void newKeySmallRsaHeadless();
+	void newKeySmallRsaHeadlessUnconfirmed_data();
+	void newKeySmallRsaHeadlessUnconfirmed();
 	void newKeyTooSmall();
 };
 
@@ -81,6 +86,10 @@ void test_service_key::newKeySmallRsaConfirmed()
 	QVERIFY(key);
 	QCOMPARE(key->getIntName(), QString("small-key"));
 	QCOMPARE(Store.getAll<pki_key>().size(), 1);
+	/* The audit entry names the confirmed question (BTD-71) */
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["confirmed"].toString(), QString("key.size:dialog"));
 }
 
 void test_service_key::newKeySmallRsaDeclined()
@@ -90,6 +99,76 @@ void test_service_key::newKeySmallRsaDeclined()
 				keyjob("RSA:768"), "small-key");
 	QVERIFY(!key);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+}
+
+/* xca --no-gui (BTD-71): the headless xcaWarningCore answers the
+ * question only if --yes or --confirm key.size confirmed it */
+void test_service_key::newKeySmallRsaHeadless_data()
+{
+	QTest::addColumn<bool>("all");
+	QTest::addColumn<QStringList>("ids");
+	QTest::addColumn<QString>("source");
+
+	QTest::newRow("--yes") << true << QStringList() << "--yes";
+	QTest::newRow("--confirm") << false << QStringList{ "item.delete",
+				"key.size" } << "--confirm";
+	QTest::newRow("both") << true << QStringList{ "key.size" }
+				<< "--confirm";
+}
+
+void test_service_key::newKeySmallRsaHeadless()
+{
+	QFETCH(bool, all);
+	QFETCH(QStringList, ids);
+	QFETCH(QString, source);
+
+	warning->delegateTo(new xcaWarningCore());
+	xcaWarningCore::setConfirmations(all, ids);
+	pki_key *key = Database.model<db_key>()->newKey(
+				keyjob("RSA:768"), "small-key");
+	QVERIFY(key);
+	QCOMPARE(Store.getAll<pki_key>().size(), 1);
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["confirmed"].toString(), "key.size:" + source);
+}
+
+void test_service_key::newKeySmallRsaHeadlessUnconfirmed_data()
+{
+	QTest::addColumn<QStringList>("ids");
+
+	QTest::newRow("no answer") << QStringList();
+	QTest::newRow("other question") << QStringList{ "item.delete" };
+}
+
+void test_service_key::newKeySmallRsaHeadlessUnconfirmed()
+{
+	QFETCH(QStringList, ids);
+
+	warning->delegateTo(new xcaWarningCore());
+	xcaWarningCore::setConfirmations(false, ids);
+	int before = AuditLog::entries().size();
+	try {
+		Database.model<db_key>()->newKey(keyjob("RSA:768"),
+					"small-key");
+		QFAIL("the unconfirmed question did not stop newKey()");
+	} catch (confirmationError &err) {
+		QCOMPARE(err.question, QString("key.size"));
+		QVERIFY(err.getString().contains("--confirm key.size"));
+	}
+	/* Nothing generated, one "denied" entry */
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	QList<AuditEntry> entries = AuditLog::entries();
+	QCOMPARE(entries.size(), before + 1);
+	AuditEntry e = entries.last();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("denied"));
+	QCOMPARE(e.errorCode, QString("confirmation_required"));
+	QCOMPARE(e.params["question"].toString(), QString("key.size"));
+	QCOMPARE(e.params["key_size"].toLongLong(), qint64(768));
+	QVERIFY(!e.params.contains("confirmed"));
+	QVERIFY(AuditLog::verify().ok());
 }
 
 void test_service_key::newKeyTooSmall()

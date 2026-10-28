@@ -246,16 +246,27 @@ pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
 pki_key *db_key::newKey(const keyjob &task, const QString &name)
 {
 	pki_key *key = NULL;
+	ServiceContext ctx = ServiceContext::localUser(
+				ServiceContext::processChannel);
 
 	if (!task.isEC() && !task.isED25519() && task.size >= 32 &&
 	    (task.size < 1024 || task.size > 8192))
 	{
-		if (!XCA_YESNO(tr("You are sure to create a key of the size: %1 ?").arg(task.size)))
-			return NULL;
+		try {
+			if (!xcaWarning::confirm(ctx, "key.size",
+				tr("You are sure to create a key of the size: %1 ?").arg(task.size)))
+				return NULL;
+		} catch (confirmationError &err) {
+			/* xca --no-gui without --yes: nothing is generated */
+			AuditParams params = keyjobParams(task, name);
+			params.set("question", err.question);
+			AuditLog::append(ctx, "key.generate", "key", QString(),
+				params, "denied", "confirmation_required");
+			throw;
+		}
 	}
 	try {
-		key = newKey(ServiceContext::localUser(
-				ServiceContext::processChannel), task, name);
+		key = newKey(ctx, task, name);
 		emit keyDone(key);
 		createSuccess(key);
 	} catch (errorEx &err) {

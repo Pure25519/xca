@@ -24,6 +24,7 @@
 #include "db_x509.h"
 #include "db_crl.h"
 #include "audit.h"
+#include "XcaWarningCore.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -88,6 +89,9 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::SqlPassword, sqlpass);
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
+		/* Questions likewise: "yes" only if confirmed here */
+		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
+				cmd_opts["confirm"].split(","));
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())

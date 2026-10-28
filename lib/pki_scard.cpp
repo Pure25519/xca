@@ -337,7 +337,7 @@ void pki_scard::deleteFromToken(const slotid &slot)
 	p11.startSession(slot, true);
 
 	tkInfo ti = p11.tokenInfo();
-	if (!XCA_YESNO(tr("Delete the private key '%1' from the token '%2 (#%3)' ?").
+	if (!XCA_YESNO("token.delete_key", tr("Delete the private key '%1' from the token '%2 (#%3)' ?").
 			arg(getIntName()).arg(ti.label()).arg(ti.serial())))
 		return;
 
@@ -573,7 +573,7 @@ bool pki_scard::prepare_card(slotid *slot) const
 		} catch (...) {
 			qDebug() << "find_key_on_card exception";
 		}
-	} while (XCA_OKCANCEL(msg));
+	} while (XCA_OKCANCEL("token.insert_card", msg));
 	return false;
 }
 

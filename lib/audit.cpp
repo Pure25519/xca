@@ -52,6 +52,13 @@ QString ServiceContext::osUser()
 	return user.isEmpty() ? QString("unknown") : user;
 }
 
+void ServiceContext::confirm(const QString &id, const QString &source)
+{
+	QString c = id + ":" + source;
+	if (!confirmed.contains(c))
+		confirmed << c;
+}
+
 ServiceContext ServiceContext::localUser(enum channel c)
 {
 	return ServiceContext(c, "os:" + osUser());
@@ -73,12 +80,12 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
-		"ca_id", "count", "crl_number", "curve", "der_size", "file",
-		"fingerprint", "format", "hash_algo", "invalidity_date",
-		"issuer", "item_id", "key_size", "key_type", "name",
-		"next_update", "not_after", "not_before", "reason",
-		"reason_bit", "revocation_date", "serial", "subject",
-		"template", "this_update",
+		"ca_id", "confirmed", "count", "crl_number", "curve",
+		"der_size", "file", "fingerprint", "format", "hash_algo",
+		"invalidity_date", "issuer", "item_id", "key_size",
+		"key_type", "name", "next_update", "not_after", "not_before",
+		"question", "reason", "reason_bit", "revocation_date",
+		"serial", "subject", "template", "this_update",
 	};
 	return list;
 }
@@ -409,6 +416,8 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	e.objectType = objectType;
 	e.objectId = objectId;
 	e.params = params.getValues();
+	if (!ctx.confirmations().isEmpty())
+		e.params["confirmed"] = ctx.confirmations().join(",");
 	e.result = result;
 	e.errorCode = errorCode;
 	e.hash = e.computeHash();

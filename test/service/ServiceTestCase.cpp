@@ -105,6 +105,17 @@ void StrictPwDialog::pinPadLogin(pass_info *p, QThread *login)
 	login->wait();
 }
 
+StrictWarning::~StrictWarning()
+{
+	delete delegate;
+}
+
+void StrictWarning::delegateTo(xcaWarning_i *d)
+{
+	delete delegate;
+	delegate = d;
+}
+
 void StrictWarning::expectQuestion(bool answer)
 {
 	answers << answer;
@@ -125,6 +136,8 @@ void StrictWarning::reset()
 				.arg(m));
 	answers.clear();
 	messages.clear();
+	delegateTo(nullptr);
+	xcaWarningCore::setConfirmations(false, QStringList());
 }
 
 void StrictWarning::message(const char *kind, const QString &msg)
@@ -138,11 +151,15 @@ void StrictWarning::message(const char *kind, const QString &msg)
 	ServiceViolations::add(QString("unexpected %1: %2").arg(kind).arg(msg));
 }
 
-bool StrictWarning::question(const char *kind, const QString &msg)
+bool StrictWarning::question(const char *kind, const QString &id,
+			const QString &msg)
 {
+	if (delegate)
+		return QString(kind) == "yesno" ? delegate->yesno(id, msg) :
+				delegate->okcancel(id, msg);
 	if (answers.isEmpty()) {
-		ServiceViolations::add(QString("unexpected question (%1): %2")
-				.arg(kind).arg(msg));
+		ServiceViolations::add(QString("unexpected question (%1 %2): %3")
+				.arg(kind).arg(id).arg(msg));
 		return false;
 	}
 	return answers.takeFirst();
@@ -163,14 +180,19 @@ void StrictWarning::warningv3(const QString &msg, const extList &)
 	message("warning", msg);
 }
 
-bool StrictWarning::yesno(const QString &msg)
+bool StrictWarning::yesno(const QString &id, const QString &msg)
 {
-	return question("yesno", msg);
+	return question("yesno", id, msg);
 }
 
-bool StrictWarning::okcancel(const QString &msg)
+bool StrictWarning::okcancel(const QString &id, const QString &msg)
 {
-	return question("okcancel", msg);
+	return question("okcancel", id, msg);
+}
+
+QString StrictWarning::answerSource(const QString &id) const
+{
+	return delegate ? delegate->answerSource(id) : QString("dialog");
 }
 
 void StrictWarning::sqlerror(QSqlError err)

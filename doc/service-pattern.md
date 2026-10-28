@@ -48,6 +48,17 @@ message), it stays as the interactive wrapper for the GUI and `xca --no-gui` and
 function with `ServiceContext::localUser(ServiceContext::processChannel)`; the rejection itself
 moved into the service function, so the wrapper only asks and reports.
 
+Questions (BTD-71): every `XCA_YESNO`/`XCA_OKCANCEL` carries a stable question id (`key.size`,
+`item.delete`, `token.*`, `dh.abort`). Without a GUI, `xcaWarningCore` answers "yes" only if the
+command line confirmed the question (`--yes` for all, `--confirm <id,...>` per id); otherwise it
+throws `confirmationError` (`lib/exception.h`) with the id, and `xca --no-gui` exits 1. A wrapper
+whose service call depends on the answer asks with `xcaWarning::confirm(ctx, id, msg)`: the "yes"
+is recorded in the `ServiceContext`, and `AuditLog::append()` writes it as parameter `confirmed`
+(`key.size:--yes`, `key.size:--confirm`, `key.size:dialog`). An unconfirmed question writes a
+`denied` entry with error code `confirmation_required` and parameter `question`, and nothing is
+changed. Service functions themselves still never ask; a caller without a GUI (REST, EST, CMP)
+passes its confirmations in the `ServiceContext`.
+
 A request's extensions are built in the context of a temporary self-signed certificate with the
 spec's subject and key (`RequestSpec::buildExtensions()`), as the dialog did when its temporary
 context was current. "hash" (subject key identifier) and `DNS:copycn` therefore always refer to

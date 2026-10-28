@@ -32,8 +32,8 @@ class xcaWarningGui : public QObject, public xcaWarning_i
 	void information(const QString &msg);
 	void warning(const QString &msg);
 	void warningv3(const QString &msg, const extList &el);
-	bool yesno(const QString &msg);
-	bool okcancel(const QString &msg);
+	bool yesno(const QString &id, const QString &msg);
+	bool okcancel(const QString &id, const QString &msg);
 	void sqlerror(QSqlError err);
 	void error(const QString &msg);
 };

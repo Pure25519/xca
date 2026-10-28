@@ -73,6 +73,20 @@ class secretError: public errorEx
 		}
 };
 
+/* A question (XCA_YESNO, XCA_OKCANCEL) that nobody answered "yes"
+ * without a GUI (BTD-71): the operation stops instead of going on.
+ * question is the stable id of the question, e.g. "key.size". */
+class confirmationError: public errorEx
+{
+	public:
+		QString question;
+
+		confirmationError(const QString &id, const QString &txt)
+			: errorEx(txt), question(id)
+		{
+		}
+};
+
 /* A rejected service call (BTD-31, pattern for BTD-32..35).
  * code is the stable snake_case reason that also goes into the
  * error_code of the audit entry, e.g. "no_private_signing_key";
