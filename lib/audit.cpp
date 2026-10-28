@@ -435,8 +435,6 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 	e.objectType = objectType;
 	e.objectId = objectId;
 	e.params = params.getValues();
-	if (!ctx.confirmations().isEmpty())
-		e.params["confirmed"] = ctx.confirmations().join(",");
 	e.result = result;
 	e.errorCode = errorCode;
 	e.hash = e.computeHash();
@@ -489,8 +487,13 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (action == actionCheckpoint || action == actionKeyCreate)
 		throw errorEx(QString("Audit action '%1' is reserved")
 				.arg(action));
+	/* The questions confirmed for this operation (BTD-71). Only here:
+	 * a checkpoint signs exactly the params it stores. */
+	AuditParams p = params;
+	if (!ctx.confirmations().isEmpty())
+		p.set("confirmed", ctx.confirmations().join(","));
 	AuditEntry e = insertEntry(ctx, action, objectType, objectId,
-				params, result, errorCode);
+				p, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	try {

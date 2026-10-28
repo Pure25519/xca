@@ -80,6 +80,7 @@ class test_service_checkpoint : public ServiceTestCase
 
   private slots:
 	void checkpointEveryN();
+	void checkpointAfterConfirmedOperation();
 	void defaultInterval();
 	void recomputedChain_data();
 	void recomputedChain();
@@ -259,6 +260,33 @@ void test_service_checkpoint::checkpointEveryN()
 	reopenDatabase();
 	QVERIFY(AuditLog::verify().ok());
 	QCOMPARE(AuditKey::current(), key);
+}
+
+/* A checkpoint written by an operation with confirmed questions (BTD-71)
+ * carries only its own params, so its signature verifies */
+void test_service_checkpoint::checkpointAfterConfirmedOperation()
+{
+	Settings["audit_checkpoint_interval"] = 5;
+	ServiceContext confirmed = ctx;
+	confirmed.confirm("key.size", "--yes");
+	for (int i = 1; i <= 5; i++) {
+		AuditParams p;
+		p.set("name", QString("key-%1").arg(i));
+		AuditLog::append(confirmed, "key.generate", "key",
+				QString::number(i), p);
+	}
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 7);
+	QCOMPARE(list[4].params.value("confirmed").toString(),
+		QString("key.size:--yes"));
+	QVERIFY(!list[5].params.contains("confirmed"));
+	QCOMPARE(list[6].action, QString(AuditLog::actionCheckpoint));
+	QCOMPARE(QStringList(list[6].params.keys()), QStringList({
+		"checkpoint_hash", "checkpoint_seq", "checkpoint_time",
+		"key_id", "signature" }));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.checkpoints, qint64(1));
 }
 
 void test_service_checkpoint::defaultInterval()
