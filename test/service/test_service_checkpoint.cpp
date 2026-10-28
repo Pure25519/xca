@@ -280,6 +280,9 @@ void test_service_checkpoint::checkpointAfterConfirmedOperation()
 	QCOMPARE(list[4].params.value("confirmed").toString(),
 		QString("key.size:--yes"));
 	QVERIFY(!list[5].params.contains("confirmed"));
+	/* The same for the password check on open (BTD-78) */
+	QVERIFY(list[4].params.contains("db_unlock_verified"));
+	QVERIFY(!list[5].params.contains("db_unlock_verified"));
 	QCOMPARE(list[6].action, QString(AuditLog::actionCheckpoint));
 	QCOMPARE(QStringList(list[6].params.keys()), QStringList({
 		"checkpoint_hash", "checkpoint_seq", "checkpoint_time",
