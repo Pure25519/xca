@@ -31,6 +31,7 @@
 #include "db_crl.h"
 #include "db_x509req.h"
 #include "db_temp.h"
+#include "audit.h"
 
 xca_db Database;
 
@@ -70,16 +71,28 @@ const QString &database_model::detect_provider()
 	return db_provider;
 }
 
+static unsigned bxcSchemaVersion()
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "SELECT value FROM settings WHERE key_='bxc_schema'");
+	q.exec();
+	return q.next() ? q.value(0).toUInt() : 0;
+}
+
 QSqlError database_model::initSqlDB()
 {
-#define MAX_SCHEMAS 9
+#define MAX_SCHEMAS 8
 /* The initial SQL creation data creates a version "7"
  * database. Then an update to Version 8 by creating "takeys"
- * and to Version 9 by creating "audit_log" is executed.
+ * is executed.
  */
 #define INITIAL_SCHEMA_VERSION "7"
+/* Migrations of the bxc-pki fork, counted in settings 'bxc_schema' */
+#define BXC_MAX_SCHEMAS 1
 
 	QStringList schemas[MAX_SCHEMAS];
+	QStringList bxc_schemas[BXC_MAX_SCHEMAS];
 
 #include "database_schema.cpp"
 
@@ -99,6 +112,9 @@ QSqlError database_model::initSqlDB()
 	if (!TransBegin())
 		return db.lastError();
 
+	bool existing = XSqlQuery::schemaVersion() > 0;
+	bool auditCreated = false;
+
 	for (;;) {
 		i = XSqlQuery::schemaVersion();
 		if (i >= ARRAY_SIZE(schemas))
@@ -115,6 +131,30 @@ QSqlError database_model::initSqlDB()
 
 	if (i < MAX_SCHEMAS)
 		throw errorEx(QObject::tr("Failed to update the database schema to the current version"));
+
+	for (;;) {
+		i = bxcSchemaVersion();
+		if (i >= ARRAY_SIZE(bxc_schemas))
+			break;
+		foreach(QString sql, bxc_schemas[i]) {
+			sql.replace("_B64_BLOB_", b64_blob);
+			qDebug("EXEC[bxc %d]: '%s'", i, CCHAR(sql));
+			if (!q.exec(sql) || q.lastError().isValid()) {
+				TransRollback();
+				return q.lastError();
+			}
+		}
+		if (i == 0)
+			auditCreated = true;
+	}
+
+	if (i < BXC_MAX_SCHEMAS)
+		throw errorEx(QObject::tr("Failed to update the database schema to the current version"));
+
+	/* A database that existed before the audit log: record its
+	 * revocations, so that rows added later without an entry show */
+	if (auditCreated && existing)
+		AuditLog::writeBaseline();
 
 	TransCommit();
 	return QSqlError();

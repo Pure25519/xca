@@ -24,9 +24,13 @@ const QByteArray AuditLog::genesisHash = QByteArray(64, '0');
 const char AuditLog::actionRevoke[] = "cert.revoke";
 const char AuditLog::actionUnrevoke[] = "cert.unrevoke";
 const char AuditLog::actionCrlGenerate[] = "crl.generate";
+const char AuditLog::actionRevocationBaseline[] = "revocation.baseline";
+const char AuditLog::actionInit[] = "audit.init";
 
 /* Largest integer that RFC 8785 serialises exactly (IEEE 754 double) */
 static const qint64 maxSafeInteger = 9007199254740991LL;
+
+enum ServiceContext::channel ServiceContext::processChannel = ServiceContext::gui;
 
 ServiceContext::ServiceContext(enum channel c, const QString &actor)
 	: chan(c), actorId(actor)
@@ -309,6 +313,10 @@ QByteArray AuditLog::canonicalJson(const QVariant &v)
 		if (!std::isfinite(d) || std::floor(d) != d)
 			throw errorEx(QString("Audit value is not an integer: %1")
 					.arg(d));
+		/* Range first: casting an out-of-range double is undefined */
+		if (std::fabs(d) > (double)maxSafeInteger)
+			throw errorEx(QString("Audit value out of the safe "
+					"integer range: %1").arg(d));
 		return canonicalInteger((qint64)d);
 	}
 	case QMetaType::QString:
@@ -426,7 +434,23 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	return e;
 }
 
-/* badParams collects the entries whose params column is no JSON object */
+/* True if the stored params text is exactly the canonical JSON of an
+ * object, as append() writes it */
+static bool canonicalParams(const QString &stored, QVariantMap *params)
+{
+	QJsonDocument doc = QJsonDocument::fromJson(stored.toUtf8());
+	if (!doc.isObject())
+		return false;
+	*params = doc.toVariant().toMap();
+	try {
+		return AuditLog::canonicalJson(*params) == stored.toUtf8();
+	} catch (errorEx &) {
+		return false;
+	}
+}
+
+/* badParams collects the entries whose params column is not the
+ * canonical JSON of an object */
 static QList<AuditEntry> readEntries(QSet<qint64> *badParams)
 {
 	XSqlQuery q;
@@ -446,11 +470,8 @@ static QList<AuditEntry> readEntries(QSet<qint64> *badParams)
 		e.action = q.value(4).toString();
 		e.objectType = q.value(5).toString();
 		e.objectId = q.value(6).toString();
-		QJsonDocument doc = QJsonDocument::fromJson(
-					q.value(7).toString().toUtf8());
-		if (doc.isObject())
-			e.params = doc.toVariant().toMap();
-		else if (badParams)
+		if (!canonicalParams(q.value(7).toString(), &e.params) &&
+		    badParams)
 			*badParams << e.seq;
 		e.result = q.value(8).toString();
 		e.errorCode = q.value(9).toString();
@@ -470,9 +491,47 @@ QByteArray AuditLog::exportJsonLines()
 {
 	QByteArray out;
 
-	for (const AuditEntry &e : entries())
-		out += canonicalJson(e.toMap(true)) + "\n";
+	for (const AuditEntry &e : entries()) {
+		try {
+			out += canonicalJson(e.toMap(true)) + "\n";
+		} catch (errorEx &err) {
+			throw errorEx(QString("Audit entry %1 cannot be exported, "
+				"run --audit-verify: %2").arg(e.seq)
+				.arg(err.getString()));
+		}
+	}
 	return out;
+}
+
+void AuditLog::writeBaseline()
+{
+	XSqlQuery q;
+	QList<AuditParams> rows;
+
+	Transaction;
+	TransThrow();
+	SQL_PREPARE(q, "SELECT caId, serial, date, invaldate, crlNo, reasonBit "
+			"FROM revocations ORDER BY caId, serial");
+	q.exec();
+	throwOnError(q);
+	while (q.next()) {
+		a1time date, invalDate;
+		date.fromPlain(q.value(2).toString());
+		invalDate.fromPlain(q.value(3).toString());
+		AuditParams p = AuditParams::revocation(q.value(0).toLongLong(),
+			q.value(1).toString(), q.value(5).toInt(), date, invalDate);
+		if (!q.value(4).isNull())
+			p.set("crl_number", q.value(4).toLongLong());
+		rows << p;
+	}
+	ServiceContext ctx = ServiceContext::localUser(
+				ServiceContext::processChannel);
+	for (const AuditParams &p : rows)
+		append(ctx, actionRevocationBaseline, "cert",
+			p.getValues().value("serial").toString(), p);
+	append(ctx, actionInit, "database", QString(),
+		AuditParams().set("count", (qint64)rows.size()));
+	TransCommit();
 }
 
 /* RFC 3339 of a date in the revocations table; empty if undefined */
@@ -527,7 +586,18 @@ AuditVerifyResult AuditLog::verify()
 			r.reason = "prev_hash";
 			break;
 		}
-		if (badParams.contains(e.seq) || e.computeHash() != e.hash) {
+		if (badParams.contains(e.seq)) {
+			r.firstBrokenSeq = e.seq;
+			r.reason = "params";
+			break;
+		}
+		bool hashOk = false;
+		try {
+			hashOk = e.computeHash() == e.hash;
+		} catch (errorEx &) {
+			/* fail closed: no canonical form, no valid entry */
+		}
+		if (!hashOk) {
 			r.firstBrokenSeq = e.seq;
 			r.reason = "hash";
 			break;
@@ -546,12 +616,15 @@ AuditVerifyResult AuditLog::verify()
 
 		if (e.result != "success")
 			continue;
-		if (e.action == actionRevoke) {
+		if (e.action == actionRevoke ||
+		    e.action == actionRevocationBaseline) {
 			revocationState s;
 			s.present = true;
 			s.date = auditDate(e.params.value("revocation_date"));
 			s.invaldate = auditDate(e.params.value("invalidity_date"));
 			s.reasonBit = e.params.value("reason_bit").toLongLong();
+			/* only a baseline row can already be in a CRL */
+			s.crlNo = e.params.value("crl_number").toLongLong();
 			s.seq = e.seq;
 			state[key] = s;
 		} else if (e.action == actionUnrevoke) {
@@ -580,14 +653,21 @@ AuditVerifyResult AuditLog::verify()
 		revKey key(q.value(0).toLongLong(),
 			q.value(1).toString().toUpper());
 		seen << key;
-		if (!state.contains(key)) {
-			r.unauditedRevocations++;
-			continue;
-		}
-		const revocationState &s = state[key];
 		AuditStateMismatch m;
 		m.caId = key.first;
 		m.serial = key.second;
+		if (!state.contains(key)) {
+			/* Neither revoked through the service layer nor in the
+			 * baseline of the upgrade: inserted behind XCA's back,
+			 * or by a build without audit log */
+			r.unauditedRevocations++;
+			m.field = "row";
+			m.expected = "absent";
+			m.actual = "present";
+			r.mismatches << m;
+			continue;
+		}
+		const revocationState &s = state[key];
 		m.seq = s.seq;
 		if (!s.present) {
 			m.field = "row";

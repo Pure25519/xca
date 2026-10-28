@@ -315,9 +315,18 @@
 << "UPDATE settings SET value='8' WHERE key_='schema'"
 	;
 
-	schemas[8]
-// Audit log of the bxc-pki fork (BTD-29, lib/audit.h): append-only,
-// every row chained to its predecessor by SHA-256
+/* Migrations of the bxc-pki fork. They are counted under the settings key
+ * 'bxc_schema' (absent = 0), independent of upstream's 'schema', so that
+ * upstream can keep numbering its own migrations: a future upstream
+ * schema 9 runs as usual and never collides with a fork migration.
+ * An upstream XCA still opens a fork database (its 'schema' is unchanged)
+ * but writes no audit entries; verify() reports what it changed in the
+ * revocations table. Decision of BTD-29, review of xca#6.
+ */
+
+	bxc_schemas[0]
+// Audit log (BTD-29, lib/audit.h): append-only, every row chained to its
+// predecessor by SHA-256
 << "CREATE TABLE audit_log ("
 	"seq INTEGER PRIMARY KEY, "     // 1, 2, 3, ... without gaps
 	"created VARCHAR(32), "         // UTC time, RFC 3339
@@ -331,7 +340,7 @@
 	"error_code VARCHAR(64), "
 	"prev_hash CHAR(64), "          // hex SHA-256 of the previous row
 	"hash CHAR(64))"                // hex SHA-256 of this row
-<< "UPDATE settings SET value='9' WHERE key_='schema'"
+<< "INSERT INTO settings (key_, value) VALUES ('bxc_schema', '1')"
 	;
 
 /* When adding new tables or views, also add them to the list

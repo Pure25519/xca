@@ -21,8 +21,12 @@
 #include "lib/db_key.h"
 #include "lib/exception.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_multi.h"
+#include "lib/sql.h"
 
 #include "ServiceTestCase.h"
+
+int read_cmdline(int, char **, bool, pki_multi **);
 
 class test_service_audit : public ServiceTestCase
 {
@@ -50,6 +54,7 @@ class test_service_audit : public ServiceTestCase
 		return QDateTime::fromString(iso, Qt::ISODate);
 	}
 	void insertRevocation();
+	int xcaCli(const QStringList &args);
 
   private slots:
 	void upgradeForkDatabase();
@@ -65,7 +70,10 @@ class test_service_audit : public ServiceTestCase
 	void revocationCrossCheck_data();
 	void revocationCrossCheck();
 	void revocationAfterUnrevoke();
-	void unauditedRevocationIsNoMismatch();
+	void unauditedRevocationIsMismatch();
+	void knownLimitSuffixRewrite();
+	void appendInRolledBackTransaction();
+	void cliExitCodes();
 	void libHasNoAuditUpdateOrDelete();
 };
 
@@ -143,22 +151,41 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(before["revocations"].size(), 1);
 
 	openDatabase();
+	/* Upstream's counter stays, the fork counts in bxc_schema */
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='schema'")
-			.toString(), QString("9"));
+			.toString(), QString("8"));
+	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
+			.toString(), QString("1"));
 
-	/* Every row is unchanged. In settings only the schema version
-	 * differs, plus the option the harness sets on each open. */
+	/* Every row is unchanged. settings only gains bxc_schema and the
+	 * option the harness sets on each open. */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
-	QCOMPARE(after.take("audit_log"), QStringList());
+	QStringList audit = after.take("audit_log");
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
-	settingsBefore.replaceInStrings(QRegularExpression("^schema\\|8$"),
-			"schema|9");
 	settingsAfter.removeIf([](const QString &s) {
-		return s.startsWith("suppress_messages|");
+		return s.startsWith("suppress_messages|") ||
+			s == "bxc_schema|1";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
+
+	/* The baseline: the existing revocation, then audit.init */
+	QCOMPARE(audit.size(), 2);
+	QList<AuditEntry> baseline = AuditLog::entries();
+	QCOMPARE(baseline.size(), 2);
+	QCOMPARE(baseline[0].action, QString(AuditLog::actionRevocationBaseline));
+	QCOMPARE(baseline[0].objectId, QString("01A2B3"));
+	QCOMPARE(baseline[0].params.value("ca_id").toLongLong(), qint64(2));
+	QCOMPARE(baseline[0].params.value("revocation_date").toString(),
+			QString("2026-10-27T12:00:00Z"));
+	QCOMPARE(baseline[0].params.value("invalidity_date").toString(),
+			QString("2026-10-26T00:00:00Z"));
+	QCOMPARE(baseline[0].params.value("reason_bit").toLongLong(), qint64(1));
+	QVERIFY(!baseline[0].params.contains("crl_number"));
+	QCOMPARE(baseline[1].action, QString(AuditLog::actionInit));
+	QCOMPARE(baseline[1].params.value("count").toLongLong(), qint64(1));
+	QCOMPARE(baseline[1].channel, QString("gui"));
 
 	/* The items load and the private keys still decrypt */
 	QStringList names;
@@ -177,13 +204,24 @@ void test_service_audit::upgradeForkDatabase()
 	}
 
 	/* The upgraded database takes audit entries; the old revocation
-	 * has no entry and is counted, not reported as a mismatch */
+	 * is known from the baseline. The baseline is written only once. */
 	appendSample(2);
 	reopenDatabase();
 	AuditVerifyResult r = AuditLog::verify();
-	QVERIFY(r.ok());
-	QCOMPARE(r.entries, qint64(2));
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.entries, qint64(4));
+	QCOMPARE(r.unauditedRevocations, qint64(0));
+
+	/* A revocation added after the upgrade without an entry */
+	sql("INSERT INTO revocations (caId, serial, date, invaldate, crlNo, "
+		"reasonBit) VALUES (2, '0F0F', '20261028100000Z', "
+		"'99991231235959Z', NULL, 0)");
+	r = AuditLog::verify();
+	QVERIFY(!r.ok());
 	QCOMPARE(r.unauditedRevocations, qint64(1));
+	QCOMPARE(r.mismatches.size(), 1);
+	QCOMPARE(r.mismatches[0].serial, QString("0F0F"));
+	QCOMPARE(r.mismatches[0].seq, qint64(0));
 }
 
 void test_service_audit::canonicalJson()
@@ -288,7 +326,22 @@ void test_service_audit::tamper_data()
 		<< false << (qint64)3 << "hash";
 	QTest::newRow("params no JSON") << QStringList({
 		"UPDATE audit_log SET params='garbage' WHERE seq=3" })
-		<< false << (qint64)3 << "hash";
+		<< false << (qint64)3 << "params";
+	/* Values without a canonical form must not make verify throw */
+	QTest::newRow("params non-integer") << QStringList({
+		"UPDATE audit_log SET params='{\"name\":1.5}' WHERE seq=3" })
+		<< false << (qint64)3 << "params";
+	QTest::newRow("params beyond 2^53") << QStringList({
+		"UPDATE audit_log SET params='{\"count\":9007199254740993}' "
+		"WHERE seq=3" })
+		<< false << (qint64)3 << "params";
+	QTest::newRow("params 1e300") << QStringList({
+		"UPDATE audit_log SET params='{\"count\":1e300}' WHERE seq=3" })
+		<< false << (qint64)3 << "params";
+	QTest::newRow("params not canonical") << QStringList({
+		"UPDATE audit_log SET params='{\"name\":\"key-3\",\"key_size\":2048}' "
+		"WHERE seq=3" })
+		<< false << (qint64)3 << "params";
 	QTest::newRow("swap") << QStringList({
 		"UPDATE audit_log SET seq=-2 WHERE seq=2",
 		"UPDATE audit_log SET seq=2 WHERE seq=3",
@@ -559,15 +612,23 @@ void test_service_audit::revocationAfterUnrevoke()
 	QCOMPARE(r.mismatches[0].seq, qint64(2));
 }
 
-void test_service_audit::unauditedRevocationIsNoMismatch()
+void test_service_audit::unauditedRevocationIsMismatch()
 {
+	/* A revocation row no audit entry knows was inserted behind XCA's
+	 * back (or by a build without audit log): verify fails */
 	insertRevocation();
 	sql("INSERT INTO revocations (caId, serial, date, invaldate, crlNo, "
 		"reasonBit) VALUES (1, '0C0D', '20261028100000Z', "
 		"'99991231235959Z', NULL, 0)");
 	AuditVerifyResult r = AuditLog::verify();
-	QVERIFY(r.ok());
+	QVERIFY(r.chainOk());
+	QVERIFY(!r.ok());
 	QCOMPARE(r.unauditedRevocations, qint64(1));
+	QCOMPARE(r.mismatches.size(), 1);
+	QCOMPARE(r.mismatches[0].serial, QString("0C0D"));
+	QCOMPARE(r.mismatches[0].field, QString("row"));
+	QCOMPARE(r.mismatches[0].expected, QString("absent"));
+	QCOMPARE(r.mismatches[0].seq, qint64(0));
 
 	/* State after a broken link is not trusted: only entries before
 	 * the break are replayed */
@@ -578,23 +639,138 @@ void test_service_audit::unauditedRevocationIsNoMismatch()
 	QCOMPARE(r.unauditedRevocations, qint64(2));
 }
 
+void test_service_audit::knownLimitSuffixRewrite()
+{
+	/* Pins the documented limit until BTD-37 (audit.h): the chain has no
+	 * key, so a rewritten suffix passes verify. When BTD-37 adds signed
+	 * checkpoints, this test must be turned around. */
+	appendSample(5);
+
+	/* Rewrite entry 3 and recompute the hashes of 3, 4 and 5 */
+	sql("UPDATE audit_log SET object_id='99' WHERE seq=3");
+	QByteArray prev;
+	for (AuditEntry e : AuditLog::entries()) {
+		if (e.seq >= 3) {
+			e.prevHash = prev;
+			e.hash = e.computeHash();
+			sql(QString("UPDATE audit_log SET prev_hash='%1', hash='%2' "
+				"WHERE seq=%3").arg(QString::fromLatin1(e.prevHash))
+				.arg(QString::fromLatin1(e.hash)).arg(e.seq));
+		}
+		prev = e.hash;
+	}
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY(r.ok());
+	QCOMPARE(AuditLog::entries()[2].objectId, QString("99"));
+
+	/* Tail cut off: still valid, append() continues from the cut */
+	sql("DELETE FROM audit_log WHERE seq > 3");
+	QVERIFY(AuditLog::verify().ok());
+	QCOMPARE(AuditLog::append(cliAlice, "test", "none", "").seq, qint64(4));
+	QVERIFY(AuditLog::verify().ok());
+
+	/* Whole log deleted: an empty log is valid */
+	sql("DELETE FROM audit_log");
+	r = AuditLog::verify();
+	QVERIFY(r.ok());
+	QCOMPARE(r.entries, qint64(0));
+}
+
+void test_service_audit::appendInRolledBackTransaction()
+{
+	/* Caller contract (audit.h): the entry shares the caller's
+	 * transaction and disappears with its rollback ... */
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		AuditLog::append(cliAlice, "key.generate", "key", "1");
+		QCOMPARE(AuditLog::entries().size(), 1);
+		QVERIFY(TransRollback());
+	}
+	QCOMPARE(AuditLog::entries().size(), 0);
+
+	/* ... so a failure entry is appended after the rollback */
+	AuditLog::append(cliAlice, "key.generate", "key", "", AuditParams(),
+			"failure", "E_DB");
+	reopenDatabase();
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 1);
+	QCOMPARE(list[0].seq, qint64(1));
+	QCOMPARE(list[0].result, QString("failure"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* Runs read_cmdline() like "xca --no-gui --database <dbFile> <args>" */
+int test_service_audit::xcaCli(const QStringList &args)
+{
+	QList<QByteArray> argBytes { "xca", "--database", dbFile.toUtf8() };
+	for (const QString &a : args)
+		argBytes << a.toUtf8();
+	QList<char *> argv;
+	for (QByteArray &a : argBytes)
+		argv << a.data();
+	argv << nullptr;
+
+	pki_multi *items = nullptr;
+	Database.close();
+	int ret = read_cmdline(argBytes.size(), argv.data(), true, &items);
+	delete items;
+	ServiceContext::processChannel = ServiceContext::gui;
+	return ret;
+}
+
+void test_service_audit::cliExitCodes()
+{
+	appendSample(3);
+	QString jsonl = QFileInfo(dbFile).dir().filePath("audit.jsonl");
+
+	QCOMPARE(xcaCli({ "--audit-verify" }), EXIT_SUCCESS);
+	QCOMPARE(xcaCli({ "--audit-export", jsonl }), EXIT_SUCCESS);
+	QFile f(jsonl);
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QCOMPARE(f.readAll().count('\n'), 3);
+	f.close();
+
+	/* Export that cannot be written (XFile::open_write() throws) */
+	warning->expectMessage("Error opening file");
+	QCOMPARE(xcaCli({ "--audit-export",
+			"/nonexistent-btd29-dir/audit.jsonl" }), EXIT_FAILURE);
+
+	/* Tampered with a value that has no canonical form: fail closed */
+	sql("UPDATE audit_log SET params='{\"name\":1.5}' WHERE seq=2");
+	QCOMPARE(xcaCli({ "--audit-verify" }), EXIT_FAILURE);
+	warning->expectMessage("cannot be exported");
+	QCOMPARE(xcaCli({ "--audit-export", "-" }), EXIT_FAILURE);
+
+	/* Plain hash mismatch */
+	sql("UPDATE audit_log SET params='{\"key_size\":2048,\"name\":\"key-2\"}', "
+		"actor='os:mallory' WHERE seq=2");
+	QCOMPARE(xcaCli({ "--audit-verify" }), EXIT_FAILURE);
+}
+
 void test_service_audit::libHasNoAuditUpdateOrDelete()
 {
 	/* Acceptance criterion: lib/ offers no way to change or remove an
-	 * entry. Guard against a future UPDATE/DELETE on the table. */
+	 * entry. Guard against a future UPDATE/DELETE on the table in the
+	 * library and the GUI. */
 	QRegularExpression write("\\b(UPDATE|DELETE\\s+FROM|DROP\\s+TABLE|"
 		"ALTER\\s+TABLE|REPLACE\\s+INTO)\\s+audit_log\\b",
 		QRegularExpression::CaseInsensitiveOption);
 	int files = 0;
-	QDirIterator it(XCA_LIB_DIR, { "*.cpp", "*.h" }, QDir::Files);
-	while (it.hasNext()) {
-		QFile f(it.next());
-		QVERIFY(f.open(QIODevice::ReadOnly));
-		QString src = QString::fromUtf8(f.readAll());
-		QVERIFY2(!write.match(src).hasMatch(), CCHAR(f.fileName()));
-		files++;
+	for (const char *dir : { "lib", "widgets" }) {
+		QDirIterator it(QString(XCA_SOURCE_DIR "/") + dir,
+				{ "*.cpp", "*.h" }, QDir::Files,
+				QDirIterator::Subdirectories);
+		while (it.hasNext()) {
+			QFile f(it.next());
+			QVERIFY(f.open(QIODevice::ReadOnly));
+			QString src = QString::fromUtf8(f.readAll());
+			QVERIFY2(!write.match(src).hasMatch(),
+				CCHAR(f.fileName()));
+			files++;
+		}
 	}
-	QVERIFY(files > 50);
+	QVERIFY(files > 100);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_audit)

@@ -93,8 +93,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		QString all = cmd_opts["verbose"];
 		debug_info::set_debug(all.isEmpty() ? QString("all") : all);
 	}
-	if (console_only)
+	if (console_only) {
 		database_model::open_without_password = true;
+		ServiceContext::processChannel = ServiceContext::cli;
+	}
 
 	if (cmd_opts.has("no-native-dialogs"))
 		QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
@@ -175,25 +177,37 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
 					.arg(cmd_opts["hierarchy"]));
 	}
+	/* Both fail closed: any error means exit code 1 */
 	if (cmd_opts.has("audit-verify")) {
-		AuditVerifyResult r = AuditLog::verify();
-		console_write(stdout, r.toJson() + '\n');
-		if (!r.ok())
+		try {
+			AuditVerifyResult r = AuditLog::verify();
+			console_write(stdout, r.toJson() + '\n');
+			if (!r.ok())
+				exitcode = EXIT_FAILURE;
+		} catch (errorEx &err) {
+			QVariantMap m { { "ok", false },
+					{ "error", err.getString() } };
+			console_write(stdout, AuditLog::canonicalJson(m) + '\n');
 			exitcode = EXIT_FAILURE;
+		}
 	}
 	if (cmd_opts.has("audit-export")) {
 		QString filename = cmd_opts["audit-export"];
-		QByteArray lines = AuditLog::exportJsonLines();
-		if (filename == "-") {
-			console_write(stdout, lines);
-		} else {
-			XFile f(filename);
-			if (f.open_write())
-				f.write(lines);
-			else
-				XCA_ERROR(QObject::tr("Failed to write the audit log to '%1'")
-						.arg(filename));
-			f.close();
+		try {
+			QByteArray lines = AuditLog::exportJsonLines();
+			if (filename == "-") {
+				console_write(stdout, lines);
+			} else {
+				XFile f(filename);
+				if (!f.open_write() ||
+				    f.write(lines) != lines.size())
+					throw errorEx(QObject::tr("Failed to write the audit log to '%1'")
+							.arg(filename));
+				f.close();
+			}
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+			exitcode = EXIT_FAILURE;
 		}
 	}
 	if (cmd_opts.has("help"))

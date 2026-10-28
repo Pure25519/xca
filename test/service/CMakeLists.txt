@@ -26,7 +26,7 @@ ServiceTest(test_service_key)
 ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
-	XCA_LIB_DIR="${PROJECT_SOURCE_DIR}/lib")
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 # The harness must fail a test on an unexpected prompt
 add_test(NAME test_service_harness_selfcheck

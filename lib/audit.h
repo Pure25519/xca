@@ -11,6 +11,32 @@
  * strings, integers in the IEEE 754 safe range, booleans and null.
  *
  * lib/ offers no function to change or delete an entry.
+ *
+ * Limit until BTD-37: the chain has no key. Anyone who can write the
+ * database can rewrite entry k and recompute the hashes of k and every
+ * later entry, cut off the newest entries, or delete the whole log, and
+ * verify() still passes. Any rewrite of a suffix of the chain is
+ * undetectable until the signed checkpoints of BTD-37 exist; append()
+ * then simply continues from the rewritten end.
+ *
+ * Caller contract (service functions of BTD-31..35):
+ *  - Every service function receives a ServiceContext and appends exactly
+ *    one entry per operation, with result "success", "failure" or
+ *    "denied".
+ *  - append() opens a nested transaction. Called inside the caller's
+ *    transaction, the entry is committed or rolled back together with
+ *    the object change (BTD-50). A "failure" or "denied" entry must
+ *    therefore be appended after the caller's transaction was rolled
+ *    back, never inside it, or it disappears with the rollback.
+ *  - append() throws errorEx on any database error and does not retry.
+ *    A concurrent writer that read the same predecessor gets a duplicate
+ *    sequence number (or SQLITE_BUSY) and fails; the caller decides
+ *    whether the whole operation fails or is retried.
+ *
+ * Schema version: the fork counts its own migrations under the settings
+ * key "bxc_schema" (see lib/database_schema.cpp) and leaves upstream's
+ * "schema" counter alone, so that a future upstream schema 9 does not
+ * collide with a fork migration.
  */
 
 #ifndef __AUDIT_H
@@ -42,6 +68,9 @@ class ServiceContext
 	ServiceContext(enum channel c, const QString &actor);
 	/* The operating system user running this process */
 	static ServiceContext localUser(enum channel c);
+	/* Channel of this process for entries without a caller, e.g. the
+	 * baseline written on a database upgrade. read_cmdline() sets cli. */
+	static enum channel processChannel;
 	static QString osUser();
 	static QString channelName(enum channel c);
 
@@ -139,7 +168,8 @@ class AuditStateMismatch
 	QString field{};         // row, date, invaldate, reasonBit, crlNo
 	QString expected{};
 	QString actual{};
-	qint64 seq{};            // last audit entry that set the expected state
+	qint64 seq{};            // last audit entry that set the expected state,
+	                         // 0 for a row no audit entry knows
 
 	QVariantMap toMap() const;
 };
@@ -150,9 +180,9 @@ class AuditVerifyResult
 	qint64 entries{};
 	qint64 verifiedEntries{};
 	qint64 firstBrokenSeq{};  // 0: chain intact
-	QString reason{};        // missing, sequence, prev_hash, hash
+	QString reason{};        // missing, sequence, prev_hash, params, hash
 	QList<AuditStateMismatch> mismatches{};
-	qint64 unauditedRevocations{};
+	qint64 unauditedRevocations{};   // also listed in mismatches
 
 	bool chainOk() const
 	{
@@ -176,6 +206,11 @@ class AuditLog
 	static const char actionRevoke[];
 	static const char actionUnrevoke[];
 	static const char actionCrlGenerate[];
+	/* Written once when an existing database gets the audit log:
+	 * one revocation.baseline entry per revocation row found, then
+	 * audit.init with the count */
+	static const char actionRevocationBaseline[];
+	static const char actionInit[];
 
 	/* Appends one entry in its own (possibly nested) transaction.
 	 * The sequence number is the primary key, so two writers that read
@@ -188,13 +223,20 @@ class AuditLog
 			const QString &result = "success",
 			const QString &errorCode = QString());
 
+	/* Records the revocation rows of a database that existed before the
+	 * audit log, so that verify() can tell them from rows added later
+	 * without an entry. Called by database_model::initSqlDB(). */
+	static void writeBaseline();
+
 	static QList<AuditEntry> entries();
 	/* Checks the chain from the first entry, then replays the revocation
 	 * and CRL entries of the intact part and compares the result with the
-	 * revocations table. Deleting the newest entries is only detected with
-	 * the signed checkpoints of BTD-37. */
+	 * revocations table; a row no entry knows is a mismatch. Never throws
+	 * for a tampered entry: an entry without a canonical form is reported
+	 * as broken. A rewritten suffix passes (see the limit above). */
 	static AuditVerifyResult verify();
-	/* One canonical JSON object per line, including prev_hash and hash */
+	/* One canonical JSON object per line, including prev_hash and hash.
+	 * Throws errorEx for an entry without a canonical form. */
 	static QByteArray exportJsonLines();
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
