@@ -65,6 +65,16 @@ macro(Test name)
 endmacro()
 
 if(BUILD_TESTING)
+  add_executable(test_x509rev
+    ${PROJECT_SOURCE_DIR}/lib/test_x509rev.cpp
+    ${PROJECT_BINARY_DIR}/local.h
+  )
+  target_link_libraries(test_x509rev PRIVATE xcalib ${QT}::Test ${ASAN_LIB})
+  set_target_properties(test_x509rev PROPERTIES MACOSX_BUNDLE FALSE)
+  add_test(NAME test_x509rev COMMAND test_x509rev)
+  add_dependencies(tests test_x509rev)
+  set_tests_properties(test_x509rev PROPERTIES LABELS "console;lib")
+
   Test(test_biobytearray BioByteArray.cpp BioByteArray.h
                                     func_base.cpp func_base.h)
   Test(test_asn1int asn1int.cpp asn1int.h func_base.h func_base.cpp)
