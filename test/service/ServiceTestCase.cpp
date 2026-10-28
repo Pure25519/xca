@@ -6,6 +6,8 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QThread>
 
 #include <openssl/provider.h>
@@ -267,6 +269,13 @@ void ServiceTestCase::openDatabase()
 		QFAIL(CCHAR(QString("Database.open aborted: %1").arg(r)));
 	}
 	QVERIFY(Database.isOpen());
+	/* A throwaway database needs no fsync per transaction: durability
+	 * after a power loss is not under test, and the waits made the 1000
+	 * issuances of test_service_issuance::serials() take 20 s instead
+	 * of 6 s (BTD-82). Transactions, rollback and the audited path stay
+	 * the same. */
+	QSqlQuery q("PRAGMA synchronous = OFF");
+	QVERIFY2(!q.lastError().isValid(), CCHAR(q.lastError().text()));
 	/* Success notifications ("Successfully created ...") are GUI feedback,
 	 * not part of a service result: off, like the option in the GUI */
 	Settings["suppress_messages"] = true;
@@ -305,26 +314,4 @@ void ServiceTestCase::cleanup()
 	QVERIFY2(dir.isEmpty() || !QFileInfo::exists(dir),
 		CCHAR(QString("temporary database directory left: %1").arg(dir)));
 	QVERIFY2(v.isEmpty(), CCHAR(v.join("; ")));
-}
-
-ServiceTestEnv::ServiceTestEnv()
-	: home(QDir::tempPath() + "/xca-service-home-XXXXXX")
-{
-	static const char * const xdg[][2] = {
-		{ "XDG_CONFIG_HOME", "/.config" },
-		{ "XDG_DATA_HOME", "/.local/share" },
-		{ "XDG_CACHE_HOME", "/.cache" },
-		{ "XDG_STATE_HOME", "/.local/state" },
-	};
-	if (!home.isValid())
-		qFatal("Cannot create the temporary HOME of the service tests");
-
-	qputenv("HOME", home.path().toLocal8Bit());
-	for (auto &x : xdg) {
-		QString dir = home.path() + x[1];
-		QDir().mkpath(dir);
-		qputenv(x[0], dir.toLocal8Bit());
-	}
-	if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM"))
-		qputenv("QT_QPA_PLATFORM", "offscreen");
 }

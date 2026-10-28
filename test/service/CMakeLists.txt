@@ -6,6 +6,7 @@ set(SERVICE_TEST_DIR ${PROJECT_SOURCE_DIR}/test/service)
 add_library(xcaservicetest STATIC
 	${SERVICE_TEST_DIR}/ServiceTestCase.cpp
 	${SERVICE_TEST_DIR}/ServiceTestCase.h
+	${PROJECT_SOURCE_DIR}/test/TestEnv.cpp
 	${PROJECT_BINARY_DIR}/local.h)
 target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcalib)
 
@@ -28,6 +29,9 @@ ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
+# Signed audit checkpoints (BTD-37); signatures checked with openssl pkeyutl
+ServiceTest(test_service_checkpoint)
 
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
@@ -78,6 +82,11 @@ else()
   message(STATUS "openssl program not found: test_cli_password_sources skipped")
 endif()
 
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_checkpoint PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Certificate issuance (BTD-31); checks the chain with openssl verify
 ServiceTest(test_service_issuance)
 if(OPENSSL_PROGRAM)
@@ -97,6 +106,12 @@ set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
 ServiceTest(test_service_request)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_request PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# Key sizes as openssl pkey reads them (BTD-94)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_key PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 

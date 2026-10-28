@@ -141,12 +141,16 @@ static QStringList contextMenuIds(XcaTreeView *v, QStringList &errors)
 	v->expandAll();
 	QApplication::processEvents();
 
-	QModelIndexList rows = allRows(v->model());
+	/* Persistent: each context menu runs an event loop, in which the
+	 * view's throttle timer may invalidate the proxy model (BTD-83) */
+	QList<QPersistentModelIndex> rows;
+	foreach(QModelIndex idx, allRows(v->model()))
+		rows << idx;
 	if (rows.isEmpty())
 		errors << QString("%1: no items to open a context menu for")
 				.arg(v->objectName());
 
-	foreach(QModelIndex idx, rows) {
+	foreach(QPersistentModelIndex idx, rows) {
 		v->selectionModel()->setCurrentIndex(idx,
 			QItemSelectionModel::ClearAndSelect |
 			QItemSelectionModel::Rows);

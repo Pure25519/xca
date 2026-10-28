@@ -69,5 +69,59 @@ else()
   message(STATUS "openssl not given: --crlgen with a known CA not checked")
 endif()
 
+# --audit-export without a password source (BTD-37, BTD-70): exit 0, a
+# warning on stderr, no new checkpoint and not a byte written to the
+# database; with --password the export signs a checkpoint first
+expect(0 "entry after the last checkpoint" --keygen EC:prime256v1 --name exit-key-2)
+# The 100 byte SQLite header is left out: database_model::close() runs
+# VACUUM on every close (upstream, also after --audit-verify), which
+# bumps the file change counter and the schema cookie only
+function(db_digest var)
+  file(READ "${WORK}/exit.xdb" content OFFSET 100 HEX)
+  string(SHA256 digest "${content}")
+  set(${var} ${digest} PARENT_SCOPE)
+endfunction()
+db_digest(before)
+execute_process(COMMAND "${XCA}" --no-gui --database "${WORK}/exit.xdb"
+    --audit-export "${WORK}/unsigned.jsonl"
+  RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 30)
+db_digest(after)
+if(NOT rc EQUAL 0)
+  fail("audit export without password: expected exit code 0, got '${rc}':\n${out}${err}")
+endif()
+if(NOT err MATCHES "no audit checkpoint signed; the newest [1-9][0-9]* audit entries")
+  fail("audit export without password: warning missing on stderr:\n${err}")
+endif()
+if(NOT before STREQUAL after)
+  fail("audit export without password changed the database")
+endif()
+# lines(<file> <count var> <last line var>), without list splitting
+function(lines file countVar lastVar)
+  file(READ "${file}" text)
+  string(REGEX MATCHALL "\n" nl "${text}")
+  list(LENGTH nl n)
+  string(REGEX MATCH "[^\n]*\n$" last "${text}")
+  set(${countVar} ${n} PARENT_SCOPE)
+  set(${lastVar} "${last}" PARENT_SCOPE)
+endfunction()
+lines("${WORK}/unsigned.jsonl" unsignedCount last)
+if(unsignedCount LESS 1 OR last MATCHES "\"action\":\"audit.checkpoint\"")
+  fail("audit export without password: ${unsignedCount} lines, a new checkpoint or none")
+endif()
+expect(0 "audit export with password" --audit-export "${WORK}/signed.jsonl")
+if(out MATCHES "Warning")
+  fail("audit export with password: unexpected warning:\n${out}")
+endif()
+# the comparison above sees a real write
+db_digest(signedDigest)
+if(signedDigest STREQUAL after)
+  fail("audit export with password: the database digest did not change")
+endif()
+lines("${WORK}/signed.jsonl" signedCount last)
+math(EXPR expected "${unsignedCount} + 1")
+if(NOT signedCount EQUAL expected OR NOT last MATCHES "\"action\":\"audit.checkpoint\"")
+  fail("audit export with password: ${signedCount} lines, expected ${expected} ending with a checkpoint")
+endif()
+
 file(REMOVE_RECURSE "${WORK}")
 message(STATUS "xca --no-gui: failing commands exit 1, successful ones 0")

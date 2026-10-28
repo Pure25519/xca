@@ -12,12 +12,34 @@
  *
  * lib/ offers no function to change or delete an entry.
  *
- * Limit until BTD-37: the chain has no key. Anyone who can write the
- * database can rewrite entry k and recompute the hashes of k and every
- * later entry, cut off the newest entries, or delete the whole log, and
- * verify() still passes. Any rewrite of a suffix of the chain is
- * undetectable until the signed checkpoints of BTD-37 exist; append()
- * then simply continues from the rewritten end.
+ * Signed checkpoints (BTD-37): after every N entries (settings key
+ * "audit_checkpoint_interval", default 100) and before each export,
+ * append() adds an entry "audit.checkpoint" whose params hold
+ *   checkpoint_seq, checkpoint_hash, checkpoint_time, key_id,
+ *   [next_key_id,] signature
+ * The signature (Base64) covers checkpointPayload(), the canonical JSON
+ * of these params without "signature", and is made with the audit key
+ * (lib/audit_key.h). checkpoint_seq/checkpoint_hash name the entry just
+ * before the checkpoint. A key is announced by an entry "audit.key_create"
+ * (key_id, key_type, public_key as PEM); the first announced key signs the
+ * first checkpoint, a later one only after a checkpoint of the old key
+ * named it next_key_id (rotation). Each export line therefore carries
+ * everything needed to check a checkpoint with the OpenSSL CLI
+ * (doc/audit-checkpoints.md).
+ *
+ * verify() checks the checkpoints of the intact chain in order. A chain
+ * rewritten with recomputed hashes no longer matches the hash signed by
+ * the next checkpoint, so verify() reports it broken after the last
+ * valid checkpoint.
+ *
+ * Remaining limits: entries after the last checkpoint (at most N, fewer
+ * after an export) are protected by the hash chain only; cutting off the
+ * newest entries including their checkpoints, or deleting the whole log,
+ * still passes verify() (unanchored_entries shows the unsigned tail); a
+ * whole log rewritten with a new key passes too, only the audit key id
+ * pinned from an earlier export reveals it. Without the database password
+ * append() writes no checkpoint (the next append() tries again) and the
+ * export exports without a new checkpoint.
  *
  * Caller contract (service functions of BTD-31..35):
  *  - Every service function receives a ServiceContext and appends exactly
@@ -192,7 +214,14 @@ class AuditVerifyResult
 	qint64 entries{};
 	qint64 verifiedEntries{};
 	qint64 firstBrokenSeq{};  // 0: chain intact
-	QString reason{};        // missing, sequence, prev_hash, params, hash
+	QString reason{};        // missing, sequence, prev_hash, params, hash,
+	                         // checkpoint_key, checkpoint_signature,
+	                         // checkpoint_hash
+	qint64 checkpoints{};    // valid checkpoints
+	qint64 lastCheckpointSeq{};    // seq of the last valid checkpoint
+	qint64 failedCheckpointSeq{};  // seq of the first invalid one
+	qint64 unanchoredEntries{};    // entries after lastCheckpointSeq
+	QStringList auditKeys{};       // key ids, in the order they signed
 	QList<AuditStateMismatch> mismatches{};
 	qint64 unauditedRevocations{};   // also listed in mismatches
 
@@ -223,11 +252,16 @@ class AuditLog
 	 * audit.init with the count */
 	static const char actionRevocationBaseline[];
 	static const char actionInit[];
+	/* Signed checkpoints and their keys (BTD-37, see above) */
+	static const char actionCheckpoint[];
+	static const char actionKeyCreate[];
+	static const int defaultCheckpointInterval;
 
 	/* Appends one entry in its own (possibly nested) transaction.
 	 * The sequence number is the primary key, so two writers that read
 	 * the same predecessor cannot fork the chain: the second insert fails.
-	 * Throws errorEx on a database error. */
+	 * Throws errorEx on a database error. A checkpoint that is due
+	 * follows the entry in the same transaction. */
 	static AuditEntry append(const ServiceContext &ctx,
 			const QString &action, const QString &objectType,
 			const QString &objectId,
@@ -240,16 +274,38 @@ class AuditLog
 	 * without an entry. Called by database_model::initSqlDB(). */
 	static void writeBaseline();
 
+	/* Signs the newest entry; the first call creates the audit key.
+	 * Throws serviceError: audit_key_unavailable (no database password),
+	 * audit_chain_broken (the entries since the last checkpoint do not
+	 * chain, nothing is signed), empty_audit_log. */
+	static AuditEntry checkpoint(const ServiceContext &ctx);
+	/* Creates a new audit key, announces it and signs a checkpoint with
+	 * the old key that names the new one; the old key is retired */
+	static AuditEntry rotateKey(const ServiceContext &ctx);
+	static int checkpointInterval();
+	/* The bytes a checkpoint signature covers */
+	static QByteArray checkpointPayload(const QVariantMap &params);
+
 	static QList<AuditEntry> entries();
-	/* Checks the chain from the first entry, then replays the revocation
-	 * and CRL entries of the intact part and compares the result with the
-	 * revocations table; a row no entry knows is a mismatch. Never throws
-	 * for a tampered entry: an entry without a canonical form is reported
-	 * as broken. A rewritten suffix passes (see the limit above). */
+	/* Checks the chain from the first entry and the signed checkpoints
+	 * of its intact part, then replays the revocation and CRL entries of
+	 * the intact part and compares the result with the revocations
+	 * table; a row no entry knows is a mismatch. Never throws for a
+	 * tampered entry: an entry without a canonical form is reported as
+	 * broken. */
 	static AuditVerifyResult verify();
-	/* One canonical JSON object per line, including prev_hash and hash.
-	 * Throws errorEx for an entry without a canonical form. */
-	static QByteArray exportJsonLines();
+	/* Signs a checkpoint unless the newest entry is one, then writes
+	 * one canonical JSON object per line, including prev_hash and hash.
+	 * Without a database password source it signs nothing and writes
+	 * nothing to the database (BTD-70); *unsignedEntries receives the
+	 * number of entries after the last checkpoint (0: all covered).
+	 * Throws errorEx for an entry without a canonical form and
+	 * serviceError when a checkpoint is due and cannot be signed
+	 * (audit_password_rejected, audit_chain_broken). */
+	static QByteArray exportJsonLines(const ServiceContext &ctx,
+			qint64 *unsignedEntries = nullptr);
+	/* The same for the local user on the channel of this process */
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);

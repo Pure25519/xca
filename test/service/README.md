@@ -14,9 +14,9 @@ ctest --test-dir build -L service --output-on-failure
 
 | When | What happens |
 |---|---|
-| process start (`XCA_SERVICE_TEST_MAIN`) | `HOME` and `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` point into a temporary directory (`settings.ini`, `dbhistory`, `.rnd` never reach the real profile); `QT_QPA_PLATFORM=offscreen` unless set; a `QApplication` (xcalib still links Qt Widgets until BTD-36) |
+| process start (`XCA_SERVICE_TEST_MAIN`) | `HOME` and `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` point into a temporary directory (`settings.ini`, `dbhistory`, `.rnd` never reach the real profile; `test/TestEnv.h`, which `testxca` uses too); `QT_QPA_PLATFORM=offscreen` unless set; a `QApplication` (xcalib still links Qt Widgets until BTD-36) |
 | `initTestCase()` | legacy provider, OIDs, entropy; installs `StrictPwDialog` as `PwDialogCore` GUI, `StrictWarning` as `xcaWarning` GUI and an OpenSSL `UI_METHOD` without reader |
-| `init()` | new temporary directory `$TMPDIR/xca-service-XXXXXX`, database `service.xdb` in it, opened with the fixed password `ServiceTestCase::dbPassword` (the only expected prompt); the database option `suppress_messages` is switched on, so XCA's "Successfully created …" boxes do not count as prompts (a test that checks them sets `Settings["suppress_messages"] = false` and expects the message) |
+| `init()` | new temporary directory `$TMPDIR/xca-service-XXXXXX`, database `service.xdb` in it, opened with the fixed password `ServiceTestCase::dbPassword` (the only expected prompt) and `PRAGMA synchronous = OFF` (no fsync per transaction in a throwaway database, BTD-82); the database option `suppress_messages` is switched on, so XCA's "Successfully created …" boxes do not count as prompts (a test that checks them sets `Settings["suppress_messages"] = false` and expects the message) |
 | `cleanup()` | closes the database, removes the directory, fails the test if the directory is still there, if an expected prompt was not shown, or if anything unexpected was prompted or shown |
 | process exit | the temporary `HOME` is removed |
 
@@ -84,6 +84,10 @@ Rules:
 
 `test_service_key.cpp` is the reference example (key generation via
 `db_key::newKey(keyjob, name)`), `test_service_harness.cpp` tests the harness itself.
+`test_service_key.cpp` also checks the size of every generated key type in the key, in the audit
+entry and with `openssl pkey -text` (skipped without the `openssl` program), and that a size
+OpenSSL rejects fails with `invalid_key_size` (BTD-94). Test RSA with more than 2048 bit: 2048 is
+OpenSSL's default and passes even when the requested size is ignored.
 `test_service_audit.cpp` covers the audit log (BTD-29); its fixture is described in
 `data/README.md`. Audit entries land in the per-test database, so a test reads them with
 `AuditLog::entries()` right after the call. The caller contract for service functions (one

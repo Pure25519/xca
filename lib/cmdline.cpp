@@ -206,7 +206,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (cmd_opts.has("audit-export")) {
 		QString filename = cmd_opts["audit-export"];
 		try {
-			QByteArray lines = AuditLog::exportJsonLines();
+			qint64 unsignedEntries = 0;
+			QByteArray lines = AuditLog::exportJsonLines(&unsignedEntries);
+			/* Without --password the export only reads (BTD-70) */
+			if (unsignedEntries > 0)
+				console_write(stderr, QObject::tr(
+					"Warning: no database password given, no audit checkpoint signed; "
+					"the newest %1 audit entries are not covered by a checkpoint "
+					"(unanchored_entries of --audit-verify). Use --password to sign one.\n")
+					.arg(unsignedEntries).toUtf8());
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
