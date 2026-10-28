@@ -70,7 +70,8 @@ void XcaDetail::import()
 
 	qDebug() << "ImportMulti" << importmulti;
 	if (pki)
-		pki = importmulti ? importmulti->import(pki) : Database.insert(pki);
+		pki = importmulti ? importmulti->import(pki) :
+			ImportMulti::importItems(QList<pki_base *>() << pki).value(0);
 
 	if (pki && !Settings["suppress_messages"])
 		XCA_INFO(pki->getMsg(pki_base::msg_import).arg(pki->getIntName()));

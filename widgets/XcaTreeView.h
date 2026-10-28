@@ -53,6 +53,8 @@ class XcaTreeView: public QTreeView
 	QModelIndex getIndex(const QModelIndex &index);
 	QModelIndex getProxyIndex(const QModelIndex &index);
 	QModelIndexList getSelectedIndexes();
+	/* The objects of column 0 indexes of the source model */
+	static QList<pki_base *> items(const QModelIndexList &indexes);
 	void headerEvent(QContextMenuEvent *e, int col);
 	QModelIndex currentIndex();
 	void showContextMenu(QContextMenuEvent *e,
@@ -70,8 +72,6 @@ class XcaTreeView: public QTreeView
 	virtual void exportItems(const QModelIndexList &indexes);
 	virtual void load_default(load_base *load);
 	virtual ExportDialog *exportDialog(const QModelIndexList &indexes);
-	virtual void exportItems(const QModelIndexList &indexes,
-		const QString &filename, const pki_export *xport);
 
    public slots:
 	void changeView();

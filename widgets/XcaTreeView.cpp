@@ -29,6 +29,8 @@
 #include "lib/load_obj.h"
 #include "lib/pass_info.h"
 #include "lib/PwDialogCore.h"
+#include "lib/audit.h"
+#include "lib/importexport.h"
 
 #include "ui_ItemProperties.h"
 
@@ -161,6 +163,17 @@ void XcaTreeView::itemSelectionChanged(const QModelIndex &m, const QModelIndex &
 	}
 	if (basemodel)
 		basemodel->setSelected(v);
+}
+
+QList<pki_base *> XcaTreeView::items(const QModelIndexList &indexes)
+{
+	QList<pki_base *> list;
+	foreach(const QModelIndex &idx, indexes) {
+		pki_base *pki = db_base::fromIndex(idx);
+		if (idx.column() == 0 && pki)
+			list << pki;
+	}
+	return list;
 }
 
 QModelIndexList XcaTreeView::getSelectedIndexes()
@@ -340,7 +353,11 @@ void XcaTreeView::editComment()
 void XcaTreeView::pem2clipboard()
 {
 	if (basemodel) try {
-		QString msg = basemodel->pem2QString(getSelectedIndexes());
+		ExportSpec spec;
+		spec.clipboard = true;
+		spec.items = items(getSelectedIndexes());
+		QString msg = QString::fromUtf8(basemodel->exportItems(
+			ServiceContext::localUser(ServiceContext::gui), spec));
 		QClipboard *cb = QApplication::clipboard();
 
 		if (cb->supportsSelection())
@@ -534,19 +551,6 @@ void XcaTreeView::changeView()
 	show();
 }
 
-void XcaTreeView::exportItems(const QModelIndexList &indexes,
-	const QString &filename, const pki_export *xport)
-{
-	XFile file(filename);
-
-	if (xport->match_all(F_PRIVATE))
-		file.open_key();
-	else
-		file.open_write();
-
-	basemodel->exportItems(indexes, xport, file);
-}
-
 void XcaTreeView::exportItems(const QModelIndexList &indexes)
 {
 	if (!basemodel || indexes.empty())
@@ -554,9 +558,11 @@ void XcaTreeView::exportItems(const QModelIndexList &indexes)
 
 	ExportDialog *dlg = exportDialog(indexes);
 	if (dlg && dlg->exec()) {
+		ServiceContext ctx = ServiceContext::localUser(ServiceContext::gui);
 		try {
-			QString fname = dlg->filename->text();
-			const pki_export *xport = dlg->export_type();
+			ExportSpec spec = dlg->exportSpec(items(indexes));
+			QString fname = spec.fileName;
+			const pki_export *xport = spec.format;
 
 			if (dlg->separateFiles->isChecked()) {
 				Passwd pass;
@@ -575,18 +581,28 @@ void XcaTreeView::exportItems(const QModelIndexList &indexes)
 					if (PwDialogCore::execute(&p, &pass, true) != 1)
 						return;
 				}
-				for (QModelIndex idx : indexes) {
-					pki_base *pki = db_base::fromIndex(idx);
-					// Will be cleared by PwDialogCore
-					PwDialogCore::cmdline_passwd = pass;
-					QString fn = pki->get_dump_filename(fname,
+				try {
+					for (pki_base *pki : spec.items) {
+						ExportSpec one = spec;
+						one.items = QList<pki_base *>() << pki;
+						one.fileName = pki->get_dump_filename(fname,
 							QString(".%1").arg(xport->extension));
-					exportItems(QModelIndexList() << idx, fn, xport);
+						// Will be cleared by PwDialogCore
+						PwDialogCore::cmdline_passwd = pass;
+						basemodel->exportItems(ctx, one);
+					}
+				} catch (...) {
+					PwDialogCore::cmdline_passwd.cleanse();
+					throw;
 				}
 				PwDialogCore::cmdline_passwd.cleanse();
 			} else {
-				exportItems(indexes, fname, xport);
+				basemodel->exportItems(ctx, spec);
 			}
+		} catch (serviceError &err) {
+			/* the password dialog was cancelled: nothing to say */
+			if (err.code != "cancelled")
+				XCA_ERROR(err);
 		} catch (errorEx &err) {
 			XCA_ERROR(err);
 		}

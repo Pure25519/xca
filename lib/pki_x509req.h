@@ -39,10 +39,10 @@ class pki_x509req : public pki_x509super
 
 		extList getV3ext() const;
 		void fromPEM_BIO(BIO *bio, const QString &name);
-		void fload(const QString &fname);
+		void fromBytes(const QByteArray &ba, const QString &fname);
 		void writeDefault(const QString &dirname) const;
 		x509name getSubject() const;
-		void writeReq(XFile &file, bool pem) const;
+		void writeReq(QIODevice &file, bool pem) const;
 		void markSigned(bool signe);
 		void print(BioByteArray &b, enum print_opt opt) const;
 		X509_REQ *getReq()

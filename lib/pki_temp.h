@@ -61,6 +61,7 @@ class pki_temp: public pki_x509name
 			settings[key] = QString::number(value);
 		}
 		void fload(const QString &fname);
+		void fromBytes(const QByteArray &ba, const QString &name);
 		void writeDefault(const QString &dirname) const ;
 		void fromData(const unsigned char *p, int size, int version);
 		void old_fromData(const unsigned char *p, int size, int version);
@@ -76,7 +77,7 @@ class pki_temp: public pki_x509name
 			return QString::fromLatin1(toData().toBase64());
 		}
 		bool compare(const pki_base *ref) const;
-		void writeTemp(XFile &file) const;
+		void writeTemp(QIODevice &file) const;
 		QVariant getIcon(const dbheader *hd) const;
 		QString getMsg(msg_type msg, int n = 1) const;
 		x509name getSubject() const;

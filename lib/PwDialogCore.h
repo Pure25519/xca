@@ -80,11 +80,15 @@ class PwDialogHeadless: public PwDialogUI_i
 	void pinPadLogin(pass_info *p, QThread *login) override;
 };
 
+class PasswordSourceScope;
+
 class PwDialogCore
 {
+	friend class PasswordSourceScope;
   private:
 	static PwDialogUI_i *pwdialog;
 	static PwDialogHeadless headlessUI;
+	static PasswordSourceScope *scope;
 	static PwDialogUI_i *ui();
 
   public:
@@ -100,5 +104,27 @@ class PwDialogCore
 	{
 		return &headlessUI;
 	}
+};
+
+/* The password source of one service call (BTD-34: import and export):
+ * while the object lives, every request of its purpose is answered from
+ * the source, like PwDialogHeadless does (read once, a second request
+ * means the secret was rejected and throws secretError), whatever GUI
+ * or headless configuration is set. An empty source changes nothing.
+ * Scopes nest; create them on the stack only. */
+class PasswordSourceScope
+{
+	PwDialogHeadless headless{};
+	enum pass_info::purpose purpose{};
+	bool active{};
+	PasswordSourceScope *outer{};
+
+  public:
+	PasswordSourceScope(enum pass_info::purpose p, const QString &source);
+	~PasswordSourceScope();
+	PasswordSourceScope(const PasswordSourceScope &) = delete;
+	PasswordSourceScope &operator=(const PasswordSourceScope &) = delete;
+	/* The headless UI answering requests of purpose p, or nullptr */
+	static PwDialogUI_i *answering(enum pass_info::purpose p);
 };
 #endif

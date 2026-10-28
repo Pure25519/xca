@@ -128,5 +128,5 @@ ExportDialog *TempTreeView::exportDialog(const QModelIndexList &indexes)
 		tr("Template export"),
 		tr("XCA Templates ( *.xca )"),
 		indexes, QPixmap(":tempImg"),
-		pki_export::select(tmpl, basemodel->exportFlags(indexes)));
+		pki_export::select(tmpl, basemodel->exportFlags(items(indexes))));
 }

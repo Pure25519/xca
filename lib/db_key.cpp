@@ -122,10 +122,6 @@ pki_base* db_key::insert(pki_base *item)
 {
 	pki_key *lkey = dynamic_cast<pki_key *>(item);
 	pki_key *oldkey;
-	pki_evp *evp = dynamic_cast<pki_evp*>(lkey);
-
-	if (evp)
-		evp->setOwnPass(pki_evp::ptCommon);
 
 	oldkey = static_cast<pki_key *>(getByReference(lkey));
 	if (oldkey != NULL) {
@@ -137,15 +133,26 @@ pki_base* db_key::insert(pki_base *item)
 		} else {
 			XCA_INFO(
 			tr("The database already contains the public part of the imported key as\n'%1\nand will be completed by the new, private part of the key").arg(oldkey->getIntName()));
-			lkey->setComment(oldkey->getComment());
-			lkey->selfComment(tr("Extending public key from %1 by imported key '%2'")
-				.arg(oldkey->getInsertionDate().toPretty())
-				.arg(lkey->getIntName()));
-			lkey->setIntName(oldkey->getIntName());
-			deletePKI(index(oldkey));
 		}
 	}
-	return insertPKI(lkey);
+	return insertKey(lkey, oldkey);
+}
+
+pki_key *db_key::insertKey(pki_key *lkey, pki_key *oldkey)
+{
+	pki_evp *evp = dynamic_cast<pki_evp*>(lkey);
+
+	if (evp)
+		evp->setOwnPass(pki_evp::ptCommon);
+	if (oldkey) {
+		lkey->setComment(oldkey->getComment());
+		lkey->selfComment(tr("Extending public key from %1 by imported key '%2'")
+			.arg(oldkey->getInsertionDate().toPretty())
+			.arg(lkey->getIntName()));
+		lkey->setIntName(oldkey->getIntName());
+		deletePKI(index(oldkey));
+	}
+	return dynamic_cast<pki_key *>(insertPKI(lkey));
 }
 
 void db_key::keyParams(AuditParams &params, pki_key *key)
@@ -276,13 +283,13 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name)
 	return key;
 }
 
-int db_key::exportFlags(const QModelIndex &index) const
+int db_key::exportFlags(pki_base *pki) const
 {
 	int disable_flags = 0;
 
-	pki_key *key = fromIndex<pki_key>(index);
+	pki_key *key = dynamic_cast<pki_key *>(pki);
 
-	if (!index.isValid() || !key)
+	if (!key)
 		return 0;
 
 	int keytype = key->getKeyType();
@@ -303,30 +310,33 @@ int db_key::exportFlags(const QModelIndex &index) const
 	return disable_flags;
 }
 
-void db_key::exportItem(const QModelIndex &index, const pki_export *xport,
-			XFile &file) const
+const pki_export *db_key::clipboardFormat() const
+{
+	return pki_export::by_id(Settings["KeyFormat"]);
+}
+
+void db_key::writeItem(pki_base *pki, const pki_export *xport,
+			QIODevice &file, const Passwd &pass) const
 {
 	const EVP_CIPHER *algo = NULL;
-	pki_key *key = fromIndex<pki_key>(index);
+	pki_key *key = dynamic_cast<pki_key *>(pki);
 	pki_evp *privkey = dynamic_cast<pki_evp *>(key);
 
-	int(*pwCallback)(char *, int, int, void *) = NULL;
-
-	if (xport->match_all(F_CRYPT)) {
+	if (!key)
+		return;
+	if (xport->match_all(F_CRYPT))
 		algo = EVP_aes_256_cbc();
-		pwCallback = PwDialogCore::pwCallback;
-	}
 
 	if (privkey && xport->match_all(F_DER | F_PRIVATE))
-		privkey->writeKey(file, NULL, NULL, false);
+		privkey->writeKey(file, NULL, pass, false);
 	else if (privkey && xport->match_all(F_PEM | F_PRIVATE))
-		privkey->writeKey(file, algo, pwCallback, true);
+		privkey->writeKey(file, algo, pass, true);
 	else if (xport->match_all(F_DER))
 		key->writePublic(file, false);
 	else if (xport->match_all(F_PEM))
 		key->writePublic(file, true);
 	else if (privkey && xport->match_all(F_PKCS8))
-		privkey->writePKCS8(file, algo, pwCallback, true);
+		privkey->writePKCS8(file, algo, pass, true);
 	else if (privkey && xport->match_all(F_SSH2 | F_PRIVATE))
 		privkey->writeSSH2private(file);
 	else if (xport->match_all(F_SSH2))
@@ -334,7 +344,7 @@ void db_key::exportItem(const QModelIndex &index, const pki_export *xport,
 	else if (privkey && xport->match_all(F_PVK))
 		privkey->writePVKprivate(file);
 	else
-		db_base::exportItem(index, xport, file);
+		db_base::writeItem(pki, xport, file, pass);
 }
 
 void db_key::updateKeyEncryptionScheme()

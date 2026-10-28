@@ -20,6 +20,8 @@
 #include "lib/pki_temp.h"
 #include "lib/xfile.h"
 #include "lib/database_model.h"
+#include "lib/audit.h"
+#include "lib/importexport.h"
 
 #include <widgets/MainWindow.h>
 #include "main.h"
@@ -133,7 +135,7 @@ QString urldecode(const QJsonValue &in)
 }
 
 void export_by_id(int id, const QString &name,
-				QModelIndexList &list, db_base *db)
+				QList<pki_base *> &list, db_base *db)
 {
 	const pki_export *xport = pki_export::by_id(id);
 	QVERIFY(xport != nullptr);
@@ -141,8 +143,7 @@ void export_by_id(int id, const QString &name,
 	F.open_write();
 	if (xport->match_all(F_PEM)) {
 		QString prefix = QString("%1\n").arg(xport->help);
-		foreach (QModelIndex idx, list) {
-			pki_base *pki = db_base::fromIndex(idx);
+		foreach (pki_base *pki, list) {
 			QVERIFY(pki != nullptr);
 			prefix += QString(" - %1[%2]\n")
 					.arg(pki->getIntName())
@@ -150,15 +151,19 @@ void export_by_id(int id, const QString &name,
 		}
 		F.write(prefix.toUtf8());
 	}
-	db->exportItems(list, xport, F);
+	ExportSpec spec;
+	spec.items = list;
+	spec.format = xport;
+	F.write(db->exportItems(
+		ServiceContext::localUser(ServiceContext::gui), spec));
 	F.close();
 }
 
 void test_main::exportFormat()
 {
 	int l=0;
-	QModelIndex idx;
-	QModelIndexList list;
+	pki_base *idx = nullptr;
+	QList<pki_base *> list;
 	QDir d; d.mkpath("testdata");
 
 	try {
@@ -184,22 +189,22 @@ void test_main::exportFormat()
 	QVERIFY(certs != nullptr);
 
 	// Root CA as only item: No chain, no private key
-	idx = certs->index(certs->getByName("Root CA"));
+	idx = certs->getByName("Root CA");
 	list << idx;
 	QCOMPARE(certs->exportFlags(idx) , F_CHAIN | F_PRIVATE);
 	QCOMPARE(certs->exportFlags(list) , F_CHAIN | F_PRIVATE);
 
 	// Inter CA 1: All export options permitted
 	// Together with "Root CA" in "list": No chain, private or single
-	idx = certs->index(certs->getByName("Inter CA 1"));
+	idx = certs->getByName("Inter CA 1");
 	list << idx;
 	QCOMPARE(certs->exportFlags(idx) , 0);
 	QCOMPARE(certs->exportFlags(list) , F_CHAIN | F_PRIVATE);
 
 	// Endentity has no private key and id no CA
-	idx = certs->index(certs->getByName("Endentity"));
+	idx = certs->getByName("Endentity");
 	list << idx;
-	QVERIFY(idx.isValid());
+	QVERIFY(idx != nullptr);
 	QCOMPARE(certs->exportFlags(idx) , F_PRIVATE | F_CA);
 
 	pki_key *key = new pki_evp();
@@ -230,7 +235,7 @@ void test_main::exportFormat()
 	// Export 2 cert Chain from Inter CA1
 	file = AUTOFILE(CERTCHAIN)
 	list.clear();
-	list << certs->index(certs->getByName("Inter CA 1"));
+	list << certs->getByName("Inter CA 1");
 	export_by_id(2, file, list, certs);
 	verify_file(file, QList<unsigned> { ROOT_HASH, INTER_HASH });
 	check_pems(file, 2);
@@ -238,7 +243,7 @@ void test_main::exportFormat()
 	// Export 3 cert Chain from Endentity
 	file = AUTOFILE(CERTCHAIN)
 	list.clear();
-	list << certs->index(certs->getByName("Endentity"));
+	list << certs->getByName("Endentity");
 	export_by_id(2, file, list, certs);
 	verify_file(file, QList<unsigned> { ROOT_HASH, INTER_HASH, END_HASH });
 	check_pems(file, 3);
@@ -299,7 +304,7 @@ void test_main::exportFormat()
 	QVERIFY(endentity->isRevoked());
 	// List must not be empty, but may contain anything
 	list.clear();
-	list << certs->index(certs->getByName("Inter CA 1"));
+	list << certs->getByName("Inter CA 1");
 	// Export unusable as PEM
 	file = AUTOFILE(UNUSABLEPEM)
 	export_by_id(40, file, list, certs);
@@ -314,7 +319,7 @@ void test_main::exportFormat()
 	// Export Endentity as JWK
 	file = AUTOFILE(JWK)
 	list.clear();
-	list << certs->index(certs->getByName("Endentity"));
+	list << certs->getByName("Endentity");
 	export_by_id(42, file, list, certs);
 	QJsonValue jwk = jsonFromFile(file);
 	QVERIFY(jwk.isObject());
@@ -329,7 +334,7 @@ void test_main::exportFormat()
 
 	file = AUTOFILE(JWK5C)
 	list.clear();
-	list << certs->index(certs->getByName("Endentity"));
+	list << certs->getByName("Endentity");
 	export_by_id(43, file, list, certs);
 	jwk = jsonFromFile(file);
 	QVERIFY(jwk.isObject());
@@ -351,7 +356,7 @@ void test_main::exportFormat()
 	list.clear();
 	key = dynamic_cast<pki_x509*>(certs->getByName("Endentity"))->getRefKey();
 	db_base *keys = Database.model<db_key>();
-	list << keys->index(key);
+	list << key;
 
 	// Public Key
 	file = AUTOFILE(PUBKEY)
@@ -424,7 +429,7 @@ void test_main::exportFormat()
 
 	// 2 Keys, 521 bit EC and 2048 bit RSA
 	file = AUTOFILE(JWK_RSA_EC)
-	list << keys->index(keys->getByName("521 bit EC"));
+	list << keys->getByName("521 bit EC");
 	export_by_id(50, file, list, keys);
 	jwk = jsonFromFile(file);
 	QVERIFY(jwk.isObject());
@@ -481,7 +486,7 @@ void test_main::exportFormat()
 
 	list.clear();
 	key = dynamic_cast<pki_key*>(keys->getByName("ED25519 Key"));
-	list << keys->index(key);
+	list << key;
 
 	// Export ED25519 as Private SSH Key
 	file = AUTOFILE(ED25519PRIVSSH)
@@ -520,7 +525,7 @@ void test_main::exportFormat()
 	Q_ASSERT(temp->getComment().isEmpty());
 	temp->setComment("My XCA TEMPLATE comment");
 	temp->setIntName("My Template Internal Name");
-	list << temps->index(temp);
+	list << temp;
 	export_by_id(35, file, list, temps);
 	verify_template(file);
 	check_pems(file, 1, QStringList{ "BEGIN XCA TEMPLATE" });

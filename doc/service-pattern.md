@@ -41,6 +41,27 @@ until the database is reopened. The `failure` entry is written; the caller sees 
 | BTD-31 | `db_x509::newCert(ctx, IssuanceSpec)` | `IssuanceSpec` (`lib/issuance.h`) | `certificate.issue` | see above |
 | BTD-32 | `db_key::newKey(ctx, keyjob, name)` | `keyjob` (`lib/pki_key.h`, already a value) | `key.generate` | `invalid_key_type`, `invalid_key_size`, `invalid_curve`, `duplicate_key`, `database_error` |
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
+| BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
+| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `write_failed`, `database_error` |
+
+Import and export (BTD-34):
+
+- Secrets: a call's `passwordSource` (`pass:`, `env:`, `file:`, `fd:`, `stdin`) answers the requests
+  of its purpose (`ImportPassword`, `ExportPassword`) through `PasswordSourceScope`
+  (`lib/PwDialogCore.h`), whatever GUI or headless configuration is set; without it
+  `PwDialogCore` asks as before. The export writers no longer prompt: they take the password
+  (`pki_evp::writeKey`/`writePKCS8`, `pki_pkcs12::writePKCS12`).
+- Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
+  audit entries, then writes the file and commits: no file without its entries, no entries
+  without the file (the file is removed when the commit fails).
+- Readers: `pki_base::fromBytes()` parses the content of a file (`fload()` reads the file and
+  calls it), `load_base::loadData()` and `pki_multi::probeData()` probe bytes like files.
+- The import dialog (`ImportMulti`) and the detail dialog only read and show objects; storing
+  goes through `importItems()` with the read objects. The export dialog fills an `ExportSpec`
+  (`ExportDialog::exportSpec()`); Ctrl+C and dragging items out are exports with
+  `ExportSpec::clipboard`. `xca --import` uses `importItems()` with channel `cli`.
+- `lib/` signatures of the group take `pki_base *` lists, no `QModelIndex`; only the Qt model
+  override `db_base::mimeData(QModelIndexList)` remains and calls `exportItems()`.
 
 Where an existing value-based entry point asked a question or showed a message (key generation:
 "Key size too small", the question before an RSA/DSA size outside 1024..8192, the success

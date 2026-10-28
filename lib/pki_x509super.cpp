@@ -205,7 +205,7 @@ static QString oid_sect()
 	return ret;
 }
 
-void pki_x509super::opensslConf(XFile &file)
+void pki_x509super::opensslConf(QIODevice &file)
 {
 	QString extensions;
 	extList el = getV3ext();

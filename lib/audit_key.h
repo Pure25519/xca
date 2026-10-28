@@ -57,7 +57,9 @@ class AuditKey
 			const QByteArray &signature);
 
 	/* Rejects a key whose public key belongs to an audit key, e.g. one
-	 * imported from a dump of audit_keys: serviceError("audit_key") */
+	 * imported from a dump of audit_keys: serviceError("audit_key").
+	 * Called where XCA signs: pki_x509::sign() (issuance, renewal),
+	 * pki_x509req::createReq() and pki_crl::sign() */
 	static void refuseSigning(pki_key *key);
 };
 

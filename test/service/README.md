@@ -104,3 +104,9 @@ program), one audit entry per operation and per rejection.
 `test_service_revocation.cpp` covers revocation and CRL generation (BTD-33): every CRL is checked
 with `openssl crl -CAfile`, the empty CRL with `openssl asn1parse`, and each test ends with
 `AuditLog::verify()` reporting no unaudited revocation row.
+`test_service_importexport.cpp` covers import and export (BTD-34): a CA and an end entity made
+with the `openssl` program are imported, exported as certificate (PEM, DER), key (PEM, DER,
+encrypted PKCS#8), PKCS#12 chain and PKCS#7 chain, read back with `openssl` and imported again;
+passwords come from `env:` sources. It checks that every private key export writes
+`key.export_private` without key material or password, and that a CRL import audits the
+revocation rows it adds (skipped without the `openssl` program).

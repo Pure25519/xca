@@ -10,6 +10,7 @@
 #include "func.h"
 #include "exception.h"
 #include "database_model.h"
+#include "audit_key.h"
 #include <QDir>
 
 pki_crl::pki_crl(const QString &name)
@@ -127,13 +128,9 @@ QSqlError pki_crl::deleteSqlData()
 	return q.lastError();
 }
 
-void pki_crl::fload(const QString &fname)
+void pki_crl::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_CRL *_crl;
-	XFile file(fname);
-	file.open_read();
-	QByteArray ba(file.readAll());
-
 	_crl = PEM_read_bio_X509_CRL(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_crl) {
 		pki_ign_openssl_error();
@@ -241,6 +238,7 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 	EVP_PKEY *pkey;
 	if (!key || key->isPubKey())
 		return;
+	AuditKey::refuseSigning(key);
 	X509_CRL_sort(crl);
 	pkey = key->decryptKey();
 	X509_CRL_sign(crl, pkey, digest.MD());
@@ -255,7 +253,7 @@ void pki_crl::writeDefault(const QString &dirname) const
 	writeCrl(file, true);
 }
 
-void pki_crl::writeCrl(XFile &file, bool pem) const
+void pki_crl::writeCrl(QIODevice &file, bool pem) const
 {
 	BioByteArray b;
 	if (pem) {

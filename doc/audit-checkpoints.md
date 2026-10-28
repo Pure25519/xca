@@ -18,10 +18,12 @@ public key.
 
 The audit key lives in the table `audit_keys`, not in `items`, so no key list, dialog, export or
 delete function shows it. Its private part is encrypted with the database password like every
-other private key. Certificate issuance, CSR creation and CRL generation refuse a key whose public
-key is an audit key with the error code `audit_key` (for a key copied out of the database and
-imported). A rotation announces the new key and signs a checkpoint with the old key that names it
-in `next_key_id`; the old key's private part is then deleted. A changed database password
+other private key. Certificate issuance and renewal, CSR creation and CRL generation refuse a key
+whose public key is an audit key with the error code `audit_key` (for a key copied out of the
+database and imported). The guard sits where XCA signs, so every caller is covered:
+`pki_x509::sign()` (issuance and the renewal dialog), `pki_x509req::createReq()` and
+`pki_crl::sign()`. A rotation announces the new key and signs a checkpoint with the old key that
+names it in `next_key_id`; the old key's private part is then deleted. A changed database password
 re-encrypts the audit key (`MainWindow::changeDbPass`).
 
 Without the database password (`xca --no-gui` without `--password`, or the unlock dialog
@@ -46,7 +48,8 @@ again. Entries after a change that does not chain are never signed (`audit_chain
 2. **The audit key is not a key item.** BTD-37 asked for the key "stored in the XCA database and
    marked as audit key". It is stored in its own table `audit_keys` instead of `items` with a
    marker: no key list, dialog, export, delete, token or password function of XCA reaches it, so
-   only the three signing services need a guard (`audit_key`), not every key path of the GUI.
+   only the signing paths need a guard (`audit_key`): certificate signing (issuance and renewal),
+   CSR creation and CRL generation, not every key path of the GUI.
 
 ## What verify reports
 

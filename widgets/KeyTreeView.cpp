@@ -207,6 +207,6 @@ ExportDialog *KeyTreeView::exportDialog(const QModelIndexList &indexes)
 		tr("SSH Private Keys ( *.priv )") + ";;" +
 		tr("Microsoft PVK Keys ( *.pvk )"), indexes,
 		QPixmap(key->isToken() ? ":scardImg" : ":keyImg"),
-		pki_export::select(asym_key, basemodel->exportFlags(indexes)),
+		pki_export::select(asym_key, basemodel->exportFlags(items(indexes))),
 		"keyexport");
 }

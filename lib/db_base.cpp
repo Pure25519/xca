@@ -9,6 +9,8 @@
 #include "func.h"
 #include "exception.h"
 #include "XcaWarningCore.h"
+#include "audit.h"
+#include "importexport.h"
 
 #include <QDir>
 #include <QDebug>
@@ -249,20 +251,6 @@ pki_base *db_base::insertPKI(pki_base *pki)
 	restart_timer();
 	emit columnsContentChanged();
 	return pki;
-}
-
-QString db_base::pem2QString(QModelIndexList indexes) const
-{
-	BioByteArray bba;
-
-	foreach(QModelIndex idx, indexes) {
-		if (idx.column() != 0)
-			continue;
-		pki_base *pki = fromIndex(idx);
-		pki->pem(bba);
-		openssl_error();
-	}
-	return bba.qstring();
 }
 
 void db_base::deletePKI(QModelIndex idx)
@@ -653,7 +641,24 @@ bool db_base::isValidCol(int col) const
 
 QMimeData *db_base::mimeData(const QModelIndexList &indexes) const
 {
-	QString data = pem2QString(indexes);
+	/* Dragging items out is an export (BTD-34) */
+	ExportSpec spec;
+	spec.clipboard = true;
+	for (const QModelIndex &idx : indexes) {
+		if (idx.column() == 0 && fromIndex(idx))
+			spec.items << fromIndex(idx);
+	}
+	if (spec.items.isEmpty())
+		return NULL;
+	QString data;
+	try {
+		/* Qt's model API is const, the audit log is not */
+		data = QString::fromUtf8(const_cast<db_base *>(this)->exportItems(
+			ServiceContext::localUser(ServiceContext::gui), spec));
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+		return NULL;
+	}
 
 	if (data.isEmpty())
 		return NULL;
@@ -664,7 +669,7 @@ QMimeData *db_base::mimeData(const QModelIndexList &indexes) const
 	return mimeData;
 }
 
-void db_base::writeVcalendar(XFile &file, QStringList vcal) const
+void db_base::writeVcalendar(QIODevice &file, QStringList vcal) const
 {
 	QStringList ics; ics <<
 	"BEGIN:VCALENDAR" <<
@@ -675,16 +680,15 @@ void db_base::writeVcalendar(XFile &file, QStringList vcal) const
 	file.write(ics.join("\r\n").toUtf8());
 }
 
-void db_base::exportItems(const QModelIndexList &indexes,
-		const pki_export *xport, XFile &file) const
+void db_base::writeItems(const QList<pki_base *> &items,
+		const pki_export *xport, QIODevice &file, const Passwd &pass) const
 {
-	if (xport->match_all(F_JWK) && indexes.size() > 1) {
+	if (xport->match_all(F_JWK) && items.size() > 1) {
 		QJsonArray arr;
 		QSet<QString> names;
 
-		foreach(QModelIndex idx, indexes) {
+		foreach(pki_base *pki, items) {
 			QJsonObject jwk;
-			pki_base *pki = fromIndex<pki_base>(idx);
 			if (pki) {
 				pki->fillJWK(jwk, xport);
 				QString name = jwk["kid"].toString();
@@ -700,24 +704,23 @@ void db_base::exportItems(const QModelIndexList &indexes,
 		QJsonDocument doc(obj);
 		file.write(doc.toJson());
 	} else {
-		foreach(QModelIndex idx, indexes)
-			exportItem(idx, xport, file);
+		foreach(pki_base *pki, items)
+			writeItem(pki, xport, file, pass);
 	}
 }
 
-void db_base::exportItem(const QModelIndex &index,
-			const pki_export *xport, XFile &file) const
+void db_base::writeItem(pki_base *pki, const pki_export *xport,
+			QIODevice &file, const Passwd &) const
 {
-	pki_base *pki = fromIndex<pki_base>(index);
 	if (xport->match_all(F_JWK))
 		pki->exportToJWK(file, xport);
 }
 
-int db_base::exportFlags(const QModelIndexList &indexes) const
+int db_base::exportFlags(const QList<pki_base *> &items) const
 {
 	int disabled_flags = 0;
-	foreach(const QModelIndex &idx, indexes)
-		disabled_flags |= exportFlags(idx);
+	foreach(pki_base *pki, items)
+		disabled_flags |= exportFlags(pki);
 	return disabled_flags;
 }
 
