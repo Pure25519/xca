@@ -47,28 +47,13 @@ static int cmd_help(int exitcode = EXIT_SUCCESS, const char *msg = NULL)
 	return exitcode;
 }
 
-static Passwd acquire_password(QString source)
+/* A --password or --sqlpass value as source: without a known prefix
+ * the value is the password itself (upstream behaviour) */
+static QString password_source(const QString &arg)
 {
-	Passwd pass;
-	pass.append(source.toUtf8());
-
-	if (source == "stdin")
-		source = "fd:0";
-	if (source.startsWith("pass:")) {
-		pass = source.mid(5).toLatin1();
-	} else if (source.startsWith("file:")) {
-		XFile f(source.mid(5));
-		f.open_read();
-		pass = f.readLine(128).trimmed();
-	} else if (source.startsWith("env:")) {
-		pass = getenv(source.mid(4).toLocal8Bit());
-	} else if (source.startsWith("fd:")) {
-		int fd = source.mid(3).toInt();
-		QFile f;
-		f.open(fd, QIODevice::ReadOnly);
-		pass = f.readLine(128).trimmed();
-	}
-	return pass;
+	if (arg.isEmpty() || PwDialogHeadless::isSource(arg))
+		return arg;
+	return QString("pass:") + arg;
 }
 
 static bool compare_pki_base(pki_base* a, pki_base* b)
@@ -86,8 +71,28 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (argc > 0)
 		xca_name = argv[0];
 	arguments cmd_opts(argc, argv);
-	PwDialogCore::cmdline_passwd = acquire_password(cmd_opts["password"]);
-	Passwd sqlpw = acquire_password(cmd_opts["sqlpass"]);
+	QString dbpass = password_source(cmd_opts["password"]);
+	QString sqlpass = password_source(cmd_opts["sqlpass"]);
+	PwDialogHeadless *headless = PwDialogCore::headless();
+	Passwd sqlpw;
+
+	if (console_only) {
+		/* Without a GUI every request of these purposes is answered
+		 * from the source; one nobody provided ends the command */
+		headless->setInteractive(cmd_opts.has("interactive"));
+		headless->setSource(pass_info::DatabasePassword, dbpass);
+		headless->setSource(pass_info::KeyPassword, dbpass);
+		headless->setSource(pass_info::SqlPassword, sqlpass);
+		if (!sqlpass.isEmpty())
+			sqlpw = headless->secret(pass_info::SqlPassword);
+	} else {
+		/* The GUI uses the password once, to unlock the database */
+		if (!dbpass.isEmpty())
+			PwDialogCore::cmdline_passwd =
+				PwDialogHeadless::readSource(dbpass);
+		if (!sqlpass.isEmpty())
+			sqlpw = PwDialogHeadless::readSource(sqlpass);
+	}
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];

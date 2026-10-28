@@ -57,7 +57,7 @@ void pki_evp::setOwnPass(enum passType x)
 			EVP_PKEY_free(pk);
 		key = pk_back;
 		ownPass = oldOwnPass;
-		throw(err);
+		throw;
 	}
 }
 
@@ -197,12 +197,14 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	pass_info p(XCA_TITLE,
 		tr("Please enter the password to decrypt the private key %1.")
 			.arg(name));
+	p.setPurpose(pass_info::ImportPassword);
 	pkey = load_ssh_ed25519_privatekey(ba, p);
 	pki_ign_openssl_error();
 
 	while (!pkey) {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(), NULL,
 						PwDialogCore::pwCallback, &p);
+		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
 		if (openssl_pw_error())
@@ -314,6 +316,7 @@ void pki_evp::fload(const QString &fname)
 {
 	pass_info p(XCA_TITLE, tr("Please enter the password to decrypt the private key from file:\n%1").
 		arg(compressFilename(fname)));
+	p.setPurpose(pass_info::ImportPassword);
 	pem_password_cb *cb = PwDialogCore::pwCallback;
 
 	pki_ign_openssl_error();
@@ -325,6 +328,7 @@ void pki_evp::fload(const QString &fname)
 	do {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(),
 						NULL, cb, &p);
+		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
 		if (openssl_pw_error())
@@ -341,6 +345,7 @@ void pki_evp::fload(const QString &fname)
 		pki_ign_openssl_error();
 		pkey = d2i_PKCS8PrivateKey_bio(BioByteArray(ba).ro(),
 						NULL, cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		PKCS8_PRIV_KEY_INFO *p8inf;
@@ -355,6 +360,7 @@ void pki_evp::fload(const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = b2i_PVK_bio(BioByteArray(ba).ro(), cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		pki_ign_openssl_error();
@@ -363,6 +369,7 @@ void pki_evp::fload(const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, cb, &p);
+		p.throwError();
 	}
 	if (!pkey) {
 		pki_ign_openssl_error();
@@ -403,6 +410,7 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 	/* This key has its own password */
 	if (ownPass == ptPrivate) {
 		pass_info pi(XCA_TITLE, tr("Please enter the password to decrypt the private key: '%1'").arg(getIntName()));
+		pi.setPurpose(pass_info::KeyPassword);
 		ret = PwDialogCore::execute(&pi, &ownPassBuf, false);
 		if (ret != 1)
 			throw errorEx(tr("Password input aborted"),
@@ -411,8 +419,9 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 		ownPassBuf = "Bogus";
 	} else {
 		ownPassBuf = passwd;
+		pass_info p(XCA_TITLE, tr("Please enter the database password for decrypting the key '%1'").arg(getIntName()));
+		p.setPurpose(pass_info::DatabasePassword);
 		while (!validateDatabasePassword(ownPassBuf)) {
-			pass_info p(XCA_TITLE, tr("Please enter the database password for decrypting the key '%1'").arg(getIntName()));
 			ret = PwDialogCore::execute(&p, &ownPassBuf,
 							passHash.isEmpty());
 			if (ret != 1)
@@ -567,6 +576,7 @@ void pki_evp::encryptKey(const char *password)
 		int ret;
 		pass_info p(XCA_TITLE, tr("Please enter the password to protect the private key: '%1'").
 			arg(getIntName()));
+		p.setPurpose(pass_info::KeyPassword);
 		ret = PwDialogCore::execute(&p, &ownPassBuf, true);
 		if (ret != 1)
 			throw errorEx("Password input aborted", getClassName());
@@ -584,6 +594,7 @@ void pki_evp::encryptKey(const char *password)
 			int ret = 0;
 			ownPassBuf = passwd;
 			pass_info p(XCA_TITLE, tr("Please enter the database password for encrypting the key"));
+			p.setPurpose(pass_info::DatabasePassword);
 			while (!validateDatabasePassword(ownPassBuf)) {
 				ret = PwDialogCore::execute(&p, &ownPassBuf,
 							passHash.isEmpty());
@@ -757,6 +768,7 @@ void pki_evp::writePKCS8(XFile &file, const EVP_CIPHER *enc,
 	pass_info p(XCA_TITLE,
 		tr("Please enter the password to protect the PKCS#8 key '%1' in file:\n%2")
 			.arg(getIntName()).arg(nativeSeparator(file.fileName())));
+	p.setPurpose(pass_info::ExportPassword);
 	EVP_PKEY *pkey = decryptKey();
 	if (!pkey) {
 		pki_openssl_error();
@@ -770,6 +782,7 @@ void pki_evp::writePKCS8(XFile &file, const EVP_CIPHER *enc,
 		i2d_PKCS8PrivateKey_bio(b, pkey, enc, NULL, 0, cb, &p);
 	}
 	EVP_PKEY_free(pkey);
+	p.throwError();
 	file.write(b);
 }
 
@@ -814,6 +827,7 @@ void pki_evp::writeKey(XFile &file, const EVP_CIPHER *enc,
 	pass_info p(XCA_TITLE,
 		tr("Please enter the password to protect the private key '%1' in file:\n%2")
 			.arg(getIntName()).arg(nativeSeparator(file.fileName())));
+	p.setPurpose(pass_info::ExportPassword);
 
 	if (isPubKey()) {
 		writePublic(file, pem);
@@ -833,6 +847,7 @@ void pki_evp::writeKey(XFile &file, const EVP_CIPHER *enc,
 		i2d_PrivateKey_bio(b, pkey);
 	}
 	EVP_PKEY_free(pkey);
+	p.throwError();
 	pki_openssl_error();
 	file.write(b);
 }

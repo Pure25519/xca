@@ -23,6 +23,7 @@ endmacro()
 
 ServiceTest(test_service_harness)
 ServiceTest(test_service_key)
+ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
@@ -34,3 +35,24 @@ add_test(NAME test_service_harness_selfcheck
 set_tests_properties(test_service_harness_selfcheck PROPERTIES LABELS service
 	ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XCA_SERVICE_SELFCHECK=1"
 	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckUnexpectedPrompt\\(\\)[^\n]*unexpected password prompt")
+
+# xca --no-gui with a missing password exits non-zero instead of prompting
+add_test(NAME test_cli_missing_password
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_missing_password
+		-P ${SERVICE_TEST_DIR}/cli_missing_password.cmake)
+set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
+add_dependencies(tests ${CMAKE_PROJECT_NAME})
+
+# --password serves every database password request of one command
+find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
+if(OPENSSL_PROGRAM)
+  add_test(NAME test_cli_password_sources
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DOPENSSL=${OPENSSL_PROGRAM}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_sources
+		-P ${SERVICE_TEST_DIR}/cli_password_sources.cmake)
+  set_tests_properties(test_cli_password_sources PROPERTIES LABELS service)
+else()
+  message(STATUS "openssl program not found: test_cli_password_sources skipped")
+endif()

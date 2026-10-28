@@ -54,4 +54,22 @@ class errorEx
 			return msg.isEmpty();
 		}
 };
+
+/* A password or PIN that the headless secret source could not provide.
+ * The message names the request and the source, never the secret. */
+class secretError: public errorEx
+{
+	public:
+		enum reason {
+			missing,	/* no source and no interactive input */
+			unreadable,	/* the source exists but yields nothing */
+			rejected	/* the secret from the source was wrong */
+		};
+		enum reason why;
+
+		secretError(enum reason r = missing, QString txt = "")
+			: errorEx(txt), why(r)
+		{
+		}
+};
 #endif

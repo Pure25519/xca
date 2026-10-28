@@ -189,8 +189,12 @@ int main(int argc, char *argv[])
 		}
 	} catch (errorEx &ex) {
 		XCA_ERROR(ex);
+		ret = EXIT_FAILURE;
 	} catch (enum open_result r) {
 		qDebug() << "DB open failed: " << r;
+		/* In the GUI, cancel and exit are the user's choice */
+		if (console_only)
+			ret = EXIT_FAILURE;
 	}
 	Database.close();
 

@@ -34,6 +34,11 @@ Every prompt is unexpected unless the test announced it **before** the call:
 | OpenSSL terminal UI | — | always fails |
 
 Expectations are consumed in order; an announced prompt that never came also fails the test.
+Token selection and PIN pad logins are always unexpected.
+
+To test the headless path, hand the requests of one test function to a `PwDialogHeadless`
+configured with sources: `pwdialog->delegateTo(h)` (takes ownership; `cleanup()` ends it).
+`test_service_secrets.cpp` shows it.
 The ctest `test_service_harness_selfcheck` proves that an unexpected prompt really turns a test red.
 
 ## Adding tests for a service ticket

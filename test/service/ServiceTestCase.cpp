@@ -6,6 +6,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QThread>
 
 #include <openssl/provider.h>
 #include <openssl/ui.h>
@@ -47,18 +48,31 @@ void StrictPwDialog::expect(const QByteArray &pass, enum open_result result)
 	expected << qMakePair(p, result);
 }
 
+StrictPwDialog::~StrictPwDialog()
+{
+	delete delegate;
+}
+
+void StrictPwDialog::delegateTo(PwDialogUI_i *d)
+{
+	delete delegate;
+	delegate = d;
+}
+
 void StrictPwDialog::reset()
 {
 	if (!expected.isEmpty())
 		ServiceViolations::add(QString("%1 expected password prompt(s) "
 				"not shown").arg(expected.size()));
 	expected.clear();
+	delegateTo(nullptr);
 }
 
 enum open_result StrictPwDialog::execute(pass_info *p, Passwd *passwd,
 					bool write, bool abort)
 {
-	(void)abort;
+	if (delegate)
+		return delegate->execute(p, passwd, write, abort);
 	if (expected.isEmpty()) {
 		ServiceViolations::add(QString("unexpected password prompt "
 				"(%1): %2 / %3").arg(write ? "write" : "read")
@@ -68,6 +82,27 @@ enum open_result StrictPwDialog::execute(pass_info *p, Passwd *passwd,
 	QPair<Passwd, enum open_result> e = expected.takeFirst();
 	*passwd = e.first;
 	return e.second;
+}
+
+int StrictPwDialog::selectToken(const QStringList &names, QWidget *w)
+{
+	if (delegate)
+		return delegate->selectToken(names, w);
+	ServiceViolations::add(QString("unexpected token selection: %1")
+				.arg(names.join(", ")));
+	return -1;
+}
+
+void StrictPwDialog::pinPadLogin(pass_info *p, QThread *login)
+{
+	if (delegate) {
+		delegate->pinPadLogin(p, login);
+		return;
+	}
+	ServiceViolations::add(QString("unexpected PIN pad login: %1")
+				.arg(p->getDescription()));
+	login->start();
+	login->wait();
 }
 
 void StrictWarning::expectQuestion(bool answer)

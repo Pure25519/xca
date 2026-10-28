@@ -6,6 +6,7 @@
  */
 
 #include "pass_info.h"
+#include "func_base.h"
 
 pass_info::pass_info(const QString &t, const QString &d, QWidget *w)
 	: title(t), description(d), widget(w),
@@ -13,8 +14,18 @@ pass_info::pass_info(const QString &t, const QString &d, QWidget *w)
 {
 }
 
-void pass_info::setPin()
+void pass_info::setPin(bool so)
 {
 	type = tr("PIN");
 	pixmap = QString(":scardImg");
+	purpose = so ? TokenSoPin : TokenPin;
+}
+
+void pass_info::throwError() const
+{
+	if (error.isEmpty())
+		return;
+	/* The OpenSSL call that ran the callback failed because of it */
+	ign_openssl_error();
+	throw error;
 }
