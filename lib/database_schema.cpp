@@ -343,6 +343,22 @@
 << "INSERT INTO settings (key_, value) VALUES ('bxc_schema', '1')"
 	;
 
+	bxc_schemas[1]
+// Signing keys of the audit checkpoints (BTD-37, lib/audit_key.h), kept
+// apart from items so that no key function of XCA can select them
+<< "CREATE TABLE audit_keys ("
+	"key_id CHAR(64) PRIMARY KEY, " // hex SHA-256 of the DER public key
+	"created VARCHAR(32), "         // UTC time, RFC 3339
+	"key_type VARCHAR(16), "        // ed25519
+	"public_key " B64_BLOB ", "     // PEM
+	"private " B64_BLOB ", "        // PKCS#8, AES-256, database password;
+	                                // NULL once retired
+	"retired SMALLINT NOT NULL DEFAULT 0)"
+// The newest checkpoint is looked up on every append
+<< "CREATE INDEX i_audit_log_action ON audit_log (action)"
+<< "UPDATE settings SET value='2' WHERE key_='bxc_schema'"
+	;
+
 /* When adding new tables or views, also add them to the list
  * in XSqlQuery::rewriteQuery(QString) in lib/sql.cpp
  */

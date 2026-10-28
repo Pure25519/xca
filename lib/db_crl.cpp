@@ -9,6 +9,7 @@
 #include "db_crl.h"
 #include "db_x509.h"
 #include "audit.h"
+#include "audit_key.h"
 #include "exception.h"
 #include "func.h"
 #include "database_model.h"
@@ -268,6 +269,7 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			throw serviceError("no_private_signing_key",
 				tr("There is no private key for '%1'")
 					.arg(cert->getIntName()));
+		AuditKey::refuseSigning(signkey);
 		if (task.hashAlgo.isInsecure())
 			throw serviceError("insecure_hash",
 				tr("A CRL is never signed with %1")
