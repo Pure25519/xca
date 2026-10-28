@@ -29,6 +29,13 @@ target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# xca --no-gui: no colour codes off a terminal, no false parser warning
+add_test(NAME test_cli_plain_output
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_plain_output
+		-P ${SERVICE_TEST_DIR}/cli_plain_output.cmake)
+set_tests_properties(test_cli_plain_output PROPERTIES LABELS service)
+
 # The harness must fail a test on an unexpected prompt
 add_test(NAME test_service_harness_selfcheck
 	COMMAND test_service_harness selfcheckUnexpectedPrompt)
@@ -43,6 +50,13 @@ add_test(NAME test_cli_missing_password
 		-P ${SERVICE_TEST_DIR}/cli_missing_password.cmake)
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
+
+# The debug output of xca --no-gui never shows --password or --sqlpass values
+add_test(NAME test_cli_debug_secrets
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_debug_secrets
+		-P ${SERVICE_TEST_DIR}/cli_debug_secrets.cmake)
+set_tests_properties(test_cli_debug_secrets PROPERTIES LABELS service)
 
 # --password serves every database password request of one command
 find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
@@ -63,6 +77,14 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_issuance PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# xca --no-gui exits 1 when a command fails, 0 when it succeeds
+add_test(NAME test_cli_exit_codes
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DOPENSSL=${OPENSSL_PROGRAM}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_exit_codes
+		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
+set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
 
 # Key generation and request creation (BTD-32); openssl req -verify
 ServiceTest(test_service_request)

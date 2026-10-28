@@ -76,6 +76,55 @@ const QList<arg_option> arguments::opts = {
 		"Print version information and exit."),
 };
 
+/* Options whose value is a password source: loggable() masks them.
+ * Every new option that takes a secret belongs here. */
+const QStringList arguments::secret_opts = { "password", "sqlpass" };
+
+/* The value of a secret option for the log: env:, file:, fd: and stdin
+ * only name the source (see PwDialogHeadless::isSource()), any other
+ * value carries the secret itself. Not linked to xcalib (xcadoc). */
+static QString maskSecret(const QString &value)
+{
+	if (value == "stdin" || value.startsWith("env:") ||
+	    value.startsWith("file:") || value.startsWith("fd:"))
+		return value;
+	if (value.startsWith("pass:"))
+		return QString("pass:***");
+	return QString("***");
+}
+
+/* The command line with the values of all secret options masked */
+QStringList arguments::loggable(int argc, char *argv[])
+{
+	QStringList out;
+	bool mask_next = false;
+
+	for (int i = 0; i < argc; i++) {
+		QString arg = QString::fromUtf8(argv[i]);
+		if (mask_next) {
+			out << maskSecret(arg);
+			mask_next = false;
+			continue;
+		}
+		if (arg.startsWith("-")) {
+			int dashes = arg.startsWith("--") ? 2 : 1;
+			int eq = arg.indexOf('=');
+			QString name = arg.mid(dashes,
+					eq < 0 ? -1 : eq - dashes);
+			if (secret_opts.contains(name)) {
+				if (eq < 0) {
+					mask_next = true;
+				} else {
+					arg = arg.left(eq + 1) +
+						maskSecret(arg.mid(eq + 1));
+				}
+			}
+		}
+		out << arg;
+	}
+	return out;
+}
+
 static QMap<QString, QString> getPassDoc()
 {
 	QMap<QString, QString> passdoc;
@@ -261,7 +310,9 @@ int arguments::parse(int argc, char *argv[])
 	QStringList found = parser.optionNames();
 	foreach(const arg_option &opt, opts) {
 		if (found.contains(opt.long_opt)) {
-			 found_options[opt.long_opt] = parser.value(opt.long_opt);
+			/* value() of a flag warns "option not expecting values" */
+			found_options[opt.long_opt] = opt.arg_type == no_argument ?
+				QString() : parser.value(opt.long_opt);
 			if (opt.need_db)
 				need_db = true;
 		}

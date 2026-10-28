@@ -66,6 +66,9 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			pki_multi **_cmdline_items)
 {
 	pki_multi *cmdline_items;
+	/* A failure reported here sets EXIT_FAILURE and the remaining
+	 * options still run; an exception ends the command and main()
+	 * returns EXIT_FAILURE */
 	int exitcode = EXIT_SUCCESS;
 
 	if (argc > 0)
@@ -266,6 +269,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!issuer) {
 			XCA_ERROR(QString("Issuer '%1' not found")
 					.arg(cmd_opts["crlgen"]));
+			exitcode = EXIT_FAILURE;
 		} else {
 			crljob task(issuer);
 			pki_crl *crl = crls->newCrl(task, cmd_opts["name"]);
@@ -309,11 +313,13 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	{
 		QString filename = cmd_opts["pem-file"];
 		XFile f(filename);
-		if (f.open_write())
+		if (f.open_write()) {
 			f.write(bbafile);
-		else
+		} else {
 			XCA_ERROR(QObject::tr("Failed to write PEM data to '%1'")
 					.arg(filename));
+			exitcode = EXIT_FAILURE;
+		}
 		f.close();
 	}
 	if (cmd_opts.has("import")) {

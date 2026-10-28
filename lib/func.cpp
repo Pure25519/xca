@@ -36,6 +36,7 @@
 #if defined(Q_OS_WIN32)
 #include <shlobj.h>
 #include <conio.h>
+#include <io.h>
 #ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
 #define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x04
 #endif
@@ -45,10 +46,45 @@
 #define getch() getchar()
 #endif
 
-int console_write(FILE *fp, const QByteArray &ba)
+/* ANSI colours only on a terminal and without NO_COLOR (no-color.org) */
+static bool console_colours(FILE *fp)
 {
-	if (ba.size() == 0)
+	const char *no_color = getenv("NO_COLOR");
+	if (no_color && *no_color)
+		return false;
+#if defined(Q_OS_WIN32)
+	return _isatty(_fileno(fp));
+#else
+	return isatty(fileno(fp));
+#endif
+}
+
+/* Removes the SGR sequences (ESC [ <digits and ;> m) of the COL_ macros */
+static QByteArray strip_colours(const QByteArray &ba)
+{
+	QByteArray out;
+	out.reserve(ba.size());
+	for (qsizetype i = 0; i < ba.size(); i++) {
+		if (ba[i] == '\x1b' && i + 1 < ba.size() && ba[i + 1] == '[') {
+			qsizetype j = i + 2;
+			while (j < ba.size() && ((ba[j] >= '0' && ba[j] <= '9') ||
+						 ba[j] == ';'))
+				j++;
+			if (j < ba.size() && ba[j] == 'm') {
+				i = j;
+				continue;
+			}
+		}
+		out += ba[i];
+	}
+	return out;
+}
+
+int console_write(FILE *fp, const QByteArray &coloured)
+{
+	if (coloured.size() == 0)
 		return 0;
+	QByteArray ba = console_colours(fp) ? coloured : strip_colours(coloured);
 #if defined(Q_OS_WIN32)
 	HANDLE con = GetStdHandle(fp == stderr ? STD_ERROR_HANDLE :
 						 STD_OUTPUT_HANDLE);
