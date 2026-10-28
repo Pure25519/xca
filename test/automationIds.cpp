@@ -24,6 +24,7 @@
 #include "widgets/XcaWarning.h"
 #include "widgets/distname.h"
 
+#include "lib/audit.h"
 #include "lib/pki_multi.h"
 #include "lib/pki_x509.h"
 #include "lib/database_model.h"
@@ -230,7 +231,8 @@ void test_main::automationIds()
 		if (c->canSign())
 			ca = c;
 	QVERIFY(ca);
-	QVERIFY(Database.model<db_crl>()->newCrl(crljob(ca)));
+	QVERIFY(Database.model<db_crl>()->newCrl(
+		ServiceContext::localUser(ServiceContext::gui), crljob(ca)));
 
 	/* Menu bar */
 	QCOMPARE(mainwin->menuBar()->objectName(), QString("menu_bar"));

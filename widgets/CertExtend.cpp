@@ -7,8 +7,12 @@
 
 
 #include "CertExtend.h"
+#include "RevocationList.h"
+#include "lib/audit.h"
 #include "lib/base.h"
+#include "lib/db_x509.h"
 #include "lib/func.h"
+#include "lib/pki_x509.h"
 #include "widgets/validity.h"
 #include "widgets/XcaWarning.h"
 #include <QLabel>
@@ -102,4 +106,95 @@ void CertExtend::accept()
 		}
 	}
 	QDialog::accept();
+}
+
+/* GUI glue of the certificate renewal, moved from lib/db_x509.cpp
+ * (BTD-33): the old certificates are revoked through db_x509::revoke() */
+void db_x509::certRenewal(QModelIndexList indexes)
+{
+	pki_x509 *oldcert = NULL, *signer = NULL, *newcert =NULL;
+	pki_key *signkey = NULL;
+	a1time time;
+	a1int serial;
+	CertExtend *dlg = NULL;
+	x509rev r;
+	bool doRevoke = false;
+	bool doReplace = false;
+
+	if (indexes.size() == 0)
+		return;
+	QModelIndex idx = indexes[0];
+
+	try {
+		oldcert = fromIndex<pki_x509>(idx);
+		if (!oldcert || !(signer = oldcert->getSigner()) ||
+				!(signkey = signer->getRefKey()) ||
+				signkey->isPubKey())
+			return;
+		bool renew_myself = signer == oldcert;
+		dlg = new CertExtend(NULL, renew_myself ? NULL : signer);
+		dlg->revoke->setEnabled(!renew_myself);
+		if (!dlg->exec()) {
+			delete dlg;
+			return;
+		}
+		if (dlg->revoke->isChecked() && !renew_myself) {
+			Revocation *revoke = new Revocation(indexes);
+			doRevoke = revoke->exec();
+			r = revoke->getRevocation();
+			delete revoke;
+		}
+		doReplace = dlg->replace->isChecked();
+		foreach(idx, indexes) {
+			oldcert = fromIndex<pki_x509>(idx);
+			if (!oldcert)
+				continue;
+			newcert = new pki_x509(oldcert);
+			newcert->pkiSource = renewed;
+			serial = dlg->keepSerial->isChecked() ?
+				oldcert->getSerial() : getUniqueSerial(signer);
+			newcert->setRevoked(x509rev());
+
+			// change date and serial
+			newcert->setSerial(serial);
+			newcert->setNotBefore(dlg->notBefore->getDate());
+			a1time a;
+			if (dlg->noWellDefinedExpDate->isChecked())
+				a.setUndefined();
+			else
+				a = dlg->notAfter->getDate();
+
+			newcert->setNotAfter(a);
+
+			// and finally sign the cert
+			newcert->sign(signkey, oldcert->getDigest());
+			newcert = dynamic_cast<pki_x509 *>(insert(newcert));
+			createSuccess(newcert);
+			/* insert() keeps it in the store or deletes it */
+			newcert = nullptr;
+		}
+		if (doRevoke) {
+			ServiceContext ctx = ServiceContext::localUser(
+						ServiceContext::gui);
+			foreach(idx, indexes) {
+				oldcert = fromIndex<pki_x509>(idx);
+				if (oldcert && !oldcert->isRevoked())
+					revoke(ctx, oldcert, r);
+			}
+		}
+
+		// delete old certificates if requested
+		if (doReplace) {
+			foreach(idx, indexes) {
+				if (fromIndex<pki_x509>(idx))
+					deletePKI(idx);
+			}
+		}
+	}
+	catch (errorEx &err) {
+		XCA_ERROR(err);
+		delete newcert;
+	}
+	delete dlg;
+	emit columnsContentChanged();
 }

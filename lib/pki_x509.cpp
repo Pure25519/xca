@@ -131,7 +131,7 @@ void pki_x509::restoreSql(const QSqlRecord &rec)
 	if (!rec.isNull(VIEW_x509_auth_crlDays))
 		crlDays = rec.value(VIEW_x509_auth_crlDays).toInt();
 	else
-		crlDays = 30;
+		crlDays = defaultCrlDays;
 	if (!rec.isNull(VIEW_x509_revocation))
 		revocation = x509rev(rec, VIEW_x509_revocation);
 }

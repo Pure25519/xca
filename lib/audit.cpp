@@ -21,8 +21,8 @@
 #endif
 
 const QByteArray AuditLog::genesisHash = QByteArray(64, '0');
-const char AuditLog::actionRevoke[] = "cert.revoke";
-const char AuditLog::actionUnrevoke[] = "cert.unrevoke";
+const char AuditLog::actionRevoke[] = "certificate.revoke";
+const char AuditLog::actionUnrevoke[] = "certificate.unrevoke";
 const char AuditLog::actionCrlGenerate[] = "crl.generate";
 const char AuditLog::actionRevocationBaseline[] = "revocation.baseline";
 const char AuditLog::actionInit[] = "audit.init";
@@ -73,11 +73,12 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
-		"ca_id", "count", "crl_number", "curve", "file",
+		"ca_id", "count", "crl_number", "curve", "der_size", "file",
 		"fingerprint", "format", "hash_algo", "invalidity_date",
 		"issuer", "item_id", "key_size", "key_type", "name",
-		"not_after", "not_before", "reason", "reason_bit",
-		"revocation_date", "serial", "subject", "template",
+		"next_update", "not_after", "not_before", "reason",
+		"reason_bit", "revocation_date", "serial", "subject",
+		"template", "this_update",
 	};
 	return list;
 }

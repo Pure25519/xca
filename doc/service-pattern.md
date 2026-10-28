@@ -21,7 +21,14 @@ Structure of the service function: a public wrapper builds the audit parameters,
 worker that does the work in one `Transaction`, and appends the `failure` entry when the worker
 throws (the worker's transaction is rolled back by then). The worker appends the `success` entry
 before its commit. Service functions are called outside a transaction; a `failure` entry appended
-inside the caller's transaction would be rolled back with it.
+inside the caller's transaction would be rolled back with it. Since BTD-33, `auditedTransaction()`
+in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
+(`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
+
+An operation that changes several revocation rows (`db_x509::setRevocations`, the Manage
+revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` entry per changed
+row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those
+entries; a rejection writes one `ca.set_revocations` failure entry.
 
 Known limit until BTD-50: a database error after the object was inserted (for example while the
 success entry is appended) rolls the transaction back, but the object stays in the in-memory store

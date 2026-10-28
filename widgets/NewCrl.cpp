@@ -10,7 +10,11 @@
 #include "XcaDialog.h"
 #include "validity.h"
 #include "MainWindow.h"
+#include "XcaWarning.h"
+#include "lib/audit.h"
 #include "lib/base.h"
+#include "lib/database_model.h"
+#include "lib/db_crl.h"
 #include "lib/func.h"
 #include <QLabel>
 #include <QLineEdit>
@@ -42,16 +46,18 @@ NewCrl::NewCrl(const crljob &j, QWidget *w)
 		subAltName->setEnabled(false);
 	}
 	revocationReasons->setChecked(task.withReason);
-	authKeyId->setChecked(task.authKeyId);
+	/* always part of a CRL (BTD-33) */
+	authKeyId->setChecked(true);
+	authKeyId->setEnabled(false);
+	setCrlNumber->setChecked(true);
+	setCrlNumber->setEnabled(false);
 }
 
 crljob NewCrl::getCrlJob() const
 {
 	crljob t = task;
 	t.withReason = revocationReasons->isChecked();
-	t.authKeyId = authKeyId->isChecked();
 	t.subAltName = subAltName->isChecked();
-	t.setCrlNumber = setCrlNumber->isChecked();
 	t.lastUpdate = lastUpdate->getDate();
 	t.nextUpdate = nextUpdate->getDate();
     t.hashAlgo = hashAlgo->current();
@@ -78,8 +84,15 @@ void NewCrl::newCrl(QWidget *parent, pki_x509 *issuer)
 				tr("Create CRL"), QString(), "crlgenerate");
 	if (dlg->exec()) {
 		db_crl *db = Database.model<db_crl>();
-		if (db)
-			db->newCrl(widget->getCrlJob());
+		try {
+			if (db)
+				db->createSuccess(db->newCrl(
+					ServiceContext::localUser(
+						ServiceContext::gui),
+					widget->getCrlJob()));
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+		}
 	}
 	delete dlg;
 }

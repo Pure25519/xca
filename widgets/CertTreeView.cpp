@@ -14,6 +14,7 @@
 #include "ExportDialog.h"
 #include "NewCrl.h"
 #include "AutomationId.h"
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_crl.h"
 #include "lib/load_obj.h"
@@ -204,7 +205,12 @@ void CertTreeView::manageRevocations()
 	RevocationList *dlg = new RevocationList();
 	dlg->setRevList(cert->getRevList(), cert);
 	if (dlg->exec()) {
-		cert->setRevocations(dlg->getRevList());
+		try {
+			certs()->setRevocations(ServiceContext::localUser(
+				ServiceContext::gui), cert, dlg->getRevList());
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+		}
 		columnsChanged();
 	}
 }
@@ -257,14 +263,44 @@ void CertTreeView::certRenewal()
 
 void CertTreeView::revoke()
 {
-	if (basemodel)
-		certs()->revoke(getSelectedIndexes());
+	QModelIndexList indexes = getSelectedIndexes();
+
+	if (!basemodel || indexes.isEmpty())
+		return;
+	Revocation *dlg = new Revocation(indexes);
+	if (dlg->exec()) {
+		ServiceContext ctx = ServiceContext::localUser(
+					ServiceContext::gui);
+		x509rev rev = dlg->getRevocation();
+		try {
+			foreach(QModelIndex idx, indexes) {
+				pki_x509 *cert = db_base::fromIndex<pki_x509>(idx);
+				if (cert && !cert->isRevoked())
+					certs()->revoke(ctx, cert, rev);
+			}
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+		}
+		columnsChanged();
+	}
+	delete dlg;
 }
 
 void CertTreeView::unRevoke()
 {
-	if (basemodel)
-		certs()->unRevoke(getSelectedIndexes());
+	if (!basemodel)
+		return;
+	ServiceContext ctx = ServiceContext::localUser(ServiceContext::gui);
+	try {
+		foreach(QModelIndex idx, getSelectedIndexes()) {
+			pki_x509 *cert = db_base::fromIndex<pki_x509>(idx);
+			if (cert && cert->isRevoked())
+				certs()->unrevoke(ctx, cert);
+		}
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
+	columnsChanged();
 }
 
 void CertTreeView::load()

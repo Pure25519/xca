@@ -11,7 +11,11 @@
 #include "MainWindow.h"
 #include "NewCrl.h"
 #include "Help.h"
+#include "XcaWarning.h"
 #include "lib/asn1int.h"
+#include "lib/audit.h"
+#include "lib/database_model.h"
+#include "lib/db_x509.h"
 #include "lib/pki_x509.h"
 
 enum revCol { Cnumber, Cserial, Cdate, Creason, CiDate, Cmax };
@@ -112,7 +116,14 @@ RevocationList::RevocationList(QWidget *w)
 
 void RevocationList::gencrl()
 {
-	issuer->setRevocations(getRevList());
+	try {
+		Database.model<db_x509>()->setRevocations(
+			ServiceContext::localUser(ServiceContext::gui),
+			issuer, getRevList());
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+		return;
+	}
 	NewCrl::newCrl(this, issuer);
 }
 

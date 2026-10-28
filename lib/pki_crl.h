@@ -20,15 +20,17 @@
 
 #include "digest.h"
 
+/* Input of db_crl::newCrl() (BTD-33). The defaults come from the CA:
+ * next CRL number, nextUpdate = lastUpdate + its CRL days. Every CRL
+ * carries the authority key identifier and a CRL number (certstrap
+ * rule 7, OPC UA), so neither is optional. */
 class crljob
 {
   public:
 	pki_x509 *issuer{};
 	bool withReason{};
-	bool authKeyId{};
-	bool subAltName{};
-	bool setCrlNumber{};
-	a1int crlNumber{};
+	bool subAltName{};          // issuerAltName copied from the CA
+	a1int crlNumber{};          // must exceed the CA's last CRL number
 	int crlDays{};
     digest hashAlgo{};
 	a1time lastUpdate{};
@@ -36,9 +38,7 @@ class crljob
 
 	crljob(pki_x509 *x = nullptr) : issuer(x),
 		withReason(true),
-		authKeyId(true),
 		subAltName(true),
-		setCrlNumber(issuer->getCrlNumber().getLong() > 0),
 		crlNumber(issuer->getCrlNumber()),
 		crlDays(issuer->getCrlDays()),
 		hashAlgo(digest::getDefault()),
