@@ -20,6 +20,7 @@ xcaWarningBox::xcaWarningBox(QWidget *w, const QString &txt,
 				QMessageBox::Icon icn)
 	: QMessageBox(icn, XCA_TITLE, txt, QMessageBox::NoButton, w)
 {
+	setObjectName("dlg_warning");
 	setTextFormat(Qt::PlainText);
 }
 
@@ -35,6 +36,7 @@ int xcaWarningGui::showBox(const QString &txt, QMessageBox::Icon icn,
 			QMessageBox::StandardButtons b)
 {
 	QMessageBox w(icn, XCA_TITLE, txt, b, nullptr);
+	w.setObjectName("dlg_message");
 	return w.exec();
 }
 
@@ -84,6 +86,7 @@ void xcaWarningGui::warningv3(const QString &msg, const extList &el)
 		QString("</h3><hr>") + el.getHtml("<br>");
 
 	QTextEdit *textbox = new QTextEdit(etext);
+	textbox->setObjectName("dlg_warningV3_text");
 	XcaDialog *d = new XcaDialog(NULL, x509, textbox,
 				QString(), QString());
 	d->aboutDialog(QPixmap(":certImg"));

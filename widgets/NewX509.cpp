@@ -28,6 +28,7 @@
 #include "OidResolver.h"
 #include "MainWindow.h"
 #include "Help.h"
+#include "AutomationId.h"
 #include "v3ext.h"
 #include "lib/x509name.h"
 #include "lib/db_key.h"
@@ -73,6 +74,8 @@ QList<nameEdit> NewX509::setupExplicitInputs(NIDlist nid_list,
 		layout->setContentsMargins(11, 11, 11, 11);
 	}
 	int n = 0, col = 0;
+	QString idPrefix = parent == attrWidget ? "dlg_newX509_attr" :
+						"dlg_newX509_dn";
 
 	foreach(int nid, nid_list) {
 		DoubleClickLabel *label;
@@ -95,6 +98,9 @@ QList<nameEdit> NewX509::setupExplicitInputs(NIDlist nid_list,
 		connect(label, SIGNAL(doubleClicked(QString)),
 		        MainWindow::getResolver(), SLOT(searchOid(QString)));
 		edit = new QLineEdit(parent);
+		edit->setObjectName(idPrefix + "_" + AutomationId::sanitize(sn));
+		edit->setAccessibleName(label->text());
+		label->setObjectName(idPrefix + "Label_" + AutomationId::sanitize(sn));
 		setupLineEditByNid(nid, edit);
 		edits << nameEdit(nid, edit, label);
 

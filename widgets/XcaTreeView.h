@@ -41,6 +41,8 @@ class XcaTreeView: public QTreeView
 	const char *ClipboardSettings{};
 	enum pki_type ClipboardPki_type{ none };
 	void clipboardFormatMenu(QMenu *menu);
+	/* Automation ID of a context menu entry: ctx_<view>_<action> */
+	QString ctxId(const QString &action = QString()) const;
 
   public:
 	XcaTreeView(QWidget *parent = nullptr);

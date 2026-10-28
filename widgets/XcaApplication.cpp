@@ -8,6 +8,7 @@
 #include "XcaApplication.h"
 #include "MainWindow.h"
 #include "XcaWarning.h"
+#include "AutomationId.h"
 
 #include "lib/entropy.h"
 
@@ -54,6 +55,7 @@ XcaApplication::XcaApplication(int &argc, char *argv[])
 #endif
 
 	installEventFilter(this);
+	AutomationId::install();
 }
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
