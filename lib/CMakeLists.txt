@@ -42,6 +42,7 @@ func_base.cpp		func_base.h		debug_info.cpp
 cmdline.cpp   pkcs11_provider.cpp
 audit.cpp	audit.h
 issuance.cpp	issuance.h
+request.cpp	request.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)

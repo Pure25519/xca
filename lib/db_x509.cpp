@@ -21,6 +21,7 @@
 #include "entropy.h"
 #include "audit.h"
 #include "issuance.h"
+#include "request.h"
 
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
@@ -944,14 +945,16 @@ void db_x509::toRequest(QModelIndex idx)
 	if (!cert)
 		return;
 
+	RequestSpec spec;
+	spec.name = cert->getIntName();
+	spec.subject = cert->getSubject();
+	spec.key = cert->getRefKey();
+	spec.hashAlgo = cert->getDigest();
+	spec.copiedExtensions = cert->getV3ext();
+	spec.source = transformed;
 	try {
-		pki_x509req *req = new pki_x509req();
-		Q_CHECK_PTR(req);
-		req->pkiSource = transformed;
-		req->setIntName(cert->getIntName());
-		req->createReq(cert->getRefKey(), cert->getSubject(),
-			cert->getDigest(), cert->getV3ext());
-		createSuccess(reqs->insert(req));
+		createSuccess(reqs->newRequest(
+			ServiceContext::localUser(ServiceContext::gui), spec));
 	}
 	catch (errorEx &err) {
 		XCA_ERROR(err);

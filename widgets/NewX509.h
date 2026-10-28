@@ -12,6 +12,7 @@
 #include "ui_NewX509.h"
 #include "lib/oid.h"
 #include "lib/issuance.h"
+#include "lib/request.h"
 #include "kvView.h"
 #include "XcaDetail.h"
 #include <openssl/x509v3.h>
@@ -106,6 +107,7 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		/* The dialog input as value objects for lib/ (BTD-31) */
 		ExtensionSpec getExtensionSpec();
 		IssuanceSpec getIssuanceSpec();
+		RequestSpec getRequestSpec();
 		extList getGuiExt();
 		extList getNetscapeExt();
 		extList getAdvanced();

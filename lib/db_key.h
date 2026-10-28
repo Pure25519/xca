@@ -15,11 +15,15 @@
 
 class QModelIndex;
 class QContextMenuEvent;
+class AuditParams;
+class ServiceContext;
 
 class db_key: public db_base
 {
 	Q_OBJECT
 
+		pki_key *generate(const keyjob &task, const QString &name,
+				AuditParams &params, const ServiceContext &ctx);
 	protected:
 		virtual dbheaderList getHeaders();
 	public:
@@ -32,7 +36,18 @@ class db_key: public db_base
 		pki_base* insert(pki_base *item);
 		void setOwnPass(QModelIndex idx, enum pki_key::passType);
 		void loadContainer();
+		/* Generates one key pair (BTD-32). Throws serviceError for a
+		 * rejected job and errorEx for anything else; writes exactly
+		 * one audit entry key.generate either way (error code
+		 * internal_error for anything but a serviceError). No question
+		 * or message; call it outside a transaction. */
+		pki_key *newKey(const ServiceContext &ctx, const keyjob &task,
+				const QString &name);
+		/* GUI and command line: asks before an unusual RSA/DSA size,
+		 * reports success or the error, returns NULL on failure */
 		pki_key *newKey(const keyjob &task, const QString &name);
+		/* Audit parameters key_type, key_size, curve of a key */
+		static void keyParams(AuditParams &params, pki_key *key);
 		int exportFlags(const QModelIndex &index) const;
 		void exportItem(const QModelIndex &index,
 			const pki_export *xport, XFile &file) const;
