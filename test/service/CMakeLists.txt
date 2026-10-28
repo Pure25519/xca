@@ -70,3 +70,11 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_issuance PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# xca --no-gui exits 1 when a command fails, 0 when it succeeds
+add_test(NAME test_cli_exit_codes
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DOPENSSL=${OPENSSL_PROGRAM}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_exit_codes
+		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
+set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
