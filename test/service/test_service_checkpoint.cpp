@@ -439,6 +439,14 @@ void test_service_checkpoint::auditKeyNotUsableForSigning()
 		Database.model<db_crl>()->newCrl(ctx, job);
 	}), QString("audit_key"));
 
+	/* Renewal (db_x509::certRenewal) copies the certificate and signs
+	 * the copy with the issuer's key, outside of issue() */
+	pki_x509 renewed(ca);
+	renewed.setNotAfter(a1time(now.addDays(60)));
+	QCOMPARE(errorCode([&]() {
+		renewed.sign(ca->getRefKey(), ca->getDigest());
+	}), QString("audit_key"));
+
 	/* Each rejection is audited; the chain and its checkpoint hold */
 	QStringList codes;
 	for (const AuditEntry &e : AuditLog::entries())
