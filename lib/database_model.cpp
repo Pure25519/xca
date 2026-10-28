@@ -89,7 +89,7 @@ QSqlError database_model::initSqlDB()
  */
 #define INITIAL_SCHEMA_VERSION "7"
 /* Migrations of the bxc-pki fork, counted in settings 'bxc_schema' */
-#define BXC_MAX_SCHEMAS 1
+#define BXC_MAX_SCHEMAS 2
 
 	QStringList schemas[MAX_SCHEMAS];
 	QStringList bxc_schemas[BXC_MAX_SCHEMAS];

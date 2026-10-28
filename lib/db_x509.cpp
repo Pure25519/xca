@@ -20,6 +20,7 @@
 #include "database_model.h"
 #include "entropy.h"
 #include "audit.h"
+#include "audit_key.h"
 #include "issuance.h"
 #include "request.h"
 
@@ -447,6 +448,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	if (! signkey || signkey->isPubKey())
 		throw serviceError("no_private_signing_key",
 			tr("The key you selected for signing is not a private one."));
+	AuditKey::refuseSigning(signkey);
 
 	X509V3_set_ctx_nodb(&ext_ctx);
 	X509V3_set_ctx(&ext_ctx, signcert->getCert(), cert->getCert(),

@@ -29,6 +29,7 @@
 
 #include "lib/entropy.h"
 #include "lib/Passwd.h"
+#include "lib/audit_key.h"
 #include "lib/database_model.h"
 #include "lib/exception.h"
 #include "lib/pki_evp.h"
@@ -542,6 +543,7 @@ void MainWindow::changeDbPass()
 			key->encryptKey(pass.constData());
 			key->sqlUpdatePrivateKey();
 		}
+		AuditKey::reencrypt(pass);
 		Settings["pwhash"] = passhash;
 		TransCommit();
 		pki_evp::passHash = passhash;

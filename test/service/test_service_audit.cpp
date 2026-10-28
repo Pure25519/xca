@@ -71,7 +71,7 @@ class test_service_audit : public ServiceTestCase
 	void revocationCrossCheck();
 	void revocationAfterUnrevoke();
 	void unauditedRevocationIsMismatch();
-	void knownLimitSuffixRewrite();
+	void knownLimitUnanchoredTail();
 	void appendInRolledBackTransaction();
 	void cliExitCodes();
 	void libHasNoAuditUpdateOrDelete();
@@ -155,18 +155,19 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='schema'")
 			.toString(), QString("8"));
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("1"));
+			.toString(), QString("2"));
 
 	/* Every row is unchanged. settings only gains bxc_schema and the
 	 * option the harness sets on each open. */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList audit = after.take("audit_log");
+	QCOMPARE(after.take("audit_keys"), QStringList());
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
-			s == "bxc_schema|1";
+			s == "bxc_schema|2";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 
@@ -483,11 +484,13 @@ void test_service_audit::exportJsonLines()
 			"cert.issue", "cert", "", AuditParams(), "failure",
 			"E_POLICY");
 
+	/* The export signs a checkpoint first (BTD-37): the audit key is
+	 * announced (4), then the checkpoint follows (5) */
 	QByteArray out = AuditLog::exportJsonLines();
 	QVERIFY(out.endsWith('\n'));
 	QList<QByteArray> lines = out.split('\n');
 	lines.removeLast();
-	QCOMPARE(lines.size(), 3);
+	QCOMPARE(lines.size(), 5);
 
 	const QStringList fields { "action", "actor", "channel", "error_code",
 		"hash", "object_id", "object_type", "params", "prev_hash",
@@ -518,6 +521,10 @@ void test_service_audit::exportJsonLines()
 	}
 	QVariantMap last = QJsonDocument::fromJson(lines[2]).toVariant().toMap();
 	QCOMPARE(last["actor"].toString(), QString("apikey:k-17"));
+	QCOMPARE(QJsonDocument::fromJson(lines[3]).toVariant().toMap()["action"]
+		.toString(), QString(AuditLog::actionKeyCreate));
+	QCOMPARE(QJsonDocument::fromJson(lines[4]).toVariant().toMap()["action"]
+		.toString(), QString(AuditLog::actionCheckpoint));
 	QCOMPARE(last["channel"].toString(), QString("rest"));
 	QCOMPARE(last["result"].toString(), QString("failure"));
 	QCOMPARE(last["error_code"].toString(), QString("E_POLICY"));
@@ -639,11 +646,13 @@ void test_service_audit::unauditedRevocationIsMismatch()
 	QCOMPARE(r.unauditedRevocations, qint64(2));
 }
 
-void test_service_audit::knownLimitSuffixRewrite()
+void test_service_audit::knownLimitUnanchoredTail()
 {
-	/* Pins the documented limit until BTD-37 (audit.h): the chain has no
-	 * key, so a rewritten suffix passes verify. When BTD-37 adds signed
-	 * checkpoints, this test must be turned around. */
+	/* Pins the remaining limits (audit.h): entries after the last signed
+	 * checkpoint have the hash chain only, so a rewritten suffix there
+	 * passes verify, and so does a cut-off or deleted log. A rewrite
+	 * that a later checkpoint covers is reported since BTD-37
+	 * (test_service_checkpoint). */
 	appendSample(5);
 
 	/* Rewrite entry 3 and recompute the hashes of 3, 4 and 5 */
@@ -661,6 +670,7 @@ void test_service_audit::knownLimitSuffixRewrite()
 	}
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY(r.ok());
+	QCOMPARE(r.unanchoredEntries, qint64(5));
 	QCOMPARE(AuditLog::entries()[2].objectId, QString("99"));
 
 	/* Tail cut off: still valid, append() continues from the cut */
@@ -725,10 +735,13 @@ void test_service_audit::cliExitCodes()
 	QString jsonl = QFileInfo(dbFile).dir().filePath("audit.jsonl");
 
 	QCOMPARE(xcaCli({ "--audit-verify" }), EXIT_SUCCESS);
+	/* The export signs a checkpoint with the database password from the
+	 * source: key announcement and checkpoint follow (BTD-37) */
+	pwdialog->expect(dbPassword);
 	QCOMPARE(xcaCli({ "--audit-export", jsonl }), EXIT_SUCCESS);
 	QFile f(jsonl);
 	QVERIFY(f.open(QIODevice::ReadOnly));
-	QCOMPARE(f.readAll().count('\n'), 3);
+	QCOMPARE(f.readAll().count('\n'), 5);
 	f.close();
 
 	/* Export that cannot be written (XFile::open_write() throws) */
