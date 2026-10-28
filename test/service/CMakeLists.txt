@@ -62,6 +62,13 @@ add_test(NAME test_cli_confirmations
 		-P ${SERVICE_TEST_DIR}/cli_confirmations.cmake)
 set_tests_properties(test_cli_confirmations PROPERTIES LABELS service)
 
+# xca --no-gui checks a given database password on open (BTD-78)
+add_test(NAME test_cli_password_verify
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_verify
+		-P ${SERVICE_TEST_DIR}/cli_password_verify.cmake)
+set_tests_properties(test_cli_password_verify PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

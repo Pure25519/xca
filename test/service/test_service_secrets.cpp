@@ -19,6 +19,7 @@
 #endif
 
 #include "lib/arguments.h"
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
@@ -129,6 +130,7 @@ class test_service_secrets : public ServiceTestCase
 	void databasePassword();
 	void databasePasswordMissing();
 	void databasePasswordRejected();
+	void passwordCheckInAuditContext();
 
 	void keyPassword_data();
 	void keyPassword();
@@ -266,6 +268,35 @@ void test_service_secrets::databasePasswordRejected()
 		QVERIFY(!e.getString().contains("wrong-db-password"));
 	}
 	QVERIFY(!Database.isOpen());
+}
+
+/* BTD-78: the audit context says whether the database password was
+ * checked against pwhash on open */
+void test_service_secrets::passwordCheckInAuditContext()
+{
+	/* The harness opened the database with its password */
+	QVERIFY(ServiceContext::processPasswordVerified);
+	AuditLog::append(ServiceContext::localUser(ServiceContext::cli),
+			"test.checked", "key", "1");
+	QCOMPARE(AuditLog::entries().last().params["db_unlock_verified"],
+			QVariant(true));
+
+	/* xca --no-gui without a password source opens unchecked */
+	Database.close();
+	database_model::open_without_password = true;
+	Database.open(dbFile);
+	QVERIFY(Database.isOpen());
+	QVERIFY(!database_model::open_without_password);
+	QVERIFY(!ServiceContext::processPasswordVerified);
+	AuditLog::append(ServiceContext::localUser(ServiceContext::cli),
+			"test.unchecked", "key", "1");
+	QCOMPARE(AuditLog::entries().last().params["db_unlock_verified"],
+			QVariant(false));
+
+	/* Any other caller has to prove it itself */
+	QVERIFY(!ServiceContext(ServiceContext::rest,
+			"apikey:test").passwordVerified());
+	QVERIFY(AuditLog::verify().ok());
 }
 
 void test_service_secrets::keyPassword_data()

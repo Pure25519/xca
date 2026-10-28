@@ -36,6 +36,7 @@ const int AuditLog::defaultCheckpointInterval = 100;
 static const qint64 maxSafeInteger = 9007199254740991LL;
 
 enum ServiceContext::channel ServiceContext::processChannel = ServiceContext::gui;
+bool ServiceContext::processPasswordVerified = false;
 
 ServiceContext::ServiceContext(enum channel c, const QString &actor)
 	: chan(c), actorId(actor)
@@ -66,7 +67,9 @@ void ServiceContext::confirm(const QString &id, const QString &source)
 
 ServiceContext ServiceContext::localUser(enum channel c)
 {
-	return ServiceContext(c, "os:" + osUser());
+	ServiceContext ctx(c, "os:" + osUser());
+	ctx.pwVerified = processPasswordVerified;
+	return ctx;
 }
 
 QString ServiceContext::channelName(enum channel c)
@@ -86,10 +89,11 @@ const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
 		"ca_id", "confirmed", "count", "crl_number", "curve",
-		"der_size", "encrypted", "file", "fingerprint", "format",
-		"hash_algo", "invalidity_date", "issuer", "item_id",
-		"key_size", "key_type", "name", "next_update", "not_after",
-		"not_before", "outcome", "question", "reason", "reason_bit",
+		"db_unlock_verified", "der_size", "encrypted", "file",
+		"fingerprint", "format", "hash_algo", "invalidity_date",
+		"issuer", "item_id", "key_size", "key_type", "name",
+		"next_update", "not_after", "not_before", "outcome",
+		"question", "reason", "reason_bit",
 		"revocation_date", "serial", "subject", "template",
 		"this_update",
 	};
@@ -488,11 +492,13 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (action == actionCheckpoint || action == actionKeyCreate)
 		throw errorEx(QString("Audit action '%1' is reserved")
 				.arg(action));
-	/* The questions confirmed for this operation (BTD-71). Only here:
+	/* The questions confirmed for this operation (BTD-71) and whether
+	 * the database password was checked on open (BTD-78). Only here:
 	 * a checkpoint signs exactly the params it stores. */
 	AuditParams p = params;
 	if (!ctx.confirmations().isEmpty())
 		p.set("confirmed", ctx.confirmations().join(","));
+	p.set("db_unlock_verified", ctx.passwordVerified());
 	AuditEntry e = insertEntry(ctx, action, objectType, objectId,
 				p, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())

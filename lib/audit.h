@@ -88,6 +88,7 @@ class ServiceContext
 	enum channel chan;
 	QString actorId;
 	QStringList confirmed{};
+	bool pwVerified{};
 
   public:
 	/* actor: "os:<login>", "apikey:<key id>" or "cert:<SHA-256 fingerprint>" */
@@ -97,6 +98,11 @@ class ServiceContext
 	/* Channel of this process for entries without a caller, e.g. the
 	 * baseline written on a database upgrade. read_cmdline() sets cli. */
 	static enum channel processChannel;
+	/* Whether this process checked the database password against
+	 * pwhash when it opened the database: always in the GUI, in
+	 * xca --no-gui only with a password source (BTD-78). localUser()
+	 * copies it; append() records it as parameter "db_unlock_verified" */
+	static bool processPasswordVerified;
 	static QString osUser();
 	static QString channelName(enum channel c);
 
@@ -111,6 +117,10 @@ class ServiceContext
 	QString actor() const
 	{
 		return actorId;
+	}
+	bool passwordVerified() const
+	{
+		return pwVerified;
 	}
 	/* The caller answered question id (XCA_YESNO) with "yes", source:
 	 * "dialog", "--yes" or "--confirm" (BTD-71). append() records the
