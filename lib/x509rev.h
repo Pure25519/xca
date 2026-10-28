@@ -34,6 +34,8 @@ class x509rev
 		void d2i(QByteArray &ba);
 		QByteArray i2d() const;
 		QString getReason() const;
+		/* RFC 5280 CRLReason code; -1 if setReason() got an unknown name */
+		int getReasonBit() const;
 		bool identical(const x509rev &x) const;
 
 		x509rev()

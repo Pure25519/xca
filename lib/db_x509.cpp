@@ -26,16 +26,8 @@
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
 
-#pragma message ("drop UI dependencies")
-#include "widgets/CertExtend.h"
-#include "widgets/RevocationList.h"
-#include "widgets/MainWindow.h"
-
-#include "ui_RevocationList.h"
-#include "ui_MainWindow.h"
-#include "ui_CertExtend.h"
-#include "ui_Revoke.h"
-#include "ui_Help.h"
+#include <QRegularExpression>
+#include <QTimeZone>
 
 #include <openssl/rand.h>
 
@@ -759,172 +751,332 @@ void db_x509::writePKCS7(pki_x509 *cert, XFile &file, int flags,
 	delete p7;
 }
 
-void db_x509::certRenewal(QModelIndexList indexes)
+/* Revocation (BTD-33) */
+
+/* The revocations table keeps whole seconds; the audit entry must carry
+ * the same value, or AuditLog::verify() reports a mismatch */
+static a1time wholeSeconds(const a1time &t)
 {
-	pki_x509 *oldcert = NULL, *signer = NULL, *newcert =NULL;
-	pki_key *signkey = NULL;
-	a1time time;
-	a1int serial;
-	CertExtend *dlg = NULL;
-	x509rev r;
-	bool doRevoke = false;
-	bool doReplace = false;
-
-	if (indexes.size() == 0)
-		return;
-	QModelIndex idx = indexes[0];
-
-	try {
-		oldcert = fromIndex<pki_x509>(idx);
-		if (!oldcert || !(signer = oldcert->getSigner()) ||
-				!(signkey = signer->getRefKey()) ||
-				signkey->isPubKey())
-			return;
-		bool renew_myself = signer == oldcert;
-		dlg = new CertExtend(NULL, renew_myself ? NULL : signer);
-		dlg->revoke->setEnabled(!renew_myself);
-		if (!dlg->exec()) {
-			delete dlg;
-			return;
-		}
-		if (dlg->revoke->isChecked() && !renew_myself) {
-			Revocation *revoke = new Revocation(indexes);
-			doRevoke = revoke->exec();
-			r = revoke->getRevocation();
-			delete revoke;
-		}
-		doReplace = dlg->replace->isChecked();
-		foreach(idx, indexes) {
-			oldcert = fromIndex<pki_x509>(idx);
-			if (!oldcert)
-				continue;
-			newcert = new pki_x509(oldcert);
-			newcert->pkiSource = renewed;
-			serial = dlg->keepSerial->isChecked() ?
-				oldcert->getSerial() : getUniqueSerial(signer);
-			newcert->setRevoked(x509rev());
-
-			// change date and serial
-			newcert->setSerial(serial);
-			newcert->setNotBefore(dlg->notBefore->getDate());
-			a1time a;
-			if (dlg->noWellDefinedExpDate->isChecked())
-				a.setUndefined();
-			else
-				a = dlg->notAfter->getDate();
-
-			newcert->setNotAfter(a);
-
-			// and finally sign the cert
-			newcert->sign(signkey, oldcert->getDigest());
-			newcert = dynamic_cast<pki_x509 *>(insert(newcert));
-			createSuccess(newcert);
-		}
-		if (doRevoke)
-			do_revoke(indexes, r);
-
-		// delete old certificates if requested
-		if (doReplace) {
-			foreach(idx, indexes) {
-				if (fromIndex<pki_x509>(idx))
-					deletePKI(idx);
-			}
-		}
-	}
-	catch (errorEx &err) {
-		XCA_ERROR(err);
-		delete newcert;
-	}
-	delete dlg;
-	emit columnsContentChanged();
+	if (!t.isValid() || t.isUndefined())
+		return t;
+	return a1time(QDateTime::fromSecsSinceEpoch(t.toSecsSinceEpoch(),
+				QTimeZone::utc()));
 }
 
-
-void db_x509::revoke(QModelIndexList indexes)
+static void execOrThrow(XSqlQuery &q)
 {
-	if (indexes.size() == 0)
-		return;
-	Revocation *revoke = new Revocation(indexes);
-	if (revoke->exec()) {
-		do_revoke(indexes, revoke->getRevocation());
-	}
-	delete revoke;
-	emit columnsContentChanged();
+	q.exec();
+	if (q.lastError().isValid())
+		throw serviceError("database_error",
+			QObject::tr("Database error: %1")
+				.arg(q.lastError().text()));
 }
 
-void db_x509::do_revoke(QModelIndexList indexes, const x509rev &r)
+namespace {
+/* A row of the revocations table with its serial as stored: rows of
+ * older databases need not be written like a1int::toHex() */
+class revocationRow
 {
-	pki_x509 *parent = NULL, *cert, *iss;
-	x509revList revlist;
-
-	foreach(QModelIndex idx, indexes) {
-		cert = fromIndex<pki_x509>(idx);
-		if (!cert)
-			continue;
-		iss = cert->getSigner();
-		if (parent == NULL) {
-			parent = iss;
-		} else if (parent != iss) {
-			parent = NULL;
-			break;
-		}
-	}
-	if (!parent) {
-		qWarning("%s(%d): Certs have different/no signer",
-			 __func__, __LINE__);
-	}
-	foreach(QModelIndex idx, indexes) {
-		cert = fromIndex<pki_x509>(idx);
-		if (!cert)
-			continue;
-		x509rev rev(r);
-		rev.setSerial(cert->getSerial());
-		cert->setRevoked(rev);
-		revlist << rev;
-	}
-	parent->mergeRevList(revlist);
+  public:
+	QString serial{};
+	x509rev rev{};
+};
 }
 
-void db_x509::unRevoke(QModelIndexList indexes)
+static QList<revocationRow> revocationRows(const QVariant &caId)
 {
-	pki_x509 *parent = NULL;
-	x509revList revList;
+	QList<revocationRow> rows;
+	XSqlQuery q;
 
-	foreach(QModelIndex idx, indexes) {
-		pki_x509 *cert = fromIndex<pki_x509>(idx);
+	SQL_PREPARE(q, "SELECT serial, date, invaldate, crlNo, reasonBit "
+			"FROM revocations WHERE caId=?");
+	q.bindValue(0, caId);
+	execOrThrow(q);
+	while (q.next()) {
+		revocationRow row;
+		row.serial = q.value(0).toString();
+		row.rev = x509rev(q.record());
+		rows << row;
+	}
+	return rows;
+}
+
+static int indexOfSerial(const QList<revocationRow> &rows, const a1int &serial)
+{
+	for (int i = 0; i < rows.size(); i++) {
+		if (rows[i].rev.getSerial() == serial)
+			return i;
+	}
+	return -1;
+}
+
+static void insertRevocation(const QVariant &caId, x509rev rev)
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "INSERT INTO revocations "
+			"(caId, serial, date, invaldate, crlNo, reasonBit) "
+			"VALUES (?,?,?,?,?,?)");
+	q.bindValue(0, caId);
+	rev.executeQuery(q);
+	if (q.lastError().isValid())
+		throw serviceError("database_error",
+			QObject::tr("Database error: %1")
+				.arg(q.lastError().text()));
+}
+
+/* Reason and dates only: the CRL number of the first appearance stays */
+static void updateRevocation(const QVariant &caId, const QString &serial,
+				const x509rev &rev)
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "UPDATE revocations SET date=?, invaldate=?, "
+			"reasonBit=? WHERE caId=? AND serial=?");
+	q.bindValue(0, rev.getDate().toPlain());
+	q.bindValue(1, rev.getInvalDate().toPlain());
+	q.bindValue(2, rev.getReasonBit());
+	q.bindValue(3, caId);
+	q.bindValue(4, serial);
+	execOrThrow(q);
+}
+
+static void deleteRevocation(const QVariant &caId, const QString &serial)
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "DELETE FROM revocations WHERE caId=? AND serial=?");
+	q.bindValue(0, caId);
+	q.bindValue(1, serial);
+	execOrThrow(q);
+}
+
+/* The state AuditLog::verify() recomputes the row from */
+static AuditParams revocationParams(const pki_x509 *ca, const QString &serial,
+				const x509rev &rev)
+{
+	AuditParams p = AuditParams::revocation(
+		ca ? ca->getSqlItemId().toLongLong() : 0, serial,
+		rev.getReasonBit(), rev.getDate(), rev.getInvalDate());
+	if (rev.getReasonBit() >= 0)
+		p.set("reason", rev.getReason());
+	if (rev.getCrlNo())
+		p.set("crl_number", (qint64)rev.getCrlNo());
+	return p;
+}
+
+static QString itemId(const pki_base *pki)
+{
+	return pki ? pki->getSqlItemId().toString() : QString();
+}
+
+/* The revocation state of the certificates of ca in memory */
+static void refreshRevocations(pki_x509 *ca)
+{
+	x509revList list = ca->getRevList();
+
+	foreach(pki_base *p, ca->getChildItems()) {
+		pki_x509 *cert = dynamic_cast<pki_x509 *>(p);
 		if (!cert)
 			continue;
-		pki_x509 *iss = cert->getSigner();
-		if (parent == NULL) {
-			parent = iss;
-		} else if (parent != iss) {
-			parent = NULL;
-			break;
-		}
-	}
-	if (!parent) {
-		qWarning("%s(%d): Certs have different/no issuer\n",
-			 __func__, __LINE__);
-		return;
-	}
-	revList = parent->getRevList();
-
-	foreach(QModelIndex idx, indexes) {
-		int i;
 		x509rev rev;
-		pki_x509 *cert = fromIndex<pki_x509>(idx);
-
-		if (!cert)
-			continue;
-
-		cert->setRevoked(x509rev());
 		rev.setSerial(cert->getSerial());
-		i = revList.indexOf(rev);
-		if (i != -1)
-			revList.takeAt(i);
+		int i = list.indexOf(rev);
+		cert->setRevoked(i == -1 ? x509rev() : list[i]);
 	}
-	parent->setRevocations(revList);
-	emit columnsContentChanged();
+}
+
+void db_x509::revoke(const ServiceContext &ctx, pki_x509 *cert,
+			const x509rev &r)
+{
+	pki_x509 *ca = cert ? cert->getSigner() : nullptr;
+	x509rev rev(r);
+
+	if (cert)
+		rev.setSerial(cert->getSerial());
+	if (rev.getDate().isUndefined())
+		rev.setDate(a1time());
+	rev.setDate(wholeSeconds(rev.getDate()));
+	rev.setInvalDate(wholeSeconds(rev.getInvalDate()));
+	rev.setCrlNo(0);
+
+	AuditParams params = revocationParams(ca, rev.getSerial().toHex(), rev);
+	if (cert)
+		params.set("name", cert->getIntName());
+
+	auditedTransaction(ctx, AuditLog::actionRevoke, "certificate",
+				itemId(cert), params, [&]() {
+		if (!cert)
+			throw serviceError("missing_certificate",
+				tr("No certificate given"));
+		if (!ca)
+			throw serviceError("unknown_issuer",
+				tr("The issuer of '%1' is not in the database")
+					.arg(cert->getIntName()));
+		if (ca == cert)
+			throw serviceError("self_signed",
+				tr("The self-signed certificate '%1' has no issuer to revoke it")
+					.arg(cert->getIntName()));
+		if (rev.getReasonBit() < 0)
+			throw serviceError("invalid_reason",
+				tr("Unknown revocation reason"));
+		if (cert->isRevoked() || indexOfSerial(revocationRows(
+				ca->getSqlItemId()), rev.getSerial()) != -1)
+			throw serviceError("already_revoked",
+				tr("The certificate '%1' is already revoked")
+					.arg(cert->getIntName()));
+		insertRevocation(ca->getSqlItemId(), rev);
+		AuditLog::append(ctx, AuditLog::actionRevoke, "certificate",
+				itemId(cert), params);
+	});
+	refreshRevocations(ca);
+}
+
+void db_x509::unrevoke(const ServiceContext &ctx, pki_x509 *cert)
+{
+	pki_x509 *ca = cert ? cert->getSigner() : nullptr;
+
+	AuditParams params = AuditParams::unrevocation(
+		ca ? ca->getSqlItemId().toLongLong() : 0,
+		cert ? cert->getSerial().toHex() : QString());
+	if (cert)
+		params.set("name", cert->getIntName());
+
+	auditedTransaction(ctx, AuditLog::actionUnrevoke, "certificate",
+				itemId(cert), params, [&]() {
+		if (!cert)
+			throw serviceError("missing_certificate",
+				tr("No certificate given"));
+		if (!ca)
+			throw serviceError("unknown_issuer",
+				tr("The issuer of '%1' is not in the database")
+					.arg(cert->getIntName()));
+		QList<revocationRow> rows = revocationRows(ca->getSqlItemId());
+		int i = indexOfSerial(rows, cert->getSerial());
+		if (i == -1)
+			throw serviceError("not_revoked",
+				tr("The certificate '%1' is not revoked")
+					.arg(cert->getIntName()));
+		deleteRevocation(ca->getSqlItemId(), rows[i].serial);
+		AuditParams p = AuditParams::unrevocation(
+			ca->getSqlItemId().toLongLong(), rows[i].serial);
+		p.set("name", cert->getIntName());
+		AuditLog::append(ctx, AuditLog::actionUnrevoke, "certificate",
+				itemId(cert), p);
+	});
+	refreshRevocations(ca);
+}
+
+void db_x509::setRevocations(const ServiceContext &ctx, pki_x509 *ca,
+			const x509revList &list)
+{
+	AuditParams params;
+
+	params.set("count", (qint64)list.size());
+	if (ca) {
+		params.set("ca_id", ca->getSqlItemId().toLongLong());
+		params.set("name", ca->getIntName());
+	}
+
+	auditedTransaction(ctx, "ca.set_revocations", "certificate",
+				itemId(ca), params, [&]() {
+		if (!ca || !ca->isCA())
+			throw serviceError("not_a_ca",
+				tr("Revocations need a CA certificate"));
+		QVariant caId = ca->getSqlItemId();
+		QList<x509rev> wanted;
+		for (x509rev rev : list) {
+			if (rev.getSerial() == a1int(0L))
+				throw serviceError("invalid_serial",
+					tr("Invalid serial number '%1'")
+						.arg(rev.getSerial().toHex()));
+			if (rev.getReasonBit() < 0)
+				throw serviceError("invalid_reason",
+					tr("Unknown revocation reason"));
+			if (wanted.contains(rev))
+				throw serviceError("duplicate_serial",
+					tr("The serial number %1 is listed twice")
+						.arg(rev.getSerial().toHex()));
+			if (rev.getDate().isUndefined())
+				rev.setDate(a1time());
+			rev.setDate(wholeSeconds(rev.getDate()));
+			rev.setInvalDate(wholeSeconds(rev.getInvalDate()));
+			rev.setCrlNo(0);
+			wanted << rev;
+		}
+		for (const revocationRow &row : revocationRows(caId)) {
+			pki_x509 *cert = ca->getBySerial(row.rev.getSerial());
+			int i = wanted.indexOf(row.rev);
+			if (i == -1) {
+				deleteRevocation(caId, row.serial);
+				AuditLog::append(ctx, AuditLog::actionUnrevoke,
+					"certificate", itemId(cert),
+					AuditParams::unrevocation(
+						caId.toLongLong(), row.serial));
+				continue;
+			}
+			x509rev rev = wanted.takeAt(i);
+			/* a CRL already published this revocation date */
+			if (row.rev.getCrlNo())
+				rev.setDate(row.rev.getDate());
+			rev.setCrlNo(row.rev.getCrlNo());
+			if (rev.identical(row.rev))
+				continue;
+			updateRevocation(caId, row.serial, rev);
+			AuditLog::append(ctx, AuditLog::actionRevoke,
+				"certificate", itemId(cert),
+				revocationParams(ca, row.serial, rev));
+		}
+		for (const x509rev &rev : wanted) {
+			insertRevocation(caId, rev);
+			AuditLog::append(ctx, AuditLog::actionRevoke,
+				"certificate",
+				itemId(ca->getBySerial(rev.getSerial())),
+				revocationParams(ca, rev.getSerial().toHex(), rev));
+		}
+	});
+	refreshRevocations(ca);
+}
+
+pki_x509 *db_x509::certBySerial(pki_x509 *issuer, const QString &serial) const
+{
+	static const QRegularExpression hex("^[0-9A-Fa-f]+$");
+	static const QRegularExpression dec("^[0-9]+$");
+	QString s = serial.trimmed();
+	bool hexOnly = s.contains(':');
+	QList<pki_x509 *> found;
+
+	s.remove(':');
+	if (s.startsWith("0x", Qt::CaseInsensitive)) {
+		s = s.mid(2);
+		hexOnly = true;
+	}
+	if (!issuer)
+		throw serviceError("unknown_issuer", tr("No issuer given"));
+	if (!hex.match(s).hasMatch())
+		throw serviceError("invalid_serial",
+			tr("Invalid serial number '%1'").arg(serial));
+	if (!dec.match(s).hasMatch())
+		hexOnly = true;
+
+	pki_x509 *cert = issuer->getBySerial(a1int().setHex(s));
+	if (cert)
+		found << cert;
+	if (!hexOnly) {
+		cert = issuer->getBySerial(a1int().setDec(s));
+		if (cert && !found.contains(cert))
+			found << cert;
+	}
+	if (found.isEmpty())
+		throw serviceError("unknown_serial",
+			tr("'%1' has issued no certificate with serial number %2")
+				.arg(issuer->getIntName(), serial));
+	if (found.size() > 1)
+		throw serviceError("ambiguous_serial",
+			tr("The serial number %1 names the certificates '%2' (hex) and '%3' (decimal)")
+				.arg(serial, found[0]->getIntName(),
+					found[1]->getIntName()));
+	return found[0];
 }
 
 void db_x509::toCertificate(QModelIndex index)

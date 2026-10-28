@@ -33,11 +33,16 @@ class pki_key;
 class pki_x509 : public pki_x509super
 {
 		Q_OBJECT
+	public:
+		/* CRL validity of a CA without own setting: P7D (BTD-33).
+		 * Each CA keeps its own value (CA Properties, authority
+		 * table); a CRL takes it from there. */
+		static const int defaultCrlDays = 7;
 	private:
 		QVariant issuerSqlId{};
 		a1time crlExpire{};
 		a1int crlNumber{};
-		int crlDays{ 30 };
+		int crlDays{ defaultCrlDays };
 		QVariant caTemplateSqlId{};
 		X509 *cert{};
 		x509rev revocation{};

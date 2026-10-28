@@ -94,3 +94,6 @@ value object, a typed error and an audit entry (pattern: `doc/service-pattern.md
 request creation through `db_x509req::newRequest(ctx, RequestSpec)` (BTD-32): RSA and EC keys, a
 CSR with SAN and EKU for each, checked with `openssl req -verify` (skipped without the `openssl`
 program), one audit entry per operation and per rejection.
+`test_service_revocation.cpp` covers revocation and CRL generation (BTD-33): every CRL is checked
+with `openssl crl -CAfile`, the empty CRL with `openssl asn1parse`, and each test ends with
+`AuditLog::verify()` reporting no unaudited revocation row.

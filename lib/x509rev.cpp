@@ -53,6 +53,13 @@ QString x509rev::getReason() const
 	return crl_reasons[reason_idx].lname;
 }
 
+int x509rev::getReasonBit() const
+{
+	if (reason_idx < 0 || reason_idx >= crlreasons().size())
+		return -1;
+	return crl_reasons[reason_idx].bitnum;
+}
+
 static int reasonBit2Idx(int bit)
 {
 	for (int i=0; crl_reasons[i].lname; i++) {

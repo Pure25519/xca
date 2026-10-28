@@ -50,6 +50,9 @@
 #include <QVariant>
 #include <QVariantMap>
 
+#include "exception.h"
+#include "sql.h"
+
 class Passwd;
 
 /* Who triggered a service function and through which channel.
@@ -245,5 +248,34 @@ class AuditLog
 			const QByteArray &canonical);
 	static QString rfc3339(const QDateTime &t);
 };
+
+/* The caller contract above for one service operation (BTD-33):
+ * work() runs in one transaction and appends its success entries before
+ * the commit. When it throws, the transaction is rolled back, one entry
+ * "failure" with the serviceError code (internal_error for any other
+ * exception) is appended and the exception is rethrown. params is read
+ * only then, so work() may complete it. */
+template <class Work>
+void auditedTransaction(const ServiceContext &ctx, const QString &action,
+		const QString &objectType, const QString &objectId,
+		const AuditParams &params, Work work)
+{
+	try {
+		Transaction;
+		TransThrow();
+		work();
+		if (!TransCommit())
+			throw serviceError("database_error", QObject::tr(
+				"Failed to commit the database transaction"));
+	} catch (serviceError &err) {
+		AuditLog::append(ctx, action, objectType, objectId, params,
+				"failure", err.code);
+		throw;
+	} catch (...) {
+		AuditLog::append(ctx, action, objectType, objectId, params,
+				"failure", "internal_error");
+		throw;
+	}
+}
 
 #endif

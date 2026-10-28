@@ -78,10 +78,40 @@ class db_x509: public db_x509super
 		void toRequest(QModelIndex idx);
 		void updateCaProperties(pki_x509 *cert);
 		void toCertificate(QModelIndex index);
+		/* GUI: Renewal dialog, defined in widgets/CertExtend.cpp */
 		void certRenewal(QModelIndexList indexes);
-		void revoke(QModelIndexList indexes);
-		void do_revoke(QModelIndexList indexes, const x509rev &r);
-		void unRevoke(QModelIndexList indexes);
+
+		/* Revocation (BTD-33). Each call writes exactly one audit
+		 * entry certificate.revoke / certificate.unrevoke and throws
+		 * serviceError for a rejected request (missing_certificate,
+		 * unknown_issuer, self_signed, invalid_reason,
+		 * already_revoked, not_revoked, database_error), errorEx for
+		 * anything else (audited as internal_error). The reason is
+		 * the one of rev; rev's serial is replaced by the
+		 * certificate's, an undefined date by now. Call them outside
+		 * a transaction (see newCert()). */
+		void revoke(const ServiceContext &ctx, pki_x509 *cert,
+				const x509rev &rev);
+		void unrevoke(const ServiceContext &ctx, pki_x509 *cert);
+		/* Replaces the revocation list of a CA (Manage revocations
+		 * dialog): serials without a certificate in the database are
+		 * allowed here. One entry certificate.revoke per added or
+		 * changed and certificate.unrevoke per removed serial, all in
+		 * one transaction; on a rejection or error nothing changes
+		 * and one entry ca.set_revocations with the error code is
+		 * written (invalid_serial, invalid_reason, duplicate_serial,
+		 * not_a_ca, database_error, internal_error). An entry already
+		 * in a CRL keeps its revocation date and CRL number. */
+		void setRevocations(const ServiceContext &ctx, pki_x509 *ca,
+				const x509revList &list);
+		/* The certificate of issuer with this serial (certstrap rule
+		 * 8): hex as XCA shows it, with or without "0x" and colons,
+		 * or decimal. Digits only fit both readings; the one that
+		 * names a certificate of issuer wins, both: ambiguous_serial.
+		 * Throws serviceError invalid_serial, unknown_serial,
+		 * ambiguous_serial. */
+		pki_x509 *certBySerial(pki_x509 *issuer,
+				const QString &serial) const;
 		int exportFlags(const QModelIndex &idx) const;
 		void exportItems(const QModelIndexList &indexes,
 				const pki_export *xport, XFile &file) const;

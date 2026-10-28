@@ -272,9 +272,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			exitcode = EXIT_FAILURE;
 		} else {
 			crljob task(issuer);
-			pki_crl *crl = crls->newCrl(task, cmd_opts["name"]);
-			if (crl)
-				cmdline_items->append_item(crl);
+			pki_crl *crl = crls->newCrl(ServiceContext::localUser(
+					ServiceContext::cli), task, cmd_opts["name"]);
+			crls->createSuccess(crl);
+			cmdline_items->append_item(crl);
 		}
 	}
 	if (!cmd_opts["select"].isEmpty()) {

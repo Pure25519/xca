@@ -332,7 +332,7 @@
 	"created VARCHAR(32), "         // UTC time, RFC 3339
 	"actor VARCHAR(256), "          // os:<login>, apikey:<id>, cert:<fp>
 	"channel VARCHAR(8), "          // gui, cli, rest, est, cmp
-	"action VARCHAR(64), "          // e.g. cert.revoke
+	"action VARCHAR(64), "          // e.g. certificate.revoke
 	"object_type VARCHAR(32), "
 	"object_id VARCHAR(128), "
 	"params " B64_BLOB ", "         // canonical JSON (RFC 8785), not Base64
