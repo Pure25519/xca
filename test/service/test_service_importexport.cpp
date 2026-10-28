@@ -9,6 +9,8 @@
  */
 
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QProcess>
 #include <QTemporaryDir>
 
@@ -84,6 +86,8 @@ class test_service_importexport : public ServiceTestCase
 	void pkcs7ChainRoundTrip();
 	void privateExportAudit();
 	void clipboardPrivateKey();
+	void privateExportEncrypted_data();
+	void privateExportEncrypted();
 	void crlImportAuditsRevocations();
 	void templateCopyExport();
 	void rejections();
@@ -518,6 +522,130 @@ void test_service_importexport::clipboardPrivateKey()
 	text = Database.model<db_key>()->exportItems(ctx, spec);
 	QVERIFY(text.contains("PUBLIC KEY"));
 	QCOMPARE(entries("key.export_private").size(), 1);
+#endif
+}
+
+/* Regression (BTD-34, review of xca#17): key.export_private records
+ * whether the private key left encrypted. The clipboard text of
+ * CertFormat 7 ("PEM + PKCS#8") holds a traditional, unencrypted PEM key
+ * (pki_evp::pem()), the entry said encrypted=true. privateExportAudit
+ * checked the number, the parameter names and the absence of secrets of
+ * the entries, not this value, and clipboardPrivateKey used only the key
+ * format 20.
+ *
+ * Every private key format, as written and as audited:
+ *   format                     target           encrypted
+ *    4 OpenVPN                 file             no
+ *    6 PEM + key               file, clipboard  no
+ *    7 PEM + PKCS#8            file             yes (AES-256-CBC)
+ *    7 PEM + PKCS#8            clipboard        no
+ *   14 PKCS #12 chain          file             yes
+ *   15 PKCS #12                file             yes
+ *   20 PEM private             file, clipboard  no
+ *   21 PEM encrypted           file             yes (AES-256-CBC)
+ *   22 SSH2 private            file             no
+ *   25 DER private             file             no
+ *   26 PVK private (RSA, DSA)  file             no
+ *   28 PKCS #8 encrypted       file             yes (AES-256-CBC)
+ *   29 PKCS #8                 file, clipboard  no
+ *   50 JSON Web Key private    file             no
+ * Checked with the openssl program: an encrypted key reads with the
+ * export password and not with a wrong one; PKCS#12 holds the key in a
+ * shrouded key bag; a private JWK has its "d" member in clear. */
+void test_service_importexport::privateExportEncrypted_data()
+{
+	QTest::addColumn<bool>("isCert");
+	QTest::addColumn<int>("format");
+	QTest::addColumn<bool>("clipboard");
+	QTest::addColumn<bool>("encrypted");
+
+	QTest::newRow("4 OpenVPN") << true << 4 << false << false;
+	QTest::newRow("6 PEM + key") << true << 6 << false << false;
+	QTest::newRow("6 PEM + key, clipboard") << true << 6 << true << false;
+	QTest::newRow("7 PEM + PKCS#8") << true << 7 << false << true;
+	QTest::newRow("7 PEM + PKCS#8, clipboard") << true << 7 << true << false;
+	QTest::newRow("14 PKCS#12 chain") << true << 14 << false << true;
+	QTest::newRow("15 PKCS#12") << true << 15 << false << true;
+	QTest::newRow("20 PEM private") << false << 20 << false << false;
+	QTest::newRow("20 PEM private, clipboard") << false << 20 << true << false;
+	QTest::newRow("21 PEM encrypted") << false << 21 << false << true;
+	QTest::newRow("22 SSH2 private") << false << 22 << false << false;
+	QTest::newRow("25 DER private") << false << 25 << false << false;
+	QTest::newRow("26 PVK private") << false << 26 << false << false;
+	QTest::newRow("28 PKCS#8 encrypted") << false << 28 << false << true;
+	QTest::newRow("29 PKCS#8") << false << 29 << false << false;
+	QTest::newRow("29 PKCS#8, clipboard") << false << 29 << true << false;
+	QTest::newRow("50 JWK private") << false << 50 << false << false;
+}
+
+void test_service_importexport::privateExportEncrypted()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(bool, isCert);
+	QFETCH(int, format);
+	QFETCH(bool, clipboard);
+	QFETCH(bool, encrypted);
+	QString passin = QString("env:%1").arg(exportVar);
+
+	importChain();
+	pki_x509 *leaf = cert("BTD34 Leaf");
+	pki_base *item = isCert ? (pki_base *)leaf : leaf->getRefKey();
+	db_base *db = isCert ? (db_base *)Database.model<db_x509>() :
+				Database.model<db_key>();
+	if (format == 26) {
+		/* PVK takes RSA and DSA keys only */
+		QVERIFY(opensslRun({ "genpkey", "-algorithm", "RSA",
+			"-pkeyopt", "rsa_keygen_bits:2048", "-out", file("rsa.key") }));
+		ImportSpec spec;
+		spec.files << file("rsa.key");
+		ImportResult r = Database.importItems(ctx, spec);
+		QCOMPARE(r.created.size(), 1);
+		item = r.created[0];
+	}
+
+	QByteArray out;
+	if (clipboard) {
+		Settings[isCert ? "CertFormat" : "KeyFormat"] =
+						QString::number(format);
+		ExportSpec spec;
+		spec.items << item;
+		spec.clipboard = true;
+		out = db->exportItems(ctx, spec);
+	} else {
+		out = exportTo(db, item, format, QString(), passin);
+	}
+	QList<AuditEntry> keys = entries("key.export_private");
+	QCOMPARE(keys.size(), 1);
+
+	QString name = file(QString("encrypted-%1.out").arg(format));
+	QFile f(name);
+	QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	f.write(out);
+	f.close();
+
+	bool written;
+	const pki_export *xport = pki_export::by_id(format);
+	if (xport->match_all(F_PKCS12)) {
+		QString info = opensslOk({ "pkcs12", "-in", name, "-info",
+				"-noenc", "-passin", passin });
+		QVERIFY(info.contains("PRIVATE KEY"));
+		written = info.contains("Shrouded Keybag");
+	} else if (xport->match_all(F_JWK)) {
+		QJsonObject jwk = QJsonDocument::fromJson(out).object();
+		QVERIFY(jwk.contains("kty"));
+		written = !jwk.contains("d");
+	} else {
+		QVERIFY(opensslRun({ "pkey", "-in", name, "-noout",
+				"-passin", passin }));
+		int rc;
+		openssl({ "pkey", "-in", name, "-noout",
+			"-passin", "pass:wrong-password" }, &rc);
+		written = rc != 0;
+	}
+	QCOMPARE(written, encrypted);
+	QCOMPARE(keys[0].params.value("encrypted").toBool(), encrypted);
 #endif
 }
 
