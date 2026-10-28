@@ -29,6 +29,9 @@ target_compile_definitions(test_service_audit PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# Signed audit checkpoints (BTD-37); signatures checked with openssl pkeyutl
+ServiceTest(test_service_checkpoint)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -69,6 +72,11 @@ if(OPENSSL_PROGRAM)
   set_tests_properties(test_cli_password_sources PROPERTIES LABELS service)
 else()
   message(STATUS "openssl program not found: test_cli_password_sources skipped")
+endif()
+
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_checkpoint PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
 # Certificate issuance (BTD-31); checks the chain with openssl verify

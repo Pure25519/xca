@@ -10,6 +10,7 @@
 #include "db_key.h"
 #include "pki_x509req.h"
 #include "audit.h"
+#include "audit_key.h"
 #include "exception.h"
 #include "func.h"
 #include "request.h"
@@ -86,6 +87,7 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	if (spec.key->isPubKey())
 		throw serviceError("no_private_key",
 			tr("The key you selected for signing is not a private one."));
+	AuditKey::refuseSigning(spec.key);
 
 	req = new pki_x509req();
 	req->pkiSource = spec.source;
