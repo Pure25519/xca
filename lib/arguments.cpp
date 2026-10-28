@@ -20,6 +20,10 @@
 
 
 const QList<arg_option> arguments::opts = {
+	arg_option("audit-export", "file", file_argument, true, true,
+		"Write the audit log as JSON Lines to <file>, '-' for standard output."),
+	arg_option("audit-verify", NULL, no_argument, true, true,
+		"Verify the hash chain of the audit log and the revocations against it. Prints a JSON report and exits with 1 if the check fails."),
 	arg_option("crlgen", "ca-identifier", required_argument, true, true,
 		"Generate CRL for <ca>. Use the 'name' option to set the internal name of the new CRL."),
 	arg_option("database", "database", file_argument, false, false,

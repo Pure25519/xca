@@ -125,7 +125,7 @@ QString XSqlQuery::rewriteQuery(QString _q)
 		"items" , "crls" , "private_keys" , "public_keys" ,
 		"tokens" , "token_mechanism" , "templates" , "certs" ,
 		"authority" , "revocations" , "requests" , "x509super" ,
-		"settings" , "takeys",
+		"settings" , "takeys", "audit_log",
 
 		"view_public_keys" , "view_certs" , "view_requests" ,
 		"view_crls" , "view_templates" , "view_private",

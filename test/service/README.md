@@ -81,3 +81,8 @@ Rules:
 
 `test_service_key.cpp` is the reference example (key generation via
 `db_key::newKey(keyjob, name)`), `test_service_harness.cpp` tests the harness itself.
+`test_service_audit.cpp` covers the audit log (BTD-29); its fixture is described in
+`data/README.md`. Audit entries land in the per-test database, so a test reads them with
+`AuditLog::entries()` right after the call. The caller contract for service functions (one
+entry per operation, `failure`/`denied` appended after the rollback, no retry on a concurrent
+writer) is in the header comment of `lib/audit.h`; `appendInRolledBackTransaction` pins it.
