@@ -73,6 +73,9 @@ if (ADDRESS_SANITIZER)
 endif()
 if (CMAKE_CXX_COMPILER_ID MATCHES Clang|GNU)
   add_compile_options(-fmacro-prefix-map=${PROJECT_SOURCE_DIR}=.)
+  # Keep the build free of deprecated OpenSSL calls (BTD-20); Qt
+  # deprecations do not warn, see QT_WARN_DEPRECATED_UP_TO below
+  add_compile_options(-Werror=deprecated-declarations)
 endif()
 
 file(GLOB UI_FILES ${CMAKE_AUTOUIC_SEARCH_PATHS}/*.ui)

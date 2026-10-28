@@ -8,6 +8,7 @@
 #include "x509name.h"
 #include "base.h"
 #include "func_base.h"
+#include "openssl_compat.h"
 #include "BioByteArray.h"
 #include <openssl/asn1.h>
 #include <openssl/err.h>
@@ -261,7 +262,7 @@ void x509name::addEntryByNid(int nid, const QString &entry)
 	X509_NAME_add_entry_by_NID(_get(), nid,
                                ASN1_STRING_type(a),
                                ASN1_STRING_get0_data(a),
-							   ASN1_STRING_length(a), -1, 0);
+							   (int)ASN1_STRING_get_length(a), -1, 0);
 	ASN1_STRING_free(a);
 	openssl_error_msg(QString("'%1' (%2)").arg(entry).arg(OBJ_nid2ln(nid)));
 }

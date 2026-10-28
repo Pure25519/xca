@@ -10,6 +10,7 @@
 
 #include "x509v3ext.h"
 #include "oid.h"
+#include "openssl_compat.h"
 
 #include <openssl/x509v3.h>
 
@@ -76,7 +77,7 @@ static QStringList generalNames(const x509v3ext &ext)
 				.arg(OBJ_nid2sn(OBJ_obj2nid(on->type_id)))
 				.arg(QString::fromUtf8((const char *)
 					ASN1_STRING_get0_data(on->value->value.utf8string),
-					ASN1_STRING_length(on->value->value.utf8string)));
+					ASN1_STRING_get_length(on->value->value.utf8string)));
 			continue;
 		}
 		default: out << QString("type%1").arg(type); continue;
@@ -84,10 +85,10 @@ static QStringList generalNames(const x509v3ext &ext)
 		if (type == GEN_IPADD)
 			val += QString::fromLatin1(QByteArray((const char *)
 				ASN1_STRING_get0_data(str),
-				ASN1_STRING_length(str)).toHex());
+				ASN1_STRING_get_length(str)).toHex());
 		else
 			val += QString::fromUtf8((const char *)
-				ASN1_STRING_get0_data(str), ASN1_STRING_length(str));
+				ASN1_STRING_get0_data(str), ASN1_STRING_get_length(str));
 		out << val;
 	}
 	GENERAL_NAMES_free(gens);
