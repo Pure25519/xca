@@ -44,6 +44,13 @@ add_test(NAME test_cli_missing_password
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
+# The debug output of xca --no-gui never shows --password or --sqlpass values
+add_test(NAME test_cli_debug_secrets
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_debug_secrets
+		-P ${SERVICE_TEST_DIR}/cli_debug_secrets.cmake)
+set_tests_properties(test_cli_debug_secrets PROPERTIES LABELS service)
+
 # --password serves every database password request of one command
 find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
 if(OPENSSL_PROGRAM)

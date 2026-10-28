@@ -18,6 +18,7 @@
 #include <unistd.h>
 #endif
 
+#include "lib/arguments.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
@@ -138,6 +139,9 @@ class test_service_secrets : public ServiceTestCase
 	void selectTokenNeedsInteractive();
 	void importDerPassword();
 	void callbackSecretTooLong();
+
+	void loggableMasksSecrets_data();
+	void loggableMasksSecrets();
 };
 
 void test_service_secrets::cleanup()
@@ -474,6 +478,49 @@ void test_service_secrets::callbackSecretTooLong()
 		QCOMPARE(e.why, secretError::unreadable);
 	}
 	QFile::remove(fname);
+}
+
+void test_service_secrets::loggableMasksSecrets_data()
+{
+	QTest::addColumn<QString>("value");
+	QTest::addColumn<QString>("logged");
+
+	/* Values that carry the secret are masked */
+	QTest::newRow("pass") << "pass:Leak-1" << "pass:***";
+	QTest::newRow("no prefix") << "Leak-2" << "***";
+	QTest::newRow("unknown prefix") << "op:Leak-3" << "***";
+	QTest::newRow("empty") << "" << "***";
+	/* Sources only name where the secret is */
+	QTest::newRow("env") << "env:XCA_PW" << "env:XCA_PW";
+	QTest::newRow("file") << "file:/run/xca/pw" << "file:/run/xca/pw";
+	QTest::newRow("fd") << "fd:3" << "fd:3";
+	QTest::newRow("stdin") << "stdin" << "stdin";
+}
+
+/* The debug dump of the command line in main() (BTD-68) */
+void test_service_secrets::loggableMasksSecrets()
+{
+	QFETCH(QString, value);
+	QFETCH(QString, logged);
+
+	QVERIFY(arguments::secret_opts.contains("password"));
+	QVERIFY(arguments::secret_opts.contains("sqlpass"));
+	for (const QString &opt : arguments::secret_opts) {
+		/* --opt value, --opt=value; a non-secret option stays */
+		QList<QByteArray> args { "xca", "--no-gui",
+			"--" + opt.toUtf8(), value.toUtf8(),
+			"--" + opt.toUtf8() + "=" + value.toUtf8(),
+			"--name", "pass:visible-name" };
+		QList<char *> argv;
+		for (QByteArray &a : args)
+			argv << a.data();
+
+		QStringList out = arguments::loggable(argv.size(), argv.data());
+		QCOMPARE(out, QStringList({ "xca", "--no-gui", "--" + opt,
+			logged, "--" + opt + "=" + logged,
+			"--name", "pass:visible-name" }));
+		QVERIFY2(!out.join(" ").contains("Leak-"), CCHAR(opt));
+	}
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_secrets)

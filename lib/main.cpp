@@ -87,11 +87,11 @@ int main(int argc, char *argv[])
 		if (argc > wargc)
 			argc = wargc;
 		qDebug() << "wargc" << wargc << argc;
+		/* Logged below by arguments::loggable(), secrets masked */
 		for (i = 0; i < argc; i++) {
 			QString s = QString::fromWCharArray(wargv[i]);
 			QByteArray ba = s.toUtf8();
 			argv[i] = strdup(ba.constData());
-			qDebug() << "wargv" << i << argv[i] << s;
 		}
 		argv[i] = NULL;
 		LocalFree(wargv);
@@ -156,8 +156,9 @@ int main(int argc, char *argv[])
 
 	int ret = EXIT_SUCCESS;
 
-	for (int i=0; i < argc; i++)
-		qDebug() << "wargv" << argc << i << argv[i];
+	QStringList args = arguments::loggable(argc, argv);
+	for (int i=0; i < args.size(); i++)
+		qDebug() << "wargv" << argc << i << CCHAR(args[i]);
 	try {
 		if (gui && !console_only) {
 			mainwin = new MainWindow();
