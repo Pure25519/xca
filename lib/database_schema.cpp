@@ -315,6 +315,25 @@
 << "UPDATE settings SET value='8' WHERE key_='schema'"
 	;
 
+	schemas[8]
+// Audit log of the bxc-pki fork (BTD-29, lib/audit.h): append-only,
+// every row chained to its predecessor by SHA-256
+<< "CREATE TABLE audit_log ("
+	"seq INTEGER PRIMARY KEY, "     // 1, 2, 3, ... without gaps
+	"created VARCHAR(32), "         // UTC time, RFC 3339
+	"actor VARCHAR(256), "          // os:<login>, apikey:<id>, cert:<fp>
+	"channel VARCHAR(8), "          // gui, cli, rest, est, cmp
+	"action VARCHAR(64), "          // e.g. cert.revoke
+	"object_type VARCHAR(32), "
+	"object_id VARCHAR(128), "
+	"params " B64_BLOB ", "         // canonical JSON (RFC 8785), not Base64
+	"result VARCHAR(16), "          // success, failure, denied
+	"error_code VARCHAR(64), "
+	"prev_hash CHAR(64), "          // hex SHA-256 of the previous row
+	"hash CHAR(64))"                // hex SHA-256 of this row
+<< "UPDATE settings SET value='9' WHERE key_='schema'"
+	;
+
 /* When adding new tables or views, also add them to the list
  * in XSqlQuery::rewriteQuery(QString) in lib/sql.cpp
  */

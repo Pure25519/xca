@@ -72,10 +72,10 @@ const QString &database_model::detect_provider()
 
 QSqlError database_model::initSqlDB()
 {
-#define MAX_SCHEMAS 8
+#define MAX_SCHEMAS 9
 /* The initial SQL creation data creates a version "7"
  * database. Then an update to Version 8 by creating "takeys"
- * is executed.
+ * and to Version 9 by creating "audit_log" is executed.
  */
 #define INITIAL_SCHEMA_VERSION "7"
 

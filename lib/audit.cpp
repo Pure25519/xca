@@ -1,0 +1,629 @@
+/* vi: set sw=4 ts=4:
+ *
+ * Tamper-evident audit log of the bxc-pki fork (BTD-29, PLAN.md section 6).
+ */
+
+#include "audit.h"
+#include "asn1time.h"
+#include "exception.h"
+#include "sql.h"
+
+#include <QCryptographicHash>
+#include <QJsonDocument>
+#include <QMap>
+#include <QPair>
+#include <QSet>
+#include <cmath>
+
+#if !defined(Q_OS_WIN32)
+#include <pwd.h>
+#include <unistd.h>
+#endif
+
+const QByteArray AuditLog::genesisHash = QByteArray(64, '0');
+const char AuditLog::actionRevoke[] = "cert.revoke";
+const char AuditLog::actionUnrevoke[] = "cert.unrevoke";
+const char AuditLog::actionCrlGenerate[] = "crl.generate";
+
+/* Largest integer that RFC 8785 serialises exactly (IEEE 754 double) */
+static const qint64 maxSafeInteger = 9007199254740991LL;
+
+ServiceContext::ServiceContext(enum channel c, const QString &actor)
+	: chan(c), actorId(actor)
+{
+}
+
+QString ServiceContext::osUser()
+{
+	QString user;
+#if defined(Q_OS_WIN32)
+	user = qEnvironmentVariable("USERNAME");
+#else
+	struct passwd *pw = getpwuid(geteuid());
+	if (pw && pw->pw_name)
+		user = QString::fromLocal8Bit(pw->pw_name);
+	if (user.isEmpty())
+		user = qEnvironmentVariable("USER");
+#endif
+	return user.isEmpty() ? QString("unknown") : user;
+}
+
+ServiceContext ServiceContext::localUser(enum channel c)
+{
+	return ServiceContext(c, "os:" + osUser());
+}
+
+QString ServiceContext::channelName(enum channel c)
+{
+	switch (c) {
+	case gui: return "gui";
+	case cli: return "cli";
+	case rest: return "rest";
+	case est: return "est";
+	case cmp: return "cmp";
+	}
+	return "unknown";
+}
+
+/* No key of this list may carry a secret (PLAN.md 6.4) */
+const QStringList &AuditParams::allowList()
+{
+	static const QStringList list {
+		"ca_id", "count", "crl_number", "curve", "file",
+		"fingerprint", "format", "hash_algo", "invalidity_date",
+		"issuer", "item_id", "key_size", "key_type", "name",
+		"not_after", "not_before", "reason", "reason_bit",
+		"revocation_date", "serial", "subject", "template",
+	};
+	return list;
+}
+
+bool AuditParams::allowed(const QString &key)
+{
+	return allowList().contains(key);
+}
+
+AuditParams &AuditParams::store(const QString &key, const QVariant &v)
+{
+	if (allowed(key))
+		values[key] = v;
+	else if (!droppedKeys.contains(key))
+		droppedKeys << key;
+	return *this;
+}
+
+AuditParams &AuditParams::set(const QString &key, const QString &v)
+{
+	return store(key, v);
+}
+
+AuditParams &AuditParams::set(const QString &key, const char *v)
+{
+	return store(key, QString(v));
+}
+
+AuditParams &AuditParams::set(const QString &key, qint64 v)
+{
+	return store(key, v);
+}
+
+AuditParams &AuditParams::set(const QString &key, int v)
+{
+	return store(key, (qint64)v);
+}
+
+AuditParams &AuditParams::set(const QString &key, bool v)
+{
+	return store(key, v);
+}
+
+/* Invalid dates and the RFC 5280 "undefined" date of a1time become null */
+AuditParams &AuditParams::set(const QString &key, const QDateTime &v)
+{
+	if (!v.isValid() || v.toSecsSinceEpoch() == 0)
+		return store(key, QVariant());
+	return store(key, AuditLog::rfc3339(v));
+}
+
+AuditParams AuditParams::fromMap(const QVariantMap &map)
+{
+	AuditParams p;
+
+	for (auto i = map.constBegin(); i != map.constEnd(); ++i) {
+		const QVariant &v = i.value();
+		switch (v.metaType().id()) {
+		case QMetaType::QString:
+			p.set(i.key(), v.toString());
+			break;
+		case QMetaType::Bool:
+			p.set(i.key(), v.toBool());
+			break;
+		case QMetaType::Int:
+		case QMetaType::UInt:
+		case QMetaType::LongLong:
+			p.set(i.key(), v.toLongLong());
+			break;
+		case QMetaType::QDateTime:
+			p.set(i.key(), v.toDateTime());
+			break;
+		default:
+			/* QByteArray (raw key material), Passwd, ... */
+			if (!p.droppedKeys.contains(i.key()))
+				p.droppedKeys << i.key();
+		}
+	}
+	return p;
+}
+
+AuditParams AuditParams::revocation(qint64 caId, const QString &serial,
+		int reasonBit, const QDateTime &date, const QDateTime &invalDate)
+{
+	AuditParams p;
+	p.set("ca_id", caId).set("serial", serial.toUpper())
+	 .set("reason_bit", reasonBit).set("revocation_date", date)
+	 .set("invalidity_date", invalDate);
+	return p;
+}
+
+AuditParams AuditParams::unrevocation(qint64 caId, const QString &serial)
+{
+	AuditParams p;
+	p.set("ca_id", caId).set("serial", serial.toUpper());
+	return p;
+}
+
+AuditParams AuditParams::crl(qint64 caId, qint64 crlNumber)
+{
+	AuditParams p;
+	p.set("ca_id", caId).set("crl_number", crlNumber);
+	return p;
+}
+
+QVariantMap AuditEntry::toMap(bool withHashes) const
+{
+	QVariantMap m;
+	m["seq"] = seq;
+	m["time"] = time;
+	m["actor"] = actor;
+	m["channel"] = channel;
+	m["action"] = action;
+	m["object_type"] = objectType;
+	m["object_id"] = objectId;
+	m["params"] = params;
+	m["result"] = result;
+	m["error_code"] = errorCode.isEmpty() ? QVariant() : errorCode;
+	if (withHashes) {
+		m["prev_hash"] = QString::fromLatin1(prevHash);
+		m["hash"] = QString::fromLatin1(hash);
+	}
+	return m;
+}
+
+QByteArray AuditEntry::canonical() const
+{
+	return AuditLog::canonicalJson(toMap(false));
+}
+
+QByteArray AuditEntry::computeHash() const
+{
+	return AuditLog::chainHash(prevHash, canonical());
+}
+
+QVariantMap AuditStateMismatch::toMap() const
+{
+	QVariantMap m;
+	m["ca_id"] = caId;
+	m["serial"] = serial;
+	m["field"] = field;
+	m["expected"] = expected;
+	m["actual"] = actual;
+	m["seq"] = seq;
+	return m;
+}
+
+QVariantMap AuditVerifyResult::toMap() const
+{
+	QVariantMap m;
+	QVariantList list;
+
+	for (const AuditStateMismatch &mm : mismatches)
+		list << mm.toMap();
+	m["ok"] = ok();
+	m["chain_ok"] = chainOk();
+	m["entries"] = entries;
+	m["verified_entries"] = verifiedEntries;
+	m["first_broken_seq"] = firstBrokenSeq ? QVariant(firstBrokenSeq)
+						: QVariant();
+	m["reason"] = reason.isEmpty() ? QVariant() : reason;
+	m["state_mismatches"] = list;
+	m["unaudited_revocations"] = unauditedRevocations;
+	return m;
+}
+
+QByteArray AuditVerifyResult::toJson() const
+{
+	return AuditLog::canonicalJson(toMap());
+}
+
+/* RFC 8785 section 3.2.2.2: escape only '"', '\' and control characters */
+static QByteArray canonicalString(const QString &s)
+{
+	static const char hex[] = "0123456789abcdef";
+	QString out = "\"";
+
+	for (QChar c : s) {
+		ushort u = c.unicode();
+		switch (u) {
+		case '"': out += "\\\""; break;
+		case '\\': out += "\\\\"; break;
+		case '\b': out += "\\b"; break;
+		case '\f': out += "\\f"; break;
+		case '\n': out += "\\n"; break;
+		case '\r': out += "\\r"; break;
+		case '\t': out += "\\t"; break;
+		default:
+			if (u < 0x20) {
+				out += "\\u00";
+				out += QLatin1Char(hex[u >> 4]);
+				out += QLatin1Char(hex[u & 0xf]);
+			} else {
+				out += c;
+			}
+		}
+	}
+	out += "\"";
+	return out.toUtf8();
+}
+
+static QByteArray canonicalInteger(qint64 i)
+{
+	if (i > maxSafeInteger || i < -maxSafeInteger)
+		throw errorEx(QString("Audit value out of the safe "
+				"integer range: %1").arg(i));
+	return QByteArray::number(i);
+}
+
+QByteArray AuditLog::canonicalJson(const QVariant &v)
+{
+	QByteArray out;
+
+	switch (v.metaType().id()) {
+	case QMetaType::UnknownType:
+	case QMetaType::Nullptr:
+		return "null";
+	case QMetaType::Bool:
+		return v.toBool() ? "true" : "false";
+	case QMetaType::Int:
+	case QMetaType::UInt:
+	case QMetaType::LongLong:
+		return canonicalInteger(v.toLongLong());
+	case QMetaType::ULongLong:
+		if (v.toULongLong() > (qulonglong)maxSafeInteger)
+			throw errorEx(QString("Audit value out of the safe "
+				"integer range: %1").arg(v.toULongLong()));
+		return canonicalInteger(v.toLongLong());
+	case QMetaType::Double: {
+		/* Only integral values: QJsonDocument reads every number
+		 * back as double or qlonglong */
+		double d = v.toDouble();
+		if (!std::isfinite(d) || std::floor(d) != d)
+			throw errorEx(QString("Audit value is not an integer: %1")
+					.arg(d));
+		return canonicalInteger((qint64)d);
+	}
+	case QMetaType::QString:
+		return canonicalString(v.toString());
+	case QMetaType::QVariantList:
+	case QMetaType::QStringList: {
+		QVariantList list = v.toList();
+		out = "[";
+		for (int i = 0; i < list.size(); i++) {
+			if (i)
+				out += ",";
+			out += canonicalJson(list[i]);
+		}
+		return out + "]";
+	}
+	case QMetaType::QVariantMap: {
+		/* QMap sorts by QString::operator<, which compares UTF-16
+		 * code units like RFC 8785 section 3.2.3 demands */
+		QVariantMap map = v.toMap();
+		out = "{";
+		for (auto i = map.constBegin(); i != map.constEnd(); ++i) {
+			if (i != map.constBegin())
+				out += ",";
+			out += canonicalString(i.key()) + ":" +
+				canonicalJson(i.value());
+		}
+		return out + "}";
+	}
+	default:
+		throw errorEx(QString("Audit value of type %1 has no "
+				"canonical JSON form").arg(v.typeName()));
+	}
+}
+
+QByteArray AuditLog::chainHash(const QByteArray &prevHashHex,
+		const QByteArray &canonical)
+{
+	QCryptographicHash h(QCryptographicHash::Sha256);
+	h.addData(QByteArray::fromHex(prevHashHex));
+	h.addData(canonical);
+	return h.result().toHex();
+}
+
+QString AuditLog::rfc3339(const QDateTime &t)
+{
+	QDateTime utc = t.toUTC();
+	return utc.toString(utc.time().msec() ? Qt::ISODateWithMs
+					     : Qt::ISODate);
+}
+
+static void throwOnError(XSqlQuery &q)
+{
+	QSqlError e = q.lastError();
+	if (e.isValid())
+		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
+}
+
+AuditEntry AuditLog::append(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &result, const QString &errorCode)
+{
+	static const QStringList results { "success", "failure", "denied" };
+	XSqlQuery q;
+	AuditEntry e;
+
+	if (action.isEmpty())
+		throw errorEx("Audit entry without action");
+	if (!results.contains(result))
+		throw errorEx(QString("Invalid audit result '%1'").arg(result));
+
+	Transaction;
+	TransThrow();
+
+	SQL_PREPARE(q, "SELECT seq, hash FROM audit_log "
+			"ORDER BY seq DESC LIMIT 1");
+	q.exec();
+	throwOnError(q);
+	e.seq = 1;
+	e.prevHash = genesisHash;
+	if (q.next()) {
+		e.seq = q.value(0).toLongLong() + 1;
+		e.prevHash = q.value(1).toString().toLatin1();
+	}
+	e.time = rfc3339(QDateTime::currentDateTimeUtc());
+	e.actor = ctx.actor();
+	e.channel = ctx.channelName();
+	e.action = action;
+	e.objectType = objectType;
+	e.objectId = objectId;
+	e.params = params.getValues();
+	e.result = result;
+	e.errorCode = errorCode;
+	e.hash = e.computeHash();
+
+	SQL_PREPARE(q, "INSERT INTO audit_log (seq, created, actor, channel, "
+			"action, object_type, object_id, params, result, "
+			"error_code, prev_hash, hash) "
+			"VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+	q.bindValue(0, e.seq);
+	q.bindValue(1, e.time);
+	q.bindValue(2, e.actor);
+	q.bindValue(3, e.channel);
+	q.bindValue(4, e.action);
+	q.bindValue(5, e.objectType);
+	q.bindValue(6, e.objectId);
+	q.bindValue(7, QString::fromUtf8(canonicalJson(e.params)));
+	q.bindValue(8, e.result);
+	q.bindValue(9, e.errorCode.isEmpty() ? QVariant() : e.errorCode);
+	q.bindValue(10, QString::fromLatin1(e.prevHash));
+	q.bindValue(11, QString::fromLatin1(e.hash));
+	q.exec();
+	throwOnError(q);
+	TransCommit();
+	return e;
+}
+
+/* badParams collects the entries whose params column is no JSON object */
+static QList<AuditEntry> readEntries(QSet<qint64> *badParams)
+{
+	XSqlQuery q;
+	QList<AuditEntry> list;
+
+	SQL_PREPARE(q, "SELECT seq, created, actor, channel, action, "
+			"object_type, object_id, params, result, error_code, "
+			"prev_hash, hash FROM audit_log ORDER BY seq");
+	q.exec();
+	throwOnError(q);
+	while (q.next()) {
+		AuditEntry e;
+		e.seq = q.value(0).toLongLong();
+		e.time = q.value(1).toString();
+		e.actor = q.value(2).toString();
+		e.channel = q.value(3).toString();
+		e.action = q.value(4).toString();
+		e.objectType = q.value(5).toString();
+		e.objectId = q.value(6).toString();
+		QJsonDocument doc = QJsonDocument::fromJson(
+					q.value(7).toString().toUtf8());
+		if (doc.isObject())
+			e.params = doc.toVariant().toMap();
+		else if (badParams)
+			*badParams << e.seq;
+		e.result = q.value(8).toString();
+		e.errorCode = q.value(9).toString();
+		e.prevHash = q.value(10).toString().toLatin1();
+		e.hash = q.value(11).toString().toLatin1();
+		list << e;
+	}
+	return list;
+}
+
+QList<AuditEntry> AuditLog::entries()
+{
+	return readEntries(nullptr);
+}
+
+QByteArray AuditLog::exportJsonLines()
+{
+	QByteArray out;
+
+	for (const AuditEntry &e : entries())
+		out += canonicalJson(e.toMap(true)) + "\n";
+	return out;
+}
+
+/* RFC 3339 of a date in the revocations table; empty if undefined */
+static QString revocationDate(const QVariant &plain)
+{
+	a1time t;
+
+	if (plain.isNull() || t.fromPlain(plain.toString()) != 0)
+		return QString();
+	return t.isUndefined() ? QString() : AuditLog::rfc3339(t);
+}
+
+/* The same normalisation for a date taken from an audit entry */
+static QString auditDate(const QVariant &rfc)
+{
+	QDateTime t = QDateTime::fromString(rfc.toString(), Qt::ISODate);
+	if (!t.isValid() || t.toSecsSinceEpoch() == 0)
+		return QString();
+	return AuditLog::rfc3339(t);
+}
+
+namespace {
+class revocationState
+{
+  public:
+	bool present{};
+	QString date{}, invaldate{};
+	qint64 reasonBit{}, crlNo{};
+	qint64 seq{};
+};
+}
+
+AuditVerifyResult AuditLog::verify()
+{
+	typedef QPair<qint64, QString> revKey;
+	AuditVerifyResult r;
+	QSet<qint64> badParams;
+	QList<AuditEntry> list = readEntries(&badParams);
+	QList<AuditEntry> verified;
+	QByteArray prev = genesisHash;
+	qint64 expected = 1;
+
+	r.entries = list.size();
+	for (const AuditEntry &e : list) {
+		if (e.seq != expected) {
+			r.firstBrokenSeq = expected;
+			r.reason = e.seq > expected ? "missing" : "sequence";
+			break;
+		}
+		if (e.prevHash != prev) {
+			r.firstBrokenSeq = e.seq;
+			r.reason = "prev_hash";
+			break;
+		}
+		if (badParams.contains(e.seq) || e.computeHash() != e.hash) {
+			r.firstBrokenSeq = e.seq;
+			r.reason = "hash";
+			break;
+		}
+		prev = e.hash;
+		expected++;
+		verified << e;
+	}
+	r.verifiedEntries = verified.size();
+
+	/* Replay what the intact part of the chain says about revocations */
+	QMap<revKey, revocationState> state;
+	for (const AuditEntry &e : verified) {
+		qint64 ca = e.params.value("ca_id").toLongLong();
+		revKey key(ca, e.params.value("serial").toString().toUpper());
+
+		if (e.result != "success")
+			continue;
+		if (e.action == actionRevoke) {
+			revocationState s;
+			s.present = true;
+			s.date = auditDate(e.params.value("revocation_date"));
+			s.invaldate = auditDate(e.params.value("invalidity_date"));
+			s.reasonBit = e.params.value("reason_bit").toLongLong();
+			s.seq = e.seq;
+			state[key] = s;
+		} else if (e.action == actionUnrevoke) {
+			revocationState s;
+			s.seq = e.seq;
+			state[key] = s;
+		} else if (e.action == actionCrlGenerate) {
+			/* db_crl::newCrl(): crlNo=? WHERE crlNo IS NULL */
+			qint64 num = e.params.value("crl_number").toLongLong();
+			for (auto i = state.begin(); i != state.end(); ++i) {
+				if (i.key().first == ca && i->present && !i->crlNo) {
+					i->crlNo = num;
+					i->seq = e.seq;
+				}
+			}
+		}
+	}
+
+	XSqlQuery q;
+	QSet<revKey> seen;
+	SQL_PREPARE(q, "SELECT caId, serial, date, invaldate, crlNo, reasonBit "
+			"FROM revocations");
+	q.exec();
+	throwOnError(q);
+	while (q.next()) {
+		revKey key(q.value(0).toLongLong(),
+			q.value(1).toString().toUpper());
+		seen << key;
+		if (!state.contains(key)) {
+			r.unauditedRevocations++;
+			continue;
+		}
+		const revocationState &s = state[key];
+		AuditStateMismatch m;
+		m.caId = key.first;
+		m.serial = key.second;
+		m.seq = s.seq;
+		if (!s.present) {
+			m.field = "row";
+			m.expected = "absent";
+			m.actual = "present";
+			r.mismatches << m;
+			continue;
+		}
+		QList<QPair<QString, QPair<QString, QString> > > fields {
+			{ "date", { s.date, revocationDate(q.value(2)) } },
+			{ "invaldate", { s.invaldate, revocationDate(q.value(3)) } },
+			{ "crlNo", { QString::number(s.crlNo),
+				QString::number(q.value(4).toLongLong()) } },
+			{ "reasonBit", { QString::number(s.reasonBit),
+				QString::number(q.value(5).toLongLong()) } },
+		};
+		for (const auto &f : fields) {
+			if (f.second.first == f.second.second)
+				continue;
+			m.field = f.first;
+			m.expected = f.second.first;
+			m.actual = f.second.second;
+			r.mismatches << m;
+		}
+	}
+	for (auto i = state.constBegin(); i != state.constEnd(); ++i) {
+		if (!i->present || seen.contains(i.key()))
+			continue;
+		AuditStateMismatch m;
+		m.caId = i.key().first;
+		m.serial = i.key().second;
+		m.seq = i->seq;
+		m.field = "row";
+		m.expected = "present";
+		m.actual = "absent";
+		r.mismatches << m;
+	}
+	return r;
+}
