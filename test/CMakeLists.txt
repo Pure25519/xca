@@ -18,3 +18,5 @@ if (APPLE)
 	${IOKIT_LIBRARY} ${COREFOUNDATION_LIBRARY}
   )
 endif()
+
+include(test/service/CMakeLists.txt)
