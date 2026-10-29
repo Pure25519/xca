@@ -105,6 +105,10 @@ class keyjob
 	int size;
 	int ec_nid;
 	slotid slot;
+	/* The text after the type, e.g. "4096" or "prime256v1"; the key
+	 * generation service checks it (BTD-41: a size for a type
+	 * without sizes is invalid_key_size) */
+	QString param{};
 	keyjob() {
 		size = DEFAULT_KEY_LENGTH;
 		ktype = keytype::byName("RSA");
@@ -119,6 +123,7 @@ class keyjob
 		if (sl.size() != 2)
 			return;
 		ktype = keytype::byName(sl[0]);
+		param = sl[1];
 		size = DEFAULT_KEY_LENGTH;
 		ec_nid = NID_undef;
 		if (isEC())
@@ -194,6 +199,10 @@ class pki_key: public pki_base
 		EVP_PKEY *fromParamData(QSharedPointer<OSSL_PARAM_BLD> bld,
 			const QMap<const char *, BIGNUM*> &params, int keytype) const;
 
+		/* Read from a file that needed a password to decrypt
+		 * (BTD-41, JsonReport::key() of an unstored key) */
+		bool encryptedFile{};
+
 	private:
 		mutable int useCount; // usage counter
 
@@ -228,6 +237,10 @@ class pki_key: public pki_base
 		enum passType getOwnPass(void) const
 		{
 			return ownPass;
+		}
+		bool fileEncrypted() const
+		{
+			return encryptedFile;
 		}
 		EVP_PKEY *getPubKey()
 		{

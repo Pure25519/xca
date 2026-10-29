@@ -373,6 +373,56 @@ class AuditLog
 	static QString rfc3339(const QDateTime &t);
 };
 
+/* Failure entries of service calls inside a caller-owned transaction
+ * (BTD-41). A service function appends its "failure" or "denied" entry
+ * after its own rollback; when the caller holds an outer transaction,
+ * that entry sits in the outer transaction and vanishes with its
+ * rollback. While a capture lives, append() keeps a copy of every such
+ * entry written inside a transaction; after rolling the outer
+ * transaction back, the caller calls replay() and the entries are
+ * written again, now outside any transaction. After a successful
+ * commit they are stored already: the caller calls discard(). Used by
+ * the bxc-pki command runner, which runs one command (or, with
+ * bootstrap, many) in one transaction and with --plan rolls back on
+ * purpose (then discard(): a plan writes nothing). Captures nest; create
+ * them on the stack only. */
+class AuditFailureCapture
+{
+	struct entry
+	{
+		ServiceContext ctx;
+		QString action, objectType, objectId;
+		AuditParams params;
+		QString result, errorCode;
+	};
+	QList<entry> captured{};
+	AuditFailureCapture *outer{};
+	static AuditFailureCapture *current;
+
+  public:
+	AuditFailureCapture();
+	~AuditFailureCapture();
+	AuditFailureCapture(const AuditFailureCapture &) = delete;
+	AuditFailureCapture &operator=(const AuditFailureCapture &) = delete;
+
+	/* Called by AuditLog::append() */
+	static void record(const ServiceContext &ctx, const QString &action,
+			const QString &objectType, const QString &objectId,
+			const AuditParams &params, const QString &result,
+			const QString &errorCode);
+	int size() const
+	{
+		return captured.size();
+	}
+	/* Appends the captured entries again and forgets them; call it
+	 * outside any transaction. Throws errorEx like append(). */
+	QList<AuditEntry> replay();
+	void discard()
+	{
+		captured.clear();
+	}
+};
+
 /* The caller contract above for one service operation (BTD-33):
  * work() runs in one transaction and appends its success entries before
  * the commit. When it throws, the transaction is rolled back, one entry

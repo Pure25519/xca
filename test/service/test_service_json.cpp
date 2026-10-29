@@ -14,6 +14,7 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 
+#include "lib/asn1int.h"
 #include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_temp.h"
@@ -319,8 +320,18 @@ void test_service_json::errors()
 	e = JsonReport::error(errorEx("boom"));
 	QCOMPARE(e.value("code").toString(), QString("internal_error"));
 	QCOMPARE(e.value("title").toString(), QString("Internal error"));
+
+	/* Typed codes of secrets and questions (BTD-41) */
 	e = JsonReport::error(secretError(secretError::rejected, "no"));
-	QCOMPARE(e.value("code").toString(), QString("internal_error"));
+	QCOMPARE(e.value("code").toString(), QString("password_rejected"));
+	e = JsonReport::error(secretError(secretError::missing, "no"));
+	QCOMPARE(e.value("code").toString(), QString("missing_password"));
+	e = JsonReport::error(secretError(secretError::unreadable, "no"));
+	QCOMPARE(e.value("code").toString(), QString("missing_password"));
+	e = JsonReport::error(confirmationError("key.size", "no"));
+	QCOMPARE(e.value("code").toString(), QString("not_confirmed"));
+	QCOMPARE(e.value("type").toString(),
+		QString("urn:bxc-pki:error:not_confirmed"));
 }
 
 void test_service_json::timestamps()
@@ -336,6 +347,14 @@ void test_service_json::timestamps()
 		QString("aACompromise"));
 	QVERIFY(JsonReport::revocationReason(7).isNull());
 	QVERIFY(JsonReport::revocationReason(-1).isNull());
+
+	/* Serials of legacy objects (BTD-41): whole octets, "00" for zero,
+	 * "-" before the magnitude of a negative one */
+	QCOMPARE(JsonReport::serial(a1int(0L)), QString("00"));
+	QCOMPARE(JsonReport::serial(a1int(-10L)), QString("-0A"));
+	QCOMPARE(JsonReport::serial(a1int(0x80FFL)), QString("80FF"));
+	a1int empty;
+	QCOMPARE(JsonReport::serial(empty), QString("00"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_json)

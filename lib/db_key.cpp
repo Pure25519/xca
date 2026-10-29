@@ -194,6 +194,11 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 		throw serviceError("invalid_key_type", tr("Unknown key type"));
 	if (!task.isEC() && !task.isED25519() && task.size < 32)
 		throw serviceError("invalid_key_size", tr("Key size too small !"));
+	/* A size for a type without sizes is no size to ignore (BTD-41) */
+	if (task.isED25519() && !task.param.isEmpty())
+		throw serviceError("invalid_key_size",
+			tr("The key type %1 has no size or curve: '%2'")
+				.arg(task.ktype.name).arg(task.param));
 	if (!keyjob(task).isValid())    /* isValid() is not const */
 		throw serviceError("invalid_curve", tr("Unknown EC curve"));
 
@@ -260,7 +265,8 @@ pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
 	}
 }
 
-pki_key *db_key::newKey(const keyjob &task, const QString &name)
+pki_key *db_key::newKey(const keyjob &task, const QString &name,
+			bool reportErrors)
 {
 	pki_key *key = NULL;
 	ServiceContext ctx = ServiceContext::localUser(
@@ -287,6 +293,8 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name)
 		emit keyDone(key);
 		createSuccess(key);
 	} catch (errorEx &err) {
+		if (!reportErrors)
+			throw;
 		key = NULL;
 		XCA_ERROR(err);
 	}

@@ -258,6 +258,8 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, NULL,0);
 	}
 	pki_openssl_error();
+	/* the password callback ran: the file was encrypted (BTD-41) */
+	encryptedFile = p.getAttempts() > 0;
 	set_EVP_PKEY(pkey, name);
 }
 
@@ -426,6 +428,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 			EVP_PKEY_free(pkey);
 		throw errorEx(tr("Unable to load the private key in file %1. Tried PEM and DER private, public, PKCS#8 key types and SSH2 format.").arg(fname));
 	}
+	encryptedFile = p.getAttempts() > 0;
 	set_EVP_PKEY(pkey, fname);
 }
 

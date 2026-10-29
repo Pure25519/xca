@@ -411,7 +411,8 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	p.set("not_after", (QDateTime)spec.effectiveNotAfter(&capped));
 	p.set("validity_capped", capped);
 	if (capped)
-		p.set("requested_not_after", (QDateTime)spec.notAfter);
+		p.set("requested_not_after",
+			(QDateTime)spec.requestedNotAfter());
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
@@ -490,8 +491,12 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	if (spec.copyRequestExtensions && spec.request) {
 		extList el = spec.request->getV3ext();
 		int m = el.count();
-		for (int i=0; i<m; i++)
+		for (int i=0; i<m; i++) {
+			if (!spec.requestExtensionNids.isEmpty() &&
+			    !spec.requestExtensionNids.contains(el[i].nid()))
+				continue;
 			cert->addV3ext(el[i], true);
+		}
 	}
 
 	// and finally sign the request

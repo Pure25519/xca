@@ -11,6 +11,7 @@
 #include "issuance.h"
 
 #include <QCoreApplication>
+#include <QRegularExpression>
 
 #include <openssl/conf.h>
 
@@ -250,4 +251,82 @@ a1time IssuanceSpec::cappedNotAfter(const a1time &requested,
 	if (capped)
 		*capped = cut;
 	return end;
+}
+
+a1time IssuanceSpec::requestedNotAfter() const
+{
+	if (!validity.isValid())
+		return notAfter;
+	return a1time(validity.addTo(notBefore));
+}
+
+IsoDuration IsoDuration::parse(const QString &text, QString *error)
+{
+	static const QRegularExpression re(
+		"^P(?:(\\d+)Y)?(?:(\\d+)M)?(?:(\\d+)W)?(?:(\\d+)D)?"
+		"(?:T(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?)?$");
+	IsoDuration d;
+	QRegularExpressionMatch m = re.match(text);
+	QString why;
+
+	if (!m.hasMatch()) {
+		why = QObject::tr("'%1' is no ISO 8601 duration such as P20Y, "
+			"P1Y6M, P90D or PT12H (no fractions, no sign)").arg(text);
+	} else if (text == "P" || text.endsWith('T')) {
+		why = QObject::tr("'%1' has no component").arg(text);
+	} else {
+		qint64 *parts[] = { &d.years, &d.months, &d.weeks, &d.days,
+				&d.hours, &d.minutes, &d.seconds };
+		for (int i = 0; i < 7; i++) {
+			QString c = m.captured(i + 1);
+			bool ok = true;
+			*parts[i] = c.isEmpty() ? 0 : c.toLongLong(&ok);
+			/* 10000 years are beyond any certificate */
+			if (!ok || *parts[i] > 10000LL * 366 * 86400) {
+				why = QObject::tr("'%1' is too large").arg(text);
+				break;
+			}
+		}
+		if (why.isEmpty() && (d.years > 10000 || d.months > 120000 ||
+				d.weeks > 530000 || d.days > 3660000))
+			why = QObject::tr("'%1' is too large").arg(text);
+	}
+	if (!why.isEmpty()) {
+		if (error)
+			*error = why;
+		return IsoDuration();
+	}
+	d.valid = true;
+	return d;
+}
+
+QDateTime IsoDuration::addTo(const QDateTime &t) const
+{
+	return t.addYears(years).addMonths(months)
+		.addDays(weeks * 7 + days)
+		.addSecs(hours * 3600 + minutes * 60 + seconds);
+}
+
+QDateTime IsoDuration::subtractFrom(const QDateTime &t) const
+{
+	return t.addSecs(-(hours * 3600 + minutes * 60 + seconds))
+		.addDays(-(weeks * 7 + days))
+		.addMonths(-months).addYears(-years);
+}
+
+QString IsoDuration::toString() const
+{
+	if (!valid)
+		return QString();
+	QString s("P"), t;
+	if (years) s += QString("%1Y").arg(years);
+	if (months) s += QString("%1M").arg(months);
+	if (weeks) s += QString("%1W").arg(weeks);
+	if (days) s += QString("%1D").arg(days);
+	if (hours) t += QString("%1H").arg(hours);
+	if (minutes) t += QString("%1M").arg(minutes);
+	if (seconds) t += QString("%1S").arg(seconds);
+	if (!t.isEmpty())
+		s += "T" + t;
+	return s == "P" ? QString("PT0S") : s;
 }

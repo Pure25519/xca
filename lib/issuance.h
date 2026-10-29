@@ -17,6 +17,8 @@
 #ifndef __ISSUANCE_H
 #define __ISSUANCE_H
 
+#include <QDateTime>
+#include <QList>
 #include <QString>
 #include <QStringList>
 
@@ -95,6 +97,36 @@ class ExtensionSpec
 	extList build(X509V3_CTX *ctx, bool selfSigned, bool forRequest) const;
 };
 
+/* An ISO 8601 duration (BTD-41, rule 6 of the certstrap triage):
+ * PnYnMnWnDTnHnMnS with non-negative integers, at least one component,
+ * e.g. P20Y, P1Y6M, P90D, PT12H. Years and months are calendar units:
+ * addTo() adds them first (QDateTime::addYears/addMonths, the end of a
+ * shorter month is clamped), then weeks and days, then the time. The
+ * same duration is used for --validity and --backdate of bxc-pki and
+ * later by the bootstrap file and the REST API. */
+class IsoDuration
+{
+  public:
+	qint64 years{}, months{}, weeks{}, days{};
+	qint64 hours{}, minutes{}, seconds{};
+	bool valid{};
+
+	/* Strict parser; *error receives the reason for an invalid text */
+	static IsoDuration parse(const QString &text, QString *error = nullptr);
+	bool isValid() const
+	{
+		return valid;
+	}
+	bool isZero() const
+	{
+		return !years && !months && !weeks && !days && !hours &&
+			!minutes && !seconds;
+	}
+	QDateTime addTo(const QDateTime &t) const;
+	QDateTime subtractFrom(const QDateTime &t) const;
+	QString toString() const;
+};
+
 /* The serial number is not part of the spec: it is always random, positive
  * and unique per issuer (rule 2 of the certstrap triage), see
  * db_x509::getUniqueSerial(). */
@@ -110,10 +142,16 @@ class IssuanceSpec
 
 	a1time notBefore{};
 	a1time notAfter{};          // may be undefined (99991231235959Z)
+	/* BTD-41: when valid, the requested end is notBefore + validity
+	 * and notAfter is ignored */
+	IsoDuration validity{};
 	digest hashAlgo{};
 
 	ExtensionSpec extensions{};
 	bool copyRequestExtensions{};   // CSR extensions the spec lacks
+	/* With copyRequestExtensions: only CSR extensions of these NIDs,
+	 * empty: all (BTD-41: bxc-pki copies the SAN only, rule 3) */
+	QList<int> requestExtensionNids{};
 
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
@@ -135,9 +173,11 @@ class IssuanceSpec
 	 * newCert() rejects it with invalid_validity. */
 	static a1time cappedNotAfter(const a1time &requested,
 				const pki_x509 *signer, bool *capped = nullptr);
+	/* notAfter, or notBefore + validity */
+	a1time requestedNotAfter() const;
 	a1time effectiveNotAfter(bool *capped = nullptr) const
 	{
-		return cappedNotAfter(notAfter, signer, capped);
+		return cappedNotAfter(requestedNotAfter(), signer, capped);
 	}
 };
 

@@ -541,8 +541,14 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (!ctx.confirmations().isEmpty())
 		p.set("confirmed", ctx.confirmations().join(","));
 	p.set("db_unlock_verified", ctx.passwordVerified());
+	/* Inside a caller's transaction a failure may be rolled back with
+	 * it (BTD-41, AuditFailureCapture) */
+	bool inTransaction = DbTransaction::active();
 	AuditEntry e = insertEntry(ctx, action, objectType, objectId,
 				p, result, errorCode);
+	if (inTransaction && result != "success")
+		AuditFailureCapture::record(ctx, action, objectType, objectId,
+				params, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	bool writing = false;
@@ -1176,4 +1182,39 @@ AuditVerifyResult AuditLog::verify()
 		r.mismatches << m;
 	}
 	return r;
+}
+
+AuditFailureCapture *AuditFailureCapture::current;
+
+AuditFailureCapture::AuditFailureCapture()
+	: outer(current)
+{
+	current = this;
+}
+
+AuditFailureCapture::~AuditFailureCapture()
+{
+	current = outer;
+}
+
+void AuditFailureCapture::record(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &result, const QString &errorCode)
+{
+	if (current)
+		current->captured << entry{ ctx, action, objectType, objectId,
+					params, result, errorCode };
+}
+
+QList<AuditEntry> AuditFailureCapture::replay()
+{
+	QList<entry> list;
+	QList<AuditEntry> written;
+
+	list.swap(captured);
+	for (const entry &e : list)
+		written << AuditLog::append(e.ctx, e.action, e.objectType,
+				e.objectId, e.params, e.result, e.errorCode);
+	return written;
 }

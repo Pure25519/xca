@@ -122,7 +122,8 @@ Passwd readPass()
 		else
 			pw += p;
 	}
-	fputc('\n', stdout);
+	/* after the prompt, which goes to stderr (BTD-41) */
+	fputc('\n', stderr);
 #if !defined(Q_OS_WIN32)
 	if (tcsetattr(0, TCSAFLUSH, &back))
 		throw errorEx(strerror(errno));

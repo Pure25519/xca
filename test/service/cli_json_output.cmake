@@ -217,7 +217,7 @@ error_object("unknown CA and list" unknown_issuer)
 json_lines("unknown CA and list" "${out}" list)
 
 run("wrong password" 1 --password "pass:${WRONG_PW}" --json --list-items)
-error_object("wrong password" internal_error)
+error_object("wrong password" password_rejected)
 if(NOT out STREQUAL "")
   fail("wrong password: output on stdout:\n${out}")
 endif()

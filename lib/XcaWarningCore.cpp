@@ -32,11 +32,11 @@ bool xcaWarning::confirmOkCancel(ServiceContext &ctx, const QString &id,
 	return true;
 }
 
-/* With --json stdout carries only JSON documents (BTD-39): the messages
- * go to stderr */
+/* stdout carries only results, with and without --json (BTD-39,
+ * BTD-41): information, warnings, questions and errors go to stderr */
 bool xcaWarningCore::print_cmdline(const char *color, const QString &msg)
 {
-	console_write(JsonReport::active() ? stderr : stdout,
+	console_write(stderr,
 			QString("%1:" COL_RESET " %2\n")
 				.arg(color).arg(msg).toUtf8());
 	return true;
