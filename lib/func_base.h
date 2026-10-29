@@ -48,6 +48,8 @@ void dn_translations_setup();
 #define ign_openssl_error() _ign_openssl_error(QString(), __FILE__, __LINE__)
 void _openssl_error(const QString &txt, const char *file, int line);
 bool _ign_openssl_error(const QString &txt, const char *file, int line);
+/* The reasons of the OpenSSL error queue, one per line; empties the queue */
+QString take_openssl_errors();
 
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char**), const void*);
 void *d2i_bytearray(void *(*d2i)(void*, unsigned char**, long),

@@ -8,6 +8,7 @@
 #include "XcaWarningCore.h"
 #include "lib/func.h"
 #include "lib/audit.h"
+#include "lib/json_report.h"
 #include <QDebug>
 #include <QSqlDatabase>
 
@@ -31,9 +32,12 @@ bool xcaWarning::confirmOkCancel(ServiceContext &ctx, const QString &id,
 	return true;
 }
 
+/* With --json stdout carries only JSON documents (BTD-39): the messages
+ * go to stderr */
 bool xcaWarningCore::print_cmdline(const char *color, const QString &msg)
 {
-	console_write(stdout, QString("%1:" COL_RESET " %2\n")
+	console_write(JsonReport::active() ? stderr : stdout,
+			QString("%1:" COL_RESET " %2\n")
 				.arg(color).arg(msg).toUtf8());
 	return true;
 }
@@ -94,7 +98,12 @@ void xcaWarningCore::sqlerror(QSqlError err)
 
 void xcaWarningCore::error(const QString &msg)
 {
-	print_cmdline(COL_RED "Error", msg);
+	/* An error without code: the error object of internal_error */
+	if (JsonReport::active())
+		JsonReport::write(stderr,
+			JsonReport::error("internal_error", msg));
+	else
+		print_cmdline(COL_RED "Error", msg);
 }
 
 void xcaWarningCore::warningv3(const QString &msg, const extList &el)

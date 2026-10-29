@@ -14,6 +14,7 @@
 class digest
 {
   private:
+	static const int builtin_md;
 	static int default_md;
 	int md_nid{ NID_sha256 };
 
@@ -34,6 +35,11 @@ class digest
 
 	static void setDefault(const QString &def);
 	static const digest getDefault();
+	/* The compiled-in default, whatever a database set (BTD-174) */
+	static const digest getBuiltinDefault()
+	{
+		return digest(builtin_md);
+	}
 };
 
 #endif

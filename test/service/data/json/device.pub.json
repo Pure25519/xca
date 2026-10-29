@@ -1,0 +1,22 @@
+{
+  "schema": "urn:bxc-pki:schema:key:v1",
+  "id": 6,
+  "name": "device",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "imported",
+  "comment": "",
+  "public_key": {
+    "curve": {
+      "name": "prime256v1",
+      "oid": "1.2.840.10045.3.1.7"
+    },
+    "fingerprint": "84:B9:3F:D2:66:AC:C6:20:1B:AC:51:3A:99:A9:29:D1:47:B3:8C:A9:29:2A:B1:B6:40:A2:90:14:F6:C7:64:9F",
+    "pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE8sYFjA6+ZGU9zUvgbEHV0NABcvCG\nCqAn9k7dgstBWnP5I1RHApB4bYDngLv6CEFaWtDaIDFA16gWrDNf+R9NcA==\n-----END PUBLIC KEY-----\n",
+    "size": 256,
+    "type": "EC"
+  },
+  "kind": "public_only",
+  "storage": "database",
+  "protection": null,
+  "use_count": 2
+}

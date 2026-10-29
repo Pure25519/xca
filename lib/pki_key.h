@@ -225,11 +225,18 @@ class pki_key: public pki_base
 		{
 			useCount = c;
 		}
-		enum passType getOwnPass(void)
+		enum passType getOwnPass(void) const
 		{
 			return ownPass;
 		}
 		EVP_PKEY *getPubKey()
+		{
+			return key;
+		}
+		/* For public operations only (PEM_write_bio_PUBKEY, i2d_PUBKEY,
+		 * EVP_PKEY_get_bits): a key read from a file holds its private
+		 * part here until it is stored encrypted (pki_evp) */
+		const EVP_PKEY *getEvpKey() const
 		{
 			return key;
 		}

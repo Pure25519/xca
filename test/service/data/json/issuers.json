@@ -1,0 +1,11 @@
+{
+  "schema": "urn:bxc-pki:schema:list:v1",
+  "kind": "issuers",
+  "items": [
+    {
+      "id": 1,
+      "key_type": "EC",
+      "name": "JSON Test CA"
+    }
+  ]
+}
