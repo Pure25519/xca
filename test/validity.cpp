@@ -7,6 +7,7 @@
 
 #include <QTest>
 #include <QThread>
+#include <QTimeZone>
 #include <QPushButton>
 
 #include "lib/audit.h"
@@ -125,6 +126,151 @@ static void editDates()
 		return;
 	warningText = box->text();
 	box->button(QMessageBox::Ok)->click();
+}
+
+static bool hadAnyway;
+
+/* Answers the next warning box with "Edit dates" / "Select other
+ * algorithm" / "Edit" (all Ok) and notes whether a way past existed */
+static void editOnly()
+{
+	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
+	if (!box)
+		return;
+	warningText = box->text();
+	hadAnyway = box->button(QMessageBox::Apply) ||
+		    (box->button(QMessageBox::Yes) &&
+		     box->button(QMessageBox::Yes)->text() == "Use algorithm anyway");
+	box->button(QMessageBox::Ok)->click();
+}
+
+/* An issuing CA of today and a leaf from midnight (BTD-55): the dialog
+ * offers only "Edit dates", "Adjust date" or "Abort"; "Edit dates"
+ * keeps it open with every input, the service is never reached */
+void test_main::issueMidnightBelowTodaysCa()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		db_key *keys = Database.model<db_key>();
+		pki_key *caKey = keys->newKey(keyjob("EC:prime256v1"), "Today CA");
+		pki_key *eeKey = keys->newKey(keyjob("EC:prime256v1"), "EE");
+		QVERIFY(caKey && eeKey);
+		x509name n;
+		n.addEntryByNid(NID_commonName, "Today CA");
+		IssuanceSpec spec;
+		spec.name = "Today CA";
+		spec.subject = n;
+		spec.key = caKey;
+		spec.notBefore = a1time();
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addYears(2));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY(ca);
+		int certs = Store.getAll<pki_x509>().size();
+
+		NewX509 *dlg = new NewX509(mainwin);
+		dlg->setCert();
+		dlg->defineSigner(ca, false);
+		dlg->keyList->setCurrentPkiItem(eeKey);
+		x509name en;
+		en.addEntryByNid(NID_commonName, "ee.example");
+		dlg->setX509name(en);
+		dlg->description->setText("midnight ee");
+		dlg->basicCA->setCurrentIndex(2);
+		QDateTime midnight(QDate::currentDate(), QTime(0, 0), QTimeZone::UTC);
+		if (a1time(midnight) >= ca->getNotBefore())
+			QSKIP("the CA was made at midnight UTC");
+		dlg->notBefore->setDate(a1time(midnight));
+		dlg->notAfter->setDate(a1time(
+			QDateTime::currentDateTimeUtc().addYears(1)));
+
+		warningText.clear();
+		QThread *job = QThread::create(editOnly);
+		job->start();
+		dlg->accept();
+		job->wait();
+		delete job;
+		QVERIFY2(warningText.contains("earlier than the signer"),
+			CCHAR(warningText));
+		QVERIFY(!hadAnyway);
+		QVERIFY(dlg->result() != QDialog::Accepted);
+		QCOMPARE(dlg->description->text(), QString("midnight ee"));
+		QCOMPARE(dlg->notBefore->getDate().toPlain(),
+			a1time(midnight).toPlain());
+		QCOMPARE(Store.getAll<pki_x509>().size(), certs);
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}
+
+/* SHA-1 for a certificate (BTD-55): no "Use algorithm anyway"; and a
+ * service check the dialog has no own check for (a CA below a CA with
+ * pathLen 0) refuses inside the dialog, which stays open */
+void test_main::issueRefusedInsideDialog()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		db_key *keys = Database.model<db_key>();
+		pki_key *caKey = keys->newKey(keyjob("EC:prime256v1"), "Odd CA");
+		pki_key *eeKey = keys->newKey(keyjob("EC:prime256v1"), "EE");
+		x509name n;
+		n.addEntryByNid(NID_commonName, "Odd CA");
+		IssuanceSpec spec;
+		spec.name = "Odd CA";
+		spec.subject = n;
+		spec.key = caKey;
+		spec.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(-2));
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addYears(2));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.pathLen = "0";
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY(ca);
+
+		NewX509 *dlg = new NewX509(mainwin);
+		dlg->setCert();
+		dlg->defineSigner(ca, false);
+		dlg->keyList->setCurrentPkiItem(eeKey);
+		x509name en;
+		en.addEntryByNid(NID_commonName, "ee.example");
+		dlg->setX509name(en);
+		dlg->description->setText("refused ee");
+		dlg->basicCA->setCurrentIndex(1);   // CA
+		dlg->notBefore->setDate(a1time());
+		dlg->notAfter->setDate(a1time(
+			QDateTime::currentDateTimeUtc().addYears(1)));
+
+		dlg->hashAlgo->setCurrent(digest(NID_sha1));
+		warningText.clear();
+		QThread *job = QThread::create(editOnly);
+		job->start();
+		dlg->accept();
+		job->wait();
+		delete job;
+		QVERIFY2(warningText.contains("insecure"), CCHAR(warningText));
+		QVERIFY(!hadAnyway);
+		QVERIFY(dlg->result() != QDialog::Accepted);
+
+		dlg->hashAlgo->setCurrent(digest(NID_sha256));
+		warningText.clear();
+		job = QThread::create(editOnly);
+		job->start();
+		dlg->accept();
+		job->wait();
+		delete job;
+		QVERIFY2(warningText.contains("path length"), CCHAR(warningText));
+		QVERIFY(dlg->result() != QDialog::Accepted);
+		QCOMPARE(dlg->description->text(), QString("refused ee"));
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
 }
 
 /* BTD-51: below an expired CA the cap leaves no validity window; OK

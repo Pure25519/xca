@@ -40,8 +40,10 @@ QList<const pki_x509 *> IssuanceChecks::issuerChain(const pki_x509 *signer)
 
 void IssuanceChecks::pathLength(const ExtensionSpec &ext)
 {
-	/* Never an implicit 0: toInt() used to turn any text into 0 */
-	static const QRegularExpression number("^[0-9]+$");
+	/* Never an implicit 0: toInt() used to turn any text into 0; the
+	 * whole value, "$" alone would let "1\n" through */
+	static const QRegularExpression number(
+			QRegularExpression::anchoredPattern("[0-9]+"));
 	bool ok = false;
 	if (ext.basicCA != ExtensionSpec::bc_ca || ext.pathLen.isEmpty())
 		return;
@@ -71,23 +73,33 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 	const pki_x509 *issuer = chain.first();
 	X509 *x = issuer->getCert();
 
-	if (X509_get_version(x) < X509_VERSION_3)
-		throw serviceError("issuer_v1",
-			tr("'%1' is a version %2 certificate and cannot act as a CA")
-			.arg(name(issuer)).arg(X509_get_version(x) + 1));
-	bool ca = false;
-	if (!issuer->caAndPathLen(&ca, nullptr, nullptr) || !ca)
-		throw serviceError("issuer_not_ca",
-			tr("'%1' is not a CA certificate (basicConstraints cA)")
-			.arg(name(issuer)));
-	/* keyCertSign is required when the issuer has key usage; without
-	 * it the issuer may sign (RFC 5280 6.1.4 (n)), noted in the log */
-	if (!(X509_get_extension_flags(x) & EXFLAG_KUSAGE))
-		params.warn("issuer_without_key_usage");
-	else if (!(X509_get_key_usage(x) & KU_KEY_CERT_SIGN))
-		throw serviceError("issuer_no_keycertsign",
-			tr("The key usage of '%1' does not allow keyCertSign")
-			.arg(name(issuer)));
+	/* every CA of the path, the self-signed trust anchor above the
+	 * issuer excepted (RFC 5280 6.1.4 (k), (n)) */
+	for (int i = 0; i < chain.size(); i++) {
+		const pki_x509 *c = chain[i];
+		X509 *cx = c->getCert();
+		if (i > 0 && i == chain.size() - 1 &&
+		    !X509_NAME_cmp(X509_get_subject_name(cx),
+				X509_get_issuer_name(cx)))
+			break;
+		if (X509_get_version(cx) < X509_VERSION_3)
+			throw serviceError("issuer_v1",
+				tr("'%1' is a version %2 certificate and cannot act as a CA")
+				.arg(name(c)).arg(X509_get_version(cx) + 1));
+		bool ca = false;
+		if (!c->caAndPathLen(&ca, nullptr, nullptr) || !ca)
+			throw serviceError("issuer_not_ca",
+				tr("'%1' is not a CA certificate (basicConstraints cA)")
+				.arg(name(c)));
+		/* keyCertSign is required when the CA has key usage; without
+		 * it the CA may sign (RFC 5280 6.1.4 (n)), noted in the log */
+		if (!(X509_get_extension_flags(cx) & EXFLAG_KUSAGE))
+			params.warn("issuer_without_key_usage");
+		else if (!(X509_get_key_usage(cx) & KU_KEY_CERT_SIGN))
+			throw serviceError("issuer_no_keycertsign",
+				tr("The key usage of '%1' does not allow keyCertSign")
+				.arg(name(c)));
+	}
 
 	a1time now, notAfter = issuer->getNotAfter();
 	if (!notAfter.isUndefined() && now > notAfter)
@@ -123,6 +135,15 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 				X509_get_issuer_name(cx)))
 			below++;
 	}
+}
+
+void IssuanceChecks::preflight(const IssuanceSpec &spec, AuditParams &params)
+{
+	IssuanceChecks::spec(spec);
+	pki_key *signkey = spec.signer ? spec.signer->getRefKey() : nullptr;
+	if (signkey)
+		issuers(spec, issuerChain(spec.signer), signkey, params);
+	request(spec, params);
 }
 
 /* The requested extension nid of a CSR, or nullptr */
