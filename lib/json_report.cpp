@@ -339,10 +339,13 @@ QJsonObject JsonReport::request(const pki_x509req *req)
 	/* The challenge password is a secret (PLAN.md 6.4); the extension
 	 * requests are listed as extensions */
 	QJsonArray attributes;
+	bool challenge = false;
 	for (int i = 0; i < X509_REQ_get_attr_count(r); i++) {
 		X509_ATTRIBUTE *att = X509_REQ_get_attr(r, i);
 		const ASN1_OBJECT *obj = X509_ATTRIBUTE_get0_object(att);
 		int nid = OBJ_obj2nid(obj);
+		if (nid == NID_pkcs9_challengePassword)
+			challenge = true;
 		if (nid == NID_pkcs9_challengePassword || nid == NID_ext_req ||
 		    nid == NID_ms_ext_req)
 			continue;
@@ -354,7 +357,11 @@ QJsonObject JsonReport::request(const pki_x509req *req)
 		attributes.append(a);
 	}
 	o["attributes"] = attributes;
-	o["pem"] = pem(PEM_write_bio_X509_REQ, r);
+	/* The signed request carries the challenge password and cannot be
+	 * shown without it: such a request has no pem, only the flag */
+	o["challenge_password_present"] = challenge;
+	if (!challenge)
+		o["pem"] = pem(PEM_write_bio_X509_REQ, r);
 	ign_openssl_error();
 	return o;
 }

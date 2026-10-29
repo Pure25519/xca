@@ -83,5 +83,7 @@ crl_extensions = crl_ext
 authorityKeyIdentifier = keyid:always
 C
 $O ca -config crl.cnf -gencrl -crl_lastupdate 20261028213542Z -crl_nextupdate 20261104213542Z -out ca.crl
+# A request without challenge password: its document embeds the PEM
+$O req -new -key ec.key -subj "/O=BxC Lab/CN=plain-request" -sha384 -out plain.csr
 rm -rf cadb *.cnf dev.ext
 $O crl -in ca.crl -noout -text

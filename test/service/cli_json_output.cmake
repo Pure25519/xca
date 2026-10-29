@@ -144,6 +144,13 @@ list(GET lines 3 csr)
 if(csr MATCHES "1\\.2\\.840\\.113549\\.1\\.9\\.7")
   fail("--print: the request lists its challenge password:\n${csr}")
 endif()
+# The signed request contains the challenge password: no pem, no der
+string(JSON challenge GET "${csr}" challenge_password_present)
+string(JSON csr_pem ERROR_VARIABLE no_pem GET "${csr}" pem)
+string(JSON csr_der ERROR_VARIABLE no_der GET "${csr}" der)
+if(NOT challenge OR NOT no_pem OR NOT no_der)
+  fail("--print: the request with a challenge password embeds its raw data:\n${csr}")
+endif()
 
 # Without a database password: public objects, the same documents
 run("print without password" 0 --json --print --select 1,6)

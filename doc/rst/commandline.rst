@@ -32,4 +32,8 @@ error object (``urn:bxc-pki:schema:error:v1``) and the exit code is 1.
 
 Key documents hold the public key only; no private key, key password or PIN
 is printed. The challenge password of a request is left out of its
-attributes, but stays inside the embedded PEM of the request.
+attributes. Because the signed request contains it, a request with a
+challenge password has no embedded PEM; its document says
+``"challenge_password_present": true`` instead. The raw request is still
+available with ``--pem`` (or ``--pem-file``) and ``--select`` without
+``--json``.

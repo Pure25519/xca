@@ -50,6 +50,7 @@ class test_service_json : public ServiceTestCase
 	void certificate();
 	void fileCertificate();
 	void request();
+	void requestWithoutChallenge();
 	void crl();
 	void keys();
 	void templates();
@@ -181,10 +182,32 @@ void test_service_json::request()
 	QVERIFY(req);
 	QJsonObject doc = JsonReport::request(req);
 
-	/* The challengePassword attribute is a secret (PLAN.md 6.4) */
+	/* The challengePassword attribute is a secret (PLAN.md 6.4), and
+	 * the signed request contains it: no pem, no der, only the flag */
 	for (const QJsonValue &a : doc.value("attributes").toArray())
 		QVERIFY(a.toObject().value("oid") != "1.2.840.113549.1.9.7");
+	QCOMPARE(doc.value("challenge_password_present"), QJsonValue(true));
+	QVERIFY(!doc.contains("pem"));
+	QVERIFY(!doc.contains("der"));
 	compare(doc, "device.csr.json", req);
+}
+
+/* Without a challenge password the request is embedded as PEM */
+void test_service_json::requestWithoutChallenge()
+{
+	importFixtures();
+	ImportSpec spec;
+	spec.files << QString(DATA) + "plain.csr";
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	r.created[0]->setComment(QString());
+	pki_x509req *req = dynamic_cast<pki_x509req *>(r.created[0]);
+	QVERIFY(req);
+	QJsonObject doc = JsonReport::request(req);
+	QCOMPARE(doc.value("challenge_password_present"), QJsonValue(false));
+	QVERIFY(doc.value("pem").toString().startsWith(
+		"-----BEGIN CERTIFICATE REQUEST-----\n"));
+	compare(doc, "plain.csr.json", req);
 }
 
 void test_service_json::crl()
