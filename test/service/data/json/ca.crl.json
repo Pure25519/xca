@@ -1,0 +1,59 @@
+{
+  "schema": "urn:bxc-pki:schema:crl:v1",
+  "id": 5,
+  "name": "JSON Test CA",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "imported",
+  "comment": "",
+  "version": 2,
+  "issuer": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      },
+      {
+        "name": "CN",
+        "oid": "2.5.4.3",
+        "value": "JSON Test CA"
+      }
+    ],
+    "rfc4514": "CN=JSON Test CA,O=BxC Lab"
+  },
+  "issuer_item": {
+    "id": 1,
+    "name": "JSON Test CA"
+  },
+  "this_update": "2026-10-28T21:35:42Z",
+  "next_update": "2026-11-04T21:35:42Z",
+  "crl_number": 1,
+  "signature_algorithm": {
+    "name": "ecdsa-with-SHA256",
+    "oid": "1.2.840.10045.4.3.2"
+  },
+  "revoked_count": 1,
+  "revoked": [
+    {
+      "date": "2026-10-28T21:35:42Z",
+      "invalidity_date": null,
+      "reason": "keyCompromise",
+      "serial": "A1B2C3D4E5F60718293A4B5C6D7E8F90"
+    }
+  ],
+  "extensions": [
+    {
+      "critical": false,
+      "name": "authorityKeyIdentifier",
+      "oid": "2.5.29.35",
+      "value": "FF:4A:EC:2E:C5:33:24:9F:EF:D6:C3:83:E0:A7:D1:83:3C:31:91:76"
+    },
+    {
+      "critical": false,
+      "name": "crlNumber",
+      "oid": "2.5.29.20",
+      "value": "1"
+    }
+  ],
+  "pem": "-----BEGIN X509 CRL-----\nMIIBFzCBvQIBATAKBggqhkjOPQQDAjApMRAwDgYDVQQKDAdCeEMgTGFiMRUwEwYD\nVQQDDAxKU09OIFRlc3QgQ0EXDTI2MTAyODIxMzU0MloXDTI2MTEwNDIxMzU0Mlow\nMjAwAhEAobLD1OX2BxgpOktcbX6PkBcNMjYxMDI4MjEzNTQyWjAMMAoGA1UdFQQD\nCgEBoC8wLTAfBgNVHSMEGDAWgBT/SuwuxTMkn+/Ww4Pgp9GDPDGRdjAKBgNVHRQE\nAwIBATAKBggqhkjOPQQDAgNJADBGAiEAo1sGFE57plR/90WNakZqfw9bsYO+xkAy\nbFUsS6DdQfICIQCUfG3/pu2QV83NrHJDLcCGGsIvnkVPtLisRPLlVajNQA==\n-----END X509 CRL-----\n"
+}

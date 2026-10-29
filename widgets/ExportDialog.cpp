@@ -11,6 +11,7 @@
 #include "Help.h"
 #include "XcaWarning.h"
 #include "lib/base.h"
+#include "lib/pki_pkcs12.h"
 
 #include <QComboBox>
 #include <QLineEdit>
@@ -204,7 +205,10 @@ void ExportDialog::on_exportFormat_highlighted(int index)
 	const pki_export *x = export_type(index);
 	if (!x)
 		return;
-	infoBox->setText(x->help);
+	QString help = x->help;
+	if (x->flags & F_PKCS12)
+		help += QString("\n") + encAlgo::forExport().description();
+	infoBox->setText(help);
 	pemComment->setEnabled(x->flags & F_PEM);
 	samePassword->setEnabled(x->flags & F_CRYPT);
 }

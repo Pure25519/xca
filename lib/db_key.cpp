@@ -112,7 +112,11 @@ void db_key::inToCont(pki_base *pki)
 		if (!x509s->compareRefKey(key))
 			continue;
 		/* Found item matching this key */
+		pki_key *old = x509s->getRefKey();
 		x509s->setRefKey(key);
+		DbTransaction::onRollback([x509s, old]() {
+			x509s->setRefKey(old);
+		});
 		q.bindValue(1, x509s->getSqlItemId());
 		AffectedItems(x509s->getSqlItemId());
 		q.exec();
@@ -229,6 +233,9 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
     }
     catch (...) {
 	delete key;
+	/* rolled back and unstored: the object is ours again (BTD-130) */
+	if (stored && !isStored(stored))
+		delete stored;
 	throw;
     }
     return stored;

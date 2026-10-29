@@ -99,6 +99,9 @@ class pki_x509 : public pki_x509super
 		bool addV3ext(const x509v3ext &e, bool skip_existing = false);
 		void sign(pki_key *signkey, const digest &digest);
 		pki_x509 *findIssuer();
+		/* The newest CA certificate of the database that signed this
+		 * one; neither the signer nor the links change */
+		pki_x509 *searchIssuer() const;
 		X509 *getCert() const
 		{
 			return cert;
@@ -134,9 +137,14 @@ class pki_x509 : public pki_x509super
 		{
 			return crlDays;
 		}
-		x509rev getRevocation()
+		x509rev getRevocation() const
 		{
 			return revocation;
+		}
+		/* nextUpdate of the newest CRL of this CA (authority table) */
+		a1time getCrlExpire() const
+		{
+			return crlExpire;
 		}
 		pk11_attlist objectAttributes();
 		bool hasExtension(int nid) const;
