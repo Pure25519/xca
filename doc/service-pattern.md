@@ -21,7 +21,10 @@ Structure of the service function: a public wrapper builds the audit parameters,
 worker that does the work in one `Transaction`, and appends the `failure` entry when the worker
 throws (the worker's transaction is rolled back by then). The worker appends the `success` entry
 before its commit. Service functions are called outside a transaction; a `failure` entry appended
-inside the caller's transaction would be rolled back with it. Since BTD-33, `auditedTransaction()`
+inside the caller's transaction would be rolled back with it. The `failure` (or `denied`) entry is
+best effort and the original error always wins: it is written with `AuditLog::appendFailure()`,
+which never throws; when the database is the reason of the failure (locked, read-only, full) the
+entry is lost and logged, and the wrapper rethrows its own error (BTD-138). Since BTD-33, `auditedTransaction()`
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
 

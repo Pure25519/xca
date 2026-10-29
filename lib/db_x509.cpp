@@ -544,13 +544,13 @@ pki_x509 *db_x509::newCert(const ServiceContext &ctx,
 		return issue(spec, params, ctx);
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "certificate.issue", "certificate",
-				QString(), params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "certificate.issue", "certificate",
+				QString(), params, err.code);
 		throw;
 	} catch (...) {
 		/* errorEx (database, OpenSSL, key decryption) and anything else */
-		AuditLog::append(ctx, "certificate.issue", "certificate",
-				QString(), params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "certificate.issue", "certificate",
+				QString(), params, "internal_error");
 		throw;
 	}
 }

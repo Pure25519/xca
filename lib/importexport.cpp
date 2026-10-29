@@ -344,13 +344,13 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		 * back to the caller or is deleted (BTD-114) */
 		dropItems(items + result.created, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "object.import", "object", QString(),
-				params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
+				params, err.code);
 		throw;
 	} catch (...) {
 		dropItems(items + result.created, spec);
-		AuditLog::append(ctx, "object.import", "object", QString(),
-				params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
+				params, "internal_error");
 		throw;
 	}
 	return result;
@@ -522,14 +522,14 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		return out;
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "object.export", objectType,
+		AuditLog::appendFailure(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
-			params, "failure", err.code);
+			params, err.code);
 		throw;
 	} catch (...) {
-		AuditLog::append(ctx, "object.export", objectType,
+		AuditLog::appendFailure(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
-			params, "failure", "internal_error");
+			params, "internal_error");
 		throw;
 	}
 }

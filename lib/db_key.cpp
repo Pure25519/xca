@@ -254,13 +254,13 @@ pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
 		return generate(task, name, params, ctx);
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "key.generate", "key",
-				QString(), params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "key.generate", "key",
+				QString(), params, err.code);
 		throw;
 	} catch (...) {
 		/* errorEx (OpenSSL, token, database) and anything else */
-		AuditLog::append(ctx, "key.generate", "key",
-				QString(), params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "key.generate", "key",
+				QString(), params, "internal_error");
 		throw;
 	}
 }
@@ -282,8 +282,8 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name)
 			/* xca --no-gui without --yes: nothing is generated */
 			AuditParams params = keyjobParams(task, name);
 			params.set("question", err.question);
-			AuditLog::append(ctx, "key.generate", "key", QString(),
-				params, "denied", "confirmation_required");
+			AuditLog::appendFailure(ctx, "key.generate", "key", QString(),
+				params, "confirmation_required", "denied");
 			throw;
 		}
 	}
