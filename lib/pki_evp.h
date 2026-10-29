@@ -9,7 +9,6 @@
 #define __PKI_EVP_H
 
 #include <QString>
-#include <QProgressBar>
 #include <openssl/pem.h>
 #include <openssl/evp.h>
 #include "pki_key.h"

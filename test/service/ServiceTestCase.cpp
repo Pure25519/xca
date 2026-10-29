@@ -23,9 +23,6 @@
 
 #include "ServiceTestCase.h"
 
-/* Referenced by lib/pkcs11.h, normally defined in lib/main.cpp */
-char segv_data[1024];
-
 const char ServiceTestCase::dbPassword[] = "service-test-db-pass";
 
 QStringList ServiceViolations::list;
@@ -86,12 +83,22 @@ enum open_result StrictPwDialog::execute(pass_info *p, Passwd *passwd,
 	return e.second;
 }
 
-int StrictPwDialog::selectToken(const QStringList &names, QWidget *w)
+int StrictPwDialog::selectToken(const QStringList &names)
 {
 	if (delegate)
-		return delegate->selectToken(names, w);
+		return delegate->selectToken(names);
 	ServiceViolations::add(QString("unexpected token selection: %1")
 				.arg(names.join(", ")));
+	return -1;
+}
+
+int StrictPwDialog::selectKeySlot(const QString &label,
+				const QStringList &names)
+{
+	if (delegate)
+		return delegate->selectKeySlot(label, names);
+	ServiceViolations::add(QString("unexpected key slot selection: %1: %2")
+				.arg(label).arg(names.join(", ")));
 	return -1;
 }
 

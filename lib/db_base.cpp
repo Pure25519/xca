@@ -200,24 +200,6 @@ bool db_base::fixedHeaderSize(int sect)
 	return allHeaders[sect]->size != -1;
 }
 
-void db_base::initHeaderView(QHeaderView *hv)
-{
-	int max = allHeaders.count();
-	colResizeStart();
-	for (int i=0; i<max; i++) {
-		allHeaders[i]->setupHeaderView(i, hv);
-	}
-	for (int i=0; i<max; i++) {
-		if (allHeaders[i]->visualIndex == -1)
-			continue;
-		if (hv->visualIndex(i) != allHeaders[i]->visualIndex) {
-			hv->moveSection(hv->visualIndex(i),
-					allHeaders[i]->visualIndex);
-		}
-	}
-	colResizeEnd();
-}
-
 void db_base::sortIndicatorChanged(int logicalIndex, Qt::SortOrder order)
 {
 	int max = allHeaders.count();

@@ -193,7 +193,6 @@ class db_base: public QAbstractItemModel
 		void createSuccess(const pki_base *pki) const;
 		bool columnHidden(int col) const;
 		virtual void saveHeaderState();
-		void initHeaderView(QHeaderView *hv);
 		void setVisualIndex(int i, int visualIndex);
 		bool fixedHeaderSize(int sect);
 		bool treeViewMode()
@@ -216,9 +215,13 @@ class db_base: public QAbstractItemModel
 		void emitDataChanged(pki_base *pki);
 		bool containsType(enum pki_type t) const;
 		void writeVcalendar(QIODevice &file, QStringList vcal) const;
+		/* Item id of the current item of the view (setSelected()) */
+		QVariant getSelected() const
+		{
+			return selected;
+		}
 
 	public slots:
-		virtual void newItem() { }
 		void columnResetDefaults();
 		void sectionResized(int i, int, int newSize);
 		void sortIndicatorChanged(int, Qt::SortOrder);

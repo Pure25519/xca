@@ -5,7 +5,6 @@
  * a prompt when no source is given, and no dialog at any time.
  */
 
-#include <QDialog>
 #include <QFile>
 #include <QTemporaryDir>
 
@@ -23,6 +22,7 @@
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_scard.h"
 #include "lib/xfile.h"
 #include "lib/audit.h"
 #include "lib/importexport.h"
@@ -72,15 +72,6 @@ class test_service_secrets : public ServiceTestCase
 		PwDialogHeadless *h = new PwDialogHeadless();
 		pwdialog->delegateTo(h);
 		return h;
-	}
-
-	static int openDialogs()
-	{
-		int n = 0;
-		for (QWidget *w : QApplication::topLevelWidgets())
-			if (qobject_cast<QDialog *>(w))
-				n++;
-		return n;
 	}
 
 	/* A file with exactly these bytes, as file: source */
@@ -142,6 +133,8 @@ class test_service_secrets : public ServiceTestCase
 	void sourceReadOnce();
 	void pinPadNeedsInteractive();
 	void selectTokenNeedsInteractive();
+	void keySlotNeedsInteractive();
+	void keySlotSelected();
 	void importDerPassword();
 	void callbackSecretTooLong();
 
@@ -151,12 +144,9 @@ class test_service_secrets : public ServiceTestCase
 
 void test_service_secrets::cleanup()
 {
-	int dialogs = openDialogs();
-
 	qunsetenv(envVar);
 	QFile::remove(secretDir.filePath("secret.txt"));
 	ServiceTestCase::cleanup();
-	QCOMPARE(dialogs, 0);
 }
 
 void test_service_secrets::readSource_data()
@@ -455,11 +445,78 @@ void test_service_secrets::selectTokenNeedsInteractive()
 {
 	PwDialogHeadless h;
 	try {
-		h.selectToken(QStringList() << "token A" << "token B", nullptr);
+		h.selectToken(QStringList() << "token A" << "token B");
 		QFAIL("selectToken() did not throw");
 	} catch (secretError &e) {
 		QCOMPARE(e.why, secretError::missing);
 	}
+}
+
+/* A token with fixed key slots (YubiKey) asks for the slot on key
+ * generation. Without a GUI and without interactive input the generation
+ * stops with secretError (BTD-36); the QInputDialog used before crashed
+ * without a QApplication. */
+void test_service_secrets::keySlotNeedsInteractive()
+{
+	QList<QStringList> ids {
+		{ "9a: PIV Authentication", "1" },
+		{ "9c: Digital Signature", "2" },
+	};
+	useHeadless();
+	try {
+		pki_scard::fixedSlotId("YubiKey NEO", ids);
+		QFAIL("fixedSlotId() did not throw");
+	} catch (secretError &e) {
+		QCOMPARE(e.why, secretError::missing);
+		QVERIFY(e.getString().contains("YubiKey NEO"));
+	}
+}
+
+/* The chosen slot gives the CKA_ID of its entry, no choice none */
+void test_service_secrets::keySlotSelected()
+{
+	class Answer : public PwDialogUI_i
+	{
+	  public:
+		int answer{};
+		QString label{};
+		QStringList names{};
+		enum open_result execute(pass_info *, Passwd *, bool, bool)
+		{
+			return pw_cancel;
+		}
+		int selectToken(const QStringList &)
+		{
+			return -1;
+		}
+		int selectKeySlot(const QString &l, const QStringList &n)
+		{
+			label = l;
+			names = n;
+			return answer;
+		}
+		void pinPadLogin(pass_info *, QThread *) { }
+	};
+	QList<QStringList> ids {
+		{ "9a: PIV Authentication", "1" },
+		{ "9c: Digital Signature", "2" },
+		{ "9d: Key Management", "3" },
+	};
+	/* The harness owns it from here */
+	Answer *a = new Answer();
+	pwdialog->delegateTo(a);
+
+	a->answer = 2;
+	pk11_attr_data id = pki_scard::fixedSlotId("YubiKey YK5", ids);
+	QCOMPARE(a->label, QString("YubiKey YK5"));
+	QCOMPARE(a->names, QStringList() << "9a: PIV Authentication"
+			<< "9c: Digital Signature" << "9d: Key Management");
+	QVERIFY(id == pk11_attr_data(CKA_ID, 3UL));
+
+	a->answer = -1;
+	id = pki_scard::fixedSlotId("YubiKey YK5", ids);
+	const unsigned char *value;
+	QCOMPARE(id.getValue(&value), 0UL);
 }
 
 void test_service_secrets::importDerPassword()

@@ -14,7 +14,6 @@
 
 #include "XcaWarningCore.h"
 
-#include <QTextEdit>
 
 db_x509name::db_x509name(const char *classname)
 	:db_base(classname)

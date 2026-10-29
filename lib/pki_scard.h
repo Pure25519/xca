@@ -80,6 +80,11 @@ class pki_scard: public pki_key
 			return mech_list;
 		}
 		pk11_attr_data select_id(const pkcs11 &p11) const;
+		/* CKA_ID of a key slot chosen from the fixed slots of a token
+		 * model (tkInfo::fixed_ids()); without a value if none was
+		 * chosen */
+		static pk11_attr_data fixedSlotId(const QString &model,
+				const QList<QStringList> &fixed_ids);
 		pk11_attlist objectAttributes(bool priv) const;
 		pk11_attlist objectAttributesNoId(EVP_PKEY *pk, bool priv) const;
 		void setMech_list(QList<CK_MECHANISM_TYPE> ml) { mech_list = ml; };

@@ -134,9 +134,14 @@ the request; the dialog's own context is set up only by some widget events
   order of the extensions. Behaviour changes go into their own tickets (for issuance: AKI on
   self-signed certificates BTD-48, validity clamp BTD-51, issuer checks BTD-55, extension merge
   policy BTD-54, SQL write errors BTD-50).
-- `db_*` entry points that open a dialog are GUI glue. They move to a file in `widgets/` (still
-  members of the model class until BTD-36 splits xcalib); the `lib/db_*.cpp` file then no longer
-  includes the dialog's header.
+- `db_*` entry points that open a dialog are GUI glue. They move to a file in `widgets/`, as
+  members of the view that offers the action (`CertTreeView::newItem()`, `ReqTreeView::newItem()`,
+  like `KeyTreeView::newItem()`), not of the model class.
+- `lib/` is the target `xcacore` and links Qt Core and Qt Sql only (BTD-36); `widgets/` is
+  `xcagui` on top of it. What the core needs from the GUI goes through an interface the GUI sets:
+  questions `xcaWarning`, secrets and token choices `PwDialogCore`, progress `XcaProgress`, item
+  icons, row colours and the wait cursor `XcaPresentation`. The ctests `test_core_sources` (grep)
+  and `test_core_link` (whole-archive link, readelf) fail on any GUI reference in the core.
 - Where the GUI used to show an information box and stop (for issuance: the certificate already
   exists, practically unreachable with random serials), the service throws a `serviceError` and
   the GUI shows it as an error.

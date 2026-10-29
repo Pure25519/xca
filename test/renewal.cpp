@@ -102,7 +102,7 @@ void test_main::revoke()
 	serial = cert->getSerial();
 	job = QThread::create(revoke_and_renew);
 	job->start();
-	certs->certRenewal({ certs->index(cert) });
+	mainwin->certView->renewal({ certs->index(cert) });
 	job->wait();
 
 	delete job;
@@ -121,7 +121,7 @@ void test_main::revoke()
 	// renew
 	job = QThread::create(renew);
 	job->start();
-	certs->certRenewal({ certs->index(certs->getByName("Inter CA 1")) });
+	mainwin->certView->renewal({ certs->index(certs->getByName("Inter CA 1")) });
 	job->wait();
 
 	delete job;
@@ -141,7 +141,7 @@ void test_main::revoke()
 
 	job = QThread::create(renew_del_keep_serial);
 	job->start();
-	certs->certRenewal({ certs->index(certs->getByName("Inter CA 1")) });
+	mainwin->certView->renewal({ certs->index(certs->getByName("Inter CA 1")) });
 	job->wait();
 
 	delete job;

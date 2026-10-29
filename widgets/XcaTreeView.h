@@ -13,6 +13,7 @@
 #include <QItemSelectionModel>
 #include <QSortFilterProxyModel>
 #include <QTimer>
+#include <QHash>
 
 #include "lib/pki_export.h"
 
@@ -32,6 +33,8 @@ class XcaTreeView: public QTreeView
 	Q_OBJECT
 
 	dbheader *curr_hd{};
+	/* Column actions of the open header menu */
+	QHash<dbheader *, QAction *> headerActions{};
 	QTimer throttle{};
 
   protected:
@@ -49,6 +52,8 @@ class XcaTreeView: public QTreeView
 	virtual ~XcaTreeView();
 	void contextMenuEvent(QContextMenuEvent *e);
 	void setModel(QAbstractItemModel *model);
+	/* Applies the stored column state of the model to the header */
+	void initHeaderView();
 	void setMainwin(MainWindow *mw, QLineEdit *filter);
 	QModelIndex getIndex(const QModelIndex &index);
 	QModelIndex getProxyIndex(const QModelIndex &index);
@@ -83,7 +88,8 @@ class XcaTreeView: public QTreeView
 	void deleteItems();
 	void exportItems();
 	void showItems();
-	void newItem();
+	/* The views of objects that can be created override it */
+	virtual void newItem() { }
 	void doubleClick(const QModelIndex &m);
 	void pem2clipboard();
 	void headerDetails();

@@ -8,7 +8,17 @@ add_library(xcaservicetest STATIC
 	${SERVICE_TEST_DIR}/ServiceTestCase.h
 	${PROJECT_SOURCE_DIR}/test/TestEnv.cpp
 	${PROJECT_BINARY_DIR}/local.h)
-target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcalib)
+target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcacore)
+
+# The service tests link xcacore, which has no Qt Gui (BTD-36): they run
+# without a platform plugin, so the QT_QPA_PLATFORM of the environment
+# (offscreen in the build image) is removed for them
+macro(Headless test)
+  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
+    set_property(TEST ${test} APPEND PROPERTY
+	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
+  endif()
+endmacro()
 
 # ServiceTest(<name>) builds test/service/<name>.cpp into one ctest
 macro(ServiceTest name)
@@ -16,10 +26,10 @@ macro(ServiceTest name)
   target_link_libraries(${name} xcaservicetest)
   target_link_options(${name} PRIVATE -pthread)
   add_test(NAME ${name} COMMAND ${name})
-  # xcalib still links Qt Widgets (until BTD-36)
-  set_tests_properties(${name} PROPERTIES LABELS service
-	ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+  set_tests_properties(${name} PROPERTIES LABELS service)
+  Headless(${name})
   add_dependencies(tests ${name})
+  list(APPEND CORE_BINARIES ${name})
 endmacro()
 
 ServiceTest(test_service_harness)
@@ -47,8 +57,9 @@ set_tests_properties(test_cli_plain_output PROPERTIES LABELS service)
 add_test(NAME test_service_harness_selfcheck
 	COMMAND test_service_harness selfcheckUnexpectedPrompt)
 set_tests_properties(test_service_harness_selfcheck PROPERTIES LABELS service
-	ENVIRONMENT "QT_QPA_PLATFORM=offscreen;XCA_SERVICE_SELFCHECK=1"
+	ENVIRONMENT XCA_SERVICE_SELFCHECK=1
 	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckUnexpectedPrompt\\(\\)[^\n]*unexpected password prompt")
+Headless(test_service_harness_selfcheck)
 
 # xca --no-gui with a missing password exits non-zero instead of prompting
 add_test(NAME test_cli_missing_password
@@ -157,3 +168,38 @@ endif()
 # Templates, rename and delete (BTD-35)
 ServiceTest(test_service_template)
 ServiceTest(test_service_objects)
+
+# xcacore without Qt Widgets, Gui and Help (BTD-36). test_core_sources
+# greps its sources for GUI code; test_core_link links every object of
+# the archive into xcacore_linkcheck (whole archive: a GUI symbol in an
+# object no test uses fails too) and checks with readelf that it and the
+# binaries linking xcacore need no Qt Gui, Widgets or Help.
+get_target_property(CORE_SOURCES xcacore SOURCES)
+list(JOIN CORE_SOURCES "|" CORE_SOURCES)
+add_test(NAME test_core_sources
+	COMMAND ${CMAKE_COMMAND} "-DSOURCES=${CORE_SOURCES}"
+		-P ${SERVICE_TEST_DIR}/core_sources.cmake)
+set_tests_properties(test_core_sources PROPERTIES LABELS service)
+
+find_program(READELF_PROGRAM NAMES readelf ${CMAKE_READELF})
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
+   CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+  add_executable(xcacore_linkcheck ${SERVICE_TEST_DIR}/xcacore_linkcheck.cpp)
+  target_link_libraries(xcacore_linkcheck
+	"$<LINK_LIBRARY:WHOLE_ARCHIVE,xcacore>")
+  add_dependencies(tests xcacore_linkcheck)
+  set(core_files "")
+  foreach(bin xcacore_linkcheck test_x509rev test_takey test_x509v3ext
+		${CORE_BINARIES})
+    list(APPEND core_files "$<TARGET_FILE:${bin}>")
+  endforeach()
+  list(JOIN core_files "|" core_files)
+  add_test(NAME test_core_link
+	COMMAND ${CMAKE_COMMAND} -DREADELF=${READELF_PROGRAM}
+		"-DBINARIES=${core_files}"
+		-DGUI_BINARY=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-P ${SERVICE_TEST_DIR}/core_link.cmake)
+  set_tests_properties(test_core_link PROPERTIES LABELS service)
+else()
+  message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
+endif()

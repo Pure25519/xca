@@ -4,12 +4,13 @@
  *
  * All rights reserved.
  *
- * GUI glue of certificate issuance (BTD-31): the db_x509 entry points
- * that open the New Certificate dialog. They moved here from
- * lib/db_x509.cpp so that lib/ issues certificates from an IssuanceSpec
- * only; BTD-36 moves them out of the db_x509 class.
+ * GUI glue of certificate issuance (BTD-31): the entry points that open
+ * the New Certificate dialog. They moved here from lib/db_x509.cpp so
+ * that lib/ issues certificates from an IssuanceSpec only, and from the
+ * db_x509 class into the certificate view with BTD-36.
  */
 
+#include "CertTreeView.h"
 #include "NewX509.h"
 
 #include "lib/audit.h"
@@ -53,51 +54,64 @@ static void issueFromDialog(db_x509 *certs, NewX509 *dlg)
 	}
 }
 
-void db_x509::newItem()
+/* The current certificate of the view, the default signer */
+static pki_x509 *selectedSigner(db_x509 *certs)
 {
+	pki_x509 *sigcert = Store.lookupPki<pki_x509>(certs->getSelected());
+	qDebug() << "SIGCERT" << (sigcert ? sigcert->getIntName() : "NULL");
+	return sigcert;
+}
+
+void CertTreeView::newItem()
+{
+	if (!basemodel)
+		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
-	pki_x509 *sigcert = Store.lookupPki<pki_x509>(selected);
-	qDebug() << "SIGCERT" << (sigcert ? sigcert->getIntName() : "NULL");
-	dlg->defineSigner(sigcert, true);
+	dlg->defineSigner(selectedSigner(certs()), true);
 	if (dlg->exec()) {
-		issueFromDialog(this, dlg);
+		issueFromDialog(certs(), dlg);
 	}
 	delete dlg;
 }
 
-void db_x509::newCert(pki_x509req *req)
+void CertTreeView::newCert(pki_x509req *req)
 {
+	if (!basemodel)
+		return;
 	NewX509 *dlg = new NewX509();
-	pki_x509 *sigcert = Store.lookupPki<pki_x509>(selected);
-	qDebug() << "SIGCERT" << (sigcert ? sigcert->getIntName() : "NULL");
+	pki_x509 *sigcert = selectedSigner(certs());
 	dlg->setCert();
 	dlg->defineRequest(req);
 	dlg->defineSigner(sigcert, true);
 	if (dlg->exec()) {
-		issueFromDialog(this, dlg);
+		issueFromDialog(certs(), dlg);
 	}
 	delete dlg;
 }
 
-void db_x509::newCert(pki_temp *temp)
+void CertTreeView::newCert(pki_temp *temp)
 {
+	if (!basemodel)
+		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
 	dlg->defineTemplate(temp);
 	if (dlg->exec()) {
-		issueFromDialog(this, dlg);
+		issueFromDialog(certs(), dlg);
 	}
 	delete dlg;
 }
 
-void db_x509::newCert(pki_x509 *cert)
+void CertTreeView::newCert(pki_x509 *cert)
 {
+	if (!basemodel)
+		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
 	dlg->fromX509super(cert, false);
 	if (dlg->exec()) {
-		issueFromDialog(this, dlg);
+		issueFromDialog(certs(), dlg);
 	}
 	delete dlg;
 }

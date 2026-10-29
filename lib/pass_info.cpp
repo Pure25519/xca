@@ -8,8 +8,8 @@
 #include "pass_info.h"
 #include "func_base.h"
 
-pass_info::pass_info(const QString &t, const QString &d, QWidget *w)
-	: title(t), description(d), widget(w),
+pass_info::pass_info(const QString &t, const QString &d)
+	: title(t), description(d),
 	type(tr("Password")), pixmap(QString(":keyImg")), result(pw_ok)
 {
 }

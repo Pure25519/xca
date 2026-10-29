@@ -16,6 +16,7 @@
 #include "x509name.h"
 #include "exception.h"
 #include "audit_key.h"
+#include "XcaPresentation.h"
 #include "openssl_compat.h"
 #include <openssl/bio.h>
 
@@ -379,10 +380,10 @@ QVariant pki_x509req::getIcon(const dbheader *hd) const
 {
 	switch (hd->id) {
 	case HD_internal_name:
-		return QVariant(QPixmap(hasPrivKey() ? ":reqkeyIco" : ":reqIco"));
+		return XcaPresentation::icon(hasPrivKey() ? ":reqkeyIco" : ":reqIco");
 	case HD_req_signed:
 		if (done)
-			return QVariant(QPixmap(":doneIco"));
+			return XcaPresentation::icon(":doneIco");
 		break;
 	default:
 		return pki_x509super::getIcon(hd);

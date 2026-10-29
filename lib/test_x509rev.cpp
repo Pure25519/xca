@@ -12,9 +12,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-/* Required by pkcs11.cpp which is compiled into xcalib */
-char segv_data[1024];
-
 class test_x509rev: public QObject
 {
 	Q_OBJECT

@@ -5,7 +5,7 @@
  * All rights reserved.
  *
  * Extension building of the New Certificate dialog, moved here from
- * widgets/NewX509_ext.cpp (BTD-31) so that it works on an ExtensionSpec.
+ * the dialog code NewX509_ext.cpp (BTD-31) so that it works on an ExtensionSpec.
  */
 
 #include "issuance.h"

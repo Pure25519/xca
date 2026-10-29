@@ -17,6 +17,7 @@
 #include "exception.h"
 #include "pass_info.h"
 #include "audit_key.h"
+#include "XcaPresentation.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -456,7 +457,7 @@ void pki_x509::store_token(bool alwaysSelect)
 
 	pki_key *privkey = getRefKey();
 	if (!privkey || !privkey->isToken() || alwaysSelect) {
-		if (!p11.selectToken(&slot, NULL))
+		if (!p11.selectToken(&slot))
 			return;
 	} else {
 		card = dynamic_cast<pki_scard *>(privkey);
@@ -1083,7 +1084,7 @@ QVariant pki_x509::getIcon(const dbheader *hd) const
 			return QVariant();
 		if (!ca)
 			return QVariant();
-		return QVariant(QPixmap(":doneIco"));
+		return XcaPresentation::icon(":doneIco");
 	case HD_internal_name:
 		if (hasPrivKey())
 			pixnum += 1;
@@ -1093,7 +1094,7 @@ QVariant pki_x509::getIcon(const dbheader *hd) const
 	default:
 		return pki_x509super::getIcon(hd);
 	}
-	return QVariant(QPixmap(icon_names[pixnum]));
+	return XcaPresentation::icon(icon_names[pixnum]);
 }
 
 bool pki_x509::unusable() const
@@ -1145,15 +1146,15 @@ QVariant pki_x509::bg_color(const dbheader *hd) const
 	switch (hd->id) {
 		case HD_cert_notBefore:
 			if (nb > now || !nb.isValid() || nb.isUndefined())
-				return QVariant(red);
+				return XcaPresentation::background(XcaHighlight::red);
 			break;
 		case HD_cert_notAfter: {
 			if (na.isUndefined())
-				return QVariant(cyan);
+				return XcaPresentation::background(XcaHighlight::cyan);
 			if (na < now)
-				return QVariant(red);
+				return XcaPresentation::background(XcaHighlight::red);
 			if (certwarn < now)
-				return QVariant(yellow);
+				return XcaPresentation::background(XcaHighlight::yellow);
 			break;
 		}
 		case HD_cert_crl_expire:
@@ -1163,9 +1164,9 @@ QVariant pki_x509::bg_color(const dbheader *hd) const
 				if (!crlExpire.isUndefined()) {
 					crlwarn = crlex.addSecs(-2 *60*60*24);
 					if (crlex < now)
-						return QVariant(red);
+						return XcaPresentation::background(XcaHighlight::red);
 					if (crlwarn < now || !crlex.isValid())
-						return QVariant(yellow);
+						return XcaPresentation::background(XcaHighlight::yellow);
 				}
 			}
 	}
