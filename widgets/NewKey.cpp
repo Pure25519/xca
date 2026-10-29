@@ -115,7 +115,10 @@ NewKey::NewKey(QWidget *parent, const QString &name)
 		foreach(slotid slot, p11_slots) {
 			QList<CK_MECHANISM_TYPE> ml = p11.mechanismList(slot);
 			foreach(keytype t, keytype::types())
-				if (ml.contains(t.mech))
+				/* once per mechanism: the types without
+				 * a token mechanism share one (BTD-16) */
+				if (ml.contains(t.mech) &&
+				    keytype::byMech(t.mech).type == t.type)
 					keytypes << keyListItem(&p11, slot,
 								t.mech);
 		}

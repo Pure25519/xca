@@ -180,7 +180,7 @@ static AuditParams keyjobParams(const keyjob &task, const QString &name)
 		p.set("key_type", task.ktype.name);
 	if (task.isEC() && task.ec_nid != NID_undef)
 		p.set("curve", OBJ_nid2sn(task.ec_nid));
-	else if (!task.isED25519())
+	else if (!task.isFixed())
 		p.set("key_size", task.size);
 	return p;
 }
@@ -192,7 +192,12 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 
 	if (task.ktype.type == -1)
 		throw serviceError("invalid_key_type", tr("Unknown key type"));
-	if (!task.isEC() && !task.isED25519() && task.size < 32)
+	/* "ML-DSA-65:2048": rejected, not dropped (BTD-16) */
+	if (task.isFixed() && task.size <= 0)
+		throw serviceError("invalid_key_size",
+			tr("The key type %1 takes no size or curve")
+			.arg(task.ktype.name));
+	if (!task.isEC() && !task.isFixed() && task.size < 32)
 		throw serviceError("invalid_key_size", tr("Key size too small !"));
 	if (!keyjob(task).isValid())    /* isValid() is not const */
 		throw serviceError("invalid_curve", tr("Unknown EC curve"));
@@ -266,7 +271,7 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name)
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
 
-	if (!task.isEC() && !task.isED25519() && task.size >= 32 &&
+	if (!task.isEC() && !task.isFixed() && task.size >= 32 &&
 	    (task.size < 1024 || task.size > 8192))
 	{
 		try {
@@ -305,10 +310,9 @@ int db_key::exportFlags(pki_base *pki) const
 	int keytype = key->getKeyType();
 	if (keytype != EVP_PKEY_RSA && keytype != EVP_PKEY_DSA)
 		disable_flags |= F_PVK;
-#ifdef EVP_PKEY_ED25519
-	if (keytype == EVP_PKEY_ED25519)
+	/* Ed25519, Ed448, ML-DSA, SLH-DSA: PKCS#8 only */
+	if (::keytype::byType(keytype).fixed())
 		disable_flags |= F_TRADITION;
-#endif
 	if (!key->SSH2_compatible())
 		disable_flags |= F_SSH2;
 
