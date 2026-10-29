@@ -38,6 +38,8 @@ class pki_x509;
 class pki_x509req;
 class Registration;
 class ServiceContext;
+class Policy;
+class TemplateSpec;
 
 namespace ProfileStore
 {
@@ -64,6 +66,11 @@ namespace ProfileStore
 	void remove(const ServiceContext &ctx, const QString &kind,
 			const QString &name, int version);
 
+	/* The explicit migration of a template (Profile::fromTemplate());
+	 * audited as profile.migrate, the template stays as it is */
+	Document migrateTemplate(const ServiceContext &ctx,
+			const TemplateSpec &t, const QString &id = QString());
+
 	/* The newest version of every name, retired ones included */
 	QList<Document> list(const QString &kind);
 	/* version 0: the newest one */
@@ -81,6 +88,11 @@ namespace ProfileStore
 	void assignToProfile(const ServiceContext &ctx, const QString &profile,
 			const QString &policy);
 	QStringList assigned(const pki_x509 *ca, const QString &kind);
+	/* The policies db_x509::newCert() checks for every issuance under
+	 * ca (GUI, CLI, REST, EST, CMP): those assigned to the CA and, for a
+	 * stored profile, to the profile; retired ones are left out. Empty
+	 * before bxc_schema 4 or without assignments: today's behaviour. */
+	QList<Policy> policiesFor(const pki_x509 *ca, const QString &profile);
 
 	pki_x509 *issue(const ServiceContext &ctx, pki_x509 *ca,
 			const QString &profile, pki_x509req *request,

@@ -21,6 +21,7 @@
 #include "policy.h"
 #include "profile.h"
 #include "sql.h"
+#include "template.h"
 
 static QString tr(const char *text)
 {
@@ -84,13 +85,16 @@ static int newestVersion(const QString &kind, const QString &name)
 
 static ProfileStore::Document store(const ServiceContext &ctx,
 		const QString &kind, const QJsonObject &doc, const QString &action,
-		bool newName, const QString &file = QString())
+		bool newName, const QString &file = QString(),
+		const QString &templateName = QString())
 {
 	ProfileStore::Document d;
 	AuditParams params;
 	params.set("name", doc["id"].toString());
 	if (!file.isEmpty())
 		params.set("file", file);
+	if (!templateName.isEmpty())
+		params.set("template", templateName);
 	auditedTransaction(ctx, kind + "." + action, kind, doc["id"].toString(),
 			params, [&]() {
 		d.kind = kind;
@@ -147,6 +151,22 @@ ProfileStore::Document ProfileStore::importFile(const ServiceContext &ctx,
 				.arg(path));
 	}
 	return store(ctx, kind, d.object(), "import", true, path);
+}
+
+ProfileStore::Document ProfileStore::migrateTemplate(const ServiceContext &ctx,
+		const TemplateSpec &t, const QString &id)
+{
+	QJsonObject doc;
+	try {
+		doc = Profile::fromTemplate(t, id);
+	} catch (serviceError &err) {
+		AuditParams params;
+		params.set("template", t.name);
+		AuditLog::appendFailure(ctx, "profile.migrate", "profile",
+				QString(), params, err.code);
+		throw;
+	}
+	return store(ctx, "profile", doc, "migrate", true, QString(), t.name);
 }
 
 ProfileStore::Document ProfileStore::update(const ServiceContext &ctx,
@@ -368,6 +388,24 @@ QStringList ProfileStore::assigned(const pki_x509 *ca, const QString &kind)
 	return assignedTo("ca", ca->getSqlItemId().toString(), kind);
 }
 
+QList<Policy> ProfileStore::policiesFor(const pki_x509 *ca,
+		const QString &profile)
+{
+	QList<Policy> policies;
+	if (!ca)
+		return policies;
+	QStringList names = assigned(ca, "policy");
+	if (!profile.isEmpty())
+		names += assignedTo("profile", profile, "policy");
+	names.removeDuplicates();
+	for (const QString &name : names) {
+		Document p = show("policy", name);
+		if (!p.retired)
+			policies << Policy::fromJson(p.document);
+	}
+	return policies;
+}
+
 pki_x509 *ProfileStore::issue(const ServiceContext &ctx, pki_x509 *ca,
 		const QString &profile, pki_x509req *request, pki_key *key,
 		const Registration &reg)
@@ -384,15 +422,8 @@ pki_x509 *ProfileStore::issue(const ServiceContext &ctx, pki_x509 *ca,
 			throw serviceError("profile_not_assigned",
 				tr("The profile '%1' is retired").arg(profile));
 		spec = Profile::fromJson(d.document).apply(request, key, reg, ca);
+		/* the policies follow in db_x509::newCert() (policiesFor()) */
 		spec.profileVersion = d.version;
-		QStringList names = assigned(ca, "policy") +
-			assignedTo("profile", profile, "policy");
-		names.removeDuplicates();
-		for (const QString &name : names) {
-			Document p = show("policy", name);
-			if (!p.retired)
-				spec.policies << Policy::fromJson(p.document);
-		}
 	} catch (serviceError &err) {
 		AuditParams params;
 		params.set("profile", profile);

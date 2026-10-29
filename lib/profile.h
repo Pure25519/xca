@@ -19,6 +19,23 @@
  * Profile::fromJson() takes the document from anywhere: a file
  * (fromFile()), or the profile store of BTD-167. apply() neither writes
  * to the database nor draws a serial.
+ *
+ * Migration of XCA templates (fromTemplate(), BTD-167): a template
+ * becomes a generic profile of schema v1.1 with id "xca-" plus its name
+ * in lower case (other characters as "-"). basicConstraints, pathLen,
+ * key usage (the same bits for RSA and EC keys), EKU and their
+ * criticality are taken over; "DNS:copycn" becomes san.dns_from_cn; the
+ * validity period becomes validity.default and .max without backdating.
+ * SKI and AKI are always present. The profile takes the subject and the
+ * SAN of the CSR (the template only with "copy extensions"), any key
+ * type of the schema, SHA-256 (SHA-384 for P-384 CAs), and keeps the
+ * order of the extensions as XCA builds them. Netscape extensions are not
+ * migrated (bxc-pki profiles/README.md). Refused, with the field named
+ * (template_not_migratable): a fixed subject, a fixed SAN, name
+ * constraints, issuer alternative name, CRL distribution points, AIA,
+ * OCSP must-staple, advanced extensions, no basicConstraints, no key
+ * usage, no SKI or AKI, EKU limits of BTD-54, midnight validity and the
+ * undefined expiry date.
  */
 
 #ifndef __PROFILE_H
@@ -36,6 +53,7 @@
 class pki_key;
 class pki_x509;
 class pki_x509req;
+class TemplateSpec;
 
 /* What the registration of a device or user knows */
 class Registration
@@ -63,6 +81,11 @@ class Profile
 	/* Throws serviceError invalid_profile naming the field */
 	static Profile fromJson(const QJsonObject &doc);
 	static Profile fromFile(const QString &path);
+
+	/* The generic profile (schema v1.1) of an XCA template; throws
+	 * serviceError template_not_migratable naming the field. */
+	static QJsonObject fromTemplate(const TemplateSpec &t,
+			const QString &id = QString());
 
 	/* The key type as the profile names it: rsa-2048, ec-p256, ... */
 	static QString keyType(const EVP_PKEY *pkey);

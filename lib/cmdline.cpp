@@ -26,6 +26,10 @@
 #include "audit.h"
 #include "XcaWarningCore.h"
 #include "json_report.h"
+#include "db_temp.h"
+#include "pki_temp.h"
+#include "profile_store.h"
+#include "template.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -293,6 +297,34 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		pki_key *pki = keys->newKey(task, cmd_opts["name"]);
 		if (pki)
 			cmdline_items->append_item(pki);
+	}
+	if (cmd_opts.has("migrate-template")) {
+		QString name = cmd_opts["migrate-template"];
+		pki_temp *temp = nullptr;
+		QList<pki_temp *> temps = Store.getAll<pki_temp>() +
+			Database.model<db_temp>()->getPredefs();
+		for (pki_temp *t : temps) {
+			if (t->getIntName() == name ||
+			    (t->getSqlItemId().isValid() &&
+			     t->getSqlItemId().toString() == name)) {
+				temp = t;
+				break;
+			}
+		}
+		try {
+			if (!temp)
+				throw serviceError("unknown_template",
+					QString("Template '%1' not found").arg(name));
+			ProfileStore::Document d = ProfileStore::migrateTemplate(
+				ServiceContext::localUser(ServiceContext::cli),
+				TemplateSpec::fromTemplate(temp), cmd_opts["name"]);
+			console_write(stdout, QString("Profile '%1' version %2 "
+				"from the template '%3'\n").arg(d.name)
+				.arg(d.version).arg(name).toUtf8());
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	if (cmd_opts.has("issuers")) {
 		QStringList out;

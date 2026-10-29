@@ -22,6 +22,7 @@
 #include "audit.h"
 #include "issuance.h"
 #include "issuance_checks.h"
+#include "profile_store.h"
 #include "request.h"
 
 #include "XcaWarningCore.h"
@@ -797,8 +798,24 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	orderExtensions(spec.extensionOrder, cert);
 
 	IssuanceChecks::certificate(spec, cert, chain);
-	IssuanceChecks::names(spec, cert, chain);
-	if (!spec.policies.isEmpty())
+	/* the policies of the spec, of the CA and of its stored profile:
+	 * every issuance channel checks the same (BTD-167) */
+	IssuanceSpec named(spec);
+	for (const Policy &p : ProfileStore::policiesFor(spec.signer,
+				spec.profileVersion ? spec.profile : QString())) {
+		bool known = false;
+		for (const Policy &q : named.policies)
+			known |= q.id == p.id;
+		if (!known)
+			named.policies << p;
+	}
+	QStringList policyNames;
+	for (const Policy &p : named.policies)
+		policyNames << p.id;
+	if (!policyNames.isEmpty())
+		params.set("policies", policyNames.join(","));
+	IssuanceChecks::names(named, cert, chain);
+	if (!named.policies.isEmpty())
 		params.set("policy_result", "pass");
 
 	// the serial only once every check passed
@@ -832,7 +849,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	tempkey = nullptr;
 	markRequestSigned(spec.request, stored);
 	if (spec.profileVersion)
-		recordProfile(spec, stored);
+		recordProfile(named, stored);
 	AuditLog::append(ctx, "certificate.issue", "certificate",
 			stored->getSqlItemId().toString(), params);
 	if (!TransCommit())

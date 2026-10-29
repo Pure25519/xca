@@ -17,6 +17,7 @@
 #include "pki_key.h"
 #include "pki_x509.h"
 #include "pki_x509req.h"
+#include "template.h"
 
 static QString tr(const char *text)
 {
@@ -119,6 +120,109 @@ Profile Profile::fromJson(const QJsonObject &doc)
 	    doc["keycertsign_request"].toString() != "override")
 		throw invalid("keycertsign_request");
 	return p;
+}
+
+static serviceError notMigratable(const TemplateSpec &t, const QString &field)
+{
+	return serviceError("template_not_migratable",
+		tr("The template '%1' cannot become a profile: a profile has no %2")
+		.arg(t.name, field));
+}
+
+/* The migration rule of XCA templates (BTD-167), see profile.h */
+QJsonObject Profile::fromTemplate(const TemplateSpec &t, const QString &id)
+{
+	const ExtensionSpec &e = t.extensions;
+	/* fixed values a profile cannot hold: refused, never dropped */
+	if (t.subject.entryCount() > 0)
+		throw notMigratable(t, "subject");
+	const QList<std::pair<QString, bool>> fixed {
+		{ "subjectAltName", !e.subjectAltName.isEmpty() &&
+			e.subjectAltName.simplified() != "DNS:copycn" },
+		{ "nameConstraints", !e.nameConstraints.isEmpty() },
+		{ "issuerAltName", !e.issuerAltName.isEmpty() },
+		{ "crlDistPoints", !e.crlDistPoints.isEmpty() },
+		{ "authInfoAccess", !e.authInfoAccess.isEmpty() },
+		{ "ocspMustStaple", e.ocspMustStaple },
+		{ "advanced", !e.advanced.trimmed().isEmpty() },
+		{ "basicConstraints", e.basicCA == ExtensionSpec::bc_absent },
+		{ "keyUsage", e.keyUsage.isEmpty() },
+		{ "subjectKeyIdentifier", !e.subjectKeyId },
+		{ "authorityKeyIdentifier", !e.authorityKeyId },
+		{ "ekuDefault", !e.ekuDefault.isEmpty() || !e.ekuAllowed.isEmpty() },
+		{ "midnight", t.midnight },
+		{ "noWellDefinedExpDate", t.noWellDefinedExpDate },
+	};
+	for (const auto &f : fixed) {
+		if (f.second)
+			throw notMigratable(t, f.first);
+	}
+
+	QString name = id;
+	if (name.isEmpty()) {
+		name = "xca-" + t.name.toLower();
+		name.replace(QRegularExpression("[^a-z0-9]+"), "-");
+		name.remove(QRegularExpression("-+$"));
+		name = name.left(63);
+	}
+	QJsonArray bits;
+	for (const QString &b : e.keyUsage)
+		bits << b;
+	QJsonObject ku { { "bits", bits }, { "critical", e.keyUsageCritical } };
+	QJsonObject bc { { "ca", e.basicCA == ExtensionSpec::bc_ca },
+			 { "critical", e.basicCritical } };
+	if (e.basicCA == ExtensionSpec::bc_ca && !e.pathLen.isEmpty())
+		bc["path_len"] = e.pathLen.toInt();
+	static const char *units[] = { "D", "M", "Y" };
+	QString period = QString("P%1%2").arg(t.validity).arg(units[t.unit]);
+	QJsonObject count { { "min", 0 }, { "max", 16 } };
+
+	QJsonObject doc {
+		{ "schema", "urn:bxc-pki:schema:profile:v1.1" },
+		{ "id", name },
+		{ "description", tr("Migrated from the XCA template '%1'%2")
+			.arg(t.name, t.comment.isEmpty() ? QString() :
+				": " + t.comment) },
+		{ "family", "generic" },
+		{ "key_source", "csr" },
+		{ "key_types", QJsonArray{ "rsa-2048", "rsa-3072", "rsa-4096",
+					"ec-p256", "ec-p384" } },
+		{ "ku_by_key_type", QJsonObject{ { "rsa", ku }, { "ec", ku } } },
+		{ "csr_eku", "ignore" },
+		{ "csr_basic_constraints", "ignore" },
+		{ "csr_aki_ski", "ignore" },
+		{ "basic_constraints", bc },
+		{ "san", QJsonObject{
+			{ "uri", QJsonObject{ { "count", 0 } } },
+			{ "dns", count }, { "ip", count }, { "email", count },
+			{ "dns_or_ip_min", 0 }, { "keep_csr_order", true },
+			{ "dns_from_cn", !e.subjectAltName.isEmpty() },
+			{ "critical", false } } },
+		{ "subject", QJsonObject{ { "copy", "byte-faithful" },
+			{ "required_attributes", QJsonArray() },
+			{ "add_missing_o", false }, { "cn_source", "csr" } } },
+		{ "aki", QJsonObject{ { "form", e.authorityKeyIdIssuer ?
+				"key-id-issuer-serial" : "key-id" } } },
+		{ "signature", QJsonObject{
+			{ "rsa", QJsonObject{ { "padding", "pkcs1v15" },
+				{ "hashes", QJsonArray{ "sha256" } } } },
+			{ "ec", QJsonObject{ { "hash_by_curve", QJsonObject{
+				{ "ec-p256", "sha256" },
+				{ "ec-p384", "sha384" } } } } } } },
+		{ "validity", QJsonObject{ { "default", period },
+			{ "max", period }, { "backdate", "PT0S" } } },
+		{ "csr_sha1", "accept-with-warning" },
+		{ "keycertsign_request", "override" },
+		{ "warnings", QJsonArray() },
+	};
+	if (!e.extKeyUsage.isEmpty()) {
+		QJsonArray purposes;
+		for (const QString &p : e.extKeyUsage)
+			purposes << p;
+		doc["eku"] = QJsonObject{ { "purposes", purposes },
+				{ "critical", e.extKeyUsageCritical } };
+	}
+	return doc;
 }
 
 Profile Profile::fromFile(const QString &path)
@@ -381,8 +485,10 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 		spec.notBefore = signer->getNotBefore();
 	spec.notAfter = a1time(shifted(now, validity["default"].toString(), 1));
 
-	/* the order of the golden files of BTD-64 */
-	spec.extensionOrder = { NID_basic_constraints, NID_key_usage,
+	/* the order of the golden files of BTD-64; a generic profile keeps
+	 * the order XCA builds, as the template it came from did */
+	if (family != "generic")
+		spec.extensionOrder = { NID_basic_constraints, NID_key_usage,
 		NID_ext_key_usage, NID_subject_alt_name,
 		NID_subject_key_identifier, NID_authority_key_identifier,
 		NID_crl_distribution_points, NID_info_access };

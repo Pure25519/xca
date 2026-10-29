@@ -10,6 +10,7 @@
 #include "lib/audit.h"
 #include "lib/exception.h"
 #include "lib/template.h"
+#include "lib/profile_store.h"
 #include "TempTreeView.h"
 #include "ExportDialog.h"
 #include "NewX509.h"
@@ -32,6 +33,8 @@ void TempTreeView::fillContextMenu(QMenu *menu, QMenu *,
 			SLOT(certFromTemp())), ctxId("createCertificate"));
 	setAutomationId(menu->addAction(tr("Create request"), this,
 			SLOT(reqFromTemp())), ctxId("createRequest"));
+	setAutomationId(menu->addAction(tr("Migrate to profile"), this,
+			SLOT(migrateTemp())), ctxId("migrateToProfile"));
 }
 
 /* The template dialogs fill a TemplateSpec; storing is the service
@@ -50,6 +53,24 @@ void TempTreeView::duplicateTemp()
 	try {
 		temps()->newTemplate(ServiceContext::localUser(
 				ServiceContext::gui), spec);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
+}
+
+/* The template as a generic profile in the profile store (BTD-167);
+ * the template stays */
+void TempTreeView::migrateTemp()
+{
+	pki_temp *temp = db_base::fromIndex<pki_temp>(currentIndex());
+	if (!temp)
+		return;
+	try {
+		ProfileStore::Document d = ProfileStore::migrateTemplate(
+			ServiceContext::localUser(ServiceContext::gui),
+			TemplateSpec::fromTemplate(temp));
+		XCA_INFO(tr("The template '%1' is now the profile '%2', version %3")
+			.arg(temp->getIntName(), d.name).arg(d.version));
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}
