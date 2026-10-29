@@ -43,6 +43,7 @@ class test_main: public QObject
 	void importAuditFailureKeepsItem();
 	void exportFormat();
 	void revoke();
+	void renewalSigningFails();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();

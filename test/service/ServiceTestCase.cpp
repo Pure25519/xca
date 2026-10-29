@@ -318,8 +318,16 @@ static QStringList emptyDerRows()
 	if (!QSqlDatabase::database().isOpen())
 		return found;
 	for (const auto &t : tables) {
-		QSqlQuery q(QString("SELECT item FROM %1 WHERE %2 IS NULL OR %2 = ''")
-				.arg(t[0], t[1]));
+		QString sql = QString("SELECT item FROM %1 WHERE %2 IS NULL OR %2 = ''")
+				.arg(t[0], t[1]);
+		QSqlQuery q;
+		/* a renamed table or column must not switch the check off
+		 * (BTD-181) */
+		if (!q.exec(sql)) {
+			found << QString("empty DER check failed: %1: %2")
+				.arg(sql, q.lastError().text());
+			continue;
+		}
 		while (q.next())
 			found << QString("%1 item %2").arg(t[0], q.value(0).toString());
 	}
@@ -342,6 +350,6 @@ void ServiceTestCase::cleanup()
 	QVERIFY2(dir.isEmpty() || !QFileInfo::exists(dir),
 		CCHAR(QString("temporary database directory left: %1").arg(dir)));
 	QVERIFY2(v.isEmpty(), CCHAR(v.join("; ")));
-	QVERIFY2(empty.isEmpty(), CCHAR("stored with an empty DER: " +
-						empty.join(", ")));
+	QVERIFY2(empty.isEmpty(), CCHAR("stored with an empty DER or "
+					"not checked: " + empty.join(", ")));
 }

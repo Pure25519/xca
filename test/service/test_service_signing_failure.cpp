@@ -1,12 +1,17 @@
 /* vi: set sw=4 ts=4:
  *
- * A failed signature is an error, never a stored object (BTD-171): an
- * Ed25519 key takes no digest, so signing with SHA-256 fails in
- * X509_sign, X509_CRL_sign and X509_REQ_sign. Before the fix the
- * certificate was stored with an empty DER and audited as success.
- * Each service call must throw signing_failed, write a failure entry,
- * store no row and advance no CRL number. ServiceTestCase::cleanup()
+ * A failed signature is an error, never a stored object (BTD-171): before
+ * the fix the certificate was stored with an empty DER and audited as
+ * success. Each service call must throw signing_failed, write a failure
+ * entry, store no row and advance no CRL number. ServiceTestCase::cleanup()
  * checks for every test that no stored object has an empty DER.
+ *
+ * The trigger (BTD-181) is an RSA-512 key with SHA-512: the PKCS#1 v1.5
+ * DigestInfo of SHA-512 is 83 bytes, an RSA-512 block holds 53, so
+ * X509_sign, X509_CRL_sign and X509_REQ_sign fail whatever the digest
+ * rules for digest-less keys say (BTD-164), and SHA-512 is no insecure
+ * digest the checks of BTD-55 would refuse before. SHA-256 (51 bytes)
+ * still fits, so the same key signs with it.
  */
 
 #include <QSqlQuery>
@@ -33,9 +38,11 @@ class test_service_signing_failure : public ServiceTestCase
 
 	ServiceContext ctx{ ServiceContext::cli, "os:service-test" };
 
-	static pki_key *ed25519(const QString &name)
+	/* XCA asks before it makes a key that small (key.size) */
+	pki_key *rsa512(const QString &name)
 	{
-		return Database.model<db_key>()->newKey(keyjob("ED25519"), name);
+		warning->expectQuestion(true);
+		return Database.model<db_key>()->newKey(keyjob("RSA:512"), name);
 	}
 	static x509name dn(const QString &cn)
 	{
@@ -44,11 +51,13 @@ class test_service_signing_failure : public ServiceTestCase
 		return n;
 	}
 	static int rows(const QString &table);
-	pki_x509 *edRoot();
+	static IssuanceSpec rootSpec(pki_key *key, int md);
+	pki_x509 *smallRoot();
 	void expectFailure(const QString &action, int auditBefore);
 
   private slots:
 	void certificate();
+	void selfSigned();
 	void crl();
 	void request();
 };
@@ -61,22 +70,33 @@ int test_service_signing_failure::rows(const QString &table)
 	return q.value(0).toInt();
 }
 
-/* A self-signed Ed25519 root, signed without a digest (that works) */
-pki_x509 *test_service_signing_failure::edRoot()
+IssuanceSpec test_service_signing_failure::rootSpec(pki_key *key, int md)
 {
 	IssuanceSpec spec;
-	spec.name = "Ed25519 Root";
+	spec.name = "RSA-512 Root";
 	spec.subject = dn(spec.name);
-	spec.key = ed25519("ed-root");
+	spec.key = key;
 	spec.notBefore = a1time();
 	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(365));
-	spec.hashAlgo = digest(NID_undef);
+	spec.hashAlgo = digest(md);
 	spec.extensions.basicCA = ExtensionSpec::bc_ca;
 	spec.extensions.basicCritical = true;
 	spec.extensions.subjectKeyId = true;
 	spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+	return spec;
+}
+
+/* A self-signed RSA-512 root, signed with SHA-256 (that fits) */
+pki_x509 *test_service_signing_failure::smallRoot()
+{
+	pki_key *key = rsa512("small-root");
+	if (!key) {
+		qWarning() << "OpenSSL refused an RSA-512 key";
+		return nullptr;
+	}
 	try {
-		return Database.model<db_x509>()->newCert(ctx, spec);
+		return Database.model<db_x509>()->newCert(ctx,
+				rootSpec(key, NID_sha256));
 	} catch (errorEx &err) {
 		qWarning() << "root failed:" << err.getString();
 		return nullptr;
@@ -94,25 +114,26 @@ void test_service_signing_failure::expectFailure(const QString &action,
 	QVERIFY(AuditLog::verify().ok());
 }
 
-/* AC 1 and 2: the end entity under an Ed25519 CA with SHA-256 */
+/* The end entity under the RSA-512 CA with SHA-512 */
 void test_service_signing_failure::certificate()
 {
-	pki_x509 *root = edRoot();
+	pki_x509 *root = smallRoot();
 	QVERIFY(root);
-	/* the key and the root are stored; only the leaf must not be */
+	/* the keys and the root are stored; only the leaf must not be */
+	pki_key *leafKey = Database.model<db_key>()->newKey(
+				keyjob("EC:prime256v1"), "leaf");
 	int certRows = rows("certs");
 	int stored = Store.getAll<pki_x509>().size();
+	int before = AuditLog::entries().size();
 
 	IssuanceSpec spec;
 	spec.name = "leaf";
 	spec.subject = dn("leaf.example");
-	spec.key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
-				"leaf");
-	int before = AuditLog::entries().size();
+	spec.key = leafKey;
 	spec.signer = root;
 	spec.notBefore = a1time();
 	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
-	spec.hashAlgo = digest(NID_sha256);
+	spec.hashAlgo = digest(NID_sha512);
 	spec.extensions.basicCA = ExtensionSpec::bc_not_ca;
 	QString code;
 	try {
@@ -128,17 +149,38 @@ void test_service_signing_failure::certificate()
 	QCOMPARE(Store.getAll<pki_x509>().size(), stored);
 }
 
-/* AC 3: X509_CRL_sign fails; no CRL row, CRL number unchanged */
+/* A self-signed certificate whose own key cannot sign with SHA-512 */
+void test_service_signing_failure::selfSigned()
+{
+	pki_key *key = rsa512("small-self");
+	QVERIFY(key);
+	int certRows = rows("certs");
+	int stored = Store.getAll<pki_x509>().size();
+	int before = AuditLog::entries().size();
+	QString code;
+	try {
+		Database.model<db_x509>()->newCert(ctx, rootSpec(key, NID_sha512));
+		code = "<issued>";
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QCOMPARE(code, QString("signing_failed"));
+	expectFailure("certificate.issue", before);
+	QCOMPARE(rows("certs"), certRows);
+	QCOMPARE(Store.getAll<pki_x509>().size(), stored);
+}
+
+/* X509_CRL_sign fails; no CRL row, CRL number unchanged */
 void test_service_signing_failure::crl()
 {
-	pki_x509 *root = edRoot();
+	pki_x509 *root = smallRoot();
 	QVERIFY(root);
 	a1int number = root->getCrlNumber();
 	int crlRows = rows("crls");
 	int before = AuditLog::entries().size();
 
 	crljob job(root);
-	job.hashAlgo = digest(NID_sha256);
+	job.hashAlgo = digest(NID_sha512);
 	QString code;
 	try {
 		Database.model<db_crl>()->newCrl(ctx, job);
@@ -155,19 +197,20 @@ void test_service_signing_failure::crl()
 			.arg(root->getSqlItemId().toLongLong())) && q.next());
 	QCOMPARE(q.value(0).toString(), number.toDec());
 
-	/* without the digest the same CRL works */
-	job.hashAlgo = digest(NID_undef);
+	/* with a digest that fits the same CRL works */
+	job.hashAlgo = digest(NID_sha256);
 	QVERIFY(Database.model<db_crl>()->newCrl(ctx, job));
 }
 
-/* AC 3: X509_REQ_sign fails; no request row */
+/* X509_REQ_sign fails; no request row */
 void test_service_signing_failure::request()
 {
 	RequestSpec spec;
-	spec.name = "ed-request";
+	spec.name = "small-request";
 	spec.subject = dn("device.example");
-	spec.key = ed25519("ed-device");
-	spec.hashAlgo = digest(NID_sha256);
+	spec.key = rsa512("small-device");
+	QVERIFY(spec.key);
+	spec.hashAlgo = digest(NID_sha512);
 	int reqRows = rows("requests");
 	int before = AuditLog::entries().size();
 	QString code;
