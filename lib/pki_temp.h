@@ -40,15 +40,15 @@ class pki_temp: public pki_x509name
 		pki_temp(const QString &d = QString());
 		~pki_temp();
 
-		QString getSetting(const QString &key)
+		QString getSetting(const QString &key) const
 		{
 			CHECK_TMPL_KEY
-			return settings[key];
+			return settings.value(key);
 		}
-		int getSettingInt(const QString &key)
+		int getSettingInt(const QString &key) const
 		{
 			CHECK_TMPL_KEY
-			return settings[key].toInt();
+			return settings.value(key).toInt();
 		}
 		void setSetting(const QString &key, const QString &value)
 		{

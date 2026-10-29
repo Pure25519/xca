@@ -247,34 +247,37 @@ void XcaTreeView::setFilter(const QString &pattern)
 	proxy->setFilterFixedString(pattern);
 }
 
+/* The question and the deletion on a token stay here, the deletion
+ * itself is the service function db_base::deleteItems() (BTD-35) */
 void XcaTreeView::deleteItems()
 {
-	QModelIndex index;
-	QModelIndexList indexes = getSelectedIndexes();
-	QStringList items;
-	pki_base *pki = NULL;
+	QList<pki_base *> list = items(getSelectedIndexes());
+	QStringList names;
+	ServiceContext ctx = ServiceContext::localUser(ServiceContext::gui);
 
-	if (indexes.count() == 0 || !basemodel)
+	if (list.isEmpty() || !basemodel)
 		return;
 
-	foreach(index, indexes) {
-		pki = db_base::fromIndex(index);
-		if (pki)
-			items << pki->getIntName();
+	foreach(pki_base *pki, list)
+		names << pki->getIntName();
+
+	if (!xcaWarning::confirmOkCancel(ctx, "item.delete",
+			list.last()->getMsg(pki_base::msg_delete,
+			names.size()).arg(names.join("', '"))))
+		return;
+
+	foreach(pki_base *pki, list) {
+		try {
+			pki->deleteFromToken();
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+		}
 	}
-
-	Transaction;
-	if (!TransBegin())
-		return;
-
-	if (!XCA_OKCANCEL("item.delete", pki->getMsg(pki_base::msg_delete,
-			items.size()).arg(items.join("', '"))))
-		return;
-
-	foreach(index, indexes) {
-		basemodel->deletePKI(index);
+	try {
+		basemodel->deleteItems(ctx, list);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
 	}
-	TransCommit();
 }
 
 void XcaTreeView::exportItems()
@@ -342,10 +345,12 @@ void XcaTreeView::editComment()
 	prop->insertionDate->setText(item->getInsertionDate().toPretty());
 	XcaDialog *d = new XcaDialog(this, item->getType(), w,
 		tr("Item properties"), QString(), "itemproperties");
-	if (d->exec()) {
-		item->setIntName(prop->name->text());
-		item->setComment(prop->comment->toPlainText());
-		basemodel->updateItem(item);
+	if (d->exec()) try {
+		basemodel->updateProperties(
+			ServiceContext::localUser(ServiceContext::gui), item,
+			prop->name->text(), prop->comment->toPlainText());
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
 	}
 	delete d;
 }

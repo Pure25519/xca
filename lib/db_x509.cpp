@@ -104,13 +104,12 @@ QList<pki_x509 *> db_x509::getAllIssuers()
 		"WHERE certs.ca=1");
 }
 
-void db_x509::remFromCont(const QModelIndex &idx)
+void db_x509::remFromCont(pki_base *pki)
 {
-	if (!idx.isValid())
+	if (!index(pki).isValid())
 		return;
 	db_crl *crls = Database.model<db_crl>();
-	db_x509super::remFromCont(idx);
-	pki_base *pki = fromIndex(idx);
+	db_x509super::remFromCont(pki);
 	pki_x509 *child;
 	pki_base *new_parent;
 	QList<pki_x509 *> childs;

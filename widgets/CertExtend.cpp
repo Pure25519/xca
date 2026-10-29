@@ -189,10 +189,13 @@ void db_x509::certRenewal(QModelIndexList indexes)
 
 		// delete old certificates if requested
 		if (doReplace) {
+			QList<pki_base *> old;
 			foreach(idx, indexes) {
 				if (fromIndex<pki_x509>(idx))
-					deletePKI(idx);
+					old << fromIndex(idx);
 			}
+			deleteItems(ServiceContext::localUser(
+					ServiceContext::gui), old);
 		}
 	}
 	catch (errorEx &err) {

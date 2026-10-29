@@ -20,8 +20,12 @@ class db_token: public db_base
 
 	public:
 		db_token();
-		bool setData(const QModelIndex &index,
-			const QVariant &value, int role);
+		/* object.rename of an object on the token of the slot
+		 * (BTD-35): the label on the token, then the name of the
+		 * matching keys in the database; parameter on_token. The
+		 * token login may ask for the PIN (PwDialogCore). */
+		void rename(const ServiceContext &ctx, pki_base *pki,
+				const QString &name) override;
 		void setSlot(const slotid &s)
 		{
 			slot = s;

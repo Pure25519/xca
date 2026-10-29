@@ -108,6 +108,9 @@ class xcaWarning
 	 * recorded in ctx, so its audit entry names question and source */
 	static bool confirm(ServiceContext &ctx, const QString &id,
 				const QString &msg);
+	/* The same with OK and Cancel, e.g. item.delete */
+	static bool confirmOkCancel(ServiceContext &ctx, const QString &id,
+				const QString &msg);
 	static void sqlerror(QSqlError err)
 	{
 		if (!err.isValid())

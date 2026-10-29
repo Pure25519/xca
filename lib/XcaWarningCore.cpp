@@ -22,6 +22,15 @@ bool xcaWarning::confirm(ServiceContext &ctx, const QString &id,
 	return true;
 }
 
+bool xcaWarning::confirmOkCancel(ServiceContext &ctx, const QString &id,
+			const QString &msg)
+{
+	if (!gui->okcancel(id, msg))
+		return false;
+	ctx.confirm(id, gui->answerSource(id));
+	return true;
+}
+
 bool xcaWarningCore::print_cmdline(const char *color, const QString &msg)
 {
 	console_write(stdout, QString("%1:" COL_RESET " %2\n")

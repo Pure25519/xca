@@ -463,7 +463,7 @@ void test_service_revocation::rejected()
 		certs()->revoke(ctx, ee, reason("Key Compromise"));
 	if (variant == "nokey") {
 		db_key *keys = Database.model<db_key>();
-		keys->deletePKI(keys->index(caKey));
+		keys->deleteItems(ctx, { caKey });
 		QVERIFY(!ca->getRefKey());
 	}
 	qint64 rows = revocationRows();

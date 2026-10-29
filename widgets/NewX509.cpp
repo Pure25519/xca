@@ -284,33 +284,6 @@ NewX509::NewX509(QWidget *w) : XcaDetail(w)
 	}
 	if (Settings["disable_netscape"])
 		tabWidget->removeTab(4);
-
-	// Setup widget <-> Template mapping
-#define MAP_LE(name) templateLineEdits[#name] = name;
-	MAP_LE(nameCons);
-	MAP_LE(subAltName);
-	MAP_LE(issAltName);
-	MAP_LE(crlDist);
-	MAP_LE(authInfAcc);
-	MAP_LE(nsComment);
-	MAP_LE(nsBaseUrl);
-	MAP_LE(nsRevocationUrl);
-	MAP_LE(nsCARevocationUrl);
-	MAP_LE(nsRenewalUrl);
-	MAP_LE(nsCaPolicyUrl);
-	MAP_LE(nsSslServerName);
-	MAP_LE(validN);
-	MAP_LE(basicPath);
-
-#define MAP_CB(name) templateCheckBoxes[#name] = name;
-	MAP_CB(bcCritical);
-	MAP_CB(kuCritical);
-	MAP_CB(ekuCritical);
-	MAP_CB(subKey);
-	MAP_CB(authKey);
-	MAP_CB(OCSPstaple);
-	MAP_CB(validMidn);
-	MAP_CB(noWellDefinedExpDate);
 }
 
 void NewX509::setRequest()
@@ -482,46 +455,17 @@ void NewX509::defineSigner(pki_x509 *defcert, bool applyTemp)
 	}
 }
 
-static int lb2int(QListWidget *lb)
+/* Selects the rows whose name is in names; with deselect, the others
+ * are deselected */
+static void selectRows(QListWidget *lb, const QStringList &rowNames,
+			const QStringList &names, bool deselect = true)
 {
-	int i, x=0, c=lb->count();
-
-	for (i=0; i<c; i++) {
-		if (lb->item(i)->isSelected())
-			x |= 1<<i;
+	for (int i = 0; i < lb->count() && i < rowNames.size(); i++) {
+		if (names.contains(rowNames[i]))
+			lb->item(i)->setSelected(true);
+		else if (deselect)
+			lb->item(i)->setSelected(false);
 	}
-	return x;
-}
-
-static void int2lb(QListWidget *lb, int x)
-{
-	for (int i=0; i<lb->count(); i++)
-		lb->item(i)->setSelected((1<<i) & x);
-}
-
-static void QString2lb(QListWidget *lb, QString x)
-{
-	QStringList li = x.split(",");
-	QList<QListWidgetItem *> items;
-
-	for (int i=0; i<li.size(); i++) {
-		QString lname = OBJ_sn2ln(CCHAR(li[i].trimmed()));
-		items = lb->findItems(lname, Qt::MatchExactly);
-		if (items.size() > 0)
-			items[0]->setSelected(true);
-	}
-}
-
-static QString lb2QString(QListWidget *lb)
-{
-	QStringList sl;
-
-	for (int i=0; i<lb->count(); i++) {
-		QListWidgetItem *item = lb->item(i);
-		if (item->isSelected())
-			sl << QString(OBJ_ln2sn(CCHAR(item->text())));
-	}
-	return sl.join(", ");
 }
 
 void NewX509::subjectFromTemplate(pki_temp *temp)
@@ -530,29 +474,51 @@ void NewX509::subjectFromTemplate(pki_temp *temp)
 		setX509name(temp->getSubject());
 }
 
-
+/* The mapping between the stored template and the extensions is
+ * TemplateSpec's (lib/template.h, BTD-35) */
 void NewX509::extensionsFromTemplate(pki_temp *temp)
 {
 	if (!temp)
 		return;
 
-	QMapIterator<QString, QLineEdit*> l(templateLineEdits);
-	while (l.hasNext()) {
-		l.next();
-		qDebug() << "APPLY LineEdits" << l.key() << temp->getSetting(l.key());
-		l.value()->setText(temp->getSetting(l.key()));
-	}
-	QMapIterator<QString, QCheckBox*> i(templateCheckBoxes);
-	while (i.hasNext()) {
-		i.next();
-		i.value()->setChecked(temp->getSettingInt(i.key()));
-	}
-	int2lb(nsCertType, temp->getSettingInt("nsCertType"));
-	basicCA->setCurrentIndex(temp->getSettingInt("ca"));
-	int2lb(keyUsage, temp->getSettingInt("keyUse"));
-	QString2lb(ekeyUsage, temp->getSetting("eKeyUse"));
-	validRange->setCurrentIndex(temp->getSettingInt("validM"));
-	nconf_data->document()->setPlainText(temp->getSetting("adv_ext"));
+	TemplateSpec t = TemplateSpec::fromTemplate(temp);
+	const ExtensionSpec &e = t.extensions;
+
+	nameCons->setText(e.nameConstraints);
+	subAltName->setText(e.subjectAltName);
+	issAltName->setText(e.issuerAltName);
+	crlDist->setText(e.crlDistPoints);
+	authInfAcc->setText(e.authInfoAccess);
+	nsComment->setText(e.nsComment);
+	nsBaseUrl->setText(e.nsBaseUrl);
+	nsRevocationUrl->setText(e.nsRevocationUrl);
+	nsCARevocationUrl->setText(e.nsCARevocationUrl);
+	nsRenewalUrl->setText(e.nsRenewalUrl);
+	nsCaPolicyUrl->setText(e.nsCaPolicyUrl);
+	nsSslServerName->setText(e.nsSslServerName);
+	validN->setText(temp->getSetting("validN"));
+	basicPath->setText(e.pathLen);
+
+	bcCritical->setChecked(e.basicCritical);
+	kuCritical->setChecked(e.keyUsageCritical);
+	ekuCritical->setChecked(e.extKeyUsageCritical);
+	subKey->setChecked(e.subjectKeyId);
+	authKey->setChecked(e.authorityKeyId);
+	OCSPstaple->setChecked(e.ocspMustStaple);
+	validMidn->setChecked(t.midnight);
+	noWellDefinedExpDate->setChecked(t.noWellDefinedExpDate);
+
+	selectRows(nsCertType, TemplateSpec::nsCertTypeNames, e.nsCertType);
+	basicCA->setCurrentIndex(e.basicCA == ExtensionSpec::bc_ca ? 1 :
+			e.basicCA == ExtensionSpec::bc_not_ca ? 2 : 0);
+	selectRows(keyUsage, TemplateSpec::keyUsageNames, e.keyUsage);
+	/* as always: selects the template's usages, keeps the others */
+	QStringList ekuNames;
+	foreach(int nid, extkeyuse_nid)
+		ekuNames << OBJ_nid2sn(nid);
+	selectRows(ekeyUsage, ekuNames, e.extKeyUsage, false);
+	validRange->setCurrentIndex(t.unit);
+	nconf_data->document()->setPlainText(e.advanced);
 
 	on_applyTime_clicked();
 }
@@ -570,39 +536,30 @@ void NewX509::updateNameComment()
 	toTemplate(temp);
 }
 
+/* The template dialog's input (BTD-35) */
+TemplateSpec NewX509::templateSpec()
+{
+	TemplateSpec t;
+
+	t.name = description->text();
+	t.comment = comment->toPlainText();
+	t.subject = getX509name();
+	t.extensions = getExtensionSpec();
+	t.validity = validN->text().toInt();
+	switch (validRange->currentIndex()) {
+	case 1: t.unit = TemplateSpec::months; break;
+	case 2: t.unit = TemplateSpec::years; break;
+	default: t.unit = TemplateSpec::days; break;
+	}
+	t.midnight = validMidn->isChecked();
+	t.noWellDefinedExpDate = noWellDefinedExpDate->isChecked();
+	return t;
+}
+
 void NewX509::toTemplate(pki_temp *temp)
 {
-	if (!temp)
-		return;
-	temp->setIntName(description->text());
-	temp->setSubject(getX509name());
-
-	QMapIterator<QString, QLineEdit*> l(templateLineEdits);
-	while (l.hasNext()) {
-		l.next();
-		temp->setSetting(l.key(), l.value()->text());
-	}
-	QMapIterator<QString, QCheckBox*> i(templateCheckBoxes);
-	while (i.hasNext()) {
-		i.next();
-		temp->setSetting(i.key(), i.value()->isChecked());
-	}
-
-	temp->setSetting("nsCertType", lb2int(nsCertType));
-	temp->setSetting("ca", basicCA->currentIndex());
-	temp->setSetting("keyUse", lb2int(keyUsage));
-	temp->setSetting("eKeyUse", lb2QString(ekeyUsage));
-	temp->setSetting("validN", validN->text().toInt());
-	temp->setSetting("validM", validRange->currentIndex());
-	if (!temp->getSetting("basicPath").isEmpty())
-		temp->setSetting("basicPath", temp->getSettingInt("basicPath"));
-	if (nconf_data->isReadOnly()) {
-		temp->setSetting("adv_ext", v3ext_backup);
-	} else {
-		temp->setSetting("adv_ext", nconf_data->toPlainText());
-	}
-
-	temp->setComment(comment->toPlainText());
+	if (temp)
+		templateSpec().toTemplate(temp);
 }
 
 void NewX509::on_fromReqCB_clicked()

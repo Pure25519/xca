@@ -32,7 +32,7 @@ class db_key: public db_base
 		QList<pki_key*> getAllKeys();
 		pki_base *newPKI(enum pki_type type = none);
 		void inToCont(pki_base *pki);
-		void remFromCont(const QModelIndex &idx);
+		void remFromCont(pki_base *pki);
 		pki_base* insert(pki_base *item);
 		/* Stores lkey without a message; oldkey: the public key of the
 		 * database that lkey completes (it takes over its name and

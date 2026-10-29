@@ -257,6 +257,8 @@ class AuditLog
 	static const char actionRevoke[];
 	static const char actionUnrevoke[];
 	static const char actionCrlGenerate[];
+	/* Deleting a certificate removes its revocation rows as a CA */
+	static const char actionDelete[];
 	/* Written once when an existing database gets the audit log:
 	 * one revocation.baseline entry per revocation row found, then
 	 * audit.init with the count */

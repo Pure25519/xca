@@ -20,7 +20,7 @@ class TempTreeView: public XcaTreeView
 		return dynamic_cast<db_temp*>(basemodel);
 	}
 
-	bool runTempDlg(pki_temp *temp);
+	bool runTempDlg(pki_temp *temp, TemplateSpec *spec);
 
   public:
 	TempTreeView(QWidget *parent) : XcaTreeView(parent) { }

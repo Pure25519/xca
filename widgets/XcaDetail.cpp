@@ -17,6 +17,9 @@
 #include "ImportMulti.h"
 #include "lib/pki_base.h"
 #include "lib/database_model.h"
+#include "lib/audit.h"
+#include "lib/exception.h"
+#include "XcaWarning.h"
 
 XcaDetail::XcaDetail(QWidget *w)
 	: QDialog(w && w->isVisible() ? w : nullptr)
@@ -89,11 +92,29 @@ void XcaDetail::import()
 	}
 }
 
+/* A stored object changes name and comment through the service
+ * function db_base::updateProperties() (BTD-35) */
 void XcaDetail::accept()
 {
 	db_base *db = Database.modelForPki(pki);
-	updateNameComment();
-	if (pki && pki->getSqlItemId().isValid() && db)
-		db->updateItem(pki);
+	if (!pki || !pki->getSqlItemId().isValid() || !db) {
+		updateNameComment();
+		QDialog::accept();
+		return;
+	}
+	QString name = pki->getIntName(), comment = pki->getComment();
+	QLineEdit *description = findChild<QLineEdit*>("description");
+	if (description)
+		name = description->text();
+	QTextEdit *commentEdit = findChild<QTextEdit*>("comment");
+	if (commentEdit)
+		comment = commentEdit->toPlainText();
+	try {
+		db->updateProperties(ServiceContext::localUser(
+				ServiceContext::gui), pki, name, comment);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+		return;
+	}
 	QDialog::accept();
 }

@@ -135,3 +135,7 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_importexport PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# Templates, rename and delete (BTD-35)
+ServiceTest(test_service_template)
+ServiceTest(test_service_objects)
