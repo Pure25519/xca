@@ -48,3 +48,23 @@ xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --keyge
 xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --keygen EC:prime256v1 --name fixture-ec
 python3 -c "import sqlite3; open('schema8-bxc2.sql','w').write('\n'.join(sqlite3.connect('fixture.xdb').iterdump())+'\n')"
 ```
+
+## `json/`
+
+Fixtures of the JSON documents (BTD-39), made once with OpenSSL 4.1 in the dev container by
+`json/gen.sh` (fixed serials and dates, so the documents do not change):
+
+| File | Content |
+|---|---|
+| `ca.crt`, `ca.key` | EC P-256 CA "O=BxC Lab, CN=JSON Test CA", serial `4D2E8B19…`, 2026-10-01 to 2036-10-01 |
+| `device.csr` | request "O=BxC Lab, OU=Prüfstand, CN=plc11" (UTF-8) with SAN, EKU and key usage as extension request, `unstructuredName` and the challenge password `Chall-Secret-42` |
+| `device.crt`, `device.pub` | the device certificate issued by the CA (serial `A1B2C3D4…`) and its public key |
+| `ca.crl` | CRL number 1 of the CA, the device certificate revoked with reason keyCompromise |
+| `rsa-enc.key` | RSA 2048 as encrypted PKCS#8, password `Import-Secret-11` |
+| `ec.key`, `own.key` | EC P-384 and Ed25519 keys; `own.key` gets the password `Own-Secret-77` of its own in the tests |
+
+The `*.json` files are the expected documents of `test_service_json.cpp`: `<fixture>.json` for
+each object, `stored.xca.json` and `predefined.xca.json` for the templates the test makes, and
+`items.json`, `issuers.json`, `index.json`, `hierarchy.json` for the lists. Ids are those of a fresh
+database in the import order of the test; the test checks the creation date against the item and
+compares the rest unchanged. All keys are throwaway test keys.

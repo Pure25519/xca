@@ -667,9 +667,14 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 	AuditKey::refuseSigning(signkey);
 	tkey = signkey->decryptKey();
 	pki_openssl_error();
-	X509_sign(cert, tkey, digest.MD());
-	pki_openssl_error();
+	/* X509_sign() returns the signature size or 0: a failure leaves
+	 * the certificate unsigned and its DER empty (BTD-171) */
+	int size = X509_sign(cert, tkey, digest.MD());
 	EVP_PKEY_free(tkey);
+	if (size <= 0)
+		throw serviceError("signing_failed",
+			tr("The certificate could not be signed with %1: %2")
+			.arg(digest.name(), take_openssl_errors()));
 	pki_openssl_error();
 }
 

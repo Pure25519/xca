@@ -37,6 +37,9 @@ class errorEx
 		{
 			msg = e.text();
 		}
+		/* Polymorphic, so that a caught errorEx can be asked for its
+		 * code (JsonReport::error(), BTD-39) */
+		virtual ~errorEx() = default;
 		void appendString(QString s)
 		{
 			msg = msg + " " + s;

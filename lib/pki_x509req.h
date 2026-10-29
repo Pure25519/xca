@@ -49,6 +49,10 @@ class pki_x509req : public pki_x509super
 		{
 			return request;
 		}
+		const X509_REQ *getReq() const
+		{
+			return request;
+		}
 		void addAttribute(int nid, QString content);
 		QString getAttribute(int nid) const;
 		int issuedCerts() const;

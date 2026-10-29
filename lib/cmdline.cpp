@@ -25,6 +25,7 @@
 #include "db_crl.h"
 #include "audit.h"
 #include "XcaWarningCore.h"
+#include "json_report.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -75,6 +76,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (argc > 0)
 		xca_name = argv[0];
 	arguments cmd_opts(argc, argv);
+	/* --json (BTD-39): the outputs as JSON Lines, errors as JSON on stderr */
+	bool json = cmd_opts.has("json");
+	JsonReport::setActive(json);
+	auto report = [json](const errorEx &err) {
+		if (json)
+			JsonReport::write(stderr, JsonReport::error(err));
+		else
+			XCA_ERROR(err);
+	};
 	QString dbpass = password_source(cmd_opts["password"]);
 	QString sqlpass = password_source(cmd_opts["sqlpass"]);
 	PwDialogHeadless *headless = PwDialogCore::headless();
@@ -143,6 +153,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		try {
 			Database.open(QString());
 		} catch (errorEx &err) {
+			if (json) {
+				report(err);
+				return EXIT_FAILURE;
+			}
 			return cmd_help(EXIT_FAILURE, CCHAR(err.getString()));
 		} catch (enum open_result opt) {
 			static const char * const msg[] = {
@@ -151,6 +165,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				/* pw_exit   */ "Exit selected",
 				/* open_abort*/ "No database given",
 			};
+			if (json) {
+				report(errorEx(msg[opt]));
+				return EXIT_FAILURE;
+			}
 			return cmd_help(EXIT_FAILURE, msg[opt]);
 		}
 	}
@@ -176,20 +194,33 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 					.arg(pki->getTypeString(), -27)
 					.arg(pki->getIntName());
 		}
-		console_write(stdout, list.join("\n").toUtf8() + '\n');
+		if (json)
+			JsonReport::write(stdout, JsonReport::itemList(items));
+		else
+			console_write(stdout, list.join("\n").toUtf8() + '\n');
 	}
 	if (!cmd_opts["index"].isEmpty()) {
 		qDebug() << cmd_opts["index"];
 		db_x509 *certs = Database.model<db_x509>();
-		certs->writeIndex(cmd_opts["index"], false);
-		XCA_INFO(QObject::tr("Index file written to '%1'")
+		if (json)
+			JsonReport::writeTo(cmd_opts["index"], JsonReport::index());
+		else
+			certs->writeIndex(cmd_opts["index"], false);
+		if (!json || cmd_opts["index"] != "-")
+			XCA_INFO(QObject::tr("Index file written to '%1'")
 					.arg(cmd_opts["index"]));
 	}
 	if (!cmd_opts["hierarchy"].isEmpty()) {
 		qDebug() << cmd_opts["hierarchy"];
 		db_x509 *certs = Database.model<db_x509>();
-		certs->writeIndex(cmd_opts["hierarchy"], true);
-		XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
+		/* With --json one document for all CAs, no directory */
+		if (json)
+			JsonReport::writeTo(cmd_opts["hierarchy"],
+					JsonReport::hierarchy());
+		else
+			certs->writeIndex(cmd_opts["hierarchy"], true);
+		if (!json || cmd_opts["hierarchy"] != "-")
+			XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
 					.arg(cmd_opts["hierarchy"]));
 	}
 	/* Before the verification, so that it reports the adoption */
@@ -200,7 +231,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			XCA_INFO(QObject::tr("Audit log signed by checkpoint %1")
 					.arg(e.seq));
 		} catch (errorEx &err) {
-			XCA_ERROR(err);
+			report(err);
 			exitcode = EXIT_FAILURE;
 		}
 	}
@@ -241,7 +272,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				f.close();
 			}
 		} catch (errorEx &err) {
-			XCA_ERROR(err);
+			report(err);
 			exitcode = EXIT_FAILURE;
 		}
 	}
@@ -277,7 +308,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				.arg(keytype, -13)
 				.arg(iss->getIntName());
 		}
-		console_write(stdout, out.join("\n").toUtf8() + '\n');
+		if (json)
+			JsonReport::write(stdout, JsonReport::issuerList(issuers));
+		else
+			console_write(stdout, out.join("\n").toUtf8() + '\n');
 	}
 	if (cmd_opts.has("crlgen")) {
 		db_crl *crls = Database.model<db_crl>();
@@ -294,8 +328,9 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 		if (!issuer) {
-			XCA_ERROR(QString("Issuer '%1' not found")
-					.arg(cmd_opts["crlgen"]));
+			report(serviceError("unknown_issuer",
+				QString("Issuer '%1' not found")
+					.arg(cmd_opts["crlgen"])));
 			exitcode = EXIT_FAILURE;
 		} else {
 			crljob task(issuer);
@@ -317,16 +352,30 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	}
 
 	BioByteArray bba, bbafile;
+	QByteArray jsonLines;
+	/* With --json, --print gives one document (line) per item */
+	bool print = cmd_opts.has("print") && !json;
 	foreach(pki_base *pki, cmdline_items->get()) {
 		QString filename = pki->getFilename();
-		if ((cmd_opts.has("text") || cmd_opts.has("print")) &&
+		if ((cmd_opts.has("text") || print) &&
 		    filename.size() > 0)
 		{
 			bba += QString("\n" COL_GREEN COL_UNDER "File: %1"
 				COL_RESET "\n").arg(filename).toUtf8();
 		}
-		if (cmd_opts.has("print"))
+		if (print)
 			pki->print(bba, pki_base::print_coloured);
+		if (json && cmd_opts.has("print")) {
+			QJsonObject doc = JsonReport::object(pki);
+			if (doc.isEmpty()) {
+				report(serviceError("unsupported_type",
+					QObject::tr("No JSON document for '%1'")
+						.arg(pki->getIntName())));
+				exitcode = EXIT_FAILURE;
+			} else {
+				jsonLines += JsonReport::line(doc);
+			}
+		}
 		if (cmd_opts.has("text"))
 			pki->print(bba, pki_base::print_openssl_txt);
 		if (cmd_opts.has("pem-file"))
@@ -334,6 +383,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		else if (cmd_opts.has("pem"))
 			pki->print(bba, pki_base::print_pem);
 	}
+	if (jsonLines.size() > 0)
+		console_write(stdout, jsonLines);
 	if (bba.size() > 0)
 		console_write(stdout, bba);
 
@@ -344,8 +395,9 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (f.open_write()) {
 			f.write(bbafile);
 		} else {
-			XCA_ERROR(QObject::tr("Failed to write PEM data to '%1'")
-					.arg(filename));
+			report(serviceError("write_failed",
+				QObject::tr("Failed to write PEM data to '%1'")
+					.arg(filename)));
 			exitcode = EXIT_FAILURE;
 		}
 		f.close();
@@ -362,7 +414,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			foreach(pki_base *pki, result.existing)
 				XCA_INFO(importExistsMessage(pki));
 		} catch (errorEx &err) {
-			XCA_ERROR(err);
+			report(err);
 			exitcode = EXIT_FAILURE;
 		}
 	}
