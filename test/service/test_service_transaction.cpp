@@ -90,6 +90,7 @@ class test_service_transaction : public ServiceTestCase
 	void passwordChangeRollbackKeepsOld();
 	void strayRollbackDoesNotLeak();
 	void crlInsertBeginFails();
+	void failedBeginLeavesOuterAlone();
 };
 
 QString test_service_transaction::errorCode(std::function<void()> call)
@@ -536,12 +537,44 @@ void test_service_transaction::crlInsertBeginFails()
 	sql("BEGIN");
 	warning->expectMessage("transaction");
 	pki_base *stored = Database.model<db_crl>()->insert(crl);
-	/* the failed DbTransaction already rolled the raw one back */
-	QSqlQuery(QSqlDatabase::database()).exec("ROLLBACK");
+	sql("ROLLBACK");
 
 	QVERIFY(!stored);
 	QCOMPARE(Store.getAll<pki_crl>().size(), crls);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM crls").toInt(), 0);
+}
+
+/* A DbTransaction whose top-level begin fails (the connection is already
+ * in a transaction it did not start). On 9121ddcd it kept its level and
+ * its destructor rolled back the outside transaction, losing its row
+ * (BTD-172). */
+void test_service_transaction::failedBeginLeavesOuterAlone()
+{
+	sql("CREATE TABLE btd172 (x INTEGER)");
+	sql("BEGIN");
+	sql("INSERT INTO btd172 VALUES (1)");
+	bool begun, active;
+	{
+		Transaction;
+		warning->expectMessage("transaction");
+		begun = TransBegin();
+		active = DbTransaction::active();
+	}
+	/* the outside transaction is still there */
+	QSqlQuery q(QSqlDatabase::database());
+	bool committed = q.exec("COMMIT");
+	QVERIFY(!begun);
+	QVERIFY2(committed, CCHAR("outside transaction ended: " +
+		q.lastError().text()));
+	QVERIFY2(!active, "level raised after the failed begin");
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd172").toInt(), 1);
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		sql("INSERT INTO btd172 VALUES (2)");
+		QVERIFY(TransCommit());
+	}
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd172").toInt(), 2);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_transaction)

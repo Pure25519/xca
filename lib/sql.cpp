@@ -55,8 +55,13 @@ bool DbTransaction::begin(const char *file, int line)
 
 	QSqlDatabase db = QSqlDatabase::database();
 	bool ret = db.transaction();
-	if (!ret)
+	if (!ret) {
 		XCA_SQLERROR(db.lastError());
+		/* Not begun: the level as before, and the destructor ends
+		 * no transaction this object did not start (BTD-172) */
+		mutex--;
+		has_begun = false;
+	}
 	return ret;
 }
 
