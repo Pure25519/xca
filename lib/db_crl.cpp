@@ -63,8 +63,13 @@ void db_crl::revokeCerts(pki_crl *crl)
 	signer->mergeRevList(revlist);
 	foreach(x509rev revok, revlist) {
 		pki_x509 *crt = signer->getBySerial(revok.getSerial());
-		if (crt)
-			crt->setRevoked(revok);
+		if (!crt)
+			continue;
+		x509rev old = crt->getRevocation();
+		crt->setRevoked(revok);
+		DbTransaction::onRollback([crt, old]() {
+			crt->setRevoked(old);
+		});
 	}
 }
 
@@ -110,7 +115,7 @@ pki_base *db_crl::insert(pki_base *item)
 		if (crl) {
 			revokeCerts(crl);
 			if (!TransCommit()) {
-				unstore(crl);
+				/* rolled back and unstored (BTD-130) */
 				delete crl;
 				return NULL;
 			}
@@ -294,90 +299,97 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 	params.set("next_update", (QDateTime)task.nextUpdate);
 	params.set("hash_algo", task.hashAlgo.name());
 
-	auditedTransaction(ctx, AuditLog::actionCrlGenerate, "crl",
-				QString(), params, [&]() {
-		pki_crl *crl = nullptr;
-		x509v3ext e;
-		X509V3_CTX ext_ctx;
-		XSqlQuery q;
+	try {
+		auditedTransaction(ctx, AuditLog::actionCrlGenerate, "crl",
+					QString(), params, [&]() {
+			pki_crl *crl = nullptr;
+			x509v3ext e;
+			X509V3_CTX ext_ctx;
+			XSqlQuery q;
 
-		if (!cert)
-			throw serviceError("missing_issuer",
-				tr("No CA certificate given"));
-		if (!cert->isCA())
-			throw serviceError("not_a_ca",
-				tr("'%1' is not a CA certificate")
-					.arg(cert->getIntName()));
-		pki_key *signkey = cert->getRefKey();
-		if (!signkey || signkey->isPubKey())
-			throw serviceError("no_private_signing_key",
-				tr("There is no private key for '%1'")
-					.arg(cert->getIntName()));
-		if (task.hashAlgo.isInsecure())
-			throw serviceError("insecure_hash",
-				tr("A CRL is never signed with %1")
-					.arg(task.hashAlgo.name()));
-		a1int last = lastCrlNumber(cert);
-		if (!(task.crlNumber > last))
-			throw serviceError("crl_number_not_increasing",
-				tr("The CRL number %1 does not exceed the last CRL number %2 of '%3'")
-					.arg(task.crlNumber.toDec(), last.toDec(),
-						cert->getIntName()));
-		/* the authority table keeps the number as unsigned 32 bit */
-		if (!numeric || number > UINT_MAX)
-			throw serviceError("invalid_crl_number",
-				tr("The CRL number %1 is too large")
-					.arg(task.crlNumber.toDec()));
+			if (!cert)
+				throw serviceError("missing_issuer",
+					tr("No CA certificate given"));
+			if (!cert->isCA())
+				throw serviceError("not_a_ca",
+					tr("'%1' is not a CA certificate")
+						.arg(cert->getIntName()));
+			pki_key *signkey = cert->getRefKey();
+			if (!signkey || signkey->isPubKey())
+				throw serviceError("no_private_signing_key",
+					tr("There is no private key for '%1'")
+						.arg(cert->getIntName()));
+			if (task.hashAlgo.isInsecure())
+				throw serviceError("insecure_hash",
+					tr("A CRL is never signed with %1")
+						.arg(task.hashAlgo.name()));
+			a1int last = lastCrlNumber(cert);
+			if (!(task.crlNumber > last))
+				throw serviceError("crl_number_not_increasing",
+					tr("The CRL number %1 does not exceed the last CRL number %2 of '%3'")
+						.arg(task.crlNumber.toDec(), last.toDec(),
+							cert->getIntName()));
+			/* the authority table keeps the number as unsigned 32 bit */
+			if (!numeric || number > UINT_MAX)
+				throw serviceError("invalid_crl_number",
+					tr("The CRL number %1 is too large")
+						.arg(task.crlNumber.toDec()));
 
-		X509V3_set_ctx(&ext_ctx, cert->getCert(), NULL, NULL, NULL, 0);
-		X509V3_set_ctx_nodb(&ext_ctx);
-		if (name.isEmpty())
-			name = cert->getIntName();
-		try {
-			crl = new pki_crl();
-			crl->createCrl(name, cert);
-			crl->pkiSource = generated;
+			X509V3_set_ctx(&ext_ctx, cert->getCert(), NULL, NULL, NULL, 0);
+			X509V3_set_ctx_nodb(&ext_ctx);
+			if (name.isEmpty())
+				name = cert->getIntName();
+			try {
+				crl = new pki_crl();
+				crl->createCrl(name, cert);
+				crl->pkiSource = generated;
 
-			expiredEntries expired(cert);
-			foreach(x509rev rev, cert->getRevList()) {
-				if (!expired.drop(rev))
-					crl->addRev(rev, task.withReason);
+				expiredEntries expired(cert);
+				foreach(x509rev rev, cert->getRevList()) {
+					if (!expired.drop(rev))
+						crl->addRev(rev, task.withReason);
+				}
+				crl->addV3ext(authorityKeyId(cert, &ext_ctx));
+				if (task.subAltName &&
+				    cert->hasExtension(NID_subject_alt_name)) {
+					crl->addV3ext(e.create(NID_issuer_alt_name,
+						"issuer:copy", &ext_ctx));
+				}
+				crl->setCrlNumber(task.crlNumber);
+				crl->setIssuer(cert);
+				crl->setLastUpdate(task.lastUpdate);
+				crl->setNextUpdate(task.nextUpdate);
+				crl->sign(signkey, task.hashAlgo);
+
+				storeCrlNumber(cert, (uint)number, task.nextUpdate);
+				SQL_PREPARE(q, "UPDATE revocations set crlNo=? "
+						"WHERE crlNo IS NULL AND caId=?");
+				q.bindValue(0, (uint)number);
+				q.bindValue(1, cert->getSqlItemId());
+				execOrThrow(q);
+				params.set("this_update", (QDateTime)crl->getLastUpdate());
+				params.set("next_update", (QDateTime)crl->getNextUpdate());
+				params.set("count", (qint64)crl->numRev());
+				params.set("der_size", (qint64)crl->i2d().size());
+			} catch (...) {
+				delete crl;
+				throw;
 			}
-			crl->addV3ext(authorityKeyId(cert, &ext_ctx));
-			if (task.subAltName &&
-			    cert->hasExtension(NID_subject_alt_name)) {
-				crl->addV3ext(e.create(NID_issuer_alt_name,
-					"issuer:copy", &ext_ctx));
-			}
-			crl->setCrlNumber(task.crlNumber);
-			crl->setIssuer(cert);
-			crl->setLastUpdate(task.lastUpdate);
-			crl->setNextUpdate(task.nextUpdate);
-			crl->sign(signkey, task.hashAlgo);
-
-			storeCrlNumber(cert, (uint)number, task.nextUpdate);
-			SQL_PREPARE(q, "UPDATE revocations set crlNo=? "
-					"WHERE crlNo IS NULL AND caId=?");
-			q.bindValue(0, (uint)number);
-			q.bindValue(1, cert->getSqlItemId());
-			execOrThrow(q);
-			params.set("this_update", (QDateTime)crl->getLastUpdate());
-			params.set("next_update", (QDateTime)crl->getNextUpdate());
-			params.set("count", (qint64)crl->numRev());
-			params.set("der_size", (qint64)crl->i2d().size());
-		} catch (...) {
-			delete crl;
-			throw;
-		}
-		/* insertPKI() keeps the CRL in the store or deletes it */
-		stored = dynamic_cast<pki_crl *>(insertPKI(crl));
-		if (!stored)
-			throw serviceError("database_error",
-				tr("The revocation list could not be stored"));
-		params.set("name", stored->getIntName());
-		AuditLog::append(ctx, AuditLog::actionCrlGenerate, "crl",
-				stored->getSqlItemId().toString(), params);
-	});
+			/* insertPKI() keeps the CRL in the store or deletes it */
+			stored = dynamic_cast<pki_crl *>(insertPKI(crl));
+			if (!stored)
+				throw serviceError("database_error",
+					tr("The revocation list could not be stored"));
+			params.set("name", stored->getIntName());
+			AuditLog::append(ctx, AuditLog::actionCrlGenerate, "crl",
+					stored->getSqlItemId().toString(), params);
+		});
+	} catch (...) {
+		/* rolled back and unstored: ours again (BTD-130) */
+		if (stored && !isStored(stored))
+			delete stored;
+		throw;
+	}
 	cert->setCrlNumber(task.crlNumber);
 	cert->setCrlExpire(task.nextUpdate);
 	return stored;

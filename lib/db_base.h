@@ -91,14 +91,21 @@ class db_base: public QAbstractItemModel
 		virtual ~db_base();
 		virtual pki_base *insertPKI(pki_base *pki);
 		/* Takes an object whose insert was rolled back out of the
-		 * views and the store again; it loses its id (BTD-142) */
+		 * views and the store again; it loses its id (BTD-142).
+		 * Memory only: writes nothing to the database (BTD-130) */
 		void unstore(pki_base *pki);
+		/* Puts an object whose row was just inserted into the store
+		 * and the views; unstore() if the transaction rolls back
+		 * (BTD-130). The object then belongs to the caller again. */
+		void storeInMemory(pki_base *pki);
 		pki_base *getByName(QString desc);
 		pki_base *getByReference(pki_base *refpki);
 		virtual void loadContainer();
 		void reloadContainer(const QList<enum pki_type> &typelist);
 		virtual pki_base* insert(pki_base *item);
 		virtual void inToCont(pki_base *pki);
+		/* Takes pki out of the views and relinks the objects that
+		 * referred to it, in memory only (BTD-130) */
 		virtual void remFromCont(pki_base *pki);
 		/* pki is an object of this list stored in the database */
 		bool isStored(const pki_base *pki) const;
@@ -169,12 +176,10 @@ class db_base: public QAbstractItemModel
 		/* object.delete (template.delete for templates), one entry
 		 * per object, all in one transaction: either all objects are
 		 * deleted or none, then one failure entry names the object
-		 * that failed (known limit until BTD-50: objects before the
-		 * failed one are already gone from memory until the database
-		 * is reopened). The confirmation (question item.delete) and
-		 * the deletion of a key or certificate on its token belong
-		 * to the caller. The pointers in items are invalid after a
-		 * successful call. */
+		 * that failed and memory is unchanged (BTD-130). The
+		 * confirmation (question item.delete) and the deletion of a
+		 * key or certificate on its token belong to the caller. The
+		 * pointers in items are invalid after a successful call. */
 		DeleteResult deleteItems(const ServiceContext &ctx,
 				const QList<pki_base *> &items);
 		static pki_base *fromIndex(const QModelIndex &index)

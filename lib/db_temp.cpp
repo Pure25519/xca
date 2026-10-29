@@ -117,14 +117,13 @@ pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
 			if (e.isValid())
 				throw serviceError("database_error",
 					e.text());
-			Store.add(temp->getSqlItemId(), temp);
-			inToCont(temp);
+			storeInMemory(temp);
 			AuditLog::append(ctx, "template.create", "template",
 					itemId(temp), params);
 		});
 	} catch (...) {
-		/* Known limit until BTD-50: rolled back in the database,
-		 * but already in the store and the view */
+		/* rolled back, so unstored, unless an outer transaction
+		 * of the caller is still open: it unstores at its end */
 		if (!isStored(temp))
 			delete temp;
 		throw;
@@ -153,6 +152,9 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 					tr("The template is not in the database"));
 			XSqlQuery q;
 			spec.toTemplate(temp);
+			DbTransaction::onRollback([temp, old]() {
+				old.toTemplate(temp);
+			});
 			SQL_PREPARE(q, "UPDATE templates SET version=?, template=? WHERE item=?");
 			q.bindValue(0, TMPL_VERSION);
 			q.bindValue(1, temp->toB64Data());
@@ -166,10 +168,8 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 					itemId(temp), params);
 		});
 	} catch (...) {
-		if (isStored(temp)) {
-			old.toTemplate(temp);
+		if (isStored(temp))
 			emitDataChanged(temp);
-		}
 		throw;
 	}
 	emitDataChanged(temp);

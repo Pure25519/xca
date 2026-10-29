@@ -230,17 +230,23 @@ pki_base *db_base::insertPKI(pki_base *pki)
 		delete pki;
 		return NULL;
 	}
-	Store.add(pki->getSqlItemId(), pki);
-	inToCont(pki);
+	storeInMemory(pki);
 	if (!TransCommit()) {
-		/* rolled back: keeps or deletes (BTD-142) */
-		unstore(pki);
+		/* rolled back and unstored: keeps or deletes (BTD-142) */
 		delete pki;
 		return NULL;
 	}
 	restart_timer();
 	emit columnsContentChanged();
 	return pki;
+}
+
+void db_base::storeInMemory(pki_base *pki)
+{
+	Store.add(pki->getSqlItemId(), pki);
+	/* before inToCont(): its own undo actions run first */
+	DbTransaction::onRollback([this, pki]() { unstore(pki); });
+	inToCont(pki);
 }
 
 bool db_base::isStored(const pki_base *pki) const
@@ -258,9 +264,12 @@ void db_base::removeItem(pki_base *pki)
 	if (e.isValid())
 		throw serviceError("database_error", e.text());
 	AffectedItems(id);
-	remFromCont(pki);
-	Store.remove(id);
-	delete pki;
+	/* memory only after the COMMIT: a rollback leaves it alone */
+	DbTransaction::afterCommit([this, pki, id]() {
+		remFromCont(pki);
+		Store.remove(id);
+		delete pki;
+	});
 	if (!TransCommit())
 		throw serviceError("database_error",
 			tr("Failed to commit the database transaction"));
@@ -550,36 +559,32 @@ void db_base::updateProperties(const ServiceContext &ctx, pki_base *pki,
 	if (pki)
 		renameParams.set("old_name", oldName);
 	commentParams.set("name", name);
-	try {
-		auditedTransaction(ctx, newName ? "object.rename" :
-				"object.update_comment", auditObjectType(pki),
-				itemId(pki), newName ? renameParams :
-				commentParams, [&]() {
-			if (pki && !pkitype.contains(pki->getType()))
-				throw serviceError("wrong_object_type",
-					tr("The item does not belong to this list"));
-			if (!isStored(pki))
-				throw serviceError("missing_object",
-					tr("The item is not in the database"));
-			pki->setIntName(name);
-			pki->setComment(comment);
-			writeNameComment(pki);
-			if (newName)
-				AuditLog::append(ctx, "object.rename",
-					auditObjectType(pki), itemId(pki),
-					renameParams);
-			if (newComment)
-				AuditLog::append(ctx, "object.update_comment",
-					auditObjectType(pki), itemId(pki),
-					commentParams);
-		});
-	} catch (...) {
-		if (isStored(pki)) {
+	auditedTransaction(ctx, newName ? "object.rename" :
+			"object.update_comment", auditObjectType(pki),
+			itemId(pki), newName ? renameParams :
+			commentParams, [&]() {
+		if (pki && !pkitype.contains(pki->getType()))
+			throw serviceError("wrong_object_type",
+				tr("The item does not belong to this list"));
+		if (!isStored(pki))
+			throw serviceError("missing_object",
+				tr("The item is not in the database"));
+		pki->setIntName(name);
+		pki->setComment(comment);
+		DbTransaction::onRollback([pki, oldName, oldComment]() {
 			pki->setIntName(oldName);
 			pki->setComment(oldComment);
-		}
-		throw;
-	}
+		});
+		writeNameComment(pki);
+		if (newName)
+			AuditLog::append(ctx, "object.rename",
+				auditObjectType(pki), itemId(pki),
+				renameParams);
+		if (newComment)
+			AuditLog::append(ctx, "object.update_comment",
+				auditObjectType(pki), itemId(pki),
+				commentParams);
+	});
 	emitDataChanged(pki);
 }
 

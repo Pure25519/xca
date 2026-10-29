@@ -37,9 +37,15 @@ revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` en
 row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those
 entries; a rejection writes one `ca.set_revocations` failure entry.
 
-Known limit until BTD-50: a database error after the object was inserted (for example while the
-success entry is appended) rolls the transaction back, but the object stays in the in-memory store
-until the database is reopened. The `failure` entry is written; the caller sees the error.
+Memory follows the database (BTD-130): after a rollback the in-memory store and the views show
+what the database holds. A change of memory that later steps of the transaction need (a new object
+in the store and the views, a link set by `inToCont()`, a revocation flag) is made at once and
+registers its undo with `DbTransaction::onRollback()`; the undo runs, last first, when the
+outermost transaction ends without a successful COMMIT, and changes memory only, never the
+database. A change that removes or replaces memory (freeing a deleted object) waits in
+`DbTransaction::afterCommit()` for the outermost COMMIT. `db_base::storeInMemory()` and
+`db_base::removeItem()` do this for every insert and delete; a service function frees an object
+whose insert was rolled back (`!isStored()`).
 
 ## Service functions so far
 

@@ -118,6 +118,9 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
     }
     catch (...) {
 	delete req;
+	/* rolled back and unstored: the object is ours again (BTD-130) */
+	if (stored && !isStored(stored))
+		delete stored;
 	throw;
     }
     return stored;

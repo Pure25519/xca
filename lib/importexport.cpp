@@ -186,25 +186,6 @@ bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p)
 }
 }
 
-/* After a rollback: the objects that insert() put into the store and
- * the views in this call leave them again and lose the id of their
- * rolled-back row, last first (a certificate before its issuer). Not
- * undone: a public key that a private key completed is gone from
- * memory until the database is opened again, and revocations a CRL
- * merged into its CA object stay there (BTD-130). */
-static void unstoreItems(const database_model *dbm,
-			const QList<pki_base *> &stored)
-{
-	for (qsizetype i = stored.size() - 1; i >= 0; i--) {
-		pki_base *pki = stored[i];
-		db_base *db = dbm->modelForPki(pki);
-		if (db)
-			db->remFromCont(pki);
-		Store.remove(pki->getSqlItemId());
-		pki->clearSqlItemId();
-	}
-}
-
 /* Deletes the objects not stored, never one of the database. With
  * ImportSpec::unstored, the given objects go back to the caller */
 static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
@@ -357,16 +338,15 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			crl->getIssuer()->setCrlExpire(crl->getNextUpdate());
 		}
 	} catch (serviceError &err) {
-		/* the transaction is rolled back here: what it stored goes
+		/* the transaction is rolled back here and what it stored is
+		 * out of the store and the views again (BTD-130): it goes
 		 * back to the caller or is deleted (BTD-114) */
-		unstoreItems(this, result.created);
 		dropItems(items + result.created, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
 		AuditLog::append(ctx, "object.import", "object", QString(),
 				params, "failure", err.code);
 		throw;
 	} catch (...) {
-		unstoreItems(this, result.created);
 		dropItems(items + result.created, spec);
 		AuditLog::append(ctx, "object.import", "object", QString(),
 				params, "failure", "internal_error");
