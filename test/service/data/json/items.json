@@ -1,0 +1,51 @@
+{
+  "schema": "urn:bxc-pki:schema:list:v1",
+  "kind": "items",
+  "items": [
+    {
+      "id": 1,
+      "name": "JSON Test CA",
+      "type": "certificate"
+    },
+    {
+      "id": 2,
+      "name": "ca",
+      "type": "key"
+    },
+    {
+      "id": 3,
+      "name": "plc11",
+      "type": "certificate"
+    },
+    {
+      "id": 4,
+      "name": "plc11",
+      "type": "request"
+    },
+    {
+      "id": 5,
+      "name": "JSON Test CA",
+      "type": "crl"
+    },
+    {
+      "id": 6,
+      "name": "device",
+      "type": "key"
+    },
+    {
+      "id": 7,
+      "name": "rsa-enc",
+      "type": "key"
+    },
+    {
+      "id": 8,
+      "name": "ec",
+      "type": "key"
+    },
+    {
+      "id": 9,
+      "name": "own",
+      "type": "key"
+    }
+  ]
+}

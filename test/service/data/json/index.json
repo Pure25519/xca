@@ -1,0 +1,22 @@
+{
+  "schema": "urn:bxc-pki:schema:list:v1",
+  "kind": "index",
+  "items": [
+    {
+      "not_after": "2036-10-01T00:00:00Z",
+      "reason": null,
+      "revocation_date": null,
+      "serial": "4D2E8B19C07A35F1E6024B9D7C813A5F",
+      "status": "valid",
+      "subject": "CN=JSON Test CA,O=BxC Lab"
+    },
+    {
+      "not_after": "2027-10-28T21:35:42Z",
+      "reason": "keyCompromise",
+      "revocation_date": "2026-10-28T21:35:42Z",
+      "serial": "A1B2C3D4E5F60718293A4B5C6D7E8F90",
+      "status": "revoked",
+      "subject": "CN=plc11,OU=Prüfstand,O=BxC Lab"
+    }
+  ]
+}

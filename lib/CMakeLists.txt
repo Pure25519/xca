@@ -45,6 +45,7 @@ issuance.cpp	issuance.h
 request.cpp	request.h
 importexport.cpp	importexport.h
 template.cpp	template.h
+json_report.cpp	json_report.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)

@@ -20,6 +20,7 @@
 #include "arguments.h"
 #include "pki_export.h"
 #include "debug_info.h"
+#include "json_report.h"
 #if defined(Q_OS_WIN32)
 //For the segfault handler
 #include <windows.h>
@@ -189,13 +190,20 @@ int main(int argc, char *argv[])
 			delete cmdline_items;
 		}
 	} catch (errorEx &ex) {
-		XCA_ERROR(ex);
+		/* xca --no-gui --json: the error object on stderr (BTD-39) */
+		if (console_only && JsonReport::active())
+			JsonReport::write(stderr, JsonReport::error(ex));
+		else
+			XCA_ERROR(ex);
 		ret = EXIT_FAILURE;
 	} catch (enum open_result r) {
 		qDebug() << "DB open failed: " << r;
 		/* In the GUI, cancel and exit are the user's choice */
 		if (console_only)
 			ret = EXIT_FAILURE;
+		if (console_only && JsonReport::active())
+			JsonReport::write(stderr, JsonReport::error("internal_error",
+				QString("The database was not opened")));
 	}
 	Database.close();
 

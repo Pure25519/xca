@@ -1,0 +1,92 @@
+{
+  "schema": "urn:bxc-pki:schema:certificate:v1",
+  "id": 1,
+  "name": "JSON Test CA",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "imported",
+  "comment": "",
+  "version": 3,
+  "serial": "4D2E8B19C07A35F1E6024B9D7C813A5F",
+  "subject": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      },
+      {
+        "name": "CN",
+        "oid": "2.5.4.3",
+        "value": "JSON Test CA"
+      }
+    ],
+    "rfc4514": "CN=JSON Test CA,O=BxC Lab"
+  },
+  "issuer": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      },
+      {
+        "name": "CN",
+        "oid": "2.5.4.3",
+        "value": "JSON Test CA"
+      }
+    ],
+    "rfc4514": "CN=JSON Test CA,O=BxC Lab"
+  },
+  "issuer_item": {
+    "id": 1,
+    "name": "JSON Test CA"
+  },
+  "key_item": {
+    "id": 2,
+    "name": "ca"
+  },
+  "not_before": "2026-10-01T00:00:00Z",
+  "not_after": "2036-10-01T00:00:00Z",
+  "self_signed": true,
+  "ca": true,
+  "public_key": {
+    "curve": {
+      "name": "prime256v1",
+      "oid": "1.2.840.10045.3.1.7"
+    },
+    "fingerprint": "A6:6E:F7:85:93:4C:EE:AE:46:49:D0:CC:32:15:93:85:03:EB:92:97:EA:69:86:B3:BF:77:25:AD:BB:9B:A2:B4",
+    "pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE6HP6s0jwkuY7kn+kMYVAvhBKDgah\nco+brBX8+KFYRMYVUKLKM1FAXdiHjXzOwZSCsaeODDhCDMGZTpnK2IyAbw==\n-----END PUBLIC KEY-----\n",
+    "size": 256,
+    "type": "EC"
+  },
+  "signature_algorithm": {
+    "name": "ecdsa-with-SHA256",
+    "oid": "1.2.840.10045.4.3.2"
+  },
+  "fingerprints": {
+    "sha256": "53:DC:0F:47:3D:71:07:B3:2C:B6:25:26:D7:50:27:23:42:0B:F6:AC:5E:F8:A1:D6:9E:3B:FC:68:66:A2:90:A6"
+  },
+  "extensions": [
+    {
+      "critical": true,
+      "name": "basicConstraints",
+      "oid": "2.5.29.19",
+      "value": "CA:TRUE"
+    },
+    {
+      "critical": true,
+      "name": "keyUsage",
+      "oid": "2.5.29.15",
+      "value": "Certificate Sign, CRL Sign"
+    },
+    {
+      "critical": false,
+      "name": "subjectKeyIdentifier",
+      "oid": "2.5.29.14",
+      "value": "FF:4A:EC:2E:C5:33:24:9F:EF:D6:C3:83:E0:A7:D1:83:3C:31:91:76"
+    }
+  ],
+  "revocation": null,
+  "crl_expiration": "2026-11-04T21:35:42Z",
+  "pem": "-----BEGIN CERTIFICATE-----\nMIIBkTCCATigAwIBAgIQTS6LGcB6NfHmAkudfIE6XzAKBggqhkjOPQQDAjApMRAw\nDgYDVQQKDAdCeEMgTGFiMRUwEwYDVQQDDAxKU09OIFRlc3QgQ0EwHhcNMjYxMDAx\nMDAwMDAwWhcNMzYxMDAxMDAwMDAwWjApMRAwDgYDVQQKDAdCeEMgTGFiMRUwEwYD\nVQQDDAxKU09OIFRlc3QgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAAToc/qz\nSPCS5juSf6QxhUC+EEoOBqFyj5usFfz4oVhExhVQosozUUBd2IeNfM7BlIKxp44M\nOEIMwZlOmcrYjIBvo0IwQDAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIB\nBjAdBgNVHQ4EFgQU/0rsLsUzJJ/v1sOD4KfRgzwxkXYwCgYIKoZIzj0EAwIDRwAw\nRAIgE/NGBl8C0wLQDtz/abw10qReJwYwa1Qxn7cStQe/cX4CIE48FRE/6Zj07x0m\nt+fRRpimNs6gpxnUSQcS5/Ns7Xv/\n-----END CERTIFICATE-----\n"
+}

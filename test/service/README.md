@@ -113,3 +113,12 @@ encrypted PKCS#8), PKCS#12 chain and PKCS#7 chain, read back with `openssl` and 
 passwords come from `env:` sources. It checks that every private key export writes
 `key.export_private` without key material or password, and that a CRL import audits the
 revocation rows it adds (skipped without the `openssl` program).
+`test_service_json.cpp` covers the JSON documents of `lib/json_report.h` (BTD-39): the fixtures of
+`data/json/` (see `data/README.md`) are imported into a fresh database and the certificate, request,
+CRL, key and template documents and the four list documents are compared with the expected JSON
+files there; it checks that no document holds private key material, a password or the challenge
+password. `cli_json_output.cmake` runs `xca --no-gui --json` on a database built from the same
+fixtures (one key gets a password of its own with `openssl pkcs8` and `sql_exec`): every stdout line
+is one JSON document with the expected schema (JSON Lines), `-` sends `--index`/`--hierarchy` to
+stdout, an error is an error object on stderr with exit code 1, and no output contains `PRIVATE KEY`,
+`ENCRYPTED` or one of the passwords.
