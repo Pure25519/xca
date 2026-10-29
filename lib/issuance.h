@@ -17,6 +17,8 @@
 #ifndef __ISSUANCE_H
 #define __ISSUANCE_H
 
+#include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -96,6 +98,45 @@ class ExtensionSpec
 	extList build(X509V3_CTX *ctx, bool selfSigned, bool forRequest) const;
 };
 
+/* How a device CSR is accepted (BTD-65). The members are the CSR fields
+ * of a profile (profiles/<id>.json of bxc-pki, BTD-64); the profile engine
+ * (BTD-54) fills them, the GUI keeps the defaults. */
+class CsrPolicy
+{
+  public:
+	/* csr_sha1: a SHA-1 CSR signature after the proof of possession,
+	 * with an audit warning, or never. MD5 is never accepted. */
+	enum sha1 { sha1_accept_with_warning, sha1_reject };
+	/* keycertsign_request: a leaf request asking for keyCertSign or
+	 * cA=TRUE is refused (RFC 5280 4.2.1.9) or its bits are ignored */
+	enum keyCertSign { keycertsign_reject, keycertsign_override };
+
+	/* A profile decides: the CSR's KU, EKU, basicConstraints, AKI, SKI
+	 * and Netscape extensions never reach the certificate, its SAN is
+	 * taken as it is (order kept), the URI rule below applies */
+	bool profile{};
+	enum sha1 csrSha1{ sha1_accept_with_warning };
+	enum keyCertSign keyCertSignRequest{ keycertsign_reject };
+	/* san.uri: with a profile, the ApplicationUri of the registration;
+	 * a CSR URI must equal it, a CSR without one gets it appended.
+	 * Empty: the profile allows no URI. */
+	QString registeredUri{};
+	/* subject.add_missing_o: the O of the registration, appended when
+	 * the CSR subject has none; empty: off */
+	QString missingO{};
+	/* subject.forbidden_characters, e.g. "/=" for S7-1500 V02.09.08 */
+	QString forbiddenCharacters{};
+	/* san.* (mr-processor review of xca#44): the name types a CSR SAN
+	 * may carry besides the URI, with their counts (GEN_DNS, GEN_IPADD,
+	 * GEN_EMAIL; any other type is refused), the minimum of dNSName plus
+	 * iPAddress, wildcard dNSNames, and the criticality of the SAN in
+	 * the certificate (the CSR's bytes, the profile's flag) */
+	QMap<int, QPair<int, int>> sanCounts{};
+	int dnsOrIpMin{};
+	bool sanWildcard{};
+	bool sanCritical{};
+};
+
 /* The serial number is not part of the spec: it is always random, positive
  * and unique per issuer (rule 2 of the certstrap triage), see
  * db_x509::getUniqueSerial(). */
@@ -120,6 +161,8 @@ class IssuanceSpec
 	 * checks before the signature; a profile of family opcua sets it */
 	enum chainRules { chain_rfc5280, chain_opcua };
 	enum chainRules chainRules{ chain_rfc5280 };
+
+	CsrPolicy csrPolicy{};          // with a request
 
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit

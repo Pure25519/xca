@@ -1,0 +1,71 @@
+{
+  "schema": "urn:bxc-pki:schema:profile-golden:v1",
+  "profile": "tls-server-web-keygen",
+  "key_type": "rsa-2048",
+  "issuer": {
+    "hierarchy": "ot-rsa",
+    "ca_key_type": "rsa-3072"
+  },
+  "signature_algorithm": "sha256WithRSAEncryption",
+  "extensions": [
+    {
+      "name": "basicConstraints",
+      "oid": "2.5.29.19",
+      "critical": true,
+      "value": {
+        "ca": false
+      }
+    },
+    {
+      "name": "keyUsage",
+      "oid": "2.5.29.15",
+      "critical": true,
+      "value": [
+        "digitalSignature",
+        "keyEncipherment"
+      ]
+    },
+    {
+      "name": "extendedKeyUsage",
+      "oid": "2.5.29.37",
+      "critical": false,
+      "value": [
+        "serverAuth"
+      ]
+    },
+    {
+      "name": "subjectAltName",
+      "oid": "2.5.29.17",
+      "critical": false,
+      "value": {
+        "uri": 0,
+        "dns": {
+          "min": 1,
+          "max": 1
+        },
+        "ip": {
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "name": "subjectKeyIdentifier",
+      "oid": "2.5.29.14",
+      "critical": false
+    },
+    {
+      "name": "authorityKeyIdentifier",
+      "oid": "2.5.29.35",
+      "critical": false,
+      "value": {
+        "form": "key-id"
+      }
+    }
+  ],
+  "ca_dependent_extensions": [
+    "crlDistributionPoints",
+    "authorityInfoAccess"
+  ],
+  "no_other_extensions": true
+}

@@ -75,3 +75,16 @@ OpenSSL configurations for `test_service_importexport::mlDsaUnderOpensslConf` (B
 activates the default provider with one ML-DSA setting (`ml-dsa.output_formats = priv-only`,
 `ml-dsa.retain_seed = no`, `ml-dsa.prefer_seed = no`). ctest runs the function once per file as
 `test_service_importexport_cnf_<mode>` with `OPENSSL_CONF` pointing to it.
+
+## `idial-csr/`
+
+The four certificate signing requests IDIAL recorded from S7-1500 lab units (OPC UA server and
+web server, SHA-1 signatures, keyCertSign with CA:FALSE, CA:TRUE, unusual RDN orders), byte for
+byte. `test_service_csr_acceptance` (BTD-65) issues them under the profiles; source repository,
+commit, SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`. Never edit them:
+their value is that the devices made them.
+
+## `profiles/golden/`
+
+The golden expectation files of the bxc-pki profiles (BTD-64), copied unchanged from the commit
+named in `profiles/PROVENANCE.json`. Regenerate them in bxc-pki and copy them again.

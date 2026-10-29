@@ -27,6 +27,7 @@
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
 
+#include <QCoreApplication>
 #include <QRegularExpression>
 #include <QTimeZone>
 
@@ -419,6 +420,64 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	return p;
 }
 
+/* The subject as given, byte for byte; with a profile that adds a
+ * missing O, that O after the CSR's own RDNs (BTD-65) */
+static x509name subjectOf(const IssuanceSpec &spec)
+{
+	x509name subject(spec.subject);
+	const QString &o = spec.csrPolicy.missingO;
+	if (spec.csrPolicy.profile && !o.isEmpty() &&
+	    X509_NAME_get_index_by_NID(subject.get0(),
+				NID_organizationName, -1) < 0)
+		subject.addEntryByNid(NID_organizationName, o);
+	return subject;
+}
+
+/* Under a profile the SAN is the CSR's, in its order and encoding, with
+ * the profile's criticality; the registered ApplicationUri is appended
+ * when the CSR has none. A dNSName is never made from the CN.
+ * IssuanceChecks::request() has checked the SAN against the profile and
+ * refused a CSR with two extension instances, so ext is the only one. */
+static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
+{
+	if (!spec.extensions.subjectAltName.isEmpty())
+		throw serviceError("san_conflict",
+			QCoreApplication::translate("db_x509",
+			"A profile takes the subject alternative name from the request, the spec gives one as well"));
+	X509_REQ *req = spec.request->getReq();
+	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
+	X509_EXTENSION *ext = nullptr;
+	for (int i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
+		X509_EXTENSION *e = sk_X509_EXTENSION_value(exts, i);
+		if (OBJ_obj2nid(X509_EXTENSION_get_object(e)) ==
+					NID_subject_alt_name)
+			ext = e;
+	}
+	const QString &uri = spec.csrPolicy.registeredUri;
+	GENERAL_NAMES *names = ext ? (GENERAL_NAMES *)X509V3_EXT_d2i(ext) :
+				GENERAL_NAMES_new();
+	bool hasUri = false;
+	for (int i = 0; i < sk_GENERAL_NAME_num(names); i++)
+		hasUri |= sk_GENERAL_NAME_value(names, i)->type == GEN_URI;
+	if (!uri.isEmpty() && !hasUri) {
+		GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr, nullptr,
+				GEN_URI, uri.toUtf8().constData(), 0);
+		if (gn)
+			sk_GENERAL_NAME_push(names, gn);
+		X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name, names,
+			spec.csrPolicy.sanCritical, X509V3_ADD_DEFAULT);
+	} else if (ext) {
+		/* the device's own bytes, the profile's criticality */
+		X509_EXTENSION *copy = X509_EXTENSION_dup(ext);
+		X509_EXTENSION_set_critical(copy, spec.csrPolicy.sanCritical);
+		X509_add_ext(cert->getCert(), copy, -1);
+		X509_EXTENSION_free(copy);
+	}
+	GENERAL_NAMES_free(names);
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	openssl_error();
+}
+
 pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 			const ServiceContext &ctx)
 {
@@ -450,7 +509,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert = new pki_x509();
 	cert->setIntName(spec.name.isEmpty() && spec.request ?
 			spec.request->getIntName() : spec.name);
-	cert->setSubject(spec.subject);
+	cert->setSubject(subjectOf(spec));
 	cert->setPubKey(clientkey);
 
 	// Step 2 - select Signing
@@ -470,7 +529,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	QList<const pki_x509 *> chain =
 			IssuanceChecks::issuerChain(spec.signer);
 	IssuanceChecks::issuers(spec, chain, signkey, params);
-	IssuanceChecks::request(spec);
+	IssuanceChecks::request(spec, params);
 
 	X509V3_set_ctx_nodb(&ext_ctx);
 	X509V3_set_ctx(&ext_ctx, signcert->getCert(), cert->getCert(),
@@ -494,8 +553,11 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	// apply all extensions to the subject cert in the context
 	spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
 
-	// apply extensions from CSR if requested
-	if (spec.copyRequestExtensions && spec.request) {
+	// apply extensions from CSR if requested; a profile takes only
+	// the SAN (BTD-65)
+	if (spec.csrPolicy.profile && spec.request) {
+		requestSan(spec, cert);
+	} else if (spec.copyRequestExtensions && spec.request) {
 		extList el = spec.request->getV3ext();
 		int m = el.count();
 		for (int i=0; i<m; i++)
