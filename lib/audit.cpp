@@ -32,6 +32,7 @@ const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
 const int AuditLog::defaultCheckpointInterval = 100;
+const int AuditLog::maxCheckpointInterval = 1000;
 
 /* Largest integer that RFC 8785 serialises exactly (IEEE 754 double) */
 static const qint64 maxSafeInteger = 9007199254740991LL;
@@ -103,6 +104,8 @@ const QStringList &AuditParams::allowList()
 	static const QStringList withCheckpoints = list + QStringList {
 		"checkpoint_hash", "checkpoint_seq", "checkpoint_time",
 		"key_id", "next_key_id", "public_key", "signature",
+		/* BTD-110: an unsigned log adopted by the first key */
+		"adopted_entries",
 	};
 	return withCheckpoints;
 }
@@ -273,6 +276,7 @@ QVariantMap AuditVerifyResult::toMap() const
 				QVariant(failedCheckpointSeq) : QVariant();
 	m["unanchored_entries"] = unanchoredEntries;
 	m["audit_keys"] = auditKeys;
+	m["adopted_entries"] = adoptedEntries;
 	return m;
 }
 
@@ -496,7 +500,8 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 }
 
 static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
-				bool ask, bool *writing = nullptr);
+				bool ask, bool adopt = false,
+				bool *writing = nullptr);
 
 /* seq of the newest checkpoint entry, 0 if there is none */
 static qint64 lastCheckpointSeq()
@@ -512,8 +517,11 @@ static qint64 lastCheckpointSeq()
 
 int AuditLog::checkpointInterval()
 {
+	/* The setting is not signed: clamped, so that raising it cannot
+	 * switch off the tail rule of verify() (BTD-110) */
 	int n = Settings["audit_checkpoint_interval"];
-	return n > 0 ? n : defaultCheckpointInterval;
+	return n > 0 ? qMin(n, maxCheckpointInterval) :
+			defaultCheckpointInterval;
 }
 
 AuditEntry AuditLog::append(const ServiceContext &ctx,
@@ -537,7 +545,7 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 		return e;
 	bool writing = false;
 	try {
-		writeCheckpoint(ctx, false, false, &writing);
+		writeCheckpoint(ctx, false, false, false, &writing);
 	} catch (errorEx &err) {
 		/* Failed before its first write: the entry and the caller's
 		 * transaction stay, the next append() tries again. A failure
@@ -640,13 +648,51 @@ static qint64 checkUnsignedTail(qint64 fromSeq)
 	return expected - fromSeq;
 }
 
-/* The announcement of a generated key after prev, not written yet */
+/* seq of the audit.init entry that closes the revocation baseline at the
+ * start of the chain (written without a checkpoint, before the database
+ * was unlocked), 0 if there is none or its count is not the number of
+ * baseline rows before it */
+static qint64 baselineEnd(const QList<AuditEntry> &list)
+{
+	qint64 rows = 0;
+
+	for (const AuditEntry &e : list) {
+		if (e.action == AuditLog::actionInit)
+			return e.params.value("count").toLongLong() == rows ?
+				e.seq : 0;
+		if (e.action != AuditLog::actionRevocationBaseline)
+			break;
+		rows++;
+	}
+	return 0;
+}
+
+/* The entries of list after the anchored ones that count against the
+ * unsigned tail: a writer with the database password never leaves more
+ * than checkpointInterval() + 1. The one rule of verify() and of the
+ * first checkpoint (BTD-110). */
+static qint64 unanchoredTail(const QList<AuditEntry> &list, qint64 anchored)
+{
+	return list.size() - qMax(anchored, baselineEnd(list));
+}
+
+static bool tailTooLong(qint64 tail)
+{
+	return tail > AuditLog::checkpointInterval() + 1;
+}
+
+/* The announcement of a generated key after prev, not written yet;
+ * adopted: the number of unsigned entries the first key takes over
+ * explicitly, 0 for none */
 static AuditEntry makeAnnouncement(const ServiceContext &ctx,
-		const AuditEntry &prev, const AuditKey::Generated &key)
+		const AuditEntry &prev, const AuditKey::Generated &key,
+		qint64 adopted = 0)
 {
 	AuditParams p;
 	p.set("key_id", key.id).set("key_type", AuditKey::typeEd25519)
 	 .set("public_key", QString::fromLatin1(key.publicPem));
+	if (adopted)
+		p.set("adopted_entries", adopted);
 	return makeEntry(ctx, prev, AuditLog::actionKeyCreate, "audit_key",
 			key.id, p.getValues());
 }
@@ -693,9 +739,10 @@ static bool keyAnnounced()
  * first write: the password, the key generation, the signature. Only
  * then *writing is set and the entries are written; a failure from there
  * on rolls back the caller's transaction too (BTD-111). ask: the password
- * may be asked for (explicit checkpoints, not automatic ones). */
+ * may be asked for (explicit checkpoints, not automatic ones). adopt: a
+ * first key may sign a log with too long an unsigned tail (BTD-110). */
 static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
-				bool ask, bool *writing)
+				bool ask, bool adopt, bool *writing)
 {
 	if (!headEntry().seq)
 		throw serviceError("empty_audit_log",
@@ -709,6 +756,21 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 		throw serviceError("audit_key_missing", QObject::tr(
 			"The audit key that signs the checkpoints is missing "
 			"or retired; run --audit-verify"));
+	/* First use over a log longer than any writer with the password
+	 * leaves unsigned: checkpoints and keys may have been deleted. Only
+	 * an explicit adoption signs it, and records that it did. */
+	qint64 adopted = 0;
+	if (key.isEmpty()) {
+		qint64 tail = unanchoredTail(AuditLog::entries(), 0);
+		if (tailTooLong(tail) && !adopt)
+			throw serviceError("audit_checkpoint_missing",
+				QObject::tr("%1 audit entries were never signed by a "
+				"checkpoint, more than the checkpoint interval allows; "
+				"checkpoints may have been deleted. Check the log, then "
+				"sign it explicitly with --audit-adopt").arg(tail));
+		if (tailTooLong(tail))
+			adopted = tail;
+	}
 
 	/* first use: a new key announced and signing itself; rotation: a
 	 * new key announced and named by a checkpoint of the old one */
@@ -717,7 +779,8 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	AuditEntry prev = headEntry(), announcement;
 	if (first || rotate) {
 		fresh = AuditKey::generate(pass);
-		announcement = makeAnnouncement(ctx, prev, fresh);
+		announcement = makeAnnouncement(ctx, prev, fresh,
+						first ? adopted : 0);
 		prev = announcement;
 	}
 	AuditEntry e = first ?
@@ -748,6 +811,11 @@ AuditEntry AuditLog::checkpoint(const ServiceContext &ctx)
 AuditEntry AuditLog::rotateKey(const ServiceContext &ctx)
 {
 	return writeCheckpoint(ctx, true, true);
+}
+
+AuditEntry AuditLog::adoptUnanchored(const ServiceContext &ctx)
+{
+	return writeCheckpoint(ctx, false, true, true);
 }
 
 QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
@@ -842,19 +910,6 @@ static QString auditDate(const QVariant &rfc)
 	return AuditLog::rfc3339(t);
 }
 
-/* seq of the audit.init entry that closes the revocation baseline at the
- * start of the chain (written without a checkpoint), 0 if there is none */
-static qint64 baselineEnd(const QList<AuditEntry> &list)
-{
-	for (const AuditEntry &e : list) {
-		if (e.action == AuditLog::actionInit)
-			return e.seq;
-		if (e.action != AuditLog::actionRevocationBaseline)
-			break;
-	}
-	return 0;
-}
-
 /* Checks the checkpoints of the intact chain list (seq 1, 2, ...) in
  * order: each one signed by the current key over the hash of the entry
  * just before it. An entry is anchored up to the checkpoint_seq of the
@@ -870,6 +925,7 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 	QMap<QString, QByteArray> announced;	// key id -> public PEM
 	QString signer;
 	qint64 anchored = 0, lastValid = 0;
+	qint64 baseline = baselineEnd(list);
 
 	for (const AuditEntry &e : list) {
 		QString reason;
@@ -878,9 +934,18 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 		if (e.action == AuditLog::actionKeyCreate) {
 			QString id = p.value("key_id").toString();
 			QByteArray pem = p.value("public_key").toString().toLatin1();
-			if (id.isEmpty() || AuditKey::keyId(pem) != id) {
+			/* only the first key adopts, exactly the unsigned
+			 * entries before it */
+			bool adopts = p.contains("adopted_entries");
+			if (id.isEmpty() || AuditKey::keyId(pem) != id ||
+			    (adopts && (!signer.isEmpty() ||
+			     p.value("adopted_entries").toLongLong() !=
+					e.seq - 1 - baseline))) {
 				reason = "checkpoint_key";
 			} else {
+				if (adopts)
+					r.adoptedEntries = p.value(
+						"adopted_entries").toLongLong();
 				announced[id] = pem;
 				/* the first key is trusted on first use */
 				if (signer.isEmpty()) {
@@ -934,8 +999,7 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 	throwOnError(q);
 	while (q.next())
 		unannounced |= !announced.contains(q.value(0).toString());
-	if (unannounced || r.entries - qMax(anchored, baselineEnd(list)) >
-			AuditLog::checkpointInterval() + 1) {
+	if (unannounced || tailTooLong(unanchoredTail(list, anchored))) {
 		r.firstBrokenSeq = anchored + 1;
 		r.reason = "checkpoint_missing";
 	}

@@ -41,24 +41,32 @@
  * metadata, which would change the signed payload and the export). Deleted
  * checkpoints are reported as checkpoint_missing: a key in audit_keys that
  * no audit.key_create of the chain announces, or more than interval + 1
- * unanchored entries (the revocation baseline at the start excepted).
- * Once a key was announced, a missing current key fails the checkpoint
- * with audit_key_missing instead of announcing a new key.
+ * unanchored entries (the revocation baseline at the start excepted, when
+ * audit.init counts exactly its rows). The interval is the setting
+ * audit_checkpoint_interval clamped to maxCheckpointInterval, because the
+ * setting is not signed. Once a key was announced, a missing current key
+ * fails the checkpoint with audit_key_missing instead of announcing a new
+ * key. The first key is not announced over a log with too long an
+ * unsigned tail either (audit_checkpoint_missing), so that the next
+ * checkpoint does not sign a history whose checkpoints and keys were
+ * deleted; adoptUnanchored() signs such a log on explicit request and
+ * records the number of adopted entries as adopted_entries in the
+ * announcement, which verify() reports.
  *
  * Remaining limits: entries after the last checkpoint (at most N + 1,
  * fewer after an export) are protected by the hash chain only; cutting
  * off the newest entries including their checkpoints (unless that removes
  * a key announcement) still passes verify() (unanchored_entries shows the
  * unsigned tail), and so does deleting the whole log or its checkpoints
- * together with the audit_keys rows, when the rest is at most interval + 1
- * entries long or the unsigned setting audit_checkpoint_interval was
- * raised as well; a whole log
- * rewritten with a new key passes too, only the audit key id pinned from
- * an earlier export reveals it. Without the database password append()
- * writes no checkpoint (the next append() tries again) and the export
- * exports without a new checkpoint; a log written that way for more than
- * interval + 1 entries fails verify() with checkpoint_missing until the
- * next checkpoint.
+ * together with the audit_keys rows when the rest is at most interval + 1
+ * entries long; a log adopted with adoptUnanchored() is only as trustworthy
+ * as the check before the adoption (adopted_entries in the report); a
+ * whole log rewritten with a new key passes too, only the audit key id
+ * pinned from an earlier export reveals it. Without the database password
+ * append() writes no checkpoint (the next append() tries again) and the
+ * export exports without a new checkpoint; a log written that way for
+ * more than interval + 1 entries fails verify() with checkpoint_missing
+ * and needs adoptUnanchored() unless a key was announced before.
  *
  * Caller contract (service functions of BTD-31..35):
  *  - Every service function receives a ServiceContext and appends exactly
@@ -256,6 +264,7 @@ class AuditVerifyResult
 	QStringList auditKeys{};       // key ids, in the order they signed
 	QList<AuditStateMismatch> mismatches{};
 	qint64 unauditedRevocations{};   // also listed in mismatches
+	qint64 adoptedEntries{};   // unsigned entries the first key adopted
 
 	bool chainOk() const
 	{
@@ -290,6 +299,7 @@ class AuditLog
 	static const char actionCheckpoint[];
 	static const char actionKeyCreate[];
 	static const int defaultCheckpointInterval;
+	static const int maxCheckpointInterval;   // bound of the setting
 
 	/* Appends one entry in its own (possibly nested) transaction.
 	 * The sequence number is the primary key, so two writers that read
@@ -315,13 +325,22 @@ class AuditLog
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),
 	 * audit_key_missing (a key was announced, but no usable current key
-	 * is left; no new key is created), audit_chain_broken (the entries
+	 * is left; no new key is created), audit_checkpoint_missing (no key
+	 * yet and too long an unsigned tail, see adoptUnanchored()),
+	 * audit_chain_broken (the entries
 	 * since the last checkpoint do not chain, nothing is signed),
 	 * empty_audit_log. */
 	static AuditEntry checkpoint(const ServiceContext &ctx);
 	/* Creates a new audit key, announces it and signs a checkpoint with
 	 * the old key that names the new one; the old key is retired */
 	static AuditEntry rotateKey(const ServiceContext &ctx);
+	/* checkpoint() for a log without audit key whose unsigned tail is
+	 * longer than the interval allows, which checkpoint() refuses with
+	 * audit_checkpoint_missing: announces the first key with
+	 * adopted_entries and signs. Only after the log was checked. */
+	static AuditEntry adoptUnanchored(const ServiceContext &ctx);
+	/* The setting audit_checkpoint_interval, default 100, at most
+	 * maxCheckpointInterval (1000) */
 	static int checkpointInterval();
 	/* The bytes a checkpoint signature covers */
 	static QByteArray checkpointPayload(const QVariantMap &params);
