@@ -59,7 +59,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("no-gui", NULL, no_argument, true, false,
 		"Do not start the GUI. Alternatively set environment variable XCA_NO_GUI=1 or call xca as 'xca-console' symlink."),
 	arg_option("password", "password", required_argument, false, false,
-		"Database password for unlocking the database. Without GUI it is checked when the database is opened, a wrong one ends the command with an error; without this option only the public objects can be listed. It also answers every request for the database password and for keys with their own password. See below for password format options."),
+		"Database password for unlocking the database. Without GUI it is checked when the database is opened, a wrong one ends the command with an error; without this option only the public objects can be listed. An empty value (--password \"\") counts as no option, while a source that yields an empty password is an error; a database with an empty password is therefore opened without this option. It also answers every request for the database password and for keys with their own password. See below for password format options."),
 	arg_option("pem", NULL, no_argument, true, false,
 		"Print PEM representation of provided files. Prints only the public part of private keys."),
 	arg_option("pem-file", NULL, file_argument, true, false,

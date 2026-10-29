@@ -69,6 +69,21 @@ add_test(NAME test_cli_password_verify
 		-P ${SERVICE_TEST_DIR}/cli_password_verify.cmake)
 set_tests_properties(test_cli_password_verify PROPERTIES LABELS service)
 
+# sqlite3 for the CLI tests: prepares databases the CLI cannot create
+add_executable(sql_exec ${SERVICE_TEST_DIR}/sql_exec.cpp)
+target_link_libraries(sql_exec ${QT}::Sql ${ASAN_LIB})
+add_dependencies(tests sql_exec)
+
+# A given password is checked on a database with an empty password too,
+# and a rejected one leaves an old database unchanged (BTD-117)
+add_test(NAME test_cli_password_empty_db
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DDUMP=${SERVICE_TEST_DIR}/data/schema8-fork.sql
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_empty_db
+		-P ${SERVICE_TEST_DIR}/cli_password_empty_db.cmake)
+set_tests_properties(test_cli_password_empty_db PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

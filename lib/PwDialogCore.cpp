@@ -40,6 +40,13 @@ enum open_result PwDialogCore::execute(pass_info *p, Passwd *passwd,
 	return ui()->execute(p, passwd, write, abort);
 }
 
+bool PwDialogCore::hasSource(enum pass_info::purpose p)
+{
+	if (PasswordSourceScope::answering(p) || !cmdline_passwd.isEmpty())
+		return true;
+	return ui() == &headlessUI && headlessUI.hasSource(p);
+}
+
 PasswordSourceScope::PasswordSourceScope(enum pass_info::purpose p,
 					const QString &source)
 	: purpose(p), active(!source.isEmpty())

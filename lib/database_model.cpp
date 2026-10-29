@@ -217,12 +217,20 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	try {
 		Entropy::seed_rng();
-		initSqlDB();
+		/* An existing database is unlocked before the schema upgrade
+		 * and the audit baseline write to it, so a rejected password
+		 * leaves it as it was. A new one needs its tables before the
+		 * new password can be stored. (BTD-117) */
+		bool existing = XSqlQuery::schemaVersion() > 0;
+		if (!existing)
+			initSqlDB();
 		result = initPass(dbName, Settings["pwhash"]);
 		if (result == pw_exit)
 			throw pw_exit;
 		if (result != pw_ok && Settings["pwhash"].empty())
 			throw open_abort;
+		if (existing)
+			initSqlDB();
 	} catch (...) {
 		/* No destructor runs for a failed constructor: close the
 		 * connection here, or the next open() inherits its state */
@@ -578,10 +586,15 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 		pki_evp::passHash =pki_evp::sha512passwT(pki_evp::passwd,salt);
 		Settings["pwhash"] = pki_evp::passHash;
 	} else if (!open_without_password) {
+		/* A given password is read and compared even if the current
+		 * one (empty at first) already matches: on a database with an
+		 * empty password any given one passed unread (BTD-117) */
+		bool given = PwDialogCore::hasSource(p.getPurpose());
 		pwhash_upgrade();
-		while (pki_evp::sha512passwT(pki_evp::passwd, pki_evp::passHash)
-				!= pki_evp::passHash)
+		while (given || pki_evp::sha512passwT(pki_evp::passwd,
+				pki_evp::passHash) != pki_evp::passHash)
 		{
+			given = false;
 			if (result == pw_ok)
 				XCA_PASSWD_ERROR();
 			p.setTitle(tr("Password"));
