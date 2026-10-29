@@ -16,6 +16,7 @@
 
 #include "pk11_attribute.h"
 #include "func.h"
+#include "XcaPresentation.h"
 
 void waitcursor(int start, int line);
 #define WAITCURSOR_START waitcursor(1, __LINE__);
@@ -26,12 +27,10 @@ extern char segv_data[1024];
 	snprintf(segv_data, sizeof segv_data, "Crashed in %s in %s from %s:%d\n" \
 		"This looks like a bug in the PKC#11 library and not in XCA\n", \
 		#func, CCHAR((l)->filename()), __func__, __LINE__); \
-	if (IS_GUI_APP) \
-		QApplication::setOverrideCursor(QCursor(Qt::WaitCursor)); \
+	XcaPresentation::busy(true); \
 	rv = l->ptr()->func(__VA_ARGS__); \
 	segv_data[0] = 0; \
-	if (IS_GUI_APP) \
-		QApplication::restoreOverrideCursor(); \
+	XcaPresentation::busy(false); \
 	ign_openssl_error(); \
 } while(0);
 
@@ -175,7 +174,7 @@ class pkcs11
 		}
 
 		void closeSession(const slotid &slot);
-		bool selectToken(slotid *slot, QWidget *w);
+		bool selectToken(slotid *slot);
 		void changePin(const slotid &slot, bool so);
 		void initPin(const slotid &slot);
 		void initToken(const slotid &slot, unsigned char *pin,

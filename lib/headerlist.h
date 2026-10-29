@@ -10,8 +10,6 @@
 
 #include <QString>
 #include <QList>
-#include <QAction>
-#include <QHeaderView>
 #include <QDebug>
 #include <Qt>
 #include <openssl/objects.h>
@@ -77,7 +75,6 @@ class dbheader
 	int id{ HD_undef };
 	bool show{ false };
 	bool showDefault{ false };
-	QAction *action{};
 	int size{ -1 };
 	int visualIndex{ -1 };
 	int sortIndicator{ -1 };
@@ -145,19 +142,8 @@ class dbheader
 			size = -1;
 		show = sl[3].toInt();
 	}
-	void setupHeaderView(int sect, QHeaderView *hv)
-	{
-		hv->setSectionHidden(sect, !show);
-		if (size != -1)
-			hv->resizeSection(sect, size);
-		if (sortIndicator != -1) {
-			hv->setSortIndicator(sect, sortIndicator ?
-				Qt::DescendingOrder : Qt::AscendingOrder);
-		}
-	}
 	void reset()
 	{
-		action = NULL;
 		show = showDefault;
 		size = -1;
 		visualIndex = -1;

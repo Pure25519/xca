@@ -7,6 +7,7 @@
 
 
 #include "CertExtend.h"
+#include "CertTreeView.h"
 #include "RevocationList.h"
 #include "lib/audit.h"
 #include "lib/base.h"
@@ -113,9 +114,13 @@ void CertExtend::accept()
 }
 
 /* GUI glue of the certificate renewal, moved from lib/db_x509.cpp
- * (BTD-33): the old certificates are revoked through db_x509::revoke() */
-void db_x509::certRenewal(QModelIndexList indexes)
+ * (BTD-33) and into the certificate view (BTD-36): the old certificates
+ * are revoked through db_x509::revoke() */
+void CertTreeView::renewal(QModelIndexList indexes)
 {
+	if (!basemodel)
+		return;
+	db_x509 *certs = this->certs();
 	pki_x509 *oldcert = NULL, *signer = NULL, *newcert =NULL;
 	pki_key *signkey = NULL;
 	a1time time;
@@ -130,7 +135,7 @@ void db_x509::certRenewal(QModelIndexList indexes)
 	QModelIndex idx = indexes[0];
 
 	try {
-		oldcert = fromIndex<pki_x509>(idx);
+		oldcert = db_base::fromIndex<pki_x509>(idx);
 		if (!oldcert || !(signer = oldcert->getSigner()) ||
 				!(signkey = signer->getRefKey()) ||
 				signkey->isPubKey())
@@ -150,13 +155,13 @@ void db_x509::certRenewal(QModelIndexList indexes)
 		}
 		doReplace = dlg->replace->isChecked();
 		foreach(idx, indexes) {
-			oldcert = fromIndex<pki_x509>(idx);
+			oldcert = db_base::fromIndex<pki_x509>(idx);
 			if (!oldcert)
 				continue;
 			newcert = new pki_x509(oldcert);
 			newcert->pkiSource = renewed;
 			serial = dlg->keepSerial->isChecked() ?
-				oldcert->getSerial() : getUniqueSerial(signer);
+				oldcert->getSerial() : certs->getUniqueSerial(signer);
 			newcert->setRevoked(x509rev());
 
 			// change date and serial
@@ -172,8 +177,8 @@ void db_x509::certRenewal(QModelIndexList indexes)
 
 			// and finally sign the cert
 			newcert->sign(signkey, oldcert->getDigest());
-			newcert = dynamic_cast<pki_x509 *>(insert(newcert));
-			createSuccess(newcert);
+			newcert = dynamic_cast<pki_x509 *>(certs->insert(newcert));
+			certs->createSuccess(newcert);
 			/* insert() keeps it in the store or deletes it */
 			newcert = nullptr;
 		}
@@ -181,9 +186,9 @@ void db_x509::certRenewal(QModelIndexList indexes)
 			ServiceContext ctx = ServiceContext::localUser(
 						ServiceContext::gui);
 			foreach(idx, indexes) {
-				oldcert = fromIndex<pki_x509>(idx);
+				oldcert = db_base::fromIndex<pki_x509>(idx);
 				if (oldcert && !oldcert->isRevoked())
-					revoke(ctx, oldcert, r);
+					certs->revoke(ctx, oldcert, r);
 			}
 		}
 
@@ -191,10 +196,10 @@ void db_x509::certRenewal(QModelIndexList indexes)
 		if (doReplace) {
 			QList<pki_base *> old;
 			foreach(idx, indexes) {
-				if (fromIndex<pki_x509>(idx))
-					old << fromIndex(idx);
+				if (db_base::fromIndex<pki_x509>(idx))
+					old << db_base::fromIndex(idx);
 			}
-			deleteItems(ServiceContext::localUser(
+			certs->deleteItems(ServiceContext::localUser(
 					ServiceContext::gui), old);
 		}
 	}
@@ -203,5 +208,5 @@ void db_x509::certRenewal(QModelIndexList indexes)
 		delete newcert;
 	}
 	delete dlg;
-	emit columnsContentChanged();
+	emit certs->columnsContentChanged();
 }

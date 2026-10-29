@@ -7,7 +7,7 @@
 #ifndef __SERVICETESTCASE_H
 #define __SERVICETESTCASE_H
 
-#include <QApplication>
+#include <QCoreApplication>
 #include <QList>
 #include <QObject>
 #include <QPair>
@@ -48,7 +48,9 @@ class StrictPwDialog : public PwDialogUI_i
 	void reset();
 	enum open_result execute(pass_info *p, Passwd *passwd,
 				bool write = false, bool abort = false) override;
-	int selectToken(const QStringList &names, QWidget *w) override;
+	int selectToken(const QStringList &names) override;
+	int selectKeySlot(const QString &label,
+			const QStringList &names) override;
 	void pinPadLogin(pass_info *p, QThread *login) override;
 };
 
@@ -113,9 +115,7 @@ class ServiceTestCase : public QObject
 int main(int argc, char *argv[]) \
 { \
 	TestEnv env; \
-	if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORM")) \
-		qputenv("QT_QPA_PLATFORM", "offscreen"); \
-	QApplication app(argc, argv); \
+	QCoreApplication app(argc, argv); \
 	TestClass tc; \
 	QTEST_SET_MAIN_SOURCE_PATH \
 	return QTest::qExec(&tc, argc, argv); \

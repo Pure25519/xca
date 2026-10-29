@@ -6,16 +6,12 @@
  */
 
 #include <QTest>
-#include <QApplication>
 
 #include "x509v3ext.h"
 #include "oid.h"
 #include "openssl_compat.h"
 
 #include <openssl/x509v3.h>
-
-/* Required by pkcs11.cpp which is compiled into xcalib */
-char segv_data[1024];
 
 /* The SID URI used in all round-trip tests */
 static const QString SID_URI =

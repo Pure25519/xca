@@ -22,8 +22,6 @@
 #include "main.h"
 #include "TestEnv.h"
 
-char segv_data[1024];
-
 static TestEnv *testEnv;
 
 /* Called by QTEST_MAIN before the QApplication: testxca and

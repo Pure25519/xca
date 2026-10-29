@@ -23,7 +23,6 @@
 #define IS_GUI_APP (is_gui_app)
 
 class Validity;
-class QPixmap;
 extern bool is_gui_app;
 
 QString getFullFilename(const QString &filename, const QString &selectedFilter);

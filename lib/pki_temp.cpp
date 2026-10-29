@@ -10,6 +10,7 @@
 #include "func.h"
 #include "oid.h"
 #include "exception.h"
+#include "XcaPresentation.h"
 #include <QDir>
 #include <QBuffer>
 #include <QDataStream>
@@ -555,7 +556,7 @@ bool pki_temp::compare(const pki_base *) const
 QVariant pki_temp::getIcon(const dbheader *hd) const
 {
 	return hd->id == HD_internal_name ?
-			QVariant(QPixmap(":templateIco")) : QVariant();
+			XcaPresentation::icon(":templateIco") : QVariant();
 }
 
 void pki_temp::autoIntName(const QString &file)

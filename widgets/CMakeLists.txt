@@ -29,7 +29,8 @@ MainWindow.cpp		X509SuperTreeView.h	validity.cpp
 MainWindow.h		XcaApplication.cpp	validity.h
 pkcs12EncBox.h          XcaDetail.h
 pkcs12EncBox.cpp        XcaDetail.cpp
+ipvalidator.h		XcaPresentationGui.h
 )
 
 list(TRANSFORM xca_sources PREPEND ${PROJECT_SOURCE_DIR}/widgets/)
-target_sources(xcalib PRIVATE ${xca_sources})
+target_sources(xcagui PRIVATE ${xca_sources})

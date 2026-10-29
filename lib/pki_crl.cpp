@@ -11,6 +11,7 @@
 #include "exception.h"
 #include "database_model.h"
 #include "audit_key.h"
+#include "XcaPresentation.h"
 #include <QDir>
 
 pki_crl::pki_crl(const QString &name)
@@ -408,7 +409,7 @@ a1time pki_crl::column_a1time(const dbheader *hd) const
 QVariant pki_crl::getIcon(const dbheader *hd) const
 {
 	return hd->id == HD_internal_name ?
-			QVariant(QPixmap(":crlIco")) : QVariant();
+			XcaPresentation::icon(":crlIco") : QVariant();
 }
 
 QStringList pki_crl::icsVEVENT() const

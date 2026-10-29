@@ -2,7 +2,7 @@
 list(APPEND xcadoc_sources arguments.cpp arguments.h xcadoc.cpp)
 list(APPEND xcaexport_sources pki_export.cpp pki_export.h xcaexport.cpp)
 
-list(APPEND xcalib_sources
+list(APPEND xcacore_sources
 BioByteArray.cpp	dbhistory.cpp		pki_key.cpp
 BioByteArray.h		dbhistory.h		pki_key.h
 Passwd.cpp		entropy.cpp		pki_lookup.h
@@ -11,7 +11,7 @@ arguments.cpp		exception.h		pki_multi.h
 arguments.h		func.cpp		pki_pkcs12.cpp
 asn1int.cpp		func.h			pki_pkcs12.h
 asn1int.h		headerlist.h		pki_pkcs7.cpp
-asn1time.cpp		ipvalidator.h		pki_pkcs7.h
+asn1time.cpp		pki_pkcs7.h
 asn1time.h		load_obj.cpp		pki_scard.cpp
 base.h			load_obj.h		pki_scard.h
 builtin_curves.cpp	pki_temp.cpp
@@ -45,6 +45,7 @@ issuance.cpp	issuance.h
 request.cpp	request.h
 importexport.cpp	importexport.h
 template.cpp	template.h
+XcaPresentation.cpp	XcaPresentation.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)
@@ -52,7 +53,7 @@ macro(ExpandSources target)
   target_sources(${target} PRIVATE ${${target}_sources})
 endmacro()
 
-ExpandSources(xcalib)
+ExpandSources(xcacore)
 ExpandSources(xcadoc)
 ExpandSources(xcaexport)
 
@@ -74,7 +75,7 @@ if(BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/lib/test_x509rev.cpp
     ${PROJECT_BINARY_DIR}/local.h
   )
-  target_link_libraries(test_x509rev PRIVATE xcalib ${QT}::Test ${ASAN_LIB})
+  target_link_libraries(test_x509rev PRIVATE xcacore ${QT}::Test ${ASAN_LIB})
   set_target_properties(test_x509rev PROPERTIES MACOSX_BUNDLE FALSE)
   add_test(NAME test_x509rev COMMAND test_x509rev)
   add_dependencies(tests test_x509rev)
@@ -88,7 +89,7 @@ if(BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/lib/test_takey.cpp
     ${PROJECT_BINARY_DIR}/local.h
   )
-  target_link_libraries(test_takey PRIVATE xcalib ${QT}::Test ${ASAN_LIB})
+  target_link_libraries(test_takey PRIVATE xcacore ${QT}::Test ${ASAN_LIB})
   set_target_properties(test_takey PROPERTIES MACOSX_BUNDLE FALSE)
   add_test(NAME test_takey COMMAND test_takey)
   add_dependencies(tests test_takey)
@@ -104,7 +105,7 @@ if(BUILD_TESTING)
     ${PROJECT_SOURCE_DIR}/lib/test_x509v3ext.cpp
     ${PROJECT_BINARY_DIR}/local.h
   )
-  target_link_libraries(test_x509v3ext PRIVATE xcalib ${QT}::Test ${ASAN_LIB})
+  target_link_libraries(test_x509v3ext PRIVATE xcacore ${QT}::Test ${ASAN_LIB})
   set_target_properties(test_x509v3ext PROPERTIES MACOSX_BUNDLE FALSE)
   add_test(NAME test_x509v3ext COMMAND test_x509v3ext)
   add_dependencies(tests test_x509v3ext)

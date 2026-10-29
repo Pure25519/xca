@@ -73,9 +73,14 @@ PwDialogUI_i *PasswordSourceScope::answering(enum pass_info::purpose p)
 	return nullptr;
 }
 
-int PwDialogCore::selectToken(const QStringList &names, QWidget *w)
+int PwDialogCore::selectToken(const QStringList &names)
 {
-	return ui()->selectToken(names, w);
+	return ui()->selectToken(names);
+}
+
+int PwDialogCore::selectKeySlot(const QString &label, const QStringList &names)
+{
+	return ui()->selectKeySlot(label, names);
 }
 
 void PwDialogCore::pinPadLogin(pass_info *p, QThread *login)
@@ -277,9 +282,8 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 			.arg(p->getType()).arg(noInput()).arg(p->getDescription()));
 }
 
-int PwDialogHeadless::selectToken(const QStringList &names, QWidget *w)
+int PwDialogHeadless::selectToken(const QStringList &names)
 {
-	(void)w;
 #if !defined(Q_OS_WIN32)
 	if (interactive) {
 		QString s = QObject::tr("Several security tokens are present:")
@@ -297,6 +301,29 @@ int PwDialogHeadless::selectToken(const QStringList &names, QWidget *w)
 	throw secretError(secretError::missing,
 		QObject::tr("Several security tokens are present and %1: %2")
 			.arg(noInput()).arg(names.join(", ")));
+}
+
+/* Without a GUI the slot is chosen on the terminal only (BTD-36); the
+ * input dialog used before crashed in a command line process */
+int PwDialogHeadless::selectKeySlot(const QString &label,
+				const QStringList &names)
+{
+#if !defined(Q_OS_WIN32)
+	if (interactive) {
+		QString s = QObject::tr("Key slots of %1:").arg(label) + "\n";
+		for (int i = 0; i < names.size(); i++)
+			s += QString("  %1: %2\n").arg(i + 1).arg(names[i]);
+		s += QObject::tr("Select a key slot (1-%1): ").arg(names.size());
+		console_write(stdout, s.toUtf8());
+		QTextStream in(stdin);
+		bool ok;
+		int i = in.readLine().trimmed().toInt(&ok);
+		return ok && i >= 1 && i <= names.size() ? i - 1 : -1;
+	}
+#endif
+	throw secretError(secretError::missing,
+		QObject::tr("The token %1 has fixed key slots and %2: %3")
+			.arg(label).arg(noInput()).arg(names.join(", ")));
 }
 
 void PwDialogHeadless::pinPadLogin(pass_info *p, QThread *login)

@@ -12,8 +12,6 @@
 #include <QRegularExpression>
 #include <QVariant>
 #include <QByteArray>
-#include <QPalette>
-#include <QBrush>
 #include "BioByteArray.h"
 #include "asn1time.h"
 #include "pkcs11_lib.h"
@@ -58,7 +56,6 @@ class pki_base : public QObject
 		static unsigned hash(const QByteArray &ba);
 		static bool pem_comment;
 		static int count;
-		static void setupColors(const QPalette &pal);
 
 	protected:
 		QVariant sqlItemId{};
@@ -71,7 +68,6 @@ class pki_base : public QObject
 		QList<pki_base*> childItems{};
 		mutable QRegularExpression lastPattern{};
 		int iamvisible{ 1 };
-		static QBrush red, yellow, cyan;
 
 		void my_error(const QString &error) const;
 		virtual QByteArray PEM_comment() const;

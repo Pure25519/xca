@@ -283,19 +283,11 @@ QVariant pkcs11_lib_list::data(const QModelIndex &index, int role) const
 	if (!l)
 		return QVariant();
 
-	QString pixmap;
-
 	switch (role) {
 	case Qt::DisplayRole:
 		return QVariant(nativeSeparator(l->filename()));
 	case Qt::DecorationRole:
-		pixmap = l->pixmap();
-		if (pixmap.isEmpty()) {
-			QPixmap p(QSize(20, 20));
-			p.fill(Qt::transparent);
-			return QVariant(p);
-		}
-		return QVariant(QPixmap(pixmap));
+		return XcaPresentation::icon(l->pixmap());
 	case Qt::ToolTipRole:
 		return QVariant(l->driverInfo().trimmed());
 	case Qt::CheckStateRole:

@@ -20,7 +20,7 @@ add_dependencies(tests testxca)
 add_test(NAME test_automation_ids COMMAND testxca automationIds)
 set_tests_properties(test_automation_ids PROPERTIES LABELS gui
 	ENVIRONMENT QT_QPA_PLATFORM=offscreen)
-target_link_libraries(testxca ${ASAN_LIB} ${QT}::Test xcalib)
+target_link_libraries(testxca ${ASAN_LIB} ${QT}::Test xcagui)
 target_link_options(testxca PRIVATE -pthread)
 
 if (APPLE)

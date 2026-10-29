@@ -1099,17 +1099,6 @@ pki_x509 *db_x509::certBySerial(pki_x509 *issuer, const QString &serial) const
 	return found[0];
 }
 
-void db_x509::toCertificate(QModelIndex index)
-{
-	pki_x509 *cert = fromIndex<pki_x509>(index);
-	if (!cert)
-		return;
-	if (!cert->getRefKey() && cert->getSigner() != cert)
-		extractPubkey(index);
-	cert->pkiSource = transformed;
-	newCert(cert);
-}
-
 void db_x509::toRequest(QModelIndex idx)
 {
 	db_x509req *reqs = Database.model<db_x509req>();

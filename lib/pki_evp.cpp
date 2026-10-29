@@ -13,6 +13,7 @@
 #include "entropy.h"
 #include "BioByteArray.h"
 #include "XcaProgress.h"
+#include "XcaPresentation.h"
 
 #include "PwDialogCore.h"
 #include "XcaWarningCore.h"
@@ -956,7 +957,7 @@ QVariant pki_evp::getIcon(const dbheader *hd) const
 	if (hd->id != HD_internal_name)
 		return QVariant();
 
-	return QVariant(QPixmap(isPubKey() ? ":pubkeyIco" : ":keyIco"));
+	return XcaPresentation::icon(isPubKey() ? ":pubkeyIco" : ":keyIco");
 }
 
 QString pki_evp::md5passwd(QByteArray pass)
