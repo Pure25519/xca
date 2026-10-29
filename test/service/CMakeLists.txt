@@ -206,6 +206,8 @@ endif()
 
 # Import and export (BTD-34); files made and checked with the openssl program
 ServiceTest(test_service_importexport)
+target_compile_definitions(test_service_importexport PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_importexport PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
@@ -215,7 +217,8 @@ endif()
 # (BTD-16): the same test function with data/mldsa-<mode>.cnf
 foreach(mode output retain prefer)
   add_test(NAME test_service_importexport_cnf_${mode}
-	COMMAND test_service_importexport mlDsaUnderOpensslConf)
+	COMMAND test_service_importexport mlDsaUnderOpensslConf
+		mlDsaSeedlessPasswordChange)
   set_tests_properties(test_service_importexport_cnf_${mode} PROPERTIES
 	LABELS service
 	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")

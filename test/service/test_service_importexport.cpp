@@ -105,9 +105,12 @@ class test_service_importexport : public ServiceTestCase
 	static int mlDsaTag(const QString &name, int format);
 	QByteArray exportFormat(db_base *db, pki_base *pki, int format,
 			const QString &name, const QString &keyFormat);
-	/* PKCS#8 PEM of an ML-DSA-44 key whose "both" encoding holds the
-	 * seed of one key and the expanded key of another */
+	/* PKCS#8 of an ML-DSA-44 key whose "both" encoding holds the seed
+	 * of one key and the expanded key of another; as PEM file */
+	static PKCS8_PRIV_KEY_INFO *mismatchedMlDsa();
 	bool writeMismatchedMlDsa(const QString &name);
+	/* Replaces service.xdb with a dump of data/ and opens it */
+	void loadDump(const QString &name);
 	/* importItems() of one file: the error code, "no_key" if it stored
 	 * no key without an error (the PEM reader refused the key, with its
 	 * message), or "" if it stored a key; *created the new keys */
@@ -151,6 +154,8 @@ class test_service_importexport : public ServiceTestCase
 	void mlDsaUnderOpensslConf();
 	void fixedKeyFormatsRefused_data();
 	void fixedKeyFormatsRefused();
+	void mlDsaSeedlessPasswordChange();
+	void mlDsaUndecodableStoredKey();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -1706,7 +1711,7 @@ void test_service_importexport::importOpensslFixed()
 #endif
 }
 
-bool test_service_importexport::writeMismatchedMlDsa(const QString &name)
+PKCS8_PRIV_KEY_INFO *test_service_importexport::mismatchedMlDsa()
 {
 	EVP_PKEY *a = EVP_PKEY_Q_keygen(nullptr, nullptr, "ML-DSA-44");
 	EVP_PKEY *b = EVP_PKEY_Q_keygen(nullptr, nullptr, "ML-DSA-44");
@@ -1720,7 +1725,7 @@ bool test_service_importexport::writeMismatchedMlDsa(const QString &name)
 	EVP_PKEY_free(a);
 	EVP_PKEY_free(b);
 	if (!ok)
-		return false;
+		return nullptr;
 	/* both = SEQUENCE { OCTET STRING seed, OCTET STRING expandedKey } */
 	QByteArray inner;
 	inner.append("\x04\x20", 2).append((const char *)seed, sizeof seed);
@@ -1734,15 +1739,50 @@ bool test_service_importexport::writeMismatchedMlDsa(const QString &name)
 	PKCS8_PRIV_KEY_INFO *p8 = PKCS8_PRIV_KEY_INFO_new();
 	ok = p8 && data && PKCS8_pkey_set0(p8, OBJ_nid2obj(NID_ML_DSA_44), 0,
 				V_ASN1_UNDEF, nullptr, data, both.size());
-	if (!ok)
+	if (!ok) {
 		OPENSSL_free(data);
-	BIO *b2 = ok ? BIO_new_file(QFile::encodeName(name).constData(), "w") :
+		PKCS8_PRIV_KEY_INFO_free(p8);
+		p8 = nullptr;
+	}
+	ign_openssl_error();
+	return p8;
+}
+
+bool test_service_importexport::writeMismatchedMlDsa(const QString &name)
+{
+	PKCS8_PRIV_KEY_INFO *p8 = mismatchedMlDsa();
+	BIO *b = p8 ? BIO_new_file(QFile::encodeName(name).constData(), "w") :
 			nullptr;
-	ok = b2 && PEM_write_bio_PKCS8_PRIV_KEY_INFO(b2, p8);
-	BIO_free(b2);
+	bool ok = b && PEM_write_bio_PKCS8_PRIV_KEY_INFO(b, p8);
+	BIO_free(b);
 	PKCS8_PRIV_KEY_INFO_free(p8);
 	ign_openssl_error();
 	return ok;
+}
+
+void test_service_importexport::loadDump(const QString &name)
+{
+	Database.close();
+	QVERIFY(QFile::remove(dbFile));
+	{
+		QFile dump(QString(SERVICE_TEST_DATA "/") + name);
+		QVERIFY(dump.open(QIODevice::ReadOnly));
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "dump");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		QString statement;
+		while (!dump.atEnd()) {
+			statement += QString::fromUtf8(dump.readLine());
+			if (!statement.trimmed().endsWith(';'))
+				continue;
+			QVERIFY2(q.exec(statement), CCHAR(q.lastError().text()));
+			statement.clear();
+		}
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("dump");
+	openDatabase();
 }
 
 QString test_service_importexport::importError(const QString &name,
@@ -1917,6 +1957,77 @@ void test_service_importexport::fixedKeyFormatsRefused()
 		QCOMPARE(err.code, QString("format_not_applicable"));
 	}
 	QVERIFY(!QFile::exists(file("refused")));
+}
+
+/* A database password change re-encrypts an ML-DSA key without seed
+ * (stored before, data/schema8-bxc3-mldsa.sql) also when openssl.cnf
+ * sets ml-dsa.prefer_seed = no: the seed check belongs to the import,
+ * not to every encryption (review of xca#52). The cnf runs of ctest
+ * call this function too. */
+void test_service_importexport::mlDsaSeedlessPasswordChange()
+{
+	loadDump("schema8-bxc3-mldsa.sql");
+	QList<pki_key *> keys = Store.getAll<pki_key>();
+	QCOMPARE(keys.size(), 2);
+	Passwd pass;
+	pass = "BTD16-new-db-pass";
+	try {
+		Database.model<db_key>()->changeDatabasePassword(pass);
+	} catch (errorEx &err) {
+		QFAIL(qPrintable("password change failed: " + err.getString()));
+	}
+	for (pki_key *key : keys) {
+		EVP_PKEY *pkey = key->decryptKey();
+		QVERIFY(pkey);
+		size_t len = 0;
+		bool seed = EVP_PKEY_get_octet_string_param(pkey,
+			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len;
+		ign_openssl_error();
+		QCOMPARE(seed, key->getIntName() == "fixture-mldsa-seed");
+		QCOMPARE(EVP_PKEY_eq(pkey, key->getPubKey()), 1);
+		EVP_PKEY_free(pkey);
+	}
+}
+
+/* A stored ML-DSA key that decrypts but that OpenSSL refuses (its seed
+ * belongs to another key) is an error naming the key, not a NULL key
+ * that decryptKey() retried 200 times (review of xca#52) */
+void test_service_importexport::mlDsaUndecodableStoredKey()
+{
+	pki_key *key = newKey("ML-DSA-44", "undecodable");
+	QVERIFY(key);
+	QVariant item = key->getSqlItemId();
+
+	PKCS8_PRIV_KEY_INFO *p8 = mismatchedMlDsa();
+	QVERIFY(p8);
+	X509_SIG *sig = PKCS8_encrypt(-1, EVP_aes_256_cbc(), dbPassword,
+			strlen(dbPassword), nullptr, 0, PKCS5_DEFAULT_ITER, p8);
+	PKCS8_PRIV_KEY_INFO_free(p8);
+	QVERIFY(sig);
+	unsigned char *der = nullptr;
+	int len = i2d_X509_SIG(sig, &der);
+	X509_SIG_free(sig);
+	QVERIFY(len > 0);
+	QByteArray b64 = QByteArray((const char *)der, len).toBase64();
+	OPENSSL_free(der);
+	{
+		QSqlQuery q(QSqlDatabase::database());
+		q.prepare("UPDATE private_keys SET private=? WHERE item=?");
+		q.bindValue(0, QString::fromLatin1(b64));
+		q.bindValue(1, item);
+		QVERIFY2(q.exec(), CCHAR(q.lastError().text()));
+	}
+	reopenDatabase();
+	key = Store.getAll<pki_key>()[0];
+	try {
+		EVP_PKEY *pkey = key->decryptKey();
+		EVP_PKEY_free(pkey);
+		QFAIL("decryptKey() returned a key");
+	} catch (errorEx &err) {
+		QVERIFY2(err.getString().contains("'undecodable' in the "
+			"database cannot be read"), CCHAR(err.getString()));
+	}
+	ign_openssl_error();
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

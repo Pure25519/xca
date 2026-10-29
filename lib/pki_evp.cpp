@@ -30,6 +30,8 @@
 #include <QMutex>
 
 static OSSL_LIB_CTX *mlDsaContext(const QString &format);
+static bool mlDsaHasSeed(const EVP_PKEY *pkey);
+static bool opensslDropsSeed();
 
 Passwd pki_evp::passwd;
 
@@ -284,6 +286,18 @@ void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name)
 		EVP_PKEY_free(pkey);
 		throw errorEx(tr("The key from file '%1' is incomplete or inconsistent.").arg(name));
 	}
+	/* A seed that openssl.cnf made the default provider drop on
+	 * reading is an error here, on import, not on every later
+	 * encryption of a key without seed (BTD-16) */
+	if (EVP_PKEY_isPrivKey(pkey) && isMlDsa(keytype::nid(pkey)) &&
+	    !mlDsaHasSeed(pkey) && opensslDropsSeed()) {
+		EVP_PKEY_free(pkey);
+		throw serviceError("openssl_config",
+			tr("The OpenSSL configuration sets ml-dsa.retain_seed or "
+			   "ml-dsa.prefer_seed to no: the seed of the ML-DSA key "
+			   "in '%1' may be lost. Remove the setting to import "
+			   "ML-DSA keys").arg(name));
+	}
 	if (key)
 		EVP_PKEY_free(key);
 	key = pkey;
@@ -505,6 +519,13 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 			pki_ign_openssl_error();
 			throw errorEx(tr("Decryption of private key '%1' failed")
 							.arg(getIntName()));
+		}
+		/* Decrypted, but OpenSSL refuses the key: an error, not a
+		 * NULL that decryptKey() retries and callers use (BTD-16) */
+		if (!priv) {
+			pki_ign_openssl_error();
+			throw errorEx(tr("The private key '%1' in the database "
+				"cannot be read").arg(getIntName()));
 		}
 	} else {
 		pki_ign_openssl_error();
@@ -820,35 +841,33 @@ void pki_evp::encryptKey(const char *password)
 	}
 
 	/* ML-DSA: seed and expanded key, or the expanded key of a key
-	 * imported without seed, whatever openssl.cnf sets for writing;
-	 * a seed that the configuration dropped is an error (BTD-16) */
-	if (isMlDsa(getKeyType())) {
-		bool seed = mlDsaHasSeed(key);
-		if (!seed && opensslDropsSeed())
-			throw serviceError("openssl_config",
-				tr("The OpenSSL configuration sets "
-				   "ml-dsa.retain_seed or ml-dsa.prefer_seed to no: "
-				   "the seed of the ML-DSA key '%1' may be lost. "
-				   "Remove the setting to store ML-DSA keys")
-				.arg(getIntName()));
-		EVP_PKEY *moved = mlDsaMove(key, seed ? "both" : "expanded",
-						getIntName());
-		EVP_PKEY_free(key);
-		key = moved;
-	}
+	 * imported without seed, whatever openssl.cnf sets for writing
+	 * (BTD-16). The copy stays local: key belongs to the caller until
+	 * the encrypted form is complete (setOwnPass() restores it) */
+	EVP_PKEY *moved = nullptr;
+	if (isMlDsa(getKeyType()))
+		moved = mlDsaMove(key, mlDsaHasSeed(key) ? "both" : "expanded",
+					getIntName());
+	EVP_PKEY *write = moved ? moved : key;
 
 	/* Convert private key to DER(PKCS8-aes) */
 	BioByteArray bba;
-	i2d_PKCS8PrivateKey_bio(bba, key, EVP_aes_256_cbc(),
-		ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
-	pki_openssl_error();
+	try {
+		i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
+			ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
+		pki_openssl_error();
+	} catch (...) {
+		EVP_PKEY_free(moved);
+		throw;
+	}
 	encKey = bba;
 
 	/* Replace private key by public key and
 	   have the encrypted private in "encKey"
 	 */
-	EVP_PKEY *pkey1 = priv2pub(key);
+	EVP_PKEY *pkey1 = priv2pub(write);
 	Q_CHECK_PTR(pkey1);
+	EVP_PKEY_free(moved);
 	EVP_PKEY_free(key);
 	key = pkey1;
 	pki_openssl_error();
