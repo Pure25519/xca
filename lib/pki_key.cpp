@@ -328,8 +328,13 @@ QList<int> pki_key::possibleHashNids()
 			break;
 #ifdef EVP_PKEY_ED25519
 		case EVP_PKEY_ED25519:
-			nids << NID_undef;
 #endif
+#ifdef EVP_PKEY_ED448
+		case EVP_PKEY_ED448:
+#endif
+			/* EdDSA signs the message itself, no digest */
+			nids << NID_undef;
+			break;
 #endif
 	}
 	return nids;

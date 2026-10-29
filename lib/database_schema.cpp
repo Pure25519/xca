@@ -379,7 +379,10 @@
 << "DROP TABLE public_keys_old"
 << "CREATE INDEX i_public_keys_item ON public_keys (item)"
 << "CREATE INDEX i_public_keys_hash ON public_keys (hash)"
-// The only type longer than four characters before: Ed25519
+// The only type longer than four characters before: Ed25519. Keys of a
+// type XCA did not know then (Ed448, ML-DSA, SLH-DSA imported before
+// BTD-16) were stored with an empty type and keep it here: SQL cannot
+// tell them apart. XCA itself reads the type from the key.
 << "UPDATE public_keys SET type='ED25519' WHERE type='ED25'"
 << "CREATE VIEW view_public_keys AS SELECT "
 	"items.id, items.name, items.type AS item_type, items.date, "

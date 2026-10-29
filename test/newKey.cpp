@@ -60,7 +60,11 @@ void test_main::newKey()
 	QCOMPARE(dlg->keyLength->isVisible(),false);
 	QCOMPARE(dlg->keySizeLabel->isVisible(),false);
 #endif
-	/* Ed448, ML-DSA and SLH-DSA: offered, neither size nor curve (BTD-16) */
+	/* Ed448, ML-DSA and SLH-DSA: offered, neither size nor curve (BTD-16).
+	 * The hidden size field of a type with size is not theirs: an
+	 * edited RSA size did make "takes no size" of an ML-DSA job */
+	dlg->keyType->setCurrentIndex(0);
+	dlg->keyLength->setEditText("no size");
 	foreach (const keytype t, keytype::types()) {
 		if (!t.fixed())
 			continue;
