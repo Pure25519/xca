@@ -250,7 +250,12 @@ pki_base *db_base::insertPKI(pki_base *pki)
 	}
 	Store.add(pki->getSqlItemId(), pki);
 	inToCont(pki);
-	TransCommit();
+	if (!TransCommit()) {
+		/* rolled back: keeps or deletes (BTD-142) */
+		unstore(pki);
+		delete pki;
+		return NULL;
+	}
 	restart_timer();
 	emit columnsContentChanged();
 	return pki;
@@ -274,7 +279,16 @@ void db_base::removeItem(pki_base *pki)
 	remFromCont(pki);
 	Store.remove(id);
 	delete pki;
-	TransCommit();
+	if (!TransCommit())
+		throw serviceError("database_error",
+			tr("Failed to commit the database transaction"));
+}
+
+void db_base::unstore(pki_base *pki)
+{
+	remFromCont(pki);
+	Store.remove(pki->getSqlItemId());
+	pki->clearSqlItemId();
 }
 
 void db_base::insertChild(pki_base *child, pki_base *parent)

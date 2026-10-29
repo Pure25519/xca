@@ -156,7 +156,10 @@ QSqlError database_model::initSqlDB()
 	if (auditCreated && existing)
 		AuditLog::writeBaseline();
 
-	TransCommit();
+	if (!TransCommit())
+		return QSqlError(QString(), QObject::tr("Failed to commit "
+			"the database schema update"),
+			QSqlError::TransactionError);
 	return QSqlError();
 }
 

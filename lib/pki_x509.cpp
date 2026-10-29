@@ -304,7 +304,8 @@ QString pki_x509::getTaKey()
 		q.exec();
 		qDebug() << "Generated TA key" << this << b.size() << QString::fromLatin1(b.toHex()).left(6);
 	}
-	TransCommit();
+	if (!TransCommit())
+		throw errorEx(tr("The tls-auth key could not be stored"));
 	QString takey(D5 "BEGIN " OVPN_TA_KEY D5 "\n");
 	QString hex(QString::fromLatin1(b.toHex()));
 	for (int i=0; i<16; i++)
@@ -360,9 +361,8 @@ bool pki_x509::importTaKey(const QByteArray &takey)
 		}
 		q.exec();
 	}
-	TransCommit();
 	QSqlError e = q.lastError();
-	if (e.isValid()) {
+	if (!TransCommit() || e.isValid()) {
 		XCA_ERROR(tr("Failed to import tls-auth key"));
 		return false;
 	} else if (existing_takey == data) {

@@ -161,15 +161,19 @@ void settings::set(QString key, QString value)
 	if (!TransBegin())
 		return;
 
-	if (db_keys.contains(key)) {
-		SQL_PREPARE(q, "UPDATE settings SET value=? WHERE key_=?");
-	} else {
+	bool insert = !db_keys.contains(key);
+	if (insert) {
 		SQL_PREPARE(q, "INSERT INTO settings (value, key_) VALUES (?,?)");
-		db_keys << key;
+	} else {
+		SQL_PREPARE(q, "UPDATE settings SET value=? WHERE key_=?");
 	}
 	q.bindValue(0, value);
 	q.bindValue(1, key);
 	q.exec();
+	/* not stored (finish() showed why): memory keeps the stored value */
+	if (!TransCommit())
+		return;
+	if (insert)
+		db_keys << key;
 	setAction(origkey, value);
-	TransCommit();
 }

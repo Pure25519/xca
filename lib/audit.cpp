@@ -495,7 +495,9 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 	AuditEntry e = makeEntry(ctx, headEntry(), action, objectType,
 			objectId, params.getValues(), result, errorCode);
 	writeEntry(e);
-	TransCommit();
+	if (!TransCommit())
+		throw errorEx(QObject::tr("Database error: %1")
+			.arg("the audit entry was not committed"));
 	return e;
 }
 
@@ -799,7 +801,9 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	writeEntry(e);
 	if (rotate && !first)
 		AuditKey::retire(key);
-	TransCommit();
+	if (!TransCommit())
+		throw errorEx(QObject::tr("Database error: %1")
+			.arg("the audit checkpoint was not committed"));
 	return e;
 }
 
@@ -888,7 +892,9 @@ void AuditLog::writeBaseline()
 			p.getValues().value("serial").toString(), p);
 	insertEntry(ctx, actionInit, "database", QString(),
 		AuditParams().set("count", (qint64)rows.size()));
-	TransCommit();
+	if (!TransCommit())
+		throw errorEx(QObject::tr("Database error: %1")
+			.arg("the audit baseline was not committed"));
 }
 
 /* RFC 3339 of a date in the revocations table; empty if undefined */

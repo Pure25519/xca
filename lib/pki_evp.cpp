@@ -80,10 +80,8 @@ bool pki_evp::sqlUpdatePrivateKey()
 	encKey.fill(0);
 	encKey.clear();
 
-	if (!q.lastError().isValid() && q.numRowsAffected() == 1) {
-		TransCommit();
-		return true;
-	}
+	if (!q.lastError().isValid() && q.numRowsAffected() == 1)
+		return TransCommit();
 	return false;
 }
 

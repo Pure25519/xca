@@ -90,6 +90,9 @@ class db_base: public QAbstractItemModel
 		virtual void updateHeaders();
 		virtual ~db_base();
 		virtual pki_base *insertPKI(pki_base *pki);
+		/* Takes an object whose insert was rolled back out of the
+		 * views and the store again; it loses its id (BTD-142) */
+		void unstore(pki_base *pki);
 		pki_base *getByName(QString desc);
 		pki_base *getByReference(pki_base *refpki);
 		virtual void loadContainer();
