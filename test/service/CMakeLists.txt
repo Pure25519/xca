@@ -72,6 +72,13 @@ add_test(NAME test_cli_missing_password
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
+# xca --no-gui --interactive without a terminal: a password error (BTD-145)
+add_test(NAME test_cli_interactive_no_tty
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_interactive_no_tty
+		-P ${SERVICE_TEST_DIR}/cli_interactive_no_tty.cmake)
+set_tests_properties(test_cli_interactive_no_tty PROPERTIES LABELS service)
+
 # xca --no-gui answers questions only with --yes or --confirm (BTD-71)
 add_test(NAME test_cli_confirmations
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
