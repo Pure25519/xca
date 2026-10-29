@@ -305,7 +305,11 @@ class AuditLog
 	 * The sequence number is the primary key, so two writers that read
 	 * the same predecessor cannot fork the chain: the second insert fails.
 	 * Throws errorEx on a database error. A checkpoint that is due
-	 * follows the entry in the same transaction. */
+	 * follows the entry in the same transaction. It never asks for the
+	 * password; when it fails before its first write (no password, no
+	 * usable key) it is skipped with a warning and the next append()
+	 * tries again, a database error while it writes is thrown, because
+	 * the rollback includes the caller's transaction (BTD-111). */
 	static AuditEntry append(const ServiceContext &ctx,
 			const QString &action, const QString &objectType,
 			const QString &objectId,

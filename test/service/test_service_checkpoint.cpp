@@ -6,6 +6,8 @@
  * the openssl program, and key rotation. Tampered checkpoint structures
  * (BTD-110): removed checkpoints and keys, a checkpoint that does not
  * sign its predecessor, changed checkpoint metadata, a missing key.
+ * A failing automatic checkpoint never takes the caller's change with
+ * it, and never asks for the password (BTD-111).
  */
 
 #include <QDir>
@@ -83,6 +85,7 @@ class test_service_checkpoint : public ServiceTestCase
 	static QString signature(EVP_PKEY *pkey, const QVariantMap &params);
 	static QString errorCode(std::function<void()> call);
 	QString writeFile(const QString &name, const QByteArray &data);
+	QString keyAtCheckpoint(int n, const QString &name);
 #ifdef OPENSSL_PROGRAM
 	QByteArray openssl(const QStringList &args, int *exitCode,
 			const QByteArray &input = QByteArray());
@@ -113,6 +116,10 @@ class test_service_checkpoint : public ServiceTestCase
 	void exportWithoutPassword();
 	void exportWithWrongPassword();
 	void noPasswordKeepsEntry();
+	void checkpointFailureAfterWrite();
+	void checkpointDatabaseErrorReachesCaller();
+	void unusableKeyKeepsChange();
+	void automaticCheckpointNeverAsks();
 	void neverSignsBrokenTail();
 	void keyRotation();
 	void passwordChange();
@@ -312,6 +319,117 @@ QString test_service_checkpoint::writeFile(const QString &name,
 	if (f.open(QIODevice::WriteOnly))
 		f.write(data);
 	return path;
+}
+
+/* Calls db_key::newKey() so that its audit entry is entry n of the chain
+ * and triggers the automatic checkpoint (interval n) */
+QString test_service_checkpoint::keyAtCheckpoint(int n, const QString &name)
+{
+	Settings["audit_checkpoint_interval"] = n;
+	appendSample(n - 1);
+	return errorCode([&]() {
+		Database.model<db_key>()->newKey(ctx,
+				keyjob("EC:prime256v1"), name);
+	});
+}
+
+void test_service_checkpoint::checkpointFailureAfterWrite()
+{
+	/* Fault injection: the key announced by the first checkpoint loses
+	 * its private part as soon as the announcement is written, so the
+	 * signature fails after the checkpoint's first write. On dfa29716
+	 * that serviceError rolled back the nested transaction, append()
+	 * swallowed it and newKey() returned the key: success with neither
+	 * the key nor its entry in the database (BTD-111). */
+	sql(QString("CREATE TRIGGER fault AFTER INSERT ON audit_log "
+		"WHEN NEW.action='%1' BEGIN UPDATE audit_keys SET private=NULL; "
+		"END").arg(AuditLog::actionKeyCreate));
+	QCOMPARE(keyAtCheckpoint(3, "victim"), QString());
+
+	reopenDatabase();
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
+			.toInt(), 1);
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 5);
+	QCOMPARE(list[2].action, QString("key.generate"));
+	QCOMPARE(list[2].objectType, QString("key"));
+	QCOMPARE(list[4].action, QString(AuditLog::actionCheckpoint));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+}
+
+void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
+{
+	/* A database error while the checkpoint writes rolls back the
+	 * caller's transaction with it: the caller must see the failure */
+	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
+		"SELECT RAISE(ABORT, 'injected'); END");
+	QString code = keyAtCheckpoint(3, "victim");
+	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
+	QVERIFY2(code.contains("injected"), CCHAR(code));
+
+	reopenDatabase();
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
+			.toInt(), 0);
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 0);
+	/* the failure entry that newKey() appends after the rollback */
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 3);
+	QCOMPARE(list[2].result, QString("failure"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+void test_service_checkpoint::unusableKeyKeepsChange()
+{
+	/* An audit key that no longer decrypts: the automatic checkpoint is
+	 * skipped before it writes, the key and its entry are stored, the
+	 * next append tries again. On dfa29716 the call failed. */
+	Settings["audit_checkpoint_interval"] = 3;
+	appendSample(3);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	sql("UPDATE audit_keys SET private='AAAA'");
+	QCOMPARE(keyAtCheckpoint(4, "victim"), QString());
+
+	reopenDatabase();
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
+			.toInt(), 1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	QCOMPARE(AuditLog::entries().size(), 9);
+	/* An explicit checkpoint reports it */
+	QVERIFY(errorCode([&]() { AuditLog::checkpoint(ctx); })
+			.contains("decrypt"));
+}
+
+void test_service_checkpoint::automaticCheckpointNeverAsks()
+{
+	/* Database open without its password, e.g. the unlock dialog
+	 * cancelled: the automatic checkpoints do not ask (any prompt is a
+	 * violation of the strict dialog); explicit ones still do */
+	Settings["audit_checkpoint_interval"] = 2;
+	pki_evp::passwd.cleanse();
+	appendSample(5);
+	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
+	QCOMPARE(AuditLog::entries().size(), 5);
+
+	pwdialog->expect("", pw_cancel);
+	QCOMPARE(errorCode([&]() { AuditLog::checkpoint(ctx); }),
+		QString("audit_key_unavailable"));
+	pwdialog->expect("", pw_cancel);
+	qint64 unsignedEntries = -1;
+	AuditLog::exportJsonLines(ctx, &unsignedEntries);
+	QCOMPARE(unsignedEntries, qint64(5));
+
+	/* Explicit with the password: 5 unsigned entries are more than
+	 * interval + 1, so only the adoption signs them (BTD-110) */
+	pwdialog->expect(dbPassword);
+	QCOMPARE(errorCode([&]() { AuditLog::checkpoint(ctx); }),
+		QString("audit_checkpoint_missing"));
+	pwdialog->expect(dbPassword);
+	AuditLog::adoptUnanchored(ctx);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.adoptedEntries, qint64(5));
 }
 
 void test_service_checkpoint::checkpointEveryN()
@@ -610,8 +728,6 @@ void test_service_checkpoint::unsignedTailLimit()
 	 * checkpoints are missing */
 	Settings["audit_checkpoint_interval"] = 3;
 	pki_evp::passwd.cleanse();
-	PwDialogHeadless *headless = new PwDialogHeadless();
-	pwdialog->delegateTo(headless);
 	appendSample(4);
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY2(r.ok(), r.toJson().constData());
@@ -625,10 +741,9 @@ void test_service_checkpoint::unsignedTailLimit()
 	QCOMPARE(r.failedCheckpointSeq, qint64(0));
 	QCOMPARE(r.unanchoredEntries, qint64(5));
 
-	/* With the password the next append does not sign so long a tail
-	 * on its own, the explicit adoption does (review of #27) */
-	headless->setSource(pass_info::DatabasePassword,
-				QString("pass:") + dbPassword);
+	/* Unlocked, the next append does not sign so long a tail on its
+	 * own, the explicit adoption does (review of #27) */
+	pki_evp::passwd = dbPassword;
 	appendSample(1);
 	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
 	AuditLog::adoptUnanchored(ctx);
@@ -1040,8 +1155,7 @@ void test_service_checkpoint::noPasswordKeepsEntry()
 	pki_evp::passwd.cleanse();
 
 	/* The checkpoint is due but cannot be signed: the entry and the
-	 * caller's transaction stay */
-	pwdialog->expect("", pw_cancel);
+	 * caller's transaction stay. No password prompt (BTD-111) */
 	{
 		Transaction;
 		QVERIFY(TransBegin());

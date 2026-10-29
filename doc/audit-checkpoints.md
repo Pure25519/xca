@@ -28,7 +28,10 @@ re-encrypts the audit key (`MainWindow::changeDbPass`).
 
 Without the database password (`xca --no-gui` without `--password`, or the unlock dialog
 cancelled) no automatic checkpoint is written, the entry itself is, and the next entry tries
-again. Entries after a change that does not chain are never signed (`audit_chain_broken`).
+again. Automatic checkpoints never ask for the password; an explicit checkpoint, a rotation and
+`--audit-export` do. An automatic checkpoint prepares everything that can fail (password, key
+generation, signature) before its first write, so such a failure keeps the caller's change; a
+database error while it writes fails the caller's operation (BTD-111). Entries after a change that does not chain are never signed (`audit_chain_broken`).
 Once the chain announced a key, a checkpoint without a usable current key (row deleted, retired
 without successor, private part gone) fails with `audit_key_missing` and creates no new key
 (BTD-110).
