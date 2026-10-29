@@ -40,9 +40,11 @@
 #include "lib/db_x509req.h"
 #include "lib/entropy.h"
 #include "lib/exception.h"
+#include "lib/importexport.h"
 #include "lib/issuance.h"
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_export.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
 #include "lib/request.h"
@@ -118,6 +120,8 @@ class test_service_checkpoint : public ServiceTestCase
 	void noPasswordKeepsEntry();
 	void checkpointFailureAfterWrite();
 	void checkpointDatabaseErrorReachesCaller();
+	void failureEntryKeepsErrorCode();
+	void exportCheckpointWriteFails();
 	void unusableKeyKeepsChange();
 	void automaticCheckpointNeverAsks();
 	void neverSignsBrokenTail();
@@ -363,10 +367,11 @@ void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
 	/* A database error while the checkpoint writes rolls back the
 	 * caller's transaction with it: the caller must see the failure */
 	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
-		"SELECT RAISE(ABORT, 'injected'); END");
+		"SELECT RAISE(ABORT, 'BTD-111 checkpoint write'); END");
 	QString code = keyAtCheckpoint(3, "victim");
 	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
-	QVERIFY2(code.contains("injected"), CCHAR(code));
+	/* the checkpoint's error, not one of newKey() (BTD-143) */
+	QVERIFY2(code.contains("BTD-111 checkpoint write"), CCHAR(code));
 	/* nor in memory: on 9121ddcd the key stayed in store and view
 	 * with the id of its rolled-back row (BTD-130) */
 	for (pki_key *key : Store.getAll<pki_key>())
@@ -382,6 +387,64 @@ void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
 	QList<AuditEntry> list = AuditLog::entries();
 	QCOMPARE(list.size(), 3);
 	QCOMPARE(list[2].result, QString("failure"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* The failure entry of a service function is appended after the
+ * rollback, outside any transaction, and its checkpoint fails while
+ * writing. On 9121ddcd append() threw that error anyway, and the caller
+ * got "errorEx" instead of the function's own code (BTD-143). The entry
+ * is committed; the next entry tries the checkpoint again. */
+void test_service_checkpoint::failureEntryKeepsErrorCode()
+{
+	Settings["audit_checkpoint_interval"] = 3;
+	appendSample(2);
+	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-143 checkpoint write'); END");
+	QString code = errorCode([&]() {
+		Database.model<db_key>()->deleteItems(ctx, {});
+	});
+	QCOMPARE(code, QString("nothing_to_delete"));
+
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 3);
+	QCOMPARE(list[2].action, QString("object.delete"));
+	QCOMPARE(list[2].result, QString("failure"));
+	QCOMPARE(list[2].errorCode, QString("nothing_to_delete"));
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 0);
+	QVERIFY(AuditLog::verify().ok());
+
+	sql("DROP TRIGGER fault");
+	appendSample(1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+}
+
+/* An export appends its entries inside its own transaction, before the
+ * file is written (BTD-114). A checkpoint that fails while writing rolls
+ * that transaction back: the export fails, the file is not written, the
+ * failure entry is kept (the BTD-111 rule, unchanged by BTD-143). */
+void test_service_checkpoint::exportCheckpointWriteFails()
+{
+	pki_key *key = Database.model<db_key>()->newKey(ctx,
+				keyjob("EC:prime256v1"), "BTD-143 key");
+	QVERIFY(key);
+	Settings["audit_checkpoint_interval"] =
+		(int)AuditLog::entries().size() + 1;
+	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-143 checkpoint write'); END");
+	ExportSpec spec;
+	spec.items << key;
+	spec.format = pki_export::by_id(19);
+	spec.fileName = dir.filePath("btd143.pem");
+	QString code = errorCode([&]() {
+		Database.model<db_key>()->exportItems(ctx, spec);
+	});
+	QVERIFY2(code.contains("BTD-143 checkpoint write"), CCHAR(code));
+	/* neither the file nor a temporary file of QSaveFile */
+	QCOMPARE(QDir(dir.path()).entryList({ "btd143.pem*" },
+		QDir::Files | QDir::Hidden).size(), 0);
+	QCOMPARE(byAction("object.export").size(), 1);
+	QCOMPARE(byAction("object.export")[0].result, QString("failure"));
 	QVERIFY(AuditLog::verify().ok());
 }
 

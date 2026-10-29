@@ -31,7 +31,10 @@ cancelled) no automatic checkpoint is written, the entry itself is, and the next
 again. Automatic checkpoints never ask for the password; an explicit checkpoint, a rotation and
 `--audit-export` do. An automatic checkpoint prepares everything that can fail (password, key
 generation, signature) before its first write, so such a failure keeps the caller's change; a
-database error while it writes fails the caller's operation (BTD-111). Entries after a change that does not chain are never signed (`audit_chain_broken`).
+database error while it writes fails the caller's operation (BTD-111) when the entry belongs to
+the caller's transaction. An entry outside any transaction, such as the failure entry a service
+function appends after its rollback, is already committed: the checkpoint failure is only logged,
+the caller keeps its own error code, and the next entry tries again (BTD-143). Entries after a change that does not chain are never signed (`audit_chain_broken`).
 Once the chain announced a key, a checkpoint without a usable current key (row deleted, retired
 without successor, private part gone) fails with `audit_key_missing` and creates no new key
 (BTD-110).
