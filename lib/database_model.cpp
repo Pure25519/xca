@@ -218,6 +218,13 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		}
 	} while (1);
 
+	/* A failed schema update stops the open (BTD-142) */
+	auto initSchema = [this]() {
+		QSqlError e = initSqlDB();
+		if (e.isValid())
+			throw errorEx(tr("Failed to update the database schema: %1")
+				.arg(e.text()));
+	};
 	try {
 		Entropy::seed_rng();
 		/* An existing database is unlocked before the schema upgrade
@@ -226,14 +233,14 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		 * new password can be stored. (BTD-117) */
 		bool existing = XSqlQuery::schemaVersion() > 0;
 		if (!existing)
-			initSqlDB();
+			initSchema();
 		result = initPass(dbName, Settings["pwhash"]);
 		if (result == pw_exit)
 			throw pw_exit;
 		if (result != pw_ok && Settings["pwhash"].empty())
 			throw open_abort;
 		if (existing)
-			initSqlDB();
+			initSchema();
 	} catch (...) {
 		/* No destructor runs for a failed constructor: close the
 		 * connection here, or the next open() inherits its state */
