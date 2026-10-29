@@ -55,6 +55,10 @@ class test_service_csr_acceptance : public ServiceTestCase
 	QByteArray opensslCsr(const QStringList &args);
 	static QString extText(pki_x509 *cert, int nid);
 	static QByteArray extDer(const X509_EXTENSION *ext);
+	/* A CSR built with the OpenSSL API, for what openssl req refuses
+	 * to write: the subject and extensions as given, P-256, SHA-256 */
+	static QByteArray apiCsr(X509_NAME *subject,
+				STACK_OF(X509_EXTENSION) *exts);
 
   private slots:
 	void corpusIssued_data();
@@ -69,6 +73,13 @@ class test_service_csr_acceptance : public ServiceTestCase
 	void registeredUri();
 	void forbiddenCharacters();
 	void missingOrganization();
+	void sanRulesOfProfile_data();
+	void sanRulesOfProfile();
+	void sanCriticalityFromProfile();
+	void duplicateAndMalformedExtensions();
+	void pssSha1();
+	void addedOrganizationChecked();
+	void sha1IssuanceHashRefused();
 };
 
 pki_x509 *test_service_csr_acceptance::issuingCa(const QString &keyJob)
@@ -140,10 +151,23 @@ IssuanceSpec test_service_csr_acceptance::profileSpec(const QJsonObject &g,
 	spec.csrPolicy.profile = true;
 	spec.csrPolicy.csrSha1 = CsrPolicy::sha1_accept_with_warning;
 	spec.csrPolicy.keyCertSignRequest = CsrPolicy::keycertsign_override;
+	/* no SAN in the golden file: the profile allows none */
+	spec.csrPolicy.sanCounts[GEN_DNS] = qMakePair(0, 0);
+	spec.csrPolicy.sanCounts[GEN_IPADD] = qMakePair(0, 0);
 	foreach(QJsonValue v, g["extensions"].toArray()) {
 		QJsonObject e = v.toObject();
 		QString name = e["name"].toString();
 		bool critical = e["critical"].toBool();
+		if (name == "subjectAltName") {
+			QJsonObject san = e["value"].toObject();
+			for (int type : { GEN_DNS, GEN_IPADD }) {
+				QJsonObject c = san[type == GEN_DNS ? "dns" : "ip"]
+						.toObject();
+				spec.csrPolicy.sanCounts[type] = qMakePair(
+					c["min"].toInt(), c["max"].toInt());
+			}
+			spec.csrPolicy.sanCritical = critical;
+		}
 		if (name == "basicConstraints") {
 			spec.extensions.basicCA = ExtensionSpec::bc_not_ca;
 			spec.extensions.basicCritical = critical;
@@ -617,6 +641,234 @@ void test_service_csr_acceptance::missingOrganization()
 	QCOMPARE(withO->getSubject().oneLine(),
 		QString("C = DE, CN = plc14, O = BxC"));
 #endif
+}
+
+QByteArray test_service_csr_acceptance::apiCsr(X509_NAME *subject,
+				STACK_OF(X509_EXTENSION) *exts)
+{
+	EVP_PKEY *key = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
+	X509_REQ *req = X509_REQ_new();
+	X509_REQ_set_version(req, X509_REQ_VERSION_1);
+	X509_REQ_set_subject_name(req, subject);
+	X509_REQ_set_pubkey(req, key);
+	if (exts)
+		X509_REQ_add_extensions(req, exts);
+	X509_REQ_sign(req, key, EVP_sha256());
+	unsigned char *der = nullptr;
+	int len = i2d_X509_REQ(req, &der);
+	QByteArray out(len > 0 ? (const char *)der : "", qMax(len, 0));
+	OPENSSL_free(der);
+	X509_REQ_free(req);
+	EVP_PKEY_free(key);
+	return out;
+}
+
+/* mr-processor review of xca#44, blocker 2: under a profile the CSR SAN
+ * carries only the name types and counts of the profile, no wildcard,
+ * one URI at most */
+void test_service_csr_acceptance::sanRulesOfProfile_data()
+{
+	QTest::addColumn<QString>("profile");
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("uri");
+	QTest::addColumn<int>("dnsOrIpMin");
+	QTest::addColumn<QString>("code");
+
+	QString web = "tls-server-web.rsa-2048", opc = "opcua-server.rsa-2048";
+	QTest::newRow("web, one name") << web << "DNS:a.example" << "" << 1 << "";
+	QTest::newRow("web, two names") << web << "DNS:a.example,DNS:b.example"
+		<< "" << 0 << "csr_san_count";
+	QTest::newRow("otherName") << web << "otherName:1.2.3.4;UTF8:x,DNS:a.example"
+		<< "" << 0 << "csr_san_type_not_allowed";
+	QTest::newRow("e-mail") << web << "email:a@b.example,DNS:a.example"
+		<< "" << 0 << "csr_san_type_not_allowed";
+	QTest::newRow("dirName") << web << "dirName:dir,DNS:a.example"
+		<< "" << 0 << "csr_san_type_not_allowed";
+	QTest::newRow("wildcard") << web << "DNS:*.example.com" << "" << 0
+		<< "csr_san_wildcard";
+	QTest::newRow("OPC, URI and name") << opc << "URI:urn:x:plc,DNS:plc.example"
+		<< "urn:x:plc" << 1 << "";
+	QTest::newRow("OPC, URI twice") << opc
+		<< "URI:urn:x:plc,URI:urn:x:plc,DNS:plc.example" << "urn:x:plc" << 1
+		<< "csr_uri_duplicate";
+	QTest::newRow("OPC, no name or address") << opc << "URI:urn:x:plc"
+		<< "urn:x:plc" << 1 << "csr_san_count";
+	QTest::newRow("OPC, five names") << opc
+		<< "URI:urn:x:plc,DNS:a.x,DNS:b.x,DNS:c.x,DNS:d.x,DNS:e.x"
+		<< "urn:x:plc" << 1 << "csr_san_count";
+}
+
+void test_service_csr_acceptance::sanRulesOfProfile()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, profile);
+	QFETCH(QString, san);
+	QFETCH(QString, uri);
+	QFETCH(int, dnsOrIpMin);
+	QFETCH(QString, code);
+	pki_x509 *ca = issuingCa("RSA:3072");
+	QVERIFY(ca);
+	QFile cnf(dir.filePath("dir.cnf"));
+	QVERIFY(cnf.open(QIODevice::WriteOnly));
+	cnf.write("[req]\ndistinguished_name=dn\n[dn]\n[dir]\nCN=other\n");
+	cnf.close();
+	QByteArray der = opensslCsr({ "-newkey", "rsa:2048", "-config",
+		cnf.fileName(), "-subj", "/C=DE/O=BxC/CN=dev8",
+		"-addext", "subjectAltName=" + san });
+	QVERIFY(!der.isEmpty());
+	pki_x509req *req = loadCsr("dev8", der);
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(golden(profile), req, ca);
+	spec.csrPolicy.registeredUri = uri;
+	spec.csrPolicy.dnsOrIpMin = dnsOrIpMin;
+	if (code.isEmpty())
+		QVERIFY(issue(spec));
+	else
+		expectRejected(spec, code);
+#endif
+}
+
+/* The SAN keeps the device's bytes, but the profile decides whether it
+ * is critical */
+void test_service_csr_acceptance::sanCriticalityFromProfile()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = issuingCa("RSA:3072");
+	QByteArray der = opensslCsr({ "-newkey", "rsa:2048",
+		"-subj", "/C=DE/O=BxC/CN=dev9",
+		"-addext", "subjectAltName=critical,DNS:dev9.example" });
+	pki_x509req *req = loadCsr("dev9", der);
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(golden("tls-server-web.rsa-2048"), req, ca);
+	QVERIFY(!spec.csrPolicy.sanCritical);
+	pki_x509 *cert = issue(spec);
+	QVERIFY(cert);
+	QCOMPARE(extText(cert, NID_subject_alt_name), QString("DNS:dev9.example"));
+	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req->getReq());
+	QByteArray asked;
+	for (int i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
+		X509_EXTENSION *e = sk_X509_EXTENSION_value(exts, i);
+		if (OBJ_obj2nid(X509_EXTENSION_get_object(e)) == NID_subject_alt_name)
+			asked = extDer(e);
+	}
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	X509 *x = cert->getCert();
+	QCOMPARE(extDer(X509_get_ext(x, X509_get_ext_by_NID(x,
+			NID_subject_alt_name, -1))), asked);
+#endif
+}
+
+/* Blocker 1: a CSR with an extension twice or a SAN that does not decode
+ * is refused, with or without a profile, and the failure entry names
+ * the CSR's signature algorithm */
+void test_service_csr_acceptance::duplicateAndMalformedExtensions()
+{
+	pki_x509 *ca = issuingCa("RSA:3072");
+	X509_NAME *name = X509_NAME_new();
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+			(const unsigned char *)"dev10", -1, -1, 0);
+	STACK_OF(X509_EXTENSION) *twice = sk_X509_EXTENSION_new_null();
+	for (const char *v : { "URI:urn:x:dev10", "URI:urn:x:other" }) {
+		X509_EXTENSION *e = X509V3_EXT_conf_nid(nullptr, nullptr,
+				NID_subject_alt_name, v);
+		QVERIFY(e);
+		sk_X509_EXTENSION_push(twice, e);
+	}
+	QByteArray dup = apiCsr(name, twice);
+	sk_X509_EXTENSION_pop_free(twice, X509_EXTENSION_free);
+
+	ASN1_OCTET_STRING *garbage = ASN1_OCTET_STRING_new();
+	ASN1_OCTET_STRING_set(garbage, (const unsigned char *)"\x30\x05\x82", 3);
+	STACK_OF(X509_EXTENSION) *broken = sk_X509_EXTENSION_new_null();
+	sk_X509_EXTENSION_push(broken, X509_EXTENSION_create_by_NID(nullptr,
+			NID_subject_alt_name, 0, garbage));
+	ASN1_OCTET_STRING_free(garbage);
+	QByteArray bad = apiCsr(name, broken);
+	sk_X509_EXTENSION_pop_free(broken, X509_EXTENSION_free);
+	X509_NAME_free(name);
+	QVERIFY(!dup.isEmpty() && !bad.isEmpty());
+
+	QJsonObject g = golden("opcua-server.rsa-2048");
+	pki_x509req *req = loadCsr("dev10-dup", dup);
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(g, req, ca);
+	spec.csrPolicy.registeredUri = "urn:x:dev10";
+	expectRejected(spec, "csr_duplicate_extension");
+	QCOMPARE(AuditLog::entries().last().params.value(
+		"csr_signature_algorithm").toString(), QString("ecdsa-with-SHA256"));
+	IssuanceSpec plain = spec;
+	plain.csrPolicy = CsrPolicy();
+	expectRejected(plain, "csr_duplicate_extension");
+
+	pki_x509req *malformed = loadCsr("dev10-bad", bad);
+	QVERIFY(malformed);
+	spec = profileSpec(g, malformed, ca);
+	spec.csrPolicy.registeredUri = "urn:x:dev10";
+	expectRejected(spec, "csr_san_invalid");
+}
+
+/* MINOR 3: RSASSA-PSS names its hash in the parameters; SHA-1 there is
+ * SHA-1 for the policy */
+void test_service_csr_acceptance::pssSha1()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = issuingCa("RSA:3072");
+	QByteArray der = opensslCsr({ "-newkey", "rsa:2048", "-sha1",
+		"-sigopt", "rsa_padding_mode:pss",
+		"-subj", "/C=DE/O=BxC/CN=dev11",
+		"-addext", "subjectAltName=URI:urn:x:dev11,DNS:dev11.example" });
+	QVERIFY(!der.isEmpty());
+	pki_x509req *req = loadCsr("dev11", der);
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(golden("opcua-server.rsa-2048"), req, ca);
+	spec.csrPolicy.registeredUri = "urn:x:dev11";
+	spec.csrPolicy.csrSha1 = CsrPolicy::sha1_reject;
+	expectRejected(spec, "csr_sha1_rejected");
+	spec.csrPolicy.csrSha1 = CsrPolicy::sha1_accept_with_warning;
+	QVERIFY(issue(spec));
+	QVERIFY(AuditLog::entries().last().params.value("warning").toString()
+		.contains("csr_sha1_accepted"));
+#endif
+}
+
+/* MINOR 5: the O a profile adds is checked like the device's values */
+void test_service_csr_acceptance::addedOrganizationChecked()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = issuingCa("RSA:3072");
+	QByteArray der = opensslCsr({ "-newkey", "rsa:2048",
+		"-subj", "/C=DE/CN=plc15",
+		"-addext", "subjectAltName=URI:urn:SIMATIC:plc15" });
+	pki_x509req *req = loadCsr("plc15", der);
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(golden("opcua-server.rsa-2048"), req, ca);
+	spec.csrPolicy.registeredUri = "urn:SIMATIC:plc15";
+	spec.csrPolicy.dnsOrIpMin = 0;
+	spec.csrPolicy.forbiddenCharacters = "/=";
+	spec.csrPolicy.missingO = "Line 1/2";
+	expectRejected(spec, "csr_subject_forbidden_character");
+#endif
+}
+
+/* MINOR 9: a SHA-1 CSR accepted by the profile is never signed with
+ * SHA-1 itself */
+void test_service_csr_acceptance::sha1IssuanceHashRefused()
+{
+	pki_x509 *ca = issuingCa("RSA:3072");
+	pki_x509req *req = loadCsr("plc12", corpus("plc12_csr_sha1"));
+	QVERIFY(req);
+	IssuanceSpec spec = profileSpec(golden("opcua-server.rsa-2048"), req, ca);
+	spec.csrPolicy.registeredUri = "urn:SIMATIC:plc12";
+	spec.hashAlgo = digest(NID_sha1);
+	expectRejected(spec, "signature_hash_not_allowed");
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_csr_acceptance)

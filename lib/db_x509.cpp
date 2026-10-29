@@ -466,11 +466,12 @@ static x509name subjectOf(const IssuanceSpec &spec)
 	return subject;
 }
 
-/* Under a profile the SAN is the CSR's, in its order and encoding; the
- * registered ApplicationUri is appended when the CSR has none. A dNSName
- * is made from the CN only when a generic profile says so (XCA's
- * DNS:copycn, BTD-167). IssuanceChecks::request() has checked the CSR's
- * URIs. */
+/* Under a profile the SAN is the CSR's, in its order and encoding, with
+ * the profile's criticality; the registered ApplicationUri is appended
+ * when the CSR has none. A dNSName is made from the CN only when a
+ * generic profile says so (XCA's DNS:copycn, BTD-167).
+ * IssuanceChecks::request() has checked the SAN against the profile and
+ * refused a CSR with two extension instances, so ext is the only one. */
 static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 {
 	if (!spec.extensions.subjectAltName.isEmpty())
@@ -518,11 +519,13 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 				sk_GENERAL_NAME_push(names, gn);
 		}
 		X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name, names,
-			ext && X509_EXTENSION_get_critical(ext),
-			X509V3_ADD_DEFAULT);
+			spec.csrPolicy.sanCritical, X509V3_ADD_DEFAULT);
 	} else if (ext) {
-		/* the device's own bytes */
-		X509_add_ext(cert->getCert(), ext, -1);
+		/* the device's own bytes, the profile's criticality */
+		X509_EXTENSION *copy = X509_EXTENSION_dup(ext);
+		X509_EXTENSION_set_critical(copy, spec.csrPolicy.sanCritical);
+		X509_add_ext(cert->getCert(), copy, -1);
+		X509_EXTENSION_free(copy);
 	}
 	GENERAL_NAMES_free(names);
 	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);

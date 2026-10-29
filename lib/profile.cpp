@@ -413,44 +413,43 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 				tr("The profile '%1' needs the registered ApplicationUri").arg(id));
 	}
 	policy.dnsFromCn = san["dns_from_cn"].toBool();
-	int dns = 0, ip = 0, email = 0;
-	if (request) {
-		STACK_OF(X509_EXTENSION) *exts =
-			X509_REQ_get_extensions(request->getReq());
-		GENERAL_NAMES *names = (GENERAL_NAMES *)X509V3_get_d2i(
-				exts, NID_subject_alt_name, nullptr, nullptr);
-		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
-		for (int i = 0; i < sk_GENERAL_NAME_num(names); i++) {
-			int t = sk_GENERAL_NAME_value(names, i)->type;
-			dns += t == GEN_DNS;
-			ip += t == GEN_IPADD;
-			email += t == GEN_EMAIL;
-		}
-		GENERAL_NAMES_free(names);
-	} else {
+	/* a CSR's SAN is checked by IssuanceChecks::request() against these
+	 * rules (BTD-65, mr-processor review of xca#44); the registration's
+	 * SAN of a server-side key is counted here */
+	auto range = [&](const char *type) {
+		QJsonObject c = san[type].toObject();
+		return qMakePair(c["min"].toInt(), c["max"].toInt());
+	};
+	policy.sanCounts[GEN_DNS] = range("dns");
+	policy.sanCounts[GEN_IPADD] = range("ip");
+	/* e-mail addresses only where a generic profile counts them; a
+	 * generic profile (an XCA template) has no wildcard rule */
+	if (family == "generic" && san.contains("email"))
+		policy.sanCounts[GEN_EMAIL] = range("email");
+	policy.sanWildcard = family == "generic";
+	policy.dnsOrIpMin = san["dns_or_ip_min"].toInt();
+	policy.sanCritical = san["critical"].toBool();
+	if (!request) {
 		e.subjectAltName = reg.subjectAltName;
 		if (!policy.registeredUri.isEmpty())
 			e.subjectAltName = "URI:" + policy.registeredUri +
 				(reg.subjectAltName.isEmpty() ? QString() :
 					", " + reg.subjectAltName);
-		dns = reg.subjectAltName.count("DNS:");
-		ip = reg.subjectAltName.count("IP:");
-		email = reg.subjectAltName.count("email:");
+		int dns = reg.subjectAltName.count("DNS:");
+		int ip = reg.subjectAltName.count("IP:");
+		int email = reg.subjectAltName.count("email:");
+		if (dns < range("dns").first || dns > range("dns").second ||
+		    ip < range("ip").first || ip > range("ip").second ||
+		    dns + ip < policy.dnsOrIpMin)
+			throw serviceError("csr_san_count",
+				tr("The profile '%1' does not allow %2 DNS names and %3 IP addresses")
+				.arg(id).arg(dns).arg(ip));
+		if (family == "generic" && (email < range("email").first ||
+					    email > range("email").second))
+			throw serviceError("csr_san_count",
+				tr("The profile '%1' does not allow %2 e-mail addresses")
+				.arg(id).arg(email));
 	}
-	/* e-mail addresses only where a generic profile counts them; the OT
-	 * profiles of schema v1 keep their behaviour */
-	if (family == "generic" &&
-	    (email < san["email"].toObject()["min"].toInt() ||
-	     email > san["email"].toObject()["max"].toInt()))
-		throw serviceError("csr_san_count",
-			tr("The profile '%1' does not allow %2 e-mail addresses")
-			.arg(id).arg(email));
-	if (dns < san["dns"].toObject()["min"].toInt() || dns > san["dns"].toObject()["max"].toInt() ||
-	    ip < san["ip"].toObject()["min"].toInt() || ip > san["ip"].toObject()["max"].toInt() ||
-	    dns + ip < san["dns_or_ip_min"].toInt())
-		throw serviceError("csr_san_count",
-			tr("The profile '%1' does not allow %2 DNS names and %3 IP addresses")
-			.arg(id).arg(dns).arg(ip));
 
 	/* the CSR rules of BTD-65, the chain rules of BTD-55 */
 	policy.csrSha1 = doc["csr_sha1"].toString() == "reject" ?
