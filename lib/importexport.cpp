@@ -13,6 +13,7 @@
 #include "pki_export.h"
 #include "pki_key.h"
 #include "pki_multi.h"
+#include "pki_pkcs12.h"
 #include "pki_temp.h"
 #include "pki_x509.h"
 #include "pki_x509req.h"
@@ -435,6 +436,14 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 					tr("The format '%1' is not possible for the "
 					   "selected items").arg(xport->desc));
 		}
+
+		if (!spec.pkcs12Algorithm.isEmpty() &&
+		    !encAlgo::all_encAlgos.contains(
+				encAlgo(spec.pkcs12Algorithm).getEncAlgoNid()))
+			throw serviceError("invalid_pkcs12_algorithm",
+				tr("Unknown PKCS#12 algorithm '%1'")
+				.arg(spec.pkcs12Algorithm));
+		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
 
 		/* The password, before the database is touched */
 		Passwd pass;

@@ -758,7 +758,7 @@ void db_x509::writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
 		foreach(pki_base *signer, certChain(cert).mid(1))
 			p12.append_item(signer);
 	}
-	encAlgo encAlgo((QString) Settings["pkcs12_enc_algo"]);
+	encAlgo encAlgo = encAlgo::forExport();
 	p12.writePKCS12(file, encAlgo, pass);
 }
 

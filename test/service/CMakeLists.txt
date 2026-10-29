@@ -165,6 +165,13 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Secure export defaults (BTD-52); every export read back with openssl
+ServiceTest(test_service_export_defaults)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_export_defaults PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Templates, rename and delete (BTD-35)
 ServiceTest(test_service_template)
 ServiceTest(test_service_objects)
