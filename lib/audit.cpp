@@ -89,15 +89,15 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
-		"ca_id", "confirmed", "count", "crl_number", "curve",
-		"db_unlock_verified", "dependents", "der_size", "encrypted",
-		"file", "fingerprint", "format", "hash_algo",
-		"invalidity_date", "issuer", "item_id", "key_size",
-		"key_type", "name", "next_update", "not_after", "not_before",
-		"old_name", "on_token", "outcome", "question", "reason",
-		"reason_bit", "requested_not_after", "revocation_date",
-		"revocations", "serial", "subject", "template",
-		"this_update", "validity_capped",
+		"authority_updated", "ca_id", "confirmed", "count",
+		"crl_number", "curve", "db_unlock_verified", "dependents",
+		"der_size", "encrypted", "file", "fingerprint", "format",
+		"hash_algo", "invalidity_date", "issuer", "item_id",
+		"key_size", "key_type", "name", "next_update", "not_after",
+		"not_before", "old_name", "on_token", "outcome", "question",
+		"reason", "reason_bit", "requested_not_after",
+		"revocation_date", "revocations", "serial", "subject",
+		"template", "this_update", "validity_capped",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

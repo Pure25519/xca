@@ -44,6 +44,16 @@ class db_crl: public db_x509name
 		 * the result's i2d().size(). Call it outside a transaction. */
 		pki_crl *newCrl(const ServiceContext &ctx, const crljob &task,
 				QString name = QString());
+		/* A stored CRL of a CA of the database whose CRL number
+		 * exceeds the CA's last one becomes the CA's last CRL:
+		 * authority.crlNo and crlExpire follow it (BTD-49). The
+		 * highest CRL number counts, not the latest nextUpdate, so
+		 * a lower or equal number changes nothing. Updates the
+		 * database only; the caller raises the CA object after the
+		 * commit (pki_x509::setCrlNumber, setCrlExpire). Returns
+		 * whether it did; throws serviceError (database_error).
+		 * Call it inside a transaction. */
+		bool raiseCrlNumber(pki_crl *crl);
 		void writeItems(const QList<pki_base *> &items,
 			const pki_export *xport, QIODevice &file,
 			const Passwd &pass) const;
