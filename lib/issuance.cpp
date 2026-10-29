@@ -16,6 +16,7 @@
 
 #include "BioByteArray.h"
 #include "func_base.h"
+#include "pki_x509.h"
 
 /* Drop the "<token>:copy" entry that only means something in a
  * certificate. splitSanEntries() keeps commas inside single values. */
@@ -225,4 +226,28 @@ extList ExtensionSpec::build(X509V3_CTX *ctx, bool selfSigned,
 		ne += netscapeExts(ctx);
 	ne.delInvalid();
 	return ne;
+}
+
+a1time IssuanceSpec::cappedNotAfter(const a1time &requested,
+			const pki_x509 *signer, bool *capped)
+{
+	a1time end(requested);
+	bool cut = false;
+	QList<const pki_x509 *> seen;
+
+	/* a root is its own signer; seen also stops a broken chain */
+	for (const pki_x509 *ca = signer; ca && !seen.contains(ca);
+	     ca = ca->getSigner()) {
+		seen << ca;
+		a1time caEnd = ca->getNotAfter();
+		if (caEnd.isUndefined() || !caEnd.isValid())
+			continue;
+		if (end.isUndefined() || end > caEnd) {
+			end = caEnd;
+			cut = true;
+		}
+	}
+	if (capped)
+		*capped = cut;
+	return end;
 }

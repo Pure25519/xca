@@ -726,7 +726,8 @@ void NewX509::on_genKeyBut_clicked()
 
 void NewX509::on_certList_currentIndexChanged(int)
 {
-	a1time snb, sna;
+	a1time snb;
+	bool capped;
 	pki_x509 *cert = getSelectedSigner();
 
 	switchHashAlgo();
@@ -736,11 +737,13 @@ void NewX509::on_certList_currentIndexChanged(int)
 
 	pki_temp *templ = caTemplate(cert);
 	snb = cert->getNotBefore();
-	sna = cert->getNotAfter();
 	if (snb > notBefore->getDate())
 		notBefore->setDate(snb);
-	if (sna < notAfter->getDate())
-		notAfter->setDate(sna);
+	/* a signer with the undefined notAfter caps nothing (BTD-51) */
+	a1time end = IssuanceSpec::cappedNotAfter(notAfter->getDate(), cert,
+						&capped);
+	if (capped)
+		notAfter->setDate(end);
 
 	if (templ)
 		templateChanged(templ);
@@ -1388,8 +1391,26 @@ void NewX509::accept()
 				notBefore->setDate(signer->getNotBefore());
 		}
 	}
-	if (signer && notAfter->getDate() > signer->getNotAfter() &&
-				!noWellDefinedExpDate->isChecked()) {
+	/* The issuance caps the end date at the signer chain (BTD-51),
+	 * also an undefined one: say so before */
+	a1time requestedEnd = notAfter->getDate();
+	if (noWellDefinedExpDate->isChecked())
+		requestedEnd.setUndefined();
+	bool capped = false;
+	a1time cappedEnd = IssuanceSpec::cappedNotAfter(requestedEnd, signer,
+							&capped);
+	if (capped && cappedEnd <= notBefore->getDate()) {
+		gotoTab(2);
+		xcaWarningBox msg(this, tr("The signer's validity ends on %1, not after the start of the certificate on %2. The certificate cannot be issued below this signer.")
+			.arg(cappedEnd.toPrettyGMT())
+			.arg(notBefore->getDate().toPrettyGMT()));
+		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
+		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
+		if (msg.exec() == QMessageBox::Close)
+			reject();
+		return;
+	}
+	if (capped) {
 		gotoTab(2);
 		QString text = tr("The certificate will be longer valid than the signer. This is probably not what you want.");
 		xcaWarningBox msg(this, text);
@@ -1408,7 +1429,8 @@ void NewX509::accept()
 			case QMessageBox::Apply:
 				break;
 			case QMessageBox::Yes:
-				notAfter->setDate(signer->getNotAfter());
+				noWellDefinedExpDate->setChecked(false);
+				notAfter->setDate(cappedEnd);
 		}
 	}
 	if (validityBox->isEnabled() &&

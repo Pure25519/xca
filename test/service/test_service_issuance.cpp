@@ -3,7 +3,7 @@
  * Certificate issuance through db_x509::newCert(ctx, IssuanceSpec)
  * (BTD-31): root CA, intermediate CA and an end entity from a CSR,
  * checked with openssl verify; one audit entry per issuance; the serial
- * number rule.
+ * number rule; the end date below the issuer chain (BTD-51).
  */
 
 #include <QDir>
@@ -55,6 +55,10 @@ class test_service_issuance : public ServiceTestCase
 	QString openssl(const QStringList &args, int *exitCode);
 	static QString extText(pki_x509 *cert, int nid);
 	static void checkSerial(const a1int &serial);
+	static QString notAfterText(pki_x509 *cert);
+	static a1time plainTime(const QString &plain);
+	IssuanceSpec validitySpec(const QString &cn, pki_x509 *signer,
+				const QString &notAfter);
 	pki_x509req *csrFromOpenssl(const QString &dir);
 
   private slots:
@@ -63,6 +67,11 @@ class test_service_issuance : public ServiceTestCase
 	void auditOnRejectedSpec();
 	void serials();
 	void forcedDuplicateSerial();
+	void validityUnderIssuer_data();
+	void validityUnderIssuer();
+	void validityCappedByRoot();
+	void validityEndsBeforeStart_data();
+	void validityEndsBeforeStart();
 };
 
 IssuanceSpec test_service_issuance::caSpec(const QString &cn, pki_key *key,
@@ -421,3 +430,219 @@ void test_service_issuance::forcedDuplicateSerial()
 
 XCA_SERVICE_TEST_MAIN(test_service_issuance)
 #include "test_service_issuance.moc"
+
+/* notAfter as encoded in the certificate, as GeneralizedTime: shows the
+ * undefined date 99991231235959Z as it is, unlike a1time */
+QString test_service_issuance::notAfterText(pki_x509 *cert)
+{
+	ASN1_GENERALIZEDTIME *gt = ASN1_TIME_to_generalizedtime(
+			X509_get0_notAfter(cert->getCert()), nullptr);
+	if (!gt)
+		return QString("invalid");
+	QString s = QString::fromLatin1(
+			(const char *)ASN1_STRING_get0_data(gt),
+			ASN1_STRING_get_length(gt));
+	ASN1_GENERALIZEDTIME_free(gt);
+	return s;
+}
+
+/* "unlimited" is the RFC 5280 undefined date */
+a1time test_service_issuance::plainTime(const QString &plain)
+{
+	a1time t;
+	if (plain == "unlimited")
+		t.setUndefined();
+	else
+		t.fromPlain(plain);
+	return t;
+}
+
+IssuanceSpec test_service_issuance::validitySpec(const QString &cn,
+			pki_x509 *signer, const QString &notAfter)
+{
+	pki_key *key = newKey(cn + "-key");
+	IssuanceSpec spec = caSpec(cn, key, signer, 1);
+	spec.extensions.pathLen.clear();
+	spec.notAfter = plainTime(notAfter);
+	return spec;
+}
+
+/* Rule 6 of the certstrap triage (PLAN 8.4): the end date is the
+ * requested one, capped at the issuer's notAfter; an issuer with the
+ * undefined notAfter caps nothing; a cap is reported in the audit entry.
+ * The dates cross 2038 (32-bit time_t), 2049/2050 (UTCTime to
+ * GeneralizedTime) and reach 9998/9999. */
+void test_service_issuance::validityUnderIssuer_data()
+{
+	QTest::addColumn<QString>("issuerEnd");
+	QTest::addColumn<QString>("requested");
+	QTest::addColumn<QString>("expected");
+	QTest::addColumn<bool>("capped");
+
+	const QString unl("unlimited"), und("99991231235959Z");
+
+	QTest::newRow("9999 issuer, after 2038")
+		<< unl << "20380119031408Z" << "20380119031408Z" << false;
+	QTest::newRow("9999 issuer, last UTCTime")
+		<< unl << "20491231235959Z" << "20491231235959Z" << false;
+	QTest::newRow("9999 issuer, first GeneralizedTime")
+		<< unl << "20500101000000Z" << "20500101000000Z" << false;
+	QTest::newRow("9999 issuer, 9998")
+		<< unl << "99981231235959Z" << "99981231235959Z" << false;
+	QTest::newRow("9999 issuer, unlimited")
+		<< unl << unl << und << false;
+	QTest::newRow("finite issuer, earlier")
+		<< "20400101000000Z" << "20300101000000Z"
+		<< "20300101000000Z" << false;
+	QTest::newRow("finite issuer, same")
+		<< "20400101000000Z" << "20400101000000Z"
+		<< "20400101000000Z" << false;
+	QTest::newRow("finite issuer, later")
+		<< "20400101000000Z" << "20500101000000Z"
+		<< "20400101000000Z" << true;
+	QTest::newRow("finite issuer, unlimited")
+		<< "20400101000000Z" << unl << "20400101000000Z" << true;
+}
+
+void test_service_issuance::validityUnderIssuer()
+{
+	QFETCH(QString, issuerEnd);
+	QFETCH(QString, requested);
+	QFETCH(QString, expected);
+	QFETCH(bool, capped);
+
+	pki_x509 *ca = issue(validitySpec("Validity CA", nullptr, issuerEnd));
+	QVERIFY(ca);
+	QCOMPARE(notAfterText(ca), issuerEnd == "unlimited" ?
+			QString("99991231235959Z") : issuerEnd);
+
+	pki_x509 *cert = issue(validitySpec("Validity EE", ca, requested));
+	QVERIFY(cert);
+	QCOMPARE(notAfterText(cert), expected);
+	/* no 1970 and no overflow, also not through a1time */
+	QVERIFY2(cert->getNotAfter().isUndefined() ||
+		cert->getNotAfter().date().year() >= 2030,
+		CCHAR(cert->getNotAfter().toPlain()));
+	QCOMPARE(cert->getNotAfter().toPlain(), expected);
+
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("certificate.issue"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["validity_capped"].toBool(), capped);
+	QCOMPARE(e.params["not_after"].toString(), expected == "99991231235959Z" ?
+		QString() : AuditLog::rfc3339(plainTime(expected)));
+	if (capped) {
+		QVERIFY(e.params.contains("requested_not_after"));
+		QCOMPARE(e.params["requested_not_after"].toString(),
+			requested == "unlimited" ? QString() :
+			AuditLog::rfc3339(plainTime(requested)));
+	} else {
+		QVERIFY(!e.params.contains("requested_not_after"));
+	}
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* The cap follows the chain up to the root: a CA below a finite root
+ * that asks for the undefined date ends with the root, and so does an
+ * end entity below it that asks for more. */
+void test_service_issuance::validityCappedByRoot()
+{
+	pki_x509 *root = issue(validitySpec("Finite Root", nullptr,
+					"20400101000000Z"));
+	QVERIFY(root);
+	pki_x509 *sub = issue(validitySpec("Unlimited Sub", root, "unlimited"));
+	QVERIFY(sub);
+	QCOMPARE(notAfterText(sub), QString("20400101000000Z"));
+	pki_x509 *ee = issue(validitySpec("Below Sub", sub, "20450101000000Z"));
+	QVERIFY(ee);
+	QCOMPARE(notAfterText(ee), QString("20400101000000Z"));
+	QCOMPARE(AuditLog::entries().last().params["validity_capped"].toBool(),
+		true);
+
+	/* Under a 9999 root, an intermediate's finite end caps */
+	pki_x509 *uroot = issue(validitySpec("Unlimited Root", nullptr,
+					"unlimited"));
+	QVERIFY(uroot);
+	pki_x509 *fsub = issue(validitySpec("Finite Sub", uroot,
+					"20350101000000Z"));
+	QVERIFY(fsub);
+	QCOMPARE(notAfterText(fsub), QString("20350101000000Z"));
+	pki_x509 *ee2 = issue(validitySpec("Below Finite Sub", fsub,
+					"unlimited"));
+	QVERIFY(ee2);
+	QCOMPARE(notAfterText(ee2), QString("20350101000000Z"));
+}
+
+/* A cap that leaves no validity window is an error, not a certificate
+ * that ends before (or when) it starts: below an expired issuer chain,
+ * or with a notBefore at or after the CA's end. The rows above keep
+ * notBefore at now below CAs that end later, so the capped end always
+ * came after the start. */
+void test_service_issuance::validityEndsBeforeStart_data()
+{
+	QTest::addColumn<QString>("caStart");
+	QTest::addColumn<QString>("caEnd");
+	QTest::addColumn<QString>("notBefore");   // empty: now
+	QTest::addColumn<QString>("notAfter");
+	QTest::addColumn<bool>("valid");
+
+	QTest::newRow("expired issuer")
+		<< "20000101000000Z" << "20100101000000Z" << QString()
+		<< "20500101000000Z" << false;
+	QTest::newRow("expired issuer, unlimited request")
+		<< "20000101000000Z" << "20100101000000Z" << QString()
+		<< "unlimited" << false;
+	QTest::newRow("notBefore after CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20410101000000Z"
+		<< "20500101000000Z" << false;
+	QTest::newRow("notBefore equal to CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20400101000000Z"
+		<< "20500101000000Z" << false;
+	QTest::newRow("notBefore one second before CA end")
+		<< "20200101000000Z" << "20400101000000Z" << "20391231235959Z"
+		<< "20500101000000Z" << true;
+}
+
+void test_service_issuance::validityEndsBeforeStart()
+{
+	QFETCH(QString, caStart);
+	QFETCH(QString, caEnd);
+	QFETCH(QString, notBefore);
+	QFETCH(QString, notAfter);
+	QFETCH(bool, valid);
+
+	IssuanceSpec caS = validitySpec("Window CA", nullptr, caEnd);
+	caS.notBefore = plainTime(caStart);
+	pki_x509 *ca = issue(caS);
+	QVERIFY(ca);
+	QCOMPARE(notAfterText(ca), caEnd);
+
+	IssuanceSpec spec = validitySpec("Window EE", ca, notAfter);
+	if (!notBefore.isEmpty())
+		spec.notBefore = plainTime(notBefore);
+	int certs = Store.getAll<pki_x509>().size();
+	int before = AuditLog::entries().size();
+
+	if (valid) {
+		pki_x509 *cert = issue(spec);
+		QVERIFY(cert);
+		QCOMPARE(notAfterText(cert), caEnd);
+		QCOMPARE(AuditLog::entries().last().result, QString("success"));
+		return;
+	}
+	try {
+		Database.model<db_x509>()->newCert(ctx, spec);
+		QFAIL("newCert issued a certificate without a validity window");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_validity"));
+	}
+	QCOMPARE(Store.getAll<pki_x509>().size(), certs);
+	QList<AuditEntry> entries = AuditLog::entries();
+	QCOMPARE(entries.size(), before + 1);
+	QCOMPARE(entries.last().action, QString("certificate.issue"));
+	QCOMPARE(entries.last().result, QString("failure"));
+	QCOMPARE(entries.last().errorCode, QString("invalid_validity"));
+	QCOMPARE(entries.last().params["validity_capped"].toBool(), true);
+	QVERIFY(entries.last().objectId.isEmpty());
+	QVERIFY(AuditLog::verify().ok());
+}

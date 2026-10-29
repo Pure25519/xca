@@ -123,6 +123,22 @@ class IssuanceSpec
 	{
 		return signer == nullptr;
 	}
+
+	/* Rule 6 of the certstrap triage (BTD-51): a certificate ends at
+	 * the earliest notAfter of its issuer chain, up to the root, if
+	 * the requested one is later. The undefined notAfter
+	 * (99991231235959Z, kept by a1time as the epoch, so it must never
+	 * be compared as a date) means "no end": it never caps and any
+	 * defined notAfter caps it. *capped tells whether the result
+	 * differs from the request; callers report that, never drop it.
+	 * A capped end at or before notBefore leaves no validity window:
+	 * newCert() rejects it with invalid_validity. */
+	static a1time cappedNotAfter(const a1time &requested,
+				const pki_x509 *signer, bool *capped = nullptr);
+	a1time effectiveNotAfter(bool *capped = nullptr) const
+	{
+		return cappedNotAfter(notAfter, signer, capped);
+	}
 };
 
 #endif

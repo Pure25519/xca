@@ -12,6 +12,7 @@
 #include "lib/base.h"
 #include "lib/db_x509.h"
 #include "lib/func.h"
+#include "lib/issuance.h"
 #include "lib/pki_x509.h"
 #include "widgets/validity.h"
 #include "widgets/XcaWarning.h"
@@ -83,8 +84,11 @@ void CertExtend::accept()
 				notBefore->setDate(signer->getNotBefore());
 		}
 	}
-	if (signer && notAfter->getDate() > signer->getNotAfter() &&
-				!noWellDefinedExpDate->isChecked()) {
+	/* a signer with the undefined notAfter caps nothing (BTD-51) */
+	bool capped = false;
+	a1time cappedEnd = IssuanceSpec::cappedNotAfter(notAfter->getDate(),
+							signer, &capped);
+	if (capped && !noWellDefinedExpDate->isChecked()) {
 		QString text = tr("The certificate will be longer valid than the signer. This is probably not what you want.");
 		xcaWarningBox msg(this, text);
 		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
@@ -102,7 +106,7 @@ void CertExtend::accept()
 			case QMessageBox::Apply:
 				break;
 			case QMessageBox::Yes:
-				notAfter->setDate(signer->getNotAfter());
+				notAfter->setDate(cappedEnd);
 		}
 	}
 	QDialog::accept();

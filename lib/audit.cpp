@@ -93,9 +93,9 @@ const QStringList &AuditParams::allowList()
 		"fingerprint", "format", "hash_algo", "invalidity_date",
 		"issuer", "item_id", "key_size", "key_type", "name",
 		"next_update", "not_after", "not_before", "outcome",
-		"question", "reason", "reason_bit",
+		"question", "reason", "reason_bit", "requested_not_after",
 		"revocation_date", "serial", "subject", "template",
-		"this_update",
+		"this_update", "validity_capped",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
