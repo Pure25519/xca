@@ -4,8 +4,9 @@
  * schemas/profile.schema.json (BTD-64) turned into an IssuanceSpec.
  *
  * The profile decides; the CSR contributes its key, its subject and its
- * SAN only. KU by key type, a fixed EKU, basicConstraints cA=FALSE, SKI
- * and AKI come from the profile, and so do the CSR policy of BTD-65 and
+ * SAN only. KU by key type, a fixed EKU, basicConstraints (cA=FALSE for
+ * opcua and tls; cA and pathLen as a generic profile of schema v1.1 says,
+ * BTD-167), SKI and AKI come from the profile, and so do the CSR policy of BTD-65 and
  * the OPC UA chain rules of BTD-55. A profile is selected by its id (EST
  * label, CMP alias, registration), never by the content of a CSR.
  *
@@ -56,7 +57,7 @@ class Profile
 
   public:
 	QString id{};
-	QString family{};           // opcua or tls
+	QString family{};           // opcua, tls or generic (schema v1.1)
 	QString keySource{};        // csr or server
 
 	/* Throws serviceError invalid_profile naming the field */

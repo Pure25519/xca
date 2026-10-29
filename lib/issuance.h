@@ -134,7 +134,7 @@ class CsrPolicy
 
 	/* A profile decides: the CSR's KU, EKU, basicConstraints, AKI, SKI
 	 * and Netscape extensions never reach the certificate, its SAN is
-	 * taken as it is (order kept), the URI rule below applies */
+	 * taken as it is (order kept), the URI and CN rules below apply */
 	bool profile{};
 	enum sha1 csrSha1{ sha1_accept_with_warning };
 	enum keyCertSign keyCertSignRequest{ keycertsign_reject };
@@ -147,6 +147,9 @@ class CsrPolicy
 	QString missingO{};
 	/* subject.forbidden_characters, e.g. "/=" for S7-1500 V02.09.08 */
 	QString forbiddenCharacters{};
+	/* san.dns_from_cn of a generic profile (XCA DNS:copycn): the CN is
+	 * appended as dNSName unless the SAN has it already */
+	bool dnsFromCn{};
 };
 
 /* The serial number is not part of the spec: it is always random, positive

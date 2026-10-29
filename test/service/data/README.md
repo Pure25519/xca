@@ -84,3 +84,8 @@ The certificate profiles of bxc-pki (`<id>.json`) and their golden expectation f
 `test_service_profiles` (BTD-54) applies every profile and compares with the golden files,
 `test_service_csr_acceptance` (BTD-65) uses the golden files. Regenerate them in bxc-pki and copy
 them again.
+
+`profiles/generic/` holds the generic profiles of profile schema v1.1 (BTD-167: the XCA default
+templates CA, TLS_server, TLS_client, a sub-CA with pathLen 0, code signing, e-mail), copied
+unchanged from the bxc-pki schema examples at the commit named in `generic/PROVENANCE.json`;
+`test_service_profiles` issues one certificate per profile and checks its extensions.

@@ -438,8 +438,9 @@ static x509name subjectOf(const IssuanceSpec &spec)
 
 /* Under a profile the SAN is the CSR's, in its order and encoding; the
  * registered ApplicationUri is appended when the CSR has none. A dNSName
- * is never made from the CN. IssuanceChecks::request() has checked the
- * CSR's URIs. */
+ * is made from the CN only when a generic profile says so (XCA's
+ * DNS:copycn, BTD-167). IssuanceChecks::request() has checked the CSR's
+ * URIs. */
 static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 {
 	if (!spec.extensions.subjectAltName.isEmpty())
@@ -458,14 +459,34 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 	const QString &uri = spec.csrPolicy.registeredUri;
 	GENERAL_NAMES *names = ext ? (GENERAL_NAMES *)X509V3_EXT_d2i(ext) :
 				GENERAL_NAMES_new();
-	bool hasUri = false;
-	for (int i = 0; i < sk_GENERAL_NAME_num(names); i++)
-		hasUri |= sk_GENERAL_NAME_value(names, i)->type == GEN_URI;
-	if (!uri.isEmpty() && !hasUri) {
-		GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr, nullptr,
-				GEN_URI, uri.toUtf8().constData(), 0);
-		if (gn)
-			sk_GENERAL_NAME_push(names, gn);
+	bool hasUri = false, hasCn = false;
+	QString cn;
+	int at = X509_NAME_get_index_by_NID(spec.subject.get0(),
+					NID_commonName, -1);
+	if (spec.csrPolicy.dnsFromCn && at >= 0)
+		cn = spec.subject.getEntry(at);
+	for (int i = 0; i < sk_GENERAL_NAME_num(names); i++) {
+		GENERAL_NAME *gn = sk_GENERAL_NAME_value(names, i);
+		hasUri |= gn->type == GEN_URI;
+		hasCn |= gn->type == GEN_DNS && !cn.isEmpty() &&
+			QString::fromLatin1((const char *)ASN1_STRING_get0_data(gn->d.ia5),
+				ASN1_STRING_get_length(gn->d.ia5)) == cn;
+	}
+	bool addUri = !uri.isEmpty() && !hasUri;
+	bool addCn = !cn.isEmpty() && !hasCn;
+	if (addUri || addCn) {
+		if (addUri) {
+			GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr,
+				nullptr, GEN_URI, uri.toUtf8().constData(), 0);
+			if (gn)
+				sk_GENERAL_NAME_push(names, gn);
+		}
+		if (addCn) {
+			GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr,
+				nullptr, GEN_DNS, cn.toUtf8().constData(), 0);
+			if (gn)
+				sk_GENERAL_NAME_push(names, gn);
+		}
 		X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name, names,
 			ext && X509_EXTENSION_get_critical(ext),
 			X509V3_ADD_DEFAULT);

@@ -29,18 +29,52 @@ static serviceError invalid(const QString &field)
 		tr("The profile has no valid '%1'").arg(field));
 }
 
+/* The key usage bits a profile may name: every bit for the family generic
+ * (schema v1.1), the end-entity bits of the key family for opcua and tls
+ * (never keyEncipherment on EC keys, PLAN.md 8.4 rule 3) */
+static bool kuBitsAllowed(const QJsonObject &ku, bool generic)
+{
+	static const QMap<QString, QStringList> ot {
+		{ "rsa", { "digitalSignature", "nonRepudiation",
+			   "keyEncipherment", "dataEncipherment" } },
+		{ "ec", { "digitalSignature", "nonRepudiation", "keyAgreement" } },
+	};
+	static const QStringList all { "digitalSignature", "nonRepudiation",
+		"keyEncipherment", "dataEncipherment", "keyAgreement",
+		"keyCertSign", "cRLSign", "encipherOnly", "decipherOnly" };
+	for (auto f = ku.begin(); f != ku.end(); ++f) {
+		if (!ot.contains(f.key()))
+			return false;
+		const QStringList &allowed = generic ? all : ot[f.key()];
+		const QJsonArray bits = f.value().toObject()["bits"].toArray();
+		if (bits.isEmpty())
+			return false;
+		for (const QJsonValue &b : bits) {
+			if (!allowed.contains(b.toString()))
+				return false;
+		}
+	}
+	return true;
+}
+
 Profile Profile::fromJson(const QJsonObject &doc)
 {
 	Profile p;
 	p.doc = doc;
-	if (doc["schema"].toString() != "urn:bxc-pki:schema:profile:v1")
+	QString schema = doc["schema"].toString();
+	if (schema != "urn:bxc-pki:schema:profile:v1" &&
+	    schema != "urn:bxc-pki:schema:profile:v1.1")
 		throw invalid("schema");
 	p.id = doc["id"].toString();
 	if (p.id.isEmpty())
 		throw invalid("id");
 	p.family = doc["family"].toString();
-	if (p.family != "opcua" && p.family != "tls")
+	if (p.family != "opcua" && p.family != "tls" && p.family != "generic")
 		throw invalid("family");
+	/* the family generic is new in schema v1.1 (BTD-167) */
+	bool generic = p.family == "generic";
+	if (generic && schema != "urn:bxc-pki:schema:profile:v1.1")
+		throw invalid("schema");
 	p.keySource = doc["key_source"].toString();
 	if (p.keySource != "csr" && p.keySource != "server")
 		throw invalid("key_source");
@@ -48,14 +82,33 @@ Profile Profile::fromJson(const QJsonObject &doc)
 		if (!doc[array].isArray() || doc[array].toArray().isEmpty())
 			throw invalid(array);
 	}
-	for (const char *object : { "ku_by_key_type", "eku",
-			"basic_constraints", "san", "subject", "aki",
-			"signature", "validity" }) {
+	for (const char *object : { "ku_by_key_type", "basic_constraints",
+			"san", "subject", "aki", "signature", "validity" }) {
 		if (!doc[object].isObject())
 			throw invalid(object);
 	}
-	if (doc["eku"].toObject()["purposes"].toArray().isEmpty())
-		throw invalid("eku.purposes");
+	/* a generic profile without EKU issues none (CA profiles) */
+	if (!generic || doc.contains("eku")) {
+		if (!doc["eku"].isObject())
+			throw invalid("eku");
+		if (doc["eku"].toObject()["purposes"].toArray().isEmpty())
+			throw invalid("eku.purposes");
+	}
+	if (!kuBitsAllowed(doc["ku_by_key_type"].toObject(), generic))
+		throw invalid("ku_by_key_type");
+	/* opcua and tls: end entity, critical; generic: pathLen only for a CA */
+	QJsonObject bc = doc["basic_constraints"].toObject();
+	if (!bc["ca"].isBool() || !bc["critical"].isBool() ||
+	    (!generic && (bc["ca"].toBool() || !bc["critical"].toBool() ||
+			  bc.contains("path_len"))) ||
+	    (bc.contains("path_len") && (!bc["ca"].toBool() ||
+			!bc["path_len"].isDouble() ||
+			bc["path_len"].toInt(-1) < 0)))
+		throw invalid("basic_constraints");
+	/* the CN as dNSName and e-mail addresses only in generic profiles */
+	QJsonObject san = doc["san"].toObject();
+	if (!generic && (san["dns_from_cn"].toBool() || san.contains("email")))
+		throw invalid("san");
 	/* Nexus-style default only outside OPC UA (PLAN.md 14.2 rule 5) */
 	if (doc.contains("eku_default") && p.family != "tls")
 		throw invalid("eku_default");
@@ -205,8 +258,12 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 	spec.subject = subject;
 
 	/* the extensions the profile fixes */
-	e.basicCA = ExtensionSpec::bc_not_ca;
-	e.basicCritical = doc["basic_constraints"].toObject()["critical"].toBool();
+	QJsonObject bc = doc["basic_constraints"].toObject();
+	e.basicCA = bc["ca"].toBool() ? ExtensionSpec::bc_ca :
+					ExtensionSpec::bc_not_ca;
+	e.basicCritical = bc["critical"].toBool();
+	if (bc.contains("path_len"))
+		e.pathLen = QString::number(bc["path_len"].toInt());
 	QJsonObject ku = doc["ku_by_key_type"].toObject()[keyFamily].toObject();
 	if (ku.isEmpty())
 		throw serviceError("profile_key_type",
@@ -229,7 +286,7 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 		ASN1_BIT_STRING_free(asked);
 	}
 	e.keyUsageCritical = ku["critical"].toBool();
-	e.extKeyUsage = strings(doc["eku"].toObject()["purposes"]);
+	e.extKeyUsage = strings(doc["eku"].toObject()["purposes"]);  // none: no EKU
 	e.extKeyUsageCritical = doc["eku"].toObject()["critical"].toBool();
 	if (doc.contains("eku_default")) {
 		e.ekuDefault = strings(doc["eku_default"]);
@@ -251,7 +308,8 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			throw serviceError("profile_registration_uri",
 				tr("The profile '%1' needs the registered ApplicationUri").arg(id));
 	}
-	int dns = 0, ip = 0;
+	policy.dnsFromCn = san["dns_from_cn"].toBool();
+	int dns = 0, ip = 0, email = 0;
 	if (request) {
 		STACK_OF(X509_EXTENSION) *exts =
 			X509_REQ_get_extensions(request->getReq());
@@ -262,6 +320,7 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			int t = sk_GENERAL_NAME_value(names, i)->type;
 			dns += t == GEN_DNS;
 			ip += t == GEN_IPADD;
+			email += t == GEN_EMAIL;
 		}
 		GENERAL_NAMES_free(names);
 	} else {
@@ -272,7 +331,16 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 					", " + reg.subjectAltName);
 		dns = reg.subjectAltName.count("DNS:");
 		ip = reg.subjectAltName.count("IP:");
+		email = reg.subjectAltName.count("email:");
 	}
+	/* e-mail addresses only where a generic profile counts them; the OT
+	 * profiles of schema v1 keep their behaviour */
+	if (family == "generic" &&
+	    (email < san["email"].toObject()["min"].toInt() ||
+	     email > san["email"].toObject()["max"].toInt()))
+		throw serviceError("csr_san_count",
+			tr("The profile '%1' does not allow %2 e-mail addresses")
+			.arg(id).arg(email));
 	if (dns < san["dns"].toObject()["min"].toInt() || dns > san["dns"].toObject()["max"].toInt() ||
 	    ip < san["ip"].toObject()["min"].toInt() || ip > san["ip"].toObject()["max"].toInt() ||
 	    dns + ip < san["dns_or_ip_min"].toInt())
