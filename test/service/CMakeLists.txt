@@ -33,6 +33,9 @@ target_compile_definitions(test_service_audit PRIVATE
 # Signed audit checkpoints (BTD-37); signatures checked with openssl pkeyutl
 ServiceTest(test_service_checkpoint)
 
+# The outer commit after a nested rollback reports failure (BTD-142)
+ServiceTest(test_service_transaction)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

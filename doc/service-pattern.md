@@ -25,6 +25,13 @@ inside the caller's transaction would be rolled back with it. Since BTD-33, `aud
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
 
+`TransCommit()` is false when the outermost commit fails and also when any inner transaction
+rolled back, e.g. a helper that returned without commit and whose caller carried on: the outermost
+transaction then rolls everything back (BTD-142; before, it returned the result of that rollback,
+true, and the caller reported success with nothing stored). Every outermost commit is checked; a
+service function turns false into `database_error` with a `failure` entry. The log names the first
+inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
+
 An operation that changes several revocation rows (`db_x509::setRevocations`, the Manage
 revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` entry per changed
 row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those

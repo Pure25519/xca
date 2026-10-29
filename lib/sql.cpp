@@ -16,15 +16,23 @@
 int DbTransaction::mutex;
 int DbTransaction::error;
 bool DbTransaction::hasTransaction;
+int DbTransaction::injected;
+QString DbTransaction::firstRollback;
 QList<quint64> DbTransaction::items;
 
 quint64 DbTransaction::DatabaseStamp;
 
+static QString location(const char *file, int line)
+{
+	return QString("%1(%2)").arg(file + QString(file).lastIndexOf("/") +1)
+			.arg(line);
+}
+
 void DbTransaction::debug(const char *func, const char *file, int line)
 {
-	qDebug() << QString("%1(%2) Transaction: %3 Level %4, E:%5 ")
-			.arg(file + QString(file).lastIndexOf("/") +1)
-			.arg(line).arg(func).arg(mutex).arg(error);
+	qDebug() << QString("%1 Transaction: %2 Level %3, E:%4 ")
+			.arg(location(file, line))
+			.arg(func).arg(mutex).arg(error);
 }
 
 DbTransaction::~DbTransaction()
@@ -37,6 +45,8 @@ bool DbTransaction::begin(const char *file, int line)
 {
 	mutex++;
 	has_begun = true;
+	beginFile = file;
+	beginLine = line;
 	debug("Begin", file, line);
 	if (mutex > 1 || !hasTransaction)
 		return true;
@@ -48,8 +58,10 @@ bool DbTransaction::begin(const char *file, int line)
 	return ret;
 }
 
-bool DbTransaction::finish(const char *oper, const char *file, int line)
+bool DbTransaction::finish(bool commit, const char *file, int line)
 {
+	const char *oper = commit ? "Commit" : "Rollback";
+
 	if (!has_begun)
 		return true;
 	if (mutex > 0)
@@ -65,7 +77,15 @@ bool DbTransaction::finish(const char *oper, const char *file, int line)
 	if (error) {
 		error = 0;
 		items.clear();
-		return hasTransaction ? db.rollback() : true;
+		bool ret = hasTransaction ? db.rollback() : true;
+		if (!commit)
+			return ret;
+		/* An inner transaction rolled back, so everything did: the
+		 * commit failed. Before BTD-142 the caller got the result
+		 * of the rollback, true, and reported success. */
+		qWarning() << "Commit at" << location(file, line)
+			<< "rolled back after the rollback at" << firstRollback;
+		return false;
 	}
 	mutex++;
 	XSqlQuery q;
@@ -100,13 +120,21 @@ bool DbTransaction::finish(const char *oper, const char *file, int line)
 
 bool DbTransaction::commit(const char *file, int line)
 {
-	return finish("Commit", file, line);
+	if (injected > 0 && has_begun && mutex > 1 && --injected == 0) {
+		rollback(file, line);
+		return true;
+	}
+	return finish(true, file, line);
 }
 
 bool DbTransaction::rollback(const char *file, int line)
 {
-	error++;
-	return finish("Rollback", file, line);
+	/* The first rollback names the cause of a failed outer commit; the
+	 * destructor names where its transaction began */
+	if (!error++)
+		firstRollback = line ? location(file, line) :
+			location(beginFile, beginLine) + " (left without commit)";
+	return finish(false, file, line);
 }
 
 bool DbTransaction::done(QSqlError e, const char *file, int line)

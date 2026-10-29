@@ -72,9 +72,9 @@ void pki_x509req::markSigned(bool signe)
 
 	if (q.lastError().isValid())
 		return;
-	done = signe;
 	AffectedItems(sqlItemId);
-	TransCommit();
+	if (TransCommit())
+		done = signe;
 }
 
 void pki_x509req::restoreSql(const QSqlRecord &rec)

@@ -545,7 +545,8 @@ void MainWindow::changeDbPass()
 		}
 		AuditKey::reencrypt(pass);
 		Settings["pwhash"] = passhash;
-		TransCommit();
+		if (!TransCommit())
+			throw errorEx(tr("The new password was not stored"));
 		pki_evp::passHash = passhash;
 		pki_evp::passwd = pass;
 	} catch (errorEx &e) {

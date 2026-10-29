@@ -380,7 +380,9 @@ void db_key::updateKeyEncryptionScheme()
 	qDebug() << "Success:" << common_success << "Legacy keys:"
 			<< withOwnPassword.size();
 	ign_openssl_error();
-	TransCommit();
+	/* not stored: tried again on the next open */
+	if (!TransCommit())
+		common_success = false;
 	if (withOwnPassword.size() > 0) {
 		QString items;
 		for (pki_evp *key : withOwnPassword)

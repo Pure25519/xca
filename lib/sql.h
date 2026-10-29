@@ -23,14 +23,21 @@ class DbTransaction
 		static int error;
 		static QList<quint64> items;
 		static bool hasTransaction;
+		static int injected;
+		static QString firstRollback;
 		bool has_begun{};
+		const char *beginFile{};
+		int beginLine{};
 		void debug(const char *func, const char *file, int line);
-		bool finish(const char *oper, const char *file, int line);
+		bool finish(bool commit, const char *file, int line);
 
 	public:
 		DbTransaction() { };
 		~DbTransaction();
 		bool begin(const char *file, int line);
+		/* False when the outermost commit fails, and also when an
+		 * inner transaction rolled back: then the outermost one rolls
+		 * everything back (BTD-142). An inner commit returns true. */
 		bool commit(const char *file, int line);
 		bool rollback(const char *file, int line);
 		bool done(QSqlError e, const char *file, int line);
@@ -46,6 +53,17 @@ class DbTransaction
 		static void setHasTransaction(bool trans)
 		{
 			hasTransaction = trans;
+		}
+		/* Tests only (BTD-142): the nested commit after the next skip
+		 * ones rolls back instead and reports success, like an inner
+		 * helper that rolls back and returns without throwing */
+		static void injectNestedRollback(int skip = 0)
+		{
+			injected = skip + 1;
+		}
+		static bool injectionPending()
+		{
+			return injected > 0;
 		}
 };
 

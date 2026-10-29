@@ -109,7 +109,11 @@ pki_base *db_crl::insert(pki_base *item)
 		crl = dynamic_cast<pki_crl *>(insertPKI(crl));
 		if (crl) {
 			revokeCerts(crl);
-			TransCommit();
+			if (!TransCommit()) {
+				unstore(crl);
+				delete crl;
+				return NULL;
+			}
 		}
 	}
 	return crl;
