@@ -1,0 +1,78 @@
+{
+  "schema": "urn:bxc-pki:schema:csr:v1",
+  "id": 4,
+  "name": "plc11",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "imported",
+  "comment": "",
+  "version": 0,
+  "subject": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      },
+      {
+        "name": "OU",
+        "oid": "2.5.4.11",
+        "value": "Prüfstand"
+      },
+      {
+        "name": "CN",
+        "oid": "2.5.4.3",
+        "value": "plc11"
+      }
+    ],
+    "rfc4514": "CN=plc11,OU=Prüfstand,O=BxC Lab"
+  },
+  "key_item": {
+    "id": 6,
+    "name": "device"
+  },
+  "public_key": {
+    "curve": {
+      "name": "prime256v1",
+      "oid": "1.2.840.10045.3.1.7"
+    },
+    "fingerprint": "84:B9:3F:D2:66:AC:C6:20:1B:AC:51:3A:99:A9:29:D1:47:B3:8C:A9:29:2A:B1:B6:40:A2:90:14:F6:C7:64:9F",
+    "pem": "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE8sYFjA6+ZGU9zUvgbEHV0NABcvCG\nCqAn9k7dgstBWnP5I1RHApB4bYDngLv6CEFaWtDaIDFA16gWrDNf+R9NcA==\n-----END PUBLIC KEY-----\n",
+    "size": 256,
+    "type": "EC"
+  },
+  "signature_algorithm": {
+    "name": "ecdsa-with-SHA256",
+    "oid": "1.2.840.10045.4.3.2"
+  },
+  "signature_valid": true,
+  "signed": false,
+  "certificate_count": 1,
+  "extensions": [
+    {
+      "critical": false,
+      "name": "subjectAltName",
+      "oid": "2.5.29.17",
+      "value": "URI:urn:bxc:plc11, DNS:plc11.lab"
+    },
+    {
+      "critical": false,
+      "name": "extendedKeyUsage",
+      "oid": "2.5.29.37",
+      "value": "TLS Web Server Authentication, TLS Web Client Authentication"
+    },
+    {
+      "critical": true,
+      "name": "keyUsage",
+      "oid": "2.5.29.15",
+      "value": "Digital Signature, Key Encipherment"
+    }
+  ],
+  "attributes": [
+    {
+      "name": "unstructuredName",
+      "oid": "1.2.840.113549.1.9.2",
+      "value": "plc11 unit"
+    }
+  ],
+  "challenge_password_present": true
+}

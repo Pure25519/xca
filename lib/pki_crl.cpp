@@ -238,12 +238,18 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 {
 	EVP_PKEY *pkey;
 	if (!key || key->isPubKey())
-		return;
+		throw serviceError("no_private_signing_key",
+			tr("There is no private key to sign the revocation list"));
 	AuditKey::refuseSigning(key);
 	X509_CRL_sort(crl);
 	pkey = key->decryptKey();
-	X509_CRL_sign(crl, pkey, digest.MD());
+	/* 0 leaves the CRL unsigned (BTD-171) */
+	int size = X509_CRL_sign(crl, pkey, digest.MD());
 	EVP_PKEY_free(pkey);
+	if (size <= 0)
+		throw serviceError("signing_failed",
+			tr("The revocation list could not be signed with %1: %2")
+			.arg(digest.name(), take_openssl_errors()));
 	pki_openssl_error();
 }
 

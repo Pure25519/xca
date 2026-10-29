@@ -70,6 +70,20 @@ class pki_temp: public pki_x509name
 		{
 			pre_defined = true;
 		}
+		bool isPreDefined() const
+		{
+			return pre_defined;
+		}
+		/* The settings of tmpl_keys as stored (other keys of an old
+		 * template file are left out) */
+		QMap<QString, QString> getSettings() const
+		{
+			QMap<QString, QString> s;
+			for (const QString &k : tmpl_keys)
+				if (settings.contains(k))
+					s[k] = settings.value(k);
+			return s;
+		}
 		QString comboText() const;
 		QByteArray toData(bool for_export = false) const;
 		QString toB64Data()

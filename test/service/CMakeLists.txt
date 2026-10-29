@@ -46,6 +46,9 @@ ServiceTest(test_service_checkpoint)
 # The outer commit after a nested rollback reports failure (BTD-142)
 ServiceTest(test_service_transaction)
 
+# Memory follows the database after a rollback (BTD-130)
+ServiceTest(test_service_memory)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -130,6 +133,9 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# A failed signature is an error, never a stored object (BTD-171)
+ServiceTest(test_service_signing_failure)
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -162,6 +168,13 @@ endif()
 ServiceTest(test_service_importexport)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_importexport PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# Secure export defaults (BTD-52); every export read back with openssl
+ServiceTest(test_service_export_defaults)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_export_defaults PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
@@ -203,3 +216,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
 else()
   message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
 endif()
+
+# JSON documents of the objects and list outputs (BTD-39)
+ServiceTest(test_service_json)
+target_compile_definitions(test_service_json PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+
+# xca --no-gui --json: JSON Lines on stdout, error objects, no secrets
+add_test(NAME test_cli_json_output
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DDATA=${SERVICE_TEST_DIR}/data/json
+		-DOPENSSL=${OPENSSL_PROGRAM}
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_json_output
+		-P ${SERVICE_TEST_DIR}/cli_json_output.cmake)
+set_tests_properties(test_cli_json_output PROPERTIES LABELS service)

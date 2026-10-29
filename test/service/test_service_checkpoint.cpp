@@ -372,6 +372,12 @@ void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
 	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
 	/* the checkpoint's error, not one of newKey() (BTD-143) */
 	QVERIFY2(code.contains("BTD-111 checkpoint write"), CCHAR(code));
+	/* nor in memory: on 9121ddcd the key stayed in store and view
+	 * with the id of its rolled-back row (BTD-130) */
+	for (pki_key *key : Store.getAll<pki_key>())
+		QVERIFY(key->getIntName() != "victim");
+	QCOMPARE(Database.model<db_key>()->rowCount(),
+		Store.getAll<pki_key>().size());
 
 	reopenDatabase();
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
