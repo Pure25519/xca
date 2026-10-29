@@ -110,16 +110,19 @@ pki_base *db_crl::insert(pki_base *item)
 		return NULL;
 	}
 	Transaction;
-	if (TransBegin()) {
-		crl = dynamic_cast<pki_crl *>(insertPKI(crl));
-		if (crl) {
-			revokeCerts(crl);
-			if (!TransCommit()) {
-				/* rolled back and unstored (BTD-130) */
-				delete crl;
-				return NULL;
-			}
-		}
+	if (!TransBegin()) {
+		/* keeps or deletes, like insertPKI() (BTD-149) */
+		delete crl;
+		return NULL;
+	}
+	crl = dynamic_cast<pki_crl *>(insertPKI(crl));
+	if (!crl)
+		return NULL;
+	revokeCerts(crl);
+	if (!TransCommit()) {
+		/* rolled back and unstored (BTD-130) */
+		delete crl;
+		return NULL;
 	}
 	return crl;
 }
