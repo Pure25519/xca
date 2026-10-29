@@ -56,8 +56,11 @@ namespace IssuanceChecks
 	/* The CSR (BTD-65): its signature digest (never MD5, SHA-1 by
 	 * CsrPolicy::csrSha1), the proof of possession, keyCertSign or
 	 * cA=TRUE in a leaf request, forbidden subject characters and the
-	 * ApplicationUri. Writes csr_signature_algorithm and, for an
-	 * accepted SHA-1 signature, warning=csr_sha1_accepted. */
+	 * SAN rules of the profile. Writes csr_signature_algorithm and, for
+	 * an accepted SHA-1 signature, warning=csr_sha1_accepted. Without a
+	 * CSR, under a profile: the same SAN rules on the SAN the profile
+	 * built from the registration of a server-side key (BTD-191); a SAN
+	 * that does not parse is registration_san_invalid. */
 	void request(const IssuanceSpec &spec, AuditParams &params);
 
 	/* The certificate to be signed: one instance per extension, and the

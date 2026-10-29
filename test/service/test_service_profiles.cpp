@@ -54,6 +54,10 @@ class test_service_profiles : public ServiceTestCase
 	void ekuDefaultInProfile_data();
 	void ekuDefaultInProfile();
 	void pssPaddingRefused();
+	void keygenSanRules_data();
+	void keygenSanRules();
+	void sanRulesBothPaths_data();
+	void sanRulesBothPaths();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -107,6 +111,8 @@ QString test_service_profiles::issue(const Profile &p, pki_x509req *req,
 		return QString();
 	} catch (serviceError &err) {
 		return err.code;
+	} catch (errorEx &err) {
+		return "<errorEx: " + err.getString() + ">";
 	}
 }
 
@@ -476,6 +482,145 @@ void test_service_profiles::pssPaddingRefused()
 	QCOMPARE(issue(p, req, nullptr, Registration(), ca, &cert),
 		QString("profile_signature_padding"));
 	QVERIFY(!cert);
+#endif
+}
+
+/* BTD-191: the SAN of a server-side key is the registration's, checked
+ * as parsed names with the rules of the CSR path; a refusal stores
+ * nothing and its failure entry names the rule and the entry */
+void test_service_profiles::keygenSanRules_data()
+{
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("code");
+	QTest::addColumn<QString>("named");   // in the error message
+
+	QTest::newRow("valid") << "DNS:plc.example, IP:10.0.0.9" << "" << "";
+	QTest::newRow("extra URI") << "URI:urn:x:other, DNS:plc.example"
+		<< "csr_uri_mismatch" << "urn:x:other";
+	QTest::newRow("registered URI again") << "URI:urn:bxc:plc, DNS:plc.example"
+		<< "csr_uri_duplicate" << "urn:bxc:plc";
+	QTest::newRow("DNS: inside a URI") << "URI:urn:x:DNS:plc.example"
+		<< "csr_uri_mismatch" << "urn:x:DNS:plc.example";
+	QTest::newRow("otherName") << "otherName:1.3.6.1.4.1.311.20.2.3;UTF8:op@x, DNS:plc.example"
+		<< "csr_san_type_not_allowed" << "otherName";
+	QTest::newRow("email") << "email:op@plc.example, DNS:plc.example"
+		<< "csr_san_type_not_allowed" << "op@plc.example";
+	QTest::newRow("dirName") << "dirName:dir_sect, DNS:plc.example"
+		<< "registration_san_invalid" << "dirName";
+	QTest::newRow("wildcard") << "DNS:*.plc.example" << "csr_san_wildcard"
+		<< "*.plc.example";
+	QTest::newRow("five DNS names")
+		<< "DNS:a.example, DNS:b.example, DNS:c.example, DNS:d.example, DNS:e.example"
+		<< "csr_san_count" << "dNSName";
+	QTest::newRow("unparsable") << "FOO:bar" << "registration_san_invalid" << "FOO:bar";
+}
+
+void test_service_profiles::keygenSanRules()
+{
+	QFETCH(QString, san);
+	QFETCH(QString, code);
+	QFETCH(QString, named);
+	Profile p = Profile::fromFile(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"device key");
+	QVERIFY(ca && key);
+	Registration reg;
+	x509name n;
+	n.addEntryByNid(NID_commonName, "plc");
+	reg.subject = n;
+	reg.subjectAltName = san;
+	reg.applicationUri = "urn:bxc:plc";
+	int certs = Store.getAll<pki_x509>().size();
+	int audit = AuditLog::entries().size();
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), code);
+	if (code.isEmpty()) {
+		QVERIFY(cert);
+		X509 *x = cert->getCert();
+		BIO *b = BIO_new(BIO_s_mem());
+		X509V3_EXT_print(b, X509_get_ext(x, X509_get_ext_by_NID(x,
+				NID_subject_alt_name, -1)), 0, 0);
+		char *data;
+		long len = BIO_get_mem_data(b, &data);
+		QCOMPARE(QString::fromUtf8(data, len), QString(
+			"URI:urn:bxc:plc, DNS:plc.example, IP Address:10.0.0.9"));
+		BIO_free(b);
+		return;
+	}
+	QVERIFY(!cert);
+	QCOMPARE(Store.getAll<pki_x509>().size(), certs);
+	QList<AuditEntry> e = AuditLog::entries();
+	QCOMPARE(e.size(), audit + 1);
+	QCOMPARE(e.last().result, QString("failure"));
+	QCOMPARE(e.last().errorCode, code);
+	QVERIFY(Store.getAll<pki_key>().contains(key));
+	/* the message names the entry; the failure entry the rule */
+	try {
+		IssuanceSpec spec = p.apply(nullptr, key, reg, ca);
+		Database.model<db_x509>()->newCert(ctx, spec);
+		QFAIL("issued");
+	} catch (serviceError &err) {
+		QVERIFY2(err.getString().contains(named), CCHAR(err.getString()));
+	}
+}
+
+/* One rule function: the same SAN through a CSR and as a registration
+ * gives the same result */
+void test_service_profiles::sanRulesBothPaths_data()
+{
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("DNS and IP") << "DNS:plc.example,IP:10.0.0.9" << "";
+	QTest::newRow("foreign URI") << "URI:urn:x:other,DNS:plc.example"
+		<< "csr_uri_mismatch";
+	QTest::newRow("otherName") << "otherName:1.2.3.4;UTF8:x,DNS:plc.example"
+		<< "csr_san_type_not_allowed";
+	QTest::newRow("email") << "email:a@plc.example,DNS:plc.example"
+		<< "csr_san_type_not_allowed";
+	QTest::newRow("wildcard") << "DNS:*.plc.example" << "csr_san_wildcard";
+	QTest::newRow("no name or address") << "" << "csr_san_count";
+	QTest::newRow("five IP addresses")
+		<< "IP:10.0.0.1,IP:10.0.0.2,IP:10.0.0.3,IP:10.0.0.4,IP:10.0.0.5"
+		<< "csr_san_count";
+}
+
+void test_service_profiles::sanRulesBothPaths()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, san);
+	QFETCH(QString, code);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	const QString uri = "urn:bxc:plc";
+
+	/* the CSR: the URI of the registration and the SAN of the row */
+	QString out = dir.filePath(QString("both-%1.csr").arg(QTest::currentDataTag()));
+	QStringList args { "req", "-new", "-newkey", "ec", "-pkeyopt",
+		"ec_paramgen_curve:P-256", "-nodes", "-keyout", out + ".key",
+		"-out", out, "-subj", "/CN=plc", "-addext",
+		"subjectAltName=URI:" + uri + (san.isEmpty() ? "" : "," + san) };
+	QProcess proc;
+	proc.start(OPENSSL_PROGRAM, args);
+	QVERIFY(proc.waitForFinished(30000) && proc.exitCode() == 0);
+	pki_x509req *req = loadCsr(QString("both-%1").arg(QTest::currentDataTag()), out);
+	QVERIFY(req);
+	Registration reg;
+	reg.applicationUri = uri;
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(Profile::fromFile(SERVICE_TEST_DATA "/profiles/opcua-server.json"),
+			req, nullptr, reg, ca, &cert), code);
+
+	/* the registration of a server-side key */
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"both key");
+	x509name n;
+	n.addEntryByNid(NID_commonName, "plc");
+	reg.subject = n;
+	reg.subjectAltName = QString(san).replace(",", ", ");
+	QCOMPARE(issue(Profile::fromFile(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json"),
+			nullptr, key, reg, ca, &cert), code);
 #endif
 }
 
