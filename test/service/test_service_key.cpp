@@ -18,6 +18,7 @@
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/exception.h"
+#include "lib/json_report.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_export.h"
 
@@ -455,6 +456,12 @@ void test_service_key::newKeyFixed()
 	QCOMPARE(e.params["key_type"].toString(), name);
 	QCOMPARE(e.params["key_size"].toInt(), pubLen * 8);
 	QVERIFY(!e.params.contains("curve"));
+
+	/* --print --json names the type like the GUI (BTD-39) */
+	QJsonObject pub = JsonReport::key(key)["public_key"].toObject();
+	QCOMPARE(pub["type"].toString(), name);
+	QCOMPARE(pub["size"].toInt(), pubLen * 8);
+	QVERIFY(pub["curve"].isNull());
 
 	/* The full name in the database, not the first four characters */
 	QCOMPARE(sqlValue("SELECT type FROM public_keys").toString(), name);
