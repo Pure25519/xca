@@ -22,6 +22,7 @@
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/db_x509.h"
+#include "lib/digest.h"
 #include "lib/exception.h"
 #include "lib/importexport.h"
 #include "lib/issuance.h"
@@ -61,8 +62,6 @@ class test_service_export_defaults : public ServiceTestCase
   private slots:
 	void initTestCase();
 	void init();
-	/* first: a legacy setting stays the static default of encAlgo
-	 * when the next database opens */
 	void noLegacyWarningByDefault();
 	void pkcs12Default_data();
 	void pkcs12Default();
@@ -73,6 +72,7 @@ class test_service_export_defaults : public ServiceTestCase
 	void pkcs12RoundTrip_data();
 	void pkcs12RoundTrip();
 	void dumpWritesPkcs8();
+	void defaultsDoNotLeakAcrossDatabases();
 };
 
 QString test_service_export_defaults::openssl(const QStringList &args,
@@ -396,6 +396,42 @@ void test_service_export_defaults::dumpWritesPkcs8()
 	QVERIFY2(out.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----"),
 		out.constData());
 	QVERIFY(!out.contains("Proc-Type"));
+}
+
+/* Database A stores a legacy PKCS#12 algorithm and another hash; B
+ * stores neither and must start with the compiled-in defaults. On
+ * bxc-main the statics that settings::setAction() fills kept A's values,
+ * because Settings.clear() refilled them from those statics (BTD-174). */
+void test_service_export_defaults::defaultsDoNotLeakAcrossDatabases()
+{
+	QString fileA = dbFile;
+	Settings["pkcs12_enc_algo"] = QString("PBE-SHA1-3DES");
+	Settings["default_hash"] = QString("SHA512");
+	QVERIFY(encAlgo::getDefault().legacy());
+
+	QTemporaryDir dirB(QDir::tempPath() + "/xca-service-XXXXXX");
+	QVERIFY(dirB.isValid());
+	Database.close();
+	dbFile = dirB.filePath("b.xdb");
+	openDatabase();
+	QVERIFY(!encAlgo::getDefault().legacy());
+	QCOMPARE(encAlgo::getDefault().getEncAlgoNid(), NID_aes_256_cbc);
+	QCOMPARE(digest::getDefault().name(), QString("SHA256"));
+	pki_x509 *cert = leaf("EC:prime256v1");
+	QVERIFY(cert);
+	QString name = exportTo(cert, 15, "b.p12");
+	QString info = opensslOk({ "pkcs12", "-in", name, "-info",
+			"-noout", "-passin", passin() });
+	qInfo().noquote() << "database B, openssl pkcs12 -info:" << info;
+	QVERIFY2(info.contains("AES-256-CBC") && info.contains("MAC: sha256"),
+		CCHAR(info));
+
+	/* A keeps what it stores */
+	Database.close();
+	dbFile = fileA;
+	openDatabase();
+	QVERIFY(encAlgo::getDefault().legacy());
+	QCOMPARE(digest::getDefault().name(), QString("SHA512"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_export_defaults)

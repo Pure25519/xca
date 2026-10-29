@@ -47,8 +47,10 @@ const QMap<QString, QString> settings::defaults() const
 		{ "explicit_dn", "C,ST,L,O,OU,CN,emailAddress" },
 		{ "string_opt", "MASK:0x2002" },
 		{ "workingdir", getHomeDir() + "/" },
-		{ "default_hash", digest::getDefault().name() },
-		{ "pkcs12_enc_algo", encAlgo::getDefault().name() },
+		/* compiled-in, not the statics that setAction() fills from
+		 * the database opened before (BTD-174) */
+		{ "default_hash", digest::getBuiltinDefault().name() },
+		{ "pkcs12_enc_algo", encAlgo::getBuiltinDefault().name() },
 		{ "ical_expiry", "1W" },
 		{ "cert_expiry", "80%" },
 		{ "serial_len", "64" },
@@ -65,6 +67,7 @@ void settings::clear()
 	loaded = false;
 	values.clear();
 	db_keys.clear();
+	keyjob::defaultjob = keyjob();
 	const QMap<QString, QString> def = defaults();
 	for(QString key : def.keys())
 		setAction(key, def[key]);

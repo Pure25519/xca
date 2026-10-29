@@ -216,7 +216,8 @@ const QList<int> encAlgo::all_encAlgos(
 
 /* AES-256-CBC: PBES2 with PBKDF2-HMAC-SHA256 for keys and certificates;
  * the legacy algorithms only when chosen (BTD-52) */
-int encAlgo::default_encAlgo(NID_aes_256_cbc);
+const int encAlgo::builtin_encAlgo(NID_aes_256_cbc);
+int encAlgo::default_encAlgo(builtin_encAlgo);
 QString encAlgo::exportName;
 
 encAlgo::encAlgo(int nid) : encAlgo_nid(nid)
