@@ -1,0 +1,327 @@
+/* vi: set sw=4 ts=4:
+ *
+ * Certificate profiles of bxc-pki (BTD-54), see profile.h.
+ */
+
+#include "profile.h"
+
+#include <QCoreApplication>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QRegularExpression>
+
+#include <openssl/x509v3.h>
+
+#include "exception.h"
+#include "pki_key.h"
+#include "pki_x509.h"
+#include "pki_x509req.h"
+
+static QString tr(const char *text)
+{
+	return QCoreApplication::translate("Profile", text);
+}
+
+static serviceError invalid(const QString &field)
+{
+	return serviceError("invalid_profile",
+		tr("The profile has no valid '%1'").arg(field));
+}
+
+Profile Profile::fromJson(const QJsonObject &doc)
+{
+	Profile p;
+	p.doc = doc;
+	if (doc["schema"].toString() != "urn:bxc-pki:schema:profile:v1")
+		throw invalid("schema");
+	p.id = doc["id"].toString();
+	if (p.id.isEmpty())
+		throw invalid("id");
+	p.family = doc["family"].toString();
+	if (p.family != "opcua" && p.family != "tls")
+		throw invalid("family");
+	p.keySource = doc["key_source"].toString();
+	if (p.keySource != "csr" && p.keySource != "server")
+		throw invalid("key_source");
+	for (const char *array : { "key_types" }) {
+		if (!doc[array].isArray() || doc[array].toArray().isEmpty())
+			throw invalid(array);
+	}
+	for (const char *object : { "ku_by_key_type", "eku",
+			"basic_constraints", "san", "subject", "aki",
+			"signature", "validity" }) {
+		if (!doc[object].isObject())
+			throw invalid(object);
+	}
+	if (doc["eku"].toObject()["purposes"].toArray().isEmpty())
+		throw invalid("eku.purposes");
+	/* Nexus-style default only outside OPC UA (PLAN.md 14.2 rule 5) */
+	if (doc.contains("eku_default") && p.family != "tls")
+		throw invalid("eku_default");
+	if (doc["csr_sha1"].toString() != "accept-with-warning" &&
+	    doc["csr_sha1"].toString() != "reject")
+		throw invalid("csr_sha1");
+	if (doc["keycertsign_request"].toString() != "reject" &&
+	    doc["keycertsign_request"].toString() != "override")
+		throw invalid("keycertsign_request");
+	return p;
+}
+
+Profile Profile::fromFile(const QString &path)
+{
+	QFile f(path);
+	if (!f.open(QIODevice::ReadOnly))
+		throw serviceError("invalid_profile",
+			tr("The profile file '%1' cannot be read").arg(path));
+	QJsonParseError err;
+	QJsonDocument d = QJsonDocument::fromJson(f.readAll(), &err);
+	if (err.error != QJsonParseError::NoError || !d.isObject())
+		throw serviceError("invalid_profile",
+			tr("The profile file '%1' is no JSON object: %2")
+			.arg(path, err.errorString()));
+	return fromJson(d.object());
+}
+
+QString Profile::keyType(const EVP_PKEY *pkey)
+{
+	if (!pkey)
+		return QString();
+	if (EVP_PKEY_is_a(pkey, "RSA"))
+		return QString("rsa-%1").arg(EVP_PKEY_get_bits(pkey));
+	if (EVP_PKEY_is_a(pkey, "EC")) {
+		char group[80];
+		size_t len = 0;
+		if (!EVP_PKEY_get_group_name(pkey, group, sizeof group, &len))
+			return "ec";
+		static const QMap<QString, QString> curves {
+			{ "prime256v1", "ec-p256" }, { "P-256", "ec-p256" },
+			{ "secp384r1", "ec-p384" }, { "P-384", "ec-p384" },
+			{ "secp521r1", "ec-p521" }, { "P-521", "ec-p521" },
+		};
+		return curves.value(QString::fromLatin1(group, len), "ec");
+	}
+	const char *name = EVP_PKEY_get0_type_name(pkey);
+	return name ? QString(name).toLower() : QString();
+}
+
+/* now plus or minus an ISO 8601 duration such as P1Y, P90D, PT1H */
+static QDateTime shifted(const QDateTime &now, const QString &iso, int sign)
+{
+	static const QRegularExpression re("^P(?:(\\d+)Y)?(?:(\\d+)M)?"
+		"(?:(\\d+)W)?(?:(\\d+)D)?(?:T(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+)S)?)?$");
+	QRegularExpressionMatch m = re.match(iso);
+	if (iso.isEmpty() || iso == "P" || !m.hasMatch())
+		throw invalid("validity");
+	auto n = [&](int i) { return sign * m.captured(i).toInt(); };
+	return now.addYears(n(1)).addMonths(n(2)).addDays(7 * n(3) + n(4))
+		.addSecs(3600LL * n(5) + 60 * n(6) + n(7));
+}
+
+static QStringList strings(const QJsonValue &v)
+{
+	QStringList list;
+	for (const QJsonValue &s : v.toArray())
+		list << s.toString();
+	return list;
+}
+
+/* The first value of attribute nid in name, or a null string */
+static QString entry(const x509name &name, int nid)
+{
+	int i = X509_NAME_get_index_by_NID(name.get0(), nid, -1);
+	return i < 0 ? QString() : name.getEntry(i);
+}
+
+IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
+			const Registration &reg, pki_x509 *signer) const
+{
+	IssuanceSpec spec;
+	ExtensionSpec &e = spec.extensions;
+	CsrPolicy &policy = spec.csrPolicy;
+
+	/* the key and where it comes from */
+	EVP_PKEY *pkey = nullptr;
+	if (keySource == "csr") {
+		if (!request || key)
+			throw serviceError("profile_key_source",
+				tr("The profile '%1' signs a certificate signing request").arg(id));
+		pkey = X509_REQ_get0_pubkey(request->getReq());
+		spec.request = request;
+		spec.name = request->getIntName();
+	} else {
+		if (!key || request)
+			throw serviceError("profile_key_source",
+				tr("The profile '%1' signs a key generated by bxc-pki").arg(id));
+		pkey = key->getPubKey();
+		spec.key = key;
+	}
+	QString type = keyType(pkey);
+	if (!strings(doc["key_types"]).contains(type))
+		throw serviceError("profile_key_type",
+			tr("The profile '%1' does not allow a %2 key").arg(id, type));
+	QString keyFamily = type.section('-', 0, 0);
+
+	/* subject: the device's own, byte for byte, or normalized */
+	QJsonObject subj = doc["subject"].toObject();
+	x509name subject = request ? request->getSubject() : reg.subject;
+	QString cnSource = subj["cn_source"].toString("csr");
+	QString cn = cnSource == "user" ? reg.userName :
+			cnSource == "https-host" ? reg.httpsHost : QString();
+	if (subj["copy"].toString() == "normalized") {
+		x509name n;
+		QString o = entry(subject, NID_organizationName);
+		if (!cn.isEmpty())
+			n.addEntryByNid(NID_commonName, cn);
+		else if (!entry(subject, NID_commonName).isEmpty())
+			n.addEntryByNid(NID_commonName,
+					entry(subject, NID_commonName));
+		if (!o.isEmpty())
+			n.addEntryByNid(NID_organizationName, o);
+		subject = n;
+	} else if (cnSource != "csr" &&
+		   entry(subject, NID_commonName) != cn) {
+		throw serviceError("csr_cn_mismatch",
+			tr("The common name '%1' is not the registered '%2'")
+			.arg(entry(subject, NID_commonName), cn));
+	}
+	if (subj["add_missing_o"].toBool())
+		policy.missingO = reg.organization;
+	static const QMap<QString, int> attributes {
+		{ "CN", NID_commonName }, { "O", NID_organizationName },
+		{ "OU", NID_organizationalUnitName }, { "DC", NID_domainComponent },
+		{ "C", NID_countryName }, { "L", NID_localityName },
+		{ "ST", NID_stateOrProvinceName },
+	};
+	for (const QString &a : strings(subj["required_attributes"])) {
+		bool added = a == "O" && !policy.missingO.isEmpty();
+		if (entry(subject, attributes.value(a)).isEmpty() && !added)
+			throw serviceError("csr_subject_missing_attribute",
+				tr("The profile '%1' needs the subject attribute %2")
+				.arg(id, a));
+	}
+	for (const QJsonValue &f : subj["forbidden_characters"].toArray())
+		policy.forbiddenCharacters += f.toObject()["characters"].toString();
+	spec.subject = subject;
+
+	/* the extensions the profile fixes */
+	e.basicCA = ExtensionSpec::bc_not_ca;
+	e.basicCritical = doc["basic_constraints"].toObject()["critical"].toBool();
+	QJsonObject ku = doc["ku_by_key_type"].toObject()[keyFamily].toObject();
+	if (ku.isEmpty())
+		throw serviceError("profile_key_type",
+			tr("The profile '%1' has no key usage for %2 keys").arg(id, keyFamily));
+	e.keyUsage = strings(ku["bits"]);
+	if (request && ku.contains("optional_bits")) {
+		/* only the bits the device asked for */
+		STACK_OF(X509_EXTENSION) *exts =
+			X509_REQ_get_extensions(request->getReq());
+		ASN1_BIT_STRING *asked = (ASN1_BIT_STRING *)X509V3_get_d2i(
+				exts, NID_key_usage, nullptr, nullptr);
+		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+		static const QMap<QString, int> bits {
+			{ "keyAgreement", 4 }, { "nonRepudiation", 1 },
+		};
+		for (const QString &b : strings(ku["optional_bits"])) {
+			if (asked && ASN1_BIT_STRING_get_bit(asked, bits.value(b, 9)))
+				e.keyUsage << b;
+		}
+		ASN1_BIT_STRING_free(asked);
+	}
+	e.keyUsageCritical = ku["critical"].toBool();
+	e.extKeyUsage = strings(doc["eku"].toObject()["purposes"]);
+	e.extKeyUsageCritical = doc["eku"].toObject()["critical"].toBool();
+	if (doc.contains("eku_default")) {
+		e.ekuDefault = strings(doc["eku_default"]);
+		e.ekuMerge = ExtensionSpec::merge_request;
+		e.ekuAllowed = e.extKeyUsage;
+		e.extKeyUsage = e.ekuDefault;
+	}
+	e.subjectKeyId = true;
+	e.authorityKeyId = true;
+	e.authorityKeyIdIssuer =
+		doc["aki"].toObject()["form"].toString() == "key-id-issuer-serial";
+
+	/* SAN: the CSR's (BTD-65) or, without a CSR, the registration's */
+	QJsonObject san = doc["san"].toObject();
+	policy.profile = true;
+	if (san["uri"].toObject()["count"].toInt() == 1) {
+		policy.registeredUri = reg.applicationUri;
+		if (reg.applicationUri.isEmpty())
+			throw serviceError("profile_registration_uri",
+				tr("The profile '%1' needs the registered ApplicationUri").arg(id));
+	}
+	/* a CSR's SAN is checked by IssuanceChecks::request() against these
+	 * rules (BTD-65, mr-processor review of xca#44); the registration's
+	 * SAN of a server-side key is counted here */
+	auto range = [&](const char *type) {
+		QJsonObject c = san[type].toObject();
+		return qMakePair(c["min"].toInt(), c["max"].toInt());
+	};
+	policy.sanCounts[GEN_DNS] = range("dns");
+	policy.sanCounts[GEN_IPADD] = range("ip");
+	policy.dnsOrIpMin = san["dns_or_ip_min"].toInt();
+	policy.sanCritical = san["critical"].toBool();
+	if (!request) {
+		e.subjectAltName = reg.subjectAltName;
+		if (!policy.registeredUri.isEmpty())
+			e.subjectAltName = "URI:" + policy.registeredUri +
+				(reg.subjectAltName.isEmpty() ? QString() :
+					", " + reg.subjectAltName);
+		int dns = reg.subjectAltName.count("DNS:");
+		int ip = reg.subjectAltName.count("IP:");
+		if (dns < range("dns").first || dns > range("dns").second ||
+		    ip < range("ip").first || ip > range("ip").second ||
+		    dns + ip < policy.dnsOrIpMin)
+			throw serviceError("csr_san_count",
+				tr("The profile '%1' does not allow %2 DNS names and %3 IP addresses")
+				.arg(id).arg(dns).arg(ip));
+	}
+
+	/* the CSR rules of BTD-65, the chain rules of BTD-55 */
+	policy.csrSha1 = doc["csr_sha1"].toString() == "reject" ?
+		CsrPolicy::sha1_reject : CsrPolicy::sha1_accept_with_warning;
+	policy.keyCertSignRequest =
+		doc["keycertsign_request"].toString() == "reject" ?
+		CsrPolicy::keycertsign_reject : CsrPolicy::keycertsign_override;
+	if (family == "opcua")
+		spec.chainRules = IssuanceSpec::chain_opcua;
+
+	/* signature: the hash the profile names for the issuing key */
+	spec.signer = signer;
+	QString caType = signer ? keyType(X509_get0_pubkey(signer->getCert())) :
+				type;
+	QString hash = caType.startsWith("rsa") ?
+		doc["signature"].toObject()["rsa"].toObject()["hashes"].toArray().first().toString() :
+		doc["signature"].toObject()["ec"].toObject()["hash_by_curve"].toObject()[caType].toString();
+	/* RSA-PSS is not implemented: refused, never signed as PKCS#1 v1.5 */
+	if (caType.startsWith("rsa") &&
+	    doc["signature"].toObject()["rsa"].toObject()["padding"].toString("pkcs1v15") != "pkcs1v15")
+		throw serviceError("profile_signature_padding",
+			tr("The profile '%1' asks for RSA padding '%2', which is not supported; only pkcs1v15")
+			.arg(id, doc["signature"].toObject()["rsa"].toObject()["padding"].toString()));
+	int md = hash.isEmpty() ? NID_undef : OBJ_sn2nid(CCHAR(hash.toUpper()));
+	if (md == NID_undef)
+		throw serviceError("profile_signature",
+			tr("The profile '%1' names no signature hash for a %2 CA").arg(id, caType));
+	spec.hashAlgo = digest(md);
+
+	/* validity relative to now, backdated for device clocks */
+	QDateTime now = QDateTime::currentDateTimeUtc();
+	QJsonObject validity = doc["validity"].toObject();
+	spec.notBefore = a1time(shifted(now,
+			validity["backdate"].toString("PT0S"), -1));
+	/* the backdating is a default for device clocks: it ends at the
+	 * start of the issuer, which IssuanceChecks::issuers() requires */
+	if (signer && spec.notBefore < signer->getNotBefore())
+		spec.notBefore = signer->getNotBefore();
+	spec.notAfter = a1time(shifted(now, validity["default"].toString(), 1));
+
+	/* the order of the golden files of BTD-64 */
+	spec.extensionOrder = { NID_basic_constraints, NID_key_usage,
+		NID_ext_key_usage, NID_subject_alt_name,
+		NID_subject_key_identifier, NID_authority_key_identifier,
+		NID_crl_distribution_points, NID_info_access };
+	spec.profile = id;
+	return spec;
+}
