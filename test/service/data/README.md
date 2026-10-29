@@ -5,7 +5,9 @@
 SQL dump (Python `sqlite3.iterdump()`) of a database created by the unmodified fork, bxc-main
 `119d539`, database schema 8. `test_service_audit::upgradeForkDatabase` loads it and checks that
 the fork migration `bxc_schema` 1 (table `audit_log`, BTD-29) keeps every row, leaves upstream's
-`schema` at 8 and writes the revocation baseline.
+`schema` at 8 and writes the revocation baseline. `test_service_audit::upgradeWaitsForPassword`
+and `cli_password_empty_db.cmake` (with the stored hash of the empty password) check that a
+rejected password leaves it unchanged (BTD-117).
 
 Content: an imported EC CA key and self-signed CA certificate (`fixture-ca-key`, `fixture-ca`), a
 generated RSA key (`fixture-rsa`) and a CRL of the CA (`fixture-crl`). All private keys are throwaway

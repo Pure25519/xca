@@ -48,6 +48,8 @@ class test_service_audit : public ServiceTestCase
 		return q.value(0);
 	}
 	static QMap<QString, QStringList> tableRows(QSqlDatabase db);
+	void loadForkDump(QMap<QString, QStringList> *rows);
+	QMap<QString, QStringList> fileRows();
 	static void appendSample(int count);
 	static QDateTime utc(const QString &iso)
 	{
@@ -58,6 +60,7 @@ class test_service_audit : public ServiceTestCase
 
   private slots:
 	void upgradeForkDatabase();
+	void upgradeWaitsForPassword();
 	void canonicalJson();
 	void chainHashVector();
 	void chainValid();
@@ -104,25 +107,13 @@ QMap<QString, QStringList> test_service_audit::tableRows(QSqlDatabase db)
 	return rows;
 }
 
-void test_service_audit::appendSample(int count)
+/* Replaces service.xdb with the dump of a database that the unmodified
+ * fork (bxc-main 119d539, schema 8) created: two keys, a CA certificate,
+ * a CRL and one revocation (data/README.md). *rows: its rows */
+void test_service_audit::loadForkDump(QMap<QString, QStringList> *rows)
 {
-	for (int i = 1; i <= count; i++) {
-		AuditParams p;
-		p.set("name", QString("key-%1").arg(i)).set("key_size", 2048);
-		AuditLog::append(cliAlice, "key.generate", "key",
-				QString::number(i), p);
-	}
-}
-
-void test_service_audit::upgradeForkDatabase()
-{
-	/* service.xdb is replaced by the dump of a database that the
-	 * unmodified fork (bxc-main 119d539, schema 8) created: two keys,
-	 * a CA certificate, a CRL and one revocation (data/README.md) */
 	Database.close();
 	QVERIFY(QFile::remove(dbFile));
-
-	QMap<QString, QStringList> before;
 	{
 		QFile dump(SERVICE_TEST_DATA "/schema8-fork.sql");
 		QVERIFY(dump.open(QIODevice::ReadOnly));
@@ -142,10 +133,43 @@ void test_service_audit::upgradeForkDatabase()
 		QVERIFY(s.exec("SELECT value FROM settings WHERE key_='schema'"));
 		QVERIFY(s.next());
 		QCOMPARE(s.value(0).toString(), QString("8"));
-		before = tableRows(db);
 		db.close();
 	}
 	QSqlDatabase::removeDatabase("fixture");
+	*rows = fileRows();
+}
+
+/* The rows of dbFile through a connection of its own, while XCA has it
+ * closed */
+QMap<QString, QStringList> test_service_audit::fileRows()
+{
+	QMap<QString, QStringList> rows;
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "rows");
+		db.setDatabaseName(dbFile);
+		if (db.open())
+			rows = tableRows(db);
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("rows");
+	return rows;
+}
+
+void test_service_audit::appendSample(int count)
+{
+	for (int i = 1; i <= count; i++) {
+		AuditParams p;
+		p.set("name", QString("key-%1").arg(i)).set("key_size", 2048);
+		AuditLog::append(cliAlice, "key.generate", "key",
+				QString::number(i), p);
+	}
+}
+
+void test_service_audit::upgradeForkDatabase()
+{
+	/* service.xdb is replaced by the schema 8 fork dump */
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
 	QVERIFY(!before.contains("audit_log"));
 	QCOMPARE(before["items"].size(), 4);
 	QCOMPARE(before["revocations"].size(), 1);
@@ -223,6 +247,29 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(r.mismatches.size(), 1);
 	QCOMPARE(r.mismatches[0].serial, QString("0F0F"));
 	QCOMPARE(r.mismatches[0].seq, qint64(0));
+}
+
+void test_service_audit::upgradeWaitsForPassword()
+{
+	/* BTD-117: the password of an old database is checked before the
+	 * fork upgrade writes. A rejected one leaves every row as it was:
+	 * no audit_log, no bxc_schema, no baseline. */
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
+
+	PwDialogHeadless *h = new PwDialogHeadless();
+	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
+	pwdialog->delegateTo(h);
+	warning->expectMessage("Password verify error");
+	bool rejected = false;
+	try {
+		Database.open(dbFile);
+	} catch (secretError &err) {
+		rejected = err.why == secretError::rejected;
+	}
+	QVERIFY(rejected);
+	QVERIFY(!Database.isOpen());
+	QCOMPARE(fileRows(), before);
 }
 
 void test_service_audit::canonicalJson()

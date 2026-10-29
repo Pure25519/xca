@@ -89,7 +89,10 @@ entry and with `openssl pkey -text` (skipped without the `openssl` program), and
 OpenSSL rejects fails with `invalid_key_size` (BTD-94). Test RSA with more than 2048 bit: 2048 is
 OpenSSL's default and passes even when the requested size is ignored.
 `test_service_audit.cpp` covers the audit log (BTD-29); its fixture is described in
-`data/README.md`. Audit entries land in the per-test database, so a test reads them with
+`data/README.md`. The CLI tests (`cli_*.cmake`) run `xca --no-gui`; `cli_password_empty_db.cmake`
+loads that fixture with `sql_exec` (a test helper in place of the `sqlite3` program, see its
+header) and gives it the stored hash of the empty password, a database the CLI cannot create
+(BTD-117). Audit entries land in the per-test database, so a test reads them with
 `AuditLog::entries()` right after the call. The caller contract for service functions (one
 entry per operation, `failure`/`denied` appended after the rollback, no retry on a concurrent
 writer) is in the header comment of `lib/audit.h`; `appendInRolledBackTransaction` pins it.

@@ -753,7 +753,7 @@ void AuditLog::writeBaseline()
 	}
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
-	/* No checkpoint here: the database is not unlocked yet */
+	/* No checkpoint here: the database may be open without its password */
 	for (const AuditParams &p : rows)
 		insertEntry(ctx, actionRevocationBaseline, "cert",
 			p.getValues().value("serial").toString(), p);
