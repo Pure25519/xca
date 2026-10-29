@@ -1,0 +1,43 @@
+{
+  "schema": "urn:bxc-pki:schema:template:v1",
+  "id": null,
+  "name": "[default] CA",
+  "created": null,
+  "source": "unknown",
+  "comment": "",
+  "predefined": true,
+  "subject": {
+    "attributes": [],
+    "rfc4514": ""
+  },
+  "settings": {
+    "OCSPstaple": "0",
+    "adv_ext": "",
+    "authInfAcc": "",
+    "authKey": "1",
+    "basicPath": "",
+    "bcCritical": "1",
+    "ca": "1",
+    "crlDist": "",
+    "eKeyUse": "",
+    "ekuCritical": "0",
+    "issAltName": "",
+    "keyUse": "96",
+    "kuCritical": "1",
+    "nameCons": "",
+    "noWellDefinedExpDate": "0",
+    "nsBaseUrl": "",
+    "nsCARevocationUrl": "",
+    "nsCaPolicyUrl": "",
+    "nsCertType": "0",
+    "nsComment": "",
+    "nsRenewalUrl": "",
+    "nsRevocationUrl": "",
+    "nsSslServerName": "",
+    "subAltName": "",
+    "subKey": "1",
+    "validM": "2",
+    "validMidn": "0",
+    "validN": "10"
+  }
+}

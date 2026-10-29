@@ -850,7 +850,12 @@ void pki_evp::writeDefault(const QString &dirname) const
 {
 	XFile file(get_dump_filename(dirname, ".pem"));
 	file.open_key();
-	writeKey(file, pki_evp::passwd.isEmpty() ? NULL : EVP_aes_256_cbc(),
+	if (isPubKey()) {
+		writePublic(file, true);
+		return;
+	}
+	/* PKCS#8 PBES2, not the RFC 1423 encryption of writeKey() (BTD-52) */
+	writePKCS8(file, pki_evp::passwd.isEmpty() ? NULL : EVP_aes_256_cbc(),
 			pki_evp::passwd, true);
 }
 

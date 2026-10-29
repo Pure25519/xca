@@ -89,6 +89,8 @@ class test_service_transaction : public ServiceTestCase
 	void schemaUpdateFailureStopsOpen();
 	void passwordChangeRollbackKeepsOld();
 	void strayRollbackDoesNotLeak();
+	void crlInsertBeginFails();
+	void failedBeginLeavesOuterAlone();
 };
 
 QString test_service_transaction::errorCode(std::function<void()> call)
@@ -469,7 +471,8 @@ void test_service_transaction::schemaUpdateFailureStopsOpen()
  * asked for a password that was never applied. */
 void test_service_transaction::passwordChangeRollbackKeepsOld()
 {
-	QVERIFY(newKey("BTD-142 key"));
+	pki_evp *key = dynamic_cast<pki_evp *>(newKey("BTD-142 key"));
+	QVERIFY(key);
 	QString oldHash = Settings["pwhash"];
 	QVERIFY(!oldHash.isEmpty());
 	Passwd pass;
@@ -484,6 +487,13 @@ void test_service_transaction::passwordChangeRollbackKeepsOld()
 	QCOMPARE(pki_evp::passHash, oldHash);
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='pwhash'")
 		.toString(), oldHash);
+	/* the key in memory still decrypts with the old password: on
+	 * 9121ddcd it carried key material encrypted with the new one
+	 * (BTD-130) */
+	EVP_PKEY *pkey = nullptr;
+	QCOMPARE(errorCode([&]() { pkey = key->decryptKey(); }), QString());
+	QVERIFY(pkey);
+	EVP_PKEY_free(pkey);
 }
 
 /* A TransRollback() after the commit of the same transaction: on
@@ -505,6 +515,66 @@ void test_service_transaction::strayRollbackDoesNotLeak()
 		QVERIFY(TransCommit());
 	}
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd142").toInt(), 1);
+}
+
+/* db_crl::insert() outside a transaction whose begin fails (here: a
+ * transaction the connection already has outside DbTransaction). On
+ * 9121ddcd it returned the CRL, neither stored nor deleted, so the
+ * caller took it for imported (BTD-149). Now it follows the contract of
+ * insertPKI(): NULL, the CRL deleted, nothing stored. */
+void test_service_transaction::crlInsertBeginFails()
+{
+	pki_x509 *ca = issue("BTD-149 CA", nullptr);
+	QVERIFY(ca);
+	pki_crl *made = Database.model<db_crl>()->newCrl(ctx, crljob(ca));
+	QVERIFY(made);
+	QByteArray der = made->i2d();
+	Database.model<db_crl>()->deleteItems(ctx, { made });
+	int crls = Store.getAll<pki_crl>().size();
+
+	pki_crl *crl = new pki_crl();
+	crl->fromBytes(der, "btd149.crl");
+	sql("BEGIN");
+	warning->expectMessage("transaction");
+	pki_base *stored = Database.model<db_crl>()->insert(crl);
+	sql("ROLLBACK");
+
+	QVERIFY(!stored);
+	QCOMPARE(Store.getAll<pki_crl>().size(), crls);
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM crls").toInt(), 0);
+}
+
+/* A DbTransaction whose top-level begin fails (the connection is already
+ * in a transaction it did not start). On 9121ddcd it kept its level and
+ * its destructor rolled back the outside transaction, losing its row
+ * (BTD-172). */
+void test_service_transaction::failedBeginLeavesOuterAlone()
+{
+	sql("CREATE TABLE btd172 (x INTEGER)");
+	sql("BEGIN");
+	sql("INSERT INTO btd172 VALUES (1)");
+	bool begun, active;
+	{
+		Transaction;
+		warning->expectMessage("transaction");
+		begun = TransBegin();
+		active = DbTransaction::active();
+	}
+	/* the outside transaction is still there */
+	QSqlQuery q(QSqlDatabase::database());
+	bool committed = q.exec("COMMIT");
+	QVERIFY(!begun);
+	QVERIFY2(committed, CCHAR("outside transaction ended: " +
+		q.lastError().text()));
+	QVERIFY2(!active, "level raised after the failed begin");
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd172").toInt(), 1);
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		sql("INSERT INTO btd172 VALUES (2)");
+		QVERIFY(TransCommit());
+	}
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd172").toInt(), 2);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_transaction)

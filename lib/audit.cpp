@@ -550,14 +550,19 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	bool writing = false;
+	/* insertEntry() has committed or joined the caller's transaction */
+	bool callerTransaction = DbTransaction::active();
 	try {
 		writeCheckpoint(ctx, false, false, false, &writing);
 	} catch (errorEx &err) {
 		/* Failed before its first write: the entry and the caller's
 		 * transaction stay, the next append() tries again. A failure
 		 * while writing rolled the caller's transaction back with
-		 * the checkpoint, so it must reach the caller (BTD-111) */
-		if (writing)
+		 * the checkpoint, so it must reach the caller (BTD-111).
+		 * Without a caller transaction (a failure entry after the
+		 * rollback) the entry is committed: the caller keeps its own
+		 * error and the next append() tries again (BTD-143) */
+		if (writing && callerTransaction)
 			throw;
 		qWarning() << "No audit checkpoint after entry" << e.seq
 			<< err.getString();

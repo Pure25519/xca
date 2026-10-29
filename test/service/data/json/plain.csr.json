@@ -1,0 +1,49 @@
+{
+  "schema": "urn:bxc-pki:schema:csr:v1",
+  "id": 10,
+  "name": "plain-request",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "imported",
+  "comment": "",
+  "version": 0,
+  "subject": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      },
+      {
+        "name": "CN",
+        "oid": "2.5.4.3",
+        "value": "plain-request"
+      }
+    ],
+    "rfc4514": "CN=plain-request,O=BxC Lab"
+  },
+  "key_item": {
+    "id": 8,
+    "name": "ec"
+  },
+  "public_key": {
+    "curve": {
+      "name": "secp384r1",
+      "oid": "1.3.132.0.34"
+    },
+    "fingerprint": "64:E1:11:9F:1C:36:6D:A2:10:C8:B4:57:59:E0:93:43:BD:CA:A2:19:A4:2D:8D:F8:3A:B1:A6:55:26:BE:22:A9",
+    "pem": "-----BEGIN PUBLIC KEY-----\nMHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEQKvJSU9nUCaFmrZNi6s+MpKJQOKLY1Bf\nANFcnMZQKRCWs2sSFytCAI+vo/IttP/PXKhAdSExbfpJ+ogrWIlK5nhWbuCxL2aQ\nY5vvARTkWuOC52Rg5UQ6d0N7ppOOcpD0\n-----END PUBLIC KEY-----\n",
+    "size": 384,
+    "type": "EC"
+  },
+  "signature_algorithm": {
+    "name": "ecdsa-with-SHA384",
+    "oid": "1.2.840.10045.4.3.3"
+  },
+  "signature_valid": true,
+  "signed": false,
+  "certificate_count": 0,
+  "extensions": [],
+  "attributes": [],
+  "challenge_password_present": false,
+  "pem": "-----BEGIN CERTIFICATE REQUEST-----\nMIIBITCBqQIBADAqMRAwDgYDVQQKDAdCeEMgTGFiMRYwFAYDVQQDDA1wbGFpbi1y\nZXF1ZXN0MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEQKvJSU9nUCaFmrZNi6s+MpKJ\nQOKLY1BfANFcnMZQKRCWs2sSFytCAI+vo/IttP/PXKhAdSExbfpJ+ogrWIlK5nhW\nbuCxL2aQY5vvARTkWuOC52Rg5UQ6d0N7ppOOcpD0oAAwCgYIKoZIzj0EAwMDZwAw\nZAIwGV7LQabkKhYGkPM029/uhv8oFT6YGf+xccJjBDtwfvO+9UucSBU2qNvOV1qm\n0As0AjByXbjTSc7Fu0Cte52XPK7NArIpFGIy0vtcvukHZuA9CeDexGg339CdmKj7\nTETAWjA=\n-----END CERTIFICATE REQUEST-----\n"
+}

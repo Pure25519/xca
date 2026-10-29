@@ -8,6 +8,8 @@
 #ifndef __SQL_H
 #define __SQL_H
 
+#include <functional>
+
 #include <QtSql>
 #include <QList>
 
@@ -25,6 +27,10 @@ class DbTransaction
 		static bool hasTransaction;
 		static int injected;
 		static QString firstRollback;
+		static QList<std::function<void()> > undoActions;
+		static QList<std::function<void()> > commitActions;
+		static void runActions(QList<std::function<void()> > &list,
+				bool lastFirst);
 		bool has_begun{};
 		const char *beginFile{};
 		int beginLine{};
@@ -42,6 +48,7 @@ class DbTransaction
 			return injected > 0;
 		}
 		friend class test_service_transaction;
+		friend class test_service_memory;
 
 	public:
 		DbTransaction() { };
@@ -66,6 +73,20 @@ class DbTransaction
 		{
 			hasTransaction = trans;
 		}
+		/* Memory follows the database (BTD-130). A change of memory
+		 * that later steps of the transaction need (a new object in
+		 * the store and the view, a link to it) is made at once and
+		 * registers how to take it back: the undo runs, last first,
+		 * when the outermost transaction ends without a successful
+		 * COMMIT, and is dropped after one. It changes memory only,
+		 * never the database, and must not throw. Outside a
+		 * transaction there is nothing to undo. */
+		static void onRollback(std::function<void()> undo);
+		/* A change of memory that must wait for the COMMIT, e.g.
+		 * freeing a deleted object: runs after the outermost COMMIT
+		 * succeeded, never after a rollback; at once outside a
+		 * transaction */
+		static void afterCommit(std::function<void()> action);
 };
 
 #define Transaction DbTransaction __trans

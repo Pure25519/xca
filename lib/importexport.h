@@ -80,6 +80,10 @@ class ExportSpec
 	 * format: pki_base::pem() in the formats of the settings
 	 * KeyFormat and CertFormat */
 	bool clipboard{};
+	/* PKCS#12 encryption, a name of encAlgo::all_encAlgos, e.g.
+	 * PBE-SHA1-3DES for a legacy reader. Empty: the setting
+	 * pkcs12_enc_algo, by default AES-256-CBC (BTD-52) */
+	QString pkcs12Algorithm{};
 };
 
 /* "certificate", "key", "request", "crl", "template": the audit object

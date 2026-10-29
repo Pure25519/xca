@@ -114,31 +114,16 @@ void db_x509::remFromCont(pki_base *pki)
 	db_crl *crls = Database.model<db_crl>();
 	db_x509super::remFromCont(pki);
 	pki_x509 *child;
-	pki_base *new_parent;
-	QList<pki_x509 *> childs;
 
-	Transaction;
-	if (!TransBegin())
-		return;
-
+	/* Memory only: the database got the new issuers of the childs with
+	 * the delete (pki_x509::deleteSqlData()), or never had pki because
+	 * its insert was rolled back (BTD-130) */
 	while (pki->childCount()) {
 		child = dynamic_cast<pki_x509*>(pki->takeFirst());
 		child->delSigner(dynamic_cast<pki_x509*>(pki));
-		new_parent = child->findIssuer();
-		insertChild(child, new_parent);
-		if (new_parent)
-			childs << child;
-	}
-	XSqlQuery q;
-	SQL_PREPARE(q, "UPDATE certs SET issuer=? WHERE item=?");
-	foreach(pki_x509 *child, childs) {
-		q.bindValue(0, child->getSigner()->getSqlItemId());
-		q.bindValue(1, child->getSqlItemId());
-		AffectedItems(child->getSqlItemId());
-		q.exec();
+		insertChild(child, child->findIssuer());
 	}
 	crls->removeSigner(pki);
-	TransCommit();
 }
 
 static bool recursiveSigning(pki_x509 *cert, pki_x509 *client)
@@ -170,6 +155,19 @@ void db_x509::inToCont(pki_base *pki)
 	unsigned pubhash = cert->pubHash();
 	unsigned namehash = cert->getSubject().hashNum();
 	x509revList revList;
+	/* A rollback gives a child back its signer, place in the tree and
+	 * revocation (BTD-130) */
+	auto keep = [this](pki_x509 *child) {
+		pki_x509 *signer = child->getSigner();
+		pki_base *parent = child->getParent();
+		x509rev rev = child->getRevocation();
+		DbTransaction::onRollback([=]() {
+			child->setSigner(signer);
+			child->setRevoked(rev);
+			if (child->getParent() != parent)
+				insertChild(child, parent);
+		});
+	};
 
 	/* Search for another certificate (name and key)
 	 * and use its childs if we are newer */
@@ -190,6 +188,7 @@ void db_x509::inToCont(pki_base *pki)
 			pki_x509 *child = dynamic_cast<pki_x509*>(b);
 			if (!child)
 				continue;
+			keep(child);
 			child->delSigner(other);
 			childs << child;
 		}
@@ -200,8 +199,10 @@ void db_x509::inToCont(pki_base *pki)
 		pki_x509 *child = dynamic_cast<pki_x509*>(b);
 		if (!child || child == cert || child->getSigner() == child)
 			continue;
-		if (child->verify_only(cert))
+		if (child->verify_only(cert)) {
+			keep(child);
 			childs << child;
+		}
 	}
 	/* move collected childs to us */
 	XSqlQuery q;
@@ -231,9 +232,13 @@ void db_x509::inToCont(pki_base *pki)
 			QList<QVariant>() << namehash);
 	SQL_PREPARE(q, "UPDATE crls SET issuer=? WHERE item=?");
 	foreach(pki_crl *crl, crls) {
+		pki_x509 *old = crl->getIssuer();
 		crl->verify(cert);
 		if (cert != crl->getIssuer())
 			continue;
+		DbTransaction::onRollback([crl, old]() {
+			crl->setIssuer(old);
+		});
 		q.bindValue(0, cert->getSqlItemId());
 		q.bindValue(1, crl->getSqlItemId());
 		AffectedItems(crl->getSqlItemId());
@@ -370,6 +375,12 @@ void db_x509::markRequestSigned(pki_x509req *req, pki_x509 *cert)
 		return;
 
 	XSqlQuery q;
+	bool done = req->getDone();
+	QString comment = req->getComment();
+	DbTransaction::onRollback([req, done, comment]() {
+		req->setDone(done);
+		req->setComment(comment);
+	});
 	req->setDone();
 	SQL_PREPARE(q, "UPDATE requests SET signed=? WHERE item=?");
 	q.bindValue(0, 1);
@@ -777,6 +788,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
     catch (...) {
 	delete cert;
 	delete tempkey;
+	/* rolled back and unstored: the object is ours again (BTD-130) */
+	if (stored && !isStored(stored))
+		delete stored;
 	throw;
     }
     return stored;
@@ -1018,7 +1032,7 @@ void db_x509::writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
 		foreach(pki_base *signer, certChain(cert).mid(1))
 			p12.append_item(signer);
 	}
-	encAlgo encAlgo((QString) Settings["pkcs12_enc_algo"]);
+	encAlgo encAlgo = encAlgo::forExport();
 	p12.writePKCS12(file, encAlgo, pass);
 }
 

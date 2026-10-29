@@ -19,6 +19,8 @@ bool DbTransaction::hasTransaction;
 int DbTransaction::injected;
 QString DbTransaction::firstRollback;
 QList<quint64> DbTransaction::items;
+QList<std::function<void()> > DbTransaction::undoActions;
+QList<std::function<void()> > DbTransaction::commitActions;
 
 quint64 DbTransaction::DatabaseStamp;
 
@@ -53,8 +55,13 @@ bool DbTransaction::begin(const char *file, int line)
 
 	QSqlDatabase db = QSqlDatabase::database();
 	bool ret = db.transaction();
-	if (!ret)
+	if (!ret) {
 		XCA_SQLERROR(db.lastError());
+		/* Not begun: the level as before, and the destructor ends
+		 * no transaction this object did not start (BTD-172) */
+		mutex--;
+		has_begun = false;
+	}
 	return ret;
 }
 
@@ -78,6 +85,8 @@ bool DbTransaction::finish(bool commit, const char *file, int line)
 		error = 0;
 		items.clear();
 		bool ret = hasTransaction ? db.rollback() : true;
+		commitActions.clear();
+		runActions(undoActions, true);
 		if (!commit)
 			return ret;
 		/* An inner transaction rolled back, so everything did: the
@@ -114,8 +123,43 @@ bool DbTransaction::finish(bool commit, const char *file, int line)
 		 * (busy, deferred constraint): every later write would end
 		 * up in it and be lost on close (BTD-114) */
 		db.rollback();
+		commitActions.clear();
+		runActions(undoActions, true);
+		return false;
 	}
-	return ret;
+	undoActions.clear();
+	runActions(commitActions, false);
+	return true;
+}
+
+void DbTransaction::runActions(QList<std::function<void()> > &list,
+			bool lastFirst)
+{
+	/* an action may start a transaction of its own and register more */
+	QList<std::function<void()> > run;
+	run.swap(list);
+	for (qsizetype i = 0; i < run.size(); i++) {
+		try {
+			run[lastFirst ? run.size() - 1 - i : i]();
+		} catch (...) {
+			/* may run while an exception unwinds the stack */
+			qCritical() << "DbTransaction: a memory action threw";
+		}
+	}
+}
+
+void DbTransaction::onRollback(std::function<void()> undo)
+{
+	if (mutex > 0)
+		undoActions << undo;
+}
+
+void DbTransaction::afterCommit(std::function<void()> action)
+{
+	if (mutex > 0)
+		commitActions << action;
+	else
+		action();
 }
 
 bool DbTransaction::commit(const char *file, int line)
