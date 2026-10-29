@@ -1,0 +1,49 @@
+{
+  "schema": "urn:bxc-pki:schema:template:v1",
+  "id": 1,
+  "name": "OPC UA server",
+  "created": "2026-10-29T00:00:00Z",
+  "source": "generated",
+  "comment": "",
+  "predefined": false,
+  "subject": {
+    "attributes": [
+      {
+        "name": "O",
+        "oid": "2.5.4.10",
+        "value": "BxC Lab"
+      }
+    ],
+    "rfc4514": "O=BxC Lab"
+  },
+  "settings": {
+    "OCSPstaple": "0",
+    "adv_ext": "",
+    "authInfAcc": "",
+    "authKey": "1",
+    "basicPath": "",
+    "bcCritical": "1",
+    "ca": "2",
+    "crlDist": "",
+    "eKeyUse": "serverAuth, clientAuth",
+    "ekuCritical": "0",
+    "issAltName": "",
+    "keyUse": "5",
+    "kuCritical": "1",
+    "nameCons": "",
+    "noWellDefinedExpDate": "0",
+    "nsBaseUrl": "",
+    "nsCARevocationUrl": "",
+    "nsCaPolicyUrl": "",
+    "nsCertType": "0",
+    "nsComment": "",
+    "nsRenewalUrl": "",
+    "nsRevocationUrl": "",
+    "nsSslServerName": "",
+    "subAltName": "URI:urn:bxc:{CN}",
+    "subKey": "1",
+    "validM": "0",
+    "validMidn": "0",
+    "validN": "365"
+  }
+}

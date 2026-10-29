@@ -134,9 +134,14 @@ class pki_x509 : public pki_x509super
 		{
 			return crlDays;
 		}
-		x509rev getRevocation()
+		x509rev getRevocation() const
 		{
 			return revocation;
+		}
+		/* nextUpdate of the newest CRL of this CA (authority table) */
+		a1time getCrlExpire() const
+		{
+			return crlExpire;
 		}
 		pk11_attlist objectAttributes();
 		bool hasExtension(int nid) const;

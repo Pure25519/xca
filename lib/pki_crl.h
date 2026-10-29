@@ -80,6 +80,10 @@ class pki_crl: public pki_x509name
 		QString getIssuerName() const;
 		void setIssuer(pki_x509 *iss);
 		x509name getSubject() const;
+		const X509_CRL *getCrl() const
+		{
+			return crl;
+		}
 		void setLastUpdate(const a1time &t);
 		void setNextUpdate(const a1time &t);
 		a1time getNextUpdate() const;
