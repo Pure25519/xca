@@ -73,11 +73,11 @@ static x509name subjectFrom(const Options &o)
 static digest hashFrom(const Options &o, const pki_key *signKey)
 {
 	if (!o.has("hash")) {
-#ifdef EVP_PKEY_ED25519
-		/* Ed25519 signs without a separate digest */
-		if (signKey && signKey->getKeyType() == EVP_PKEY_ED25519)
+		/* Key types without size or curve (EdDSA, ML-DSA, SLH-DSA)
+		 * sign without a separate digest; the dialogs' digest list
+		 * keeps SHA-256 for ML-DSA/SLH-DSA until BTD-164 */
+		if (signKey && keytype::byType(signKey->getKeyType()).fixed())
 			return digest(QString());
-#endif
 		return digest::getDefault();
 	}
 	QString name = o.value("hash");
@@ -103,7 +103,9 @@ static QDateTime nowSeconds()
 static void applyValidity(const Options &o, IssuanceSpec &spec,
 		const IsoDuration &def, bool fromTemplate)
 {
-	/* the period of a template, kept for a new start */
+	/* the period of a template, kept for the new start: a template
+	 * starts at the minute (or midnight), which may be before the
+	 * start of a CA made in the same minute (issuer_not_yet_valid) */
 	a1time tmplStart = spec.notBefore, tmplEnd = spec.notAfter;
 
 	if (o.has("not-before"))
@@ -112,7 +114,7 @@ static void applyValidity(const Options &o, IssuanceSpec &spec,
 	else if (o.has("backdate"))
 		spec.notBefore = a1time(parseDuration(o.value("backdate"),
 				"backdate").subtractFrom(nowSeconds()));
-	else if (!fromTemplate)
+	else
 		spec.notBefore = a1time(nowSeconds());
 
 	if (o.has("not-after")) {
@@ -123,8 +125,7 @@ static void applyValidity(const Options &o, IssuanceSpec &spec,
 		spec.validity = parseDuration(o.value("validity"), "validity");
 	} else if (!fromTemplate) {
 		spec.validity = def;
-	} else if (!tmplEnd.isUndefined() &&
-		   (o.has("not-before") || o.has("backdate"))) {
+	} else if (!tmplEnd.isUndefined()) {
 		spec.notAfter = a1time(((QDateTime)spec.notBefore).addSecs(
 			((QDateTime)tmplStart).secsTo(tmplEnd)));
 	}
@@ -164,19 +165,19 @@ static QList<QPair<QString, QString> > validityConflicts()
 	};
 }
 
-/* The key of a new object: --key <ref>, --key-file <file> (not stored)
- * or a new key of --key-type. A new key is written and recorded. */
+/* The key of a new object: --use-key <ref>, --key-file <file> (not
+ * stored) or a new key of type --key. A new key is written and recorded. */
 static pki_key *obtainKey(CommandContext &ctx, const QString &name,
 		const QString &defaultType, pki_multi *fileItems)
 {
 	const Options &o = ctx.opts;
-	if (o.has("key")) {
-		pki_key *key = resolveAs<pki_key>(o.value("key"), "key",
-						"--key");
+	if (o.has("use-key")) {
+		pki_key *key = resolveAs<pki_key>(o.value("use-key"), "key",
+						"--use-key");
 		if (!key || key->isPubKey())
 			throw serviceError("no_private_key", QObject::tr(
-				"--key '%1' has no private key")
-				.arg(o.value("key")));
+				"--use-key '%1' has no private key")
+				.arg(o.value("use-key")));
 		return key;
 	}
 	if (o.has("key-file")) {
@@ -190,7 +191,7 @@ static pki_key *obtainKey(CommandContext &ctx, const QString &name,
 			"--key-file '%1' holds no private key")
 			.arg(o.value("key-file")));
 	}
-	keyjob job(keyJobText(o.value("key-type", defaultType)));
+	keyjob job(keyJobText(o.value("key", defaultType)));
 	ctx.step = QObject::tr("key '%1'").arg(name);
 	pki_key *key = Database.model<db_key>()->newKey(ctx.svc, job, name);
 	ctx.result->written(key);
@@ -200,10 +201,11 @@ static pki_key *obtainKey(CommandContext &ctx, const QString &name,
 static QList<OptionSpec> keyOptions(const QString &def, bool withFile)
 {
 	QList<OptionSpec> l {
-		opt("key-type", OptionSpec::string, "<type>", QObject::tr(
-			"type of the new key: %1 (default %2)")
+		opt("key", OptionSpec::string, "<type>", QObject::tr(
+			"type of the new key, the names of the bootstrap file: "
+			"%1 (default %2)")
 			.arg(supportedKeyTypes().join(", ")).arg(def)),
-		opt("key", OptionSpec::reference, "<key>", QObject::tr(
+		opt("use-key", OptionSpec::reference, "<key>", QObject::tr(
 			"use this key of the database instead of a new one")),
 	};
 	if (withFile)
@@ -260,7 +262,7 @@ static void cmdInit(CommandContext &ctx)
 	e.netscape = false;
 
 	pki_multi fileItems;
-	spec.key = obtainKey(ctx, spec.name, "ec:secp384r1", &fileItems);
+	spec.key = obtainKey(ctx, spec.name, "ec-p384", &fileItems);
 	spec.hashAlgo = hashFrom(o, parent ? parent->getRefKey() : spec.key);
 	ctx.step = QObject::tr("certificate '%1'").arg(spec.name);
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
@@ -300,7 +302,7 @@ static void cmdRequestCert(CommandContext &ctx)
 			QObject::tr("request-cert needs --name"));
 
 	pki_multi fileItems;
-	spec.key = obtainKey(ctx, spec.name, "ec:prime256v1", &fileItems);
+	spec.key = obtainKey(ctx, spec.name, "ec-p256", &fileItems);
 	spec.hashAlgo = hashFrom(o, spec.key);
 	ctx.step = QObject::tr("request '%1'").arg(spec.name);
 	pki_x509req *req = Database.model<db_x509req>()->newRequest(ctx.svc,
@@ -466,9 +468,9 @@ void registerCommands(Registry &r)
 			"issuing CA: creates an intermediate CA")),
 		opt("path-len", OptionSpec::integer, "<n>", QObject::tr(
 			"basicConstraints pathLenConstraint; only when given")),
-	} + keyOptions("ec:secp384r1", false) + validityOptions("P10Y");
+	} + keyOptions("ec-p384", false) + validityOptions("P10Y");
 	c.conflicts = QList<QPair<QString, QString> > {
-		{ "cn", "subject" }, { "key", "key-type" } } +
+		{ "cn", "subject" }, { "key", "use-key" } } +
 		validityConflicts();
 	c.writes = true;
 	c.handler = cmdInit;
@@ -503,10 +505,10 @@ void registerCommands(Registry &r)
 		opt("hash", OptionSpec::string, "<digest>", QObject::tr(
 			"signature digest of the request (default: the database "
 			"default; none for Ed25519)")),
-	} + keyOptions("ec:prime256v1", true);
+	} + keyOptions("ec-p256", true);
 	c.conflicts = QList<QPair<QString, QString> > {
-		{ "cn", "subject" }, { "key", "key-type" },
-		{ "key", "key-file" }, { "key-file", "key-type" } };
+		{ "cn", "subject" }, { "key", "use-key" },
+		{ "use-key", "key-file" }, { "key", "key-file" } };
 	c.writes = true;
 	c.handler = cmdRequestCert;
 	r.add(c);

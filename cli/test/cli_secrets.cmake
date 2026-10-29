@@ -154,21 +154,22 @@ else()
 endif()
 
 # --- typed error codes ---------------------------------------------------
-bxc("invalid key type" 1 request-cert --db "${DB}" ${PW} --cn kt
-    --key-type foo:1)
-expect_error("invalid key type" invalid_key_type)
-foreach(kt ed25519:256 rsa:16 rsa:abc)
-  bxc("invalid size ${kt}" 1 request-cert --db "${DB}" ${PW}
-      --cn "size-${kt}" --key-type ${kt})
-  expect_error("invalid size ${kt}" invalid_key_size)
+# --key takes exactly the names of the bootstrap keyType: anything else,
+# also the xca syntax, is invalid_key_type; the name fixes size and curve
+foreach(kt foo rsa:2048 RSA-2048 rsa-1024 ec-p224 ec:prime256v1 ed25519:256
+    dsa-2048 ml-dsa-65:2048)
+  bxc("invalid key type '${kt}'" 1 request-cert --db "${DB}" ${PW} --cn kt
+      --key "${kt}")
+  expect_error("invalid key type '${kt}'" invalid_key_type)
 endforeach()
-bxc("invalid curve" 1 init --db "${DB}" ${PW} --cn curve
-    --key-type ec:nocurve)
-expect_error("invalid curve" invalid_curve)
+# a size reaches the service only through xca --keygen (below)
 xca_run("xca invalid key type" 1 --database "${DB}" ${PW} --json
     --keygen FOO:1)
 expect_error("xca invalid key type" invalid_key_type)
-foreach(kt ED25519:256 RSA:abc)
+xca_run("xca invalid curve" 1 --database "${DB}" ${PW} --json
+    --keygen EC:nocurve --name nocurve)
+expect_error("xca invalid curve" invalid_curve)
+foreach(kt ED25519:256 ED448:456 ML-DSA-65:2048 RSA:abc RSA:16)
   xca_run("xca invalid size ${kt}" 1 --database "${DB}" ${PW} --json
       --keygen ${kt} --name "xca-${kt}")
   expect_error("xca invalid size ${kt}" invalid_key_size)

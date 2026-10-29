@@ -31,7 +31,7 @@ if(NOT err STREQUAL "")
 endif()
 
 bxc("init intermediate" 0 init --db "${DB}" ${PW} --cn "BxC Lab Issuing"
-    --parent "BxC Lab Root" --path-len 0 --key-type rsa:3072 --validity P5Y)
+    --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --validity P5Y)
 one_doc("init intermediate" "${out}" cli-result inter)
 object_doc("${inter}" certificate int_crt)
 extension("${int_crt}" basicConstraints bc)
@@ -94,7 +94,7 @@ openssl_run(v verify -CAfile root.pem int.pem)
 
 # --- Ed25519 and RSA end entities, custom EKU from a template ------------
 bxc("request ed25519" 0 request-cert --db "${DB}" ${PW} --cn ed-dev
-    --dns ed-dev.lab --key-type ed25519)
+    --dns ed-dev.lab --key ed25519)
 bxc("sign ed25519" 0 sign ed-dev --db "${DB}" ${PW} --ca "BxC Lab Issuing")
 one_doc("sign ed25519" "${out}" cli-result r)
 object_doc("${r}" certificate ed_crt)
@@ -103,7 +103,7 @@ if(ku MATCHES "Encipherment")
   fail("Ed25519 certificate with '${ku}' (rule 3)")
 endif()
 bxc("request rsa" 0 request-cert --db "${DB}" ${PW} --cn rsa-dev
-    --key-type rsa:2048)
+    --key rsa-2048)
 bxc("sign rsa" 0 sign rsa-dev --db "${DB}" ${PW} --ca "BxC Lab Issuing")
 one_doc("sign rsa" "${out}" cli-result r)
 object_doc("${r}" certificate rsa_crt)
@@ -230,10 +230,10 @@ bxc("help" 0 --help)
 foreach(word init request-cert sign list show
     --db --password --sqlpass --import-pass --export-pass --pin --so-pin
     --new-pin --new-so-pin --interactive --text --plan --help --cn
-    --subject --name --parent --path-len --key-type --key --key-file
+    --subject --name --parent --path-len --key --use-key --key-file
     --validity --not-before --not-after --backdate --hash --dns --ip
     --uri --email --ca --template --profile --type --file
-    rsa ec ed25519)
+    rsa-2048 ec-p256 ed25519 ml-dsa-65 slh-dsa-sha2-128s)
   string(FIND "${out}" "${word}" pos)
   if(pos EQUAL -1)
     fail("--help does not document '${word}'")

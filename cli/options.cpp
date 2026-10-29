@@ -286,7 +286,7 @@ QString helpText()
 		"to stderr; an error is a JSON error object\n(urn:bxc-pki:schema:"
 		"error:v1) there. Exit code 0 ok, 1 failure, 2 usage error.\n"
 		"Secrets only as pass:<pw>, env:<var>, file:<path>, fd:<n> or "
-		"stdin.\nReferences (--ca, --parent, --key, --template, show) "
+		"stdin.\nReferences (--ca, --parent, --use-key, --template, show) "
 		"are a database id or a unique name.\nDurations are ISO 8601 "
 		"(P20Y, P1Y6M, P90D, PT12H), dates RFC 3339\n"
 		"(2026-10-29T12:00:00Z).\n\nCommands:\n");

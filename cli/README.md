@@ -6,9 +6,9 @@
 unless `--interactive` is given.
 
 ```
-bxc-pki init --cn "BxC Lab Root" --validity P20Y --password env:PKI_PW
-bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --password env:PKI_PW
-bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --password env:PKI_PW
+bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
+bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --password env:PKI_PW
+bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
 bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
@@ -29,6 +29,15 @@ bxc-pki show plc10 --type certificate
   (`invalid_secret_source`), `pass:` warns. One option per purpose: `--password` (database and
   key passwords), `--sqlpass`, `--import-pass`, `--export-pass`; `--pin`, `--so-pin`, `--new-pin`,
   `--new-so-pin` are reserved for BTD-17. A missing source is `missing_password` naming the option.
+- Keys: `--key <type>` generates a new key; the type names are exactly those of the bootstrap
+  file (bxc-pki `schemas/bootstrap.schema.json` `$defs/keyType`: `rsa-2048`, `rsa-3072`,
+  `rsa-4096`, `ec-p256`, `ec-p384`, `ec-p521`, `ec-brainpoolp256r1/384r1/512r1`, `ed25519`,
+  `ed448`, `ml-dsa-44/65/87`, `slh-dsa-sha2-*`, `slh-dsa-shake-*`), mapped onto the service's
+  keyjob in one table (`input.cpp`). An unknown name is `invalid_key_type`, a name this build
+  cannot generate is `not_supported`; `--help` lists the available ones. `--use-key <id|name>`
+  takes a key of the database, `--key-file <file>` a key file (not stored). Size and curve follow
+  from the name, so bxc-pki cannot pass a wrong size; the key generation service still rejects
+  one (`invalid_key_size`, audited), reachable through `xca --keygen` (BTD-16).
 - A failing OID initialisation stops every command before the database is opened
   (`oid_init_failed`).
 - Every write goes through the service layer, which writes the audit entries (channel `cli`,
@@ -55,7 +64,7 @@ Result document of `init`, `request-cert`, `sign` (schema `urn:bxc-pki:schema:cl
 | handlers | `commands.cpp` | functions over the service layer (`db_key::newKey`, `db_x509req::newRequest`, `db_x509::newCert`); they neither open nor commit a transaction and record each written object in the collector |
 | `ResultCollector` | `framework.cpp` | takes the JSON document of each written object at once (an object of a rolled back transaction is gone afterwards) and becomes one result document per command |
 | `runInTransaction()` | `framework.cpp` | runs a list of handlers in ONE transaction it owns: commit, or with `--plan` a deliberate rollback (nothing written, ids null in the result). On failure everything is rolled back and the failure audit entries of the service calls are written again after the rollback (`AuditFailureCapture`, `lib/audit.h`) |
-| references | `framework.cpp` | `--ca`, `--parent`, `--key`, `--template` and `show` take a database id or a unique name; an ambiguous name is `ambiguous_reference` with the candidates |
+| references | `framework.cpp` | `--ca`, `--parent`, `--use-key`, `--template` and `show` take a database id or a unique name; an ambiguous name is `ambiguous_reference` with the candidates |
 | input checks | `input.cpp` | RFC 4514 subjects (order kept, multi-valued RDNs, DC, UTF8String), strict IP/URI/DNS/e-mail SANs, RFC 3339, ISO 8601 durations (`IsoDuration`, `lib/issuance.h`), key types |
 
 `bootstrap` plugs in as one more command: it parses its file into the same `Options`-like inputs,
@@ -80,8 +89,10 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 - Rule 11: no prompt without `--interactive`; every failure exits non-zero with an error object
   naming the object and the cause; the result lists only written objects.
 - Rule 12: see input checks; no template object is shared between calls.
-- Rules 1, 3 and 5 checks of the service layer (BTD-55, BTD-65): `cli/test/cli_sign_checks.cmake`,
-  switched on with `-DBXC_PKI_SIGN_CHECKS=ON` once they are merged.
+- Rules 1 and 5: the checks of the service layer before every signature (BTD-55,
+  `lib/issuance_checks.h`) end to end in `cli/test/cli_sign_checks.cmake`. Rule 3 by key type
+  (BTD-54) waits in `cli/test/cli_sign_checks_pending.cmake`, switched on with
+  `-DBXC_PKI_SIGN_CHECKS=ON` once BTD-54 is merged.
 
 ## Tests
 

@@ -28,9 +28,9 @@ if(BUILD_TESTING)
   find_program(CLI_SETPRIV setpriv)
   find_program(CLI_LDD ldd)
 
-  # Sign checks of BTD-55/BTD-65 (rules 1, 3 and 5): the tests exist and
-  # are switched on once those checks are merged into bxc-main
-  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the BTD-55/65 sign checks" OFF)
+  # Sign checks that wait for a service ticket (rule 3, BTD-54): the
+  # test exists and is switched on once the ticket is merged
+  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the pending sign checks (BTD-54)" OFF)
 
   # CliTest(<name>): cli/test/<name>.cmake as ctest test_<name>, label cli
   macro(CliTest name)
@@ -61,7 +61,10 @@ if(BUILD_TESTING)
   CliTest(cli_validity)
   CliTest(cli_errors)
   CliTest(cli_json_forms)
+  CliTest(cli_keytypes)
+  # rules 1 and 5 through the checks of BTD-55
+  CliTest(cli_sign_checks)
   if(BXC_PKI_SIGN_CHECKS)
-    CliTest(cli_sign_checks)
+    CliTest(cli_sign_checks_pending)
   endif()
 endif()

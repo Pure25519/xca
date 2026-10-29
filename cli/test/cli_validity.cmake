@@ -23,7 +23,8 @@ math(EXPR y2 "${year} + 2")
 math(EXPR y1 "${year} + 1")
 
 # --- root of two years, an intermediate of P20Y gets capped -------------
-bxc("root P2Y" 0 init --db "${DB}" ${PW} --cn "Short Root" --validity P2Y)
+bxc("root P2Y" 0 init --db "${DB}" ${PW} --cn "Short Root" --validity P2Y
+    --backdate P1D)
 one_doc("root P2Y" "${out}" cli-result r)
 object_doc("${r}" certificate root)
 string(JSON root_nb GET "${root}" not_before)

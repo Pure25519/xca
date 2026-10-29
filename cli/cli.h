@@ -245,9 +245,10 @@ QString checkEmail(const QString &email);
 /* RFC 3339 date-time; throws usageError invalid_value */
 a1time parseTimestamp(const QString &text, const QString &option);
 IsoDuration parseDuration(const QString &text, const QString &option);
-/* "rsa:3072", "ec:prime256v1", "ed25519", "dsa:2048"; the key type
- * must exist (invalid_key_type), size and curve are checked by the
- * key generation service (invalid_key_size, invalid_curve) */
+/* --key: a name of the bootstrap keyType vocabulary (rsa-3072, ec-p256,
+ * ed25519, ml-dsa-65, ...) as keyjob text; an unknown name is
+ * invalid_key_type, a name this build cannot generate not_supported.
+ * Size and curve are checked by the key generation service. */
 QString keyJobText(const QString &keyType);
 QStringList supportedKeyTypes();
 

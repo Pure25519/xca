@@ -15,11 +15,11 @@ bxc("bad hash" 2 request-cert --db "${DB}" ${PW} --cn half --hash md2)
 expect_error("bad hash" invalid_hash)
 bxc("expired root" 0 init --db "${DB}" ${PW} --cn "Old Root"
     --not-before 2020-01-01T00:00:00Z --not-after 2021-01-01T00:00:00Z)
-# the new key is written, then the certificate is rejected: its end is
-# capped at 2021, before its start (invalid_validity of the service)
+# the new key is written, then the certificate is rejected: the parent
+# expired in 2021 (issuer_expired of the BTD-55 checks)
 bxc("rejected after key" 1 init --db "${DB}" ${PW} --cn "Late Sub"
     --parent "Old Root")
-expect_error("rejected after key" invalid_validity)
+expect_error("rejected after key" issuer_expired)
 if(NOT detail MATCHES "certificate 'Late Sub' was not written to")
   fail("the error must name the object: ${detail}")
 endif()
@@ -28,7 +28,7 @@ if(out MATCHES "Late Sub")
   fail("a failed command left an object: ${out}")
 endif()
 audit_entries(lines)
-if(NOT lines MATCHES "\"action\":\"certificate.issue\"[^\n]*\"error_code\":\"invalid_validity\"[^\n]*\"result\":\"failure\"")
+if(NOT lines MATCHES "\"action\":\"certificate.issue\"[^\n]*\"error_code\":\"issuer_expired\"[^\n]*\"result\":\"failure\"")
   fail("the failure must stay audited after the rollback:\n${lines}")
 endif()
 if(lines MATCHES "\"action\":\"key.generate\"[^\n]*\"name\":\"Late Sub\"")
