@@ -69,6 +69,8 @@ class test_service_signing : public ServiceTestCase
 
   private slots:
 	void pathLength();
+	void pathLengthOnRoot();
+	void brokenSignatureHasNoIssuer();
 	void pathLengthParsing_data();
 	void pathLengthParsing();
 	void requestPathLength();
@@ -299,6 +301,50 @@ void test_service_signing::pathLength()
 #endif
 }
 
+/* pathLen on the root itself; a self-issued CA (rollover, same DN) does
+ * not count against it (RFC 5280 4.2.1.9) */
+void test_service_signing::pathLengthOnRoot()
+{
+	pki_x509 *root = issue(caSpec("Root CA", newKey("root", "EC:prime256v1"),
+				nullptr, "0"));
+	QVERIFY(root);
+	expectRejected(caSpec("Sub CA", newKey("sub", "EC:prime256v1"), root),
+			"path_length_exceeded");
+	/* the rollover certificate of the root itself */
+	IssuanceSpec roll = caSpec("Root CA", newKey("root2", "EC:prime256v1"),
+				root, "0");
+	roll.name = "Root CA rollover";
+	QVERIFY(issue(roll));
+	/* end entities stay allowed */
+	QVERIFY(issue(leafSpec("leaf.example",
+			newKey("leaf", "EC:prime256v1"), root)));
+}
+
+/* A certificate whose signature does not verify gets no issuer on import
+ * (BTD-55, xca#39 review point 8): before, the name match attached it to
+ * a CA whose key never signed it. Links stored in a database are kept;
+ * only finding an issuer on insert or import is affected. */
+void test_service_signing::brokenSignatureHasNoIssuer()
+{
+	pki_x509 *ca = issue(caSpec("Root CA", newKey("root", "EC:prime256v1"),
+				nullptr));
+	QVERIFY(ca);
+	pki_x509 *leaf = issue(leafSpec("leaf.example",
+			newKey("leaf", "EC:prime256v1"), ca));
+	QVERIFY(leaf);
+	QByteArray der = leaf->i2d();
+	Database.model<db_x509>()->deleteItems(ctx, { leaf });
+	der[der.size() - 3] = der[der.size() - 3] ^ 0x01;
+	QFile f(dir.filePath("broken.der"));
+	QVERIFY(f.open(QIODevice::WriteOnly));
+	f.write(der);
+	f.close();
+	QVERIFY(importFiles({ "broken.der" }));
+	pki_x509 *broken = cert("leaf.example");
+	QVERIFY(broken);
+	QVERIFY(!broken->getSigner());
+}
+
 void test_service_signing::pathLengthParsing_data()
 {
 	QTest::addColumn<QString>("pathLen");
@@ -312,6 +358,7 @@ void test_service_signing::pathLengthParsing_data()
 	QTest::newRow("fraction") << "1.5" << "invalid_path_length";
 	QTest::newRow("plus sign") << "+1" << "invalid_path_length";
 	QTest::newRow("blank") << " " << "invalid_path_length";
+	QTest::newRow("trailing newline") << "1\n" << "invalid_path_length";
 }
 
 /* Never an implicit pathLen 0: toInt() made 0 of every non-number */

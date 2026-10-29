@@ -48,6 +48,11 @@ namespace IssuanceChecks
 			const QList<const pki_x509 *> &chain, pki_key *signkey,
 			AuditParams &params);
 
+	/* spec(), issuers() and request() for a dialog that wants to
+	 * refuse before it closes (NewX509::validateAndAccept()); the same
+	 * checks run again in db_x509::newCert() */
+	void preflight(const IssuanceSpec &spec, AuditParams &params);
+
 	/* The CSR (BTD-65): its signature digest (never MD5, SHA-1 by
 	 * CsrPolicy::csrSha1), the proof of possession, keyCertSign or
 	 * cA=TRUE in a leaf request, forbidden subject characters and the
