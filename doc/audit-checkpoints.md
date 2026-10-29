@@ -8,8 +8,8 @@ gap for every entry that a later checkpoint covers (PLAN.md section 6.3).
 
 | Entry action | When | Params |
 |---|---|---|
-| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ed25519`), `public_key` (PEM) |
-| `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `signature` |
+| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
+| `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100, at most 1000: the setting is not signed), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `signature` |
 
 A checkpoint signs the entry just before it: `checkpoint_seq` and `checkpoint_hash` are that
 entry's `seq` and `hash`. The signature (Base64, Ed25519) covers the canonical JSON (RFC 8785) of
@@ -29,13 +29,33 @@ re-encrypts the audit key (`MainWindow::changeDbPass`).
 Without the database password (`xca --no-gui` without `--password`, or the unlock dialog
 cancelled) no automatic checkpoint is written, the entry itself is, and the next entry tries
 again. Entries after a change that does not chain are never signed (`audit_chain_broken`).
+Once the chain announced a key, a checkpoint without a usable current key (row deleted, retired
+without successor, private part gone) fails with `audit_key_missing` and creates no new key
+(BTD-110).
+
+The first key is not announced over a log whose unsigned part is longer than any writer with the
+database password leaves (more than interval + 1 entries, the revocation baseline excepted): such
+a log looks exactly like one whose checkpoints and keys were deleted and rehashed. The automatic
+checkpoint is skipped, an explicit checkpoint, rotation or export fails with
+`audit_checkpoint_missing`, and `--audit-verify` keeps reporting `checkpoint_missing`. A log that
+was really written without the password (e.g. `xca --no-gui` without `--password`) is signed only
+on request, after it was checked:
+
+```
+xca --no-gui --database pki.xdb --password file:db.pass --audit-adopt --audit-verify
+```
+
+`--audit-adopt` (`AuditLog::adoptUnanchored()`) announces the first key with `adopted_entries`,
+the number of entries it takes over without proof, and signs. The announcement is covered by the
+checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it as
+`adopted_entries`.
 
 ## Export with and without a password
 
 | `--audit-export` | Result |
 |---|---|
 | with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0 |
-| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries` |
+| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries`, plus one when the log has a checkpoint (the checkpoint row itself, see below) |
 | with a wrong password source | `audit_password_rejected`, exit 1 |
 | a checkpoint is due and the entries since the last one do not chain | `audit_chain_broken`, exit 1 (only with a password; without one the export reads as it is) |
 
@@ -55,22 +75,40 @@ again. Entries after a change that does not chain are never signed (`audit_chain
 
 `xca --audit-verify` checks each checkpoint of the intact chain in order: its key is the trusted
 key (the first announced key, then the `next_key_id` of each rotation), its signature verifies,
-and `checkpoint_hash` is the hash the chain has at `checkpoint_seq`. At the first invalid
-checkpoint it reports
+and `checkpoint_seq` is the entry just before the checkpoint, with the hash the chain has there.
+Entries are anchored up to the `checkpoint_seq` of the last valid checkpoint. The checkpoint row's
+own `created`, `actor`, `channel` and `object_id` are not signed, so the row itself is anchored
+only by the next checkpoint (BTD-110, chosen instead of signing them, which would change the
+signed payload). At the first invalid checkpoint it reports
 
 | Field | Meaning |
 |---|---|
-| `reason` | `checkpoint_hash` (chain recomputed after the checkpoint), `checkpoint_signature` (checkpoint params changed), `checkpoint_key` (signed by a key that was not handed over by a rotation, or an announcement whose `key_id` does not match its key) |
-| `last_checkpoint_seq` | the last valid checkpoint: entries up to it are anchored |
-| `first_broken_seq` | `last_checkpoint_seq + 1` |
+| `reason` | `checkpoint_hash` (chain recomputed after the checkpoint, or `checkpoint_seq` not the entry before it), `checkpoint_signature` (checkpoint params changed), `checkpoint_key` (signed by a key that was not handed over by a rotation, an announcement whose `key_id` does not match its key, or a `next_key_id` never announced) |
+| `last_checkpoint_seq` | the last valid checkpoint |
+| `first_broken_seq` | the first entry that is not anchored: `checkpoint_seq` of the last valid checkpoint + 1 |
 | `failed_checkpoint_seq` | the invalid checkpoint |
 
-and always `checkpoints` (valid ones), `unanchored_entries` (entries after the last valid
-checkpoint) and `audit_keys` (key ids in the order they signed).
+A chain whose checkpoints all verify still fails with `reason` `checkpoint_missing`
+(`failed_checkpoint_seq` null, `first_broken_seq` the first entry that is not anchored) when
+checkpoints were deleted: `audit_keys` holds a key that no `audit.key_create` of the chain
+announces, or more than `audit_checkpoint_interval` + 1 entries are unanchored (a writer with the
+database password never leaves more). The revocation baseline written on the upgrade of an old
+database does not count, but only when its `audit.init` counts exactly the `revocation.baseline`
+rows before it. A log written without the database password for longer than that fails the same
+way until it is adopted (above). An empty log with a row in `audit_keys` is a deleted log and
+reports `first_broken_seq` 1.
+
+Always reported: `checkpoints` (valid ones), `unanchored_entries` (entries after the
+`checkpoint_seq` of the last valid checkpoint, the checkpoint row included), `audit_keys` (key
+ids in the order they signed) and `adopted_entries` (entries the first key adopted, 0 for none).
+An `adopted_entries` param on any other announcement, or one that does not count exactly the
+unsigned entries before it, is `checkpoint_key`.
 
 Remaining limits: entries after the last checkpoint have the hash chain only; cutting off the
-newest entries including their checkpoints, or deleting the whole log, still verifies; a log
-rewritten from the first key announcement with a new key verifies too. Keep the `key_id` of the
+newest entries including their checkpoints still verifies unless that removes a key announcement;
+deleting the whole log or its checkpoints together with the `audit_keys` rows verifies when the
+rest is at most interval + 1 entries long; an adopted log is only as trustworthy as the check
+before `--audit-adopt`; a log rewritten from the first key announcement with a new key verifies too. Keep the `key_id` of the
 first export somewhere else and compare it with `audit_keys`.
 
 ## Checking an export with the OpenSSL CLI

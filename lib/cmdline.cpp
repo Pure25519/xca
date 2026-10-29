@@ -192,6 +192,18 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
 					.arg(cmd_opts["hierarchy"]));
 	}
+	/* Before the verification, so that it reports the adoption */
+	if (cmd_opts.has("audit-adopt")) {
+		try {
+			AuditEntry e = AuditLog::adoptUnanchored(
+				ServiceContext::localUser(ServiceContext::cli));
+			XCA_INFO(QObject::tr("Audit log signed by checkpoint %1")
+					.arg(e.seq));
+		} catch (errorEx &err) {
+			XCA_ERROR(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
 	/* Both fail closed: any error means exit code 1 */
 	if (cmd_opts.has("audit-verify")) {
 		try {

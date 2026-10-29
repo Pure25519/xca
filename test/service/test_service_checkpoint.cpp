@@ -3,7 +3,9 @@
  * Signed audit checkpoints (BTD-37): checkpoint every N entries and on
  * export, verify() against a recomputed chain, the audit key refused for
  * certificates, requests and CRLs, the exported signatures checked with
- * the openssl program, and key rotation.
+ * the openssl program, and key rotation. Tampered checkpoint structures
+ * (BTD-110): removed checkpoints and keys, a checkpoint that does not
+ * sign its predecessor, changed checkpoint metadata, a missing key.
  */
 
 #include <QDir>
@@ -20,6 +22,7 @@
 
 #include <openssl/err.h>
 #include <openssl/evp.h>
+#include <openssl/pem.h>
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -70,7 +73,14 @@ class test_service_checkpoint : public ServiceTestCase
 	static QMap<QString, QStringList> tableRows();
 	static QList<AuditEntry> byAction(const QString &action);
 	static void recomputeFrom(qint64 seq);
+	static void renumber();
+	static void removeCheckpoints(bool keys);
+	static void setParams(qint64 seq, const QVariantMap &params);
+	static AuditEntry forgeEntry(const QString &action,
+			const QString &objectId, const QVariantMap &params);
 	static EVP_PKEY *auditPrivateKey();
+	static QByteArray publicPem(EVP_PKEY *pkey);
+	static QString signature(EVP_PKEY *pkey, const QVariantMap &params);
 	static QString errorCode(std::function<void()> call);
 	QString writeFile(const QString &name, const QByteArray &data);
 #ifdef OPENSSL_PROGRAM
@@ -86,6 +96,18 @@ class test_service_checkpoint : public ServiceTestCase
 	void recomputedChain_data();
 	void recomputedChain();
 	void unannouncedKey();
+	void tamperedStructure_data();
+	void tamperedStructure();
+	void unsignedTailLimit();
+	void unannouncedKeyAlone();
+	void forgedDeletionNotSigned();
+	void intervalClamped();
+	void adoptUnanchored_data();
+	void adoptUnanchored();
+	void baselineException_data();
+	void baselineException();
+	void missingCurrentKey_data();
+	void missingCurrentKey();
 	void auditKeyNotUsableForSigning();
 	void exportSignsCheckpoint();
 	void exportWithoutPassword();
@@ -144,7 +166,7 @@ QList<AuditEntry> test_service_checkpoint::byAction(const QString &action)
  * changed entry seq would */
 void test_service_checkpoint::recomputeFrom(qint64 seq)
 {
-	QByteArray prev;
+	QByteArray prev = AuditLog::genesisHash;
 	for (AuditEntry e : AuditLog::entries()) {
 		if (e.seq >= seq) {
 			e.prevHash = prev;
@@ -155,6 +177,98 @@ void test_service_checkpoint::recomputeFrom(qint64 seq)
 		}
 		prev = e.hash;
 	}
+}
+
+/* Closes the gaps of deleted entries: seq 1, 2, ... in the old order */
+void test_service_checkpoint::renumber()
+{
+	qint64 seq = 1;
+	for (const AuditEntry &e : AuditLog::entries())
+		sql(QString("UPDATE audit_log SET seq=%1 WHERE seq=%2")
+			.arg(seq++).arg(e.seq));
+}
+
+/* The review's reproduction of BTD-110: every checkpoint and announcement
+ * gone (keys: audit_keys too), the rest renumbered and rehashed */
+void test_service_checkpoint::removeCheckpoints(bool keys)
+{
+	sql(QString("DELETE FROM audit_log WHERE action IN ('%1','%2')")
+		.arg(AuditLog::actionKeyCreate).arg(AuditLog::actionCheckpoint));
+	if (keys)
+		sql("DELETE FROM audit_keys");
+	renumber();
+	recomputeFrom(1);
+}
+
+void test_service_checkpoint::setParams(qint64 seq, const QVariantMap &params)
+{
+	sql(QString("UPDATE audit_log SET params='%1' WHERE seq=%2")
+		.arg(QString::fromUtf8(AuditLog::canonicalJson(params))).arg(seq));
+}
+
+/* Appends a chained entry with sqlite3, bypassing append() and its
+ * reserved actions */
+AuditEntry test_service_checkpoint::forgeEntry(const QString &action,
+		const QString &objectId, const QVariantMap &params)
+{
+	AuditEntry last = AuditLog::entries().last();
+	AuditEntry e;
+	e.seq = last.seq + 1;
+	e.prevHash = last.hash;
+	e.time = AuditLog::rfc3339(QDateTime::currentDateTimeUtc());
+	e.actor = "os:mallory";
+	e.channel = "cli";
+	e.action = action;
+	e.objectType = "audit_key";
+	e.objectId = objectId;
+	e.params = params;
+	e.result = "success";
+	e.hash = e.computeHash();
+	QSqlQuery q(QSqlDatabase::database());
+	q.prepare("INSERT INTO audit_log (seq, created, actor, channel, "
+		"action, object_type, object_id, params, result, prev_hash, "
+		"hash) VALUES (?,?,?,?,?,?,?,?,?,?,?)");
+	q.addBindValue(e.seq);
+	q.addBindValue(e.time);
+	q.addBindValue(e.actor);
+	q.addBindValue(e.channel);
+	q.addBindValue(e.action);
+	q.addBindValue(e.objectType);
+	q.addBindValue(e.objectId);
+	q.addBindValue(QString::fromUtf8(AuditLog::canonicalJson(e.params)));
+	q.addBindValue(e.result);
+	q.addBindValue(QString::fromLatin1(e.prevHash));
+	q.addBindValue(QString::fromLatin1(e.hash));
+	if (!q.exec())
+		qWarning() << "forgeEntry:" << q.lastError().text();
+	return e;
+}
+
+QByteArray test_service_checkpoint::publicPem(EVP_PKEY *pkey)
+{
+	BioByteArray pem;
+	PEM_write_bio_PUBKEY(pem, pkey);
+	return pem.byteArray();
+}
+
+/* The Base64 signature of a checkpoint with params, as signHead() makes it */
+QString test_service_checkpoint::signature(EVP_PKEY *pkey,
+					const QVariantMap &params)
+{
+	QByteArray data = AuditLog::checkpointPayload(params);
+	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
+	size_t len = 0;
+	QByteArray sig;
+	if (EVP_DigestSignInit_ex(ctx, NULL, NULL, NULL, NULL, pkey, NULL) &&
+	    EVP_DigestSign(ctx, NULL, &len,
+			(const unsigned char *)data.constData(), data.size())) {
+		sig.resize(len);
+		EVP_DigestSign(ctx, (unsigned char *)sig.data(), &len,
+			(const unsigned char *)data.constData(), data.size());
+		sig.resize(len);
+	}
+	EVP_MD_CTX_free(ctx);
+	return QString::fromLatin1(sig.toBase64());
 }
 
 /* The current audit private key, read and decrypted from a copy of
@@ -241,7 +355,9 @@ void test_service_checkpoint::checkpointEveryN()
 	QVERIFY2(r.ok(), r.toJson().constData());
 	QCOMPARE(r.checkpoints, qint64(1));
 	QCOMPARE(r.lastCheckpointSeq, qint64(7));
-	QCOMPARE(r.unanchoredEntries, qint64(0));
+	/* The checkpoint signs entry 6; its own row is anchored by the next
+	 * one (BTD-110) */
+	QCOMPARE(r.unanchoredEntries, qint64(1));
 	QCOMPARE(r.auditKeys, QStringList({ key }));
 
 	/* N entries after the checkpoint entry the next one follows */
@@ -357,11 +473,12 @@ void test_service_checkpoint::recomputedChain()
 	QCOMPARE(r.verifiedEntries, qint64(15));   // the hash chain holds
 	QCOMPARE(r.reason, reason);
 	QCOMPARE(r.lastCheckpointSeq, qint64(7));  // broken after this one
-	QCOMPARE(r.firstBrokenSeq, qint64(8));
+	/* entry 7 itself is not signed: anchored up to 6 */
+	QCOMPARE(r.firstBrokenSeq, qint64(7));
 	QCOMPARE(r.failedCheckpointSeq, qint64(13));
 	QCOMPARE(r.checkpoints, qint64(1));
-	QCOMPARE(r.unanchoredEntries, qint64(8));
-	QVERIFY(r.toJson().contains("\"first_broken_seq\":8,"));
+	QCOMPARE(r.unanchoredEntries, qint64(9));
+	QVERIFY(r.toJson().contains("\"first_broken_seq\":7,"));
 }
 
 void test_service_checkpoint::unannouncedKey()
@@ -371,16 +488,354 @@ void test_service_checkpoint::unannouncedKey()
 	Settings["audit_checkpoint_interval"] = 3;
 	appendSample(3);
 	QString first = AuditKey::current();
-	sql(QString("UPDATE audit_keys SET retired=1 WHERE key_id='%1'")
-			.arg(first));
-	appendSample(3);
+	EVP_PKEY *mallory = EVP_PKEY_Q_keygen(NULL, NULL, "ED25519");
+	QVERIFY(mallory);
+	QByteArray pem = publicPem(mallory);
+	QString id = AuditKey::keyId(pem);
+	AuditEntry announced = forgeEntry(AuditLog::actionKeyCreate, id, {
+		{ "key_id", id }, { "key_type", "ed25519" },
+		{ "public_key", QString::fromLatin1(pem) } });
+	QVariantMap cp {
+		{ "checkpoint_seq", announced.seq },
+		{ "checkpoint_hash", QString::fromLatin1(announced.hash) },
+		{ "checkpoint_time", announced.time }, { "key_id", id } };
+	cp["signature"] = signature(mallory, cp);
+	EVP_PKEY_free(mallory);
+	forgeEntry(AuditLog::actionCheckpoint, id, cp);
+
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY(!r.ok());
 	QCOMPARE(r.reason, QString("checkpoint_key"));
 	QCOMPARE(r.lastCheckpointSeq, qint64(5));
-	QCOMPARE(r.failedCheckpointSeq, qint64(10));
+	QCOMPARE(r.failedCheckpointSeq, qint64(7));
 	QCOMPARE(r.auditKeys, QStringList({ first }));
-	QVERIFY(AuditKey::current() != first);
+}
+
+void test_service_checkpoint::tamperedStructure_data()
+{
+	QTest::addColumn<QString>("forge");
+	QTest::addColumn<QString>("reason");
+	QTest::addColumn<qint64>("firstBroken");
+	QTest::addColumn<qint64>("failedCheckpoint");
+	QTest::addColumn<qint64>("lastCheckpoint");
+	QTest::addColumn<qint64>("unanchored");
+
+	/* 1-5 sample, 6 key, 7 checkpoint of 6, 8-12 sample, 13 checkpoint
+	 * of 12 */
+	QTest::newRow("checkpoints removed") << "remove" << "checkpoint_missing"
+		<< qint64(1) << qint64(0) << qint64(0) << qint64(10);
+	QTest::newRow("checkpoints and keys removed") << "remove keys"
+		<< "checkpoint_missing" << qint64(1) << qint64(0) << qint64(0)
+		<< qint64(10);
+	QTest::newRow("checkpoint_seq not the predecessor") << "seq"
+		<< "checkpoint_hash" << qint64(7) << qint64(13) << qint64(7)
+		<< qint64(7);
+	QTest::newRow("announced PEM is not key_id") << "pem"
+		<< "checkpoint_key" << qint64(1) << qint64(6) << qint64(0)
+		<< qint64(13);
+	QTest::newRow("next_key_id never announced") << "next"
+		<< "checkpoint_key" << qint64(7) << qint64(13) << qint64(7)
+		<< qint64(7);
+	QTest::newRow("metadata of a covered checkpoint") << "metadata 7"
+		<< "checkpoint_hash" << qint64(7) << qint64(13) << qint64(7)
+		<< qint64(7);
+	/* Not signed, so not detected, but no longer counted as anchored */
+	QTest::newRow("metadata of the last checkpoint") << "metadata 13"
+		<< "" << qint64(0) << qint64(0) << qint64(13) << qint64(1);
+}
+
+void test_service_checkpoint::tamperedStructure()
+{
+	QFETCH(QString, forge);
+	QFETCH(QString, reason);
+	QFETCH(qint64, firstBroken);
+	QFETCH(qint64, failedCheckpoint);
+	QFETCH(qint64, lastCheckpoint);
+	QFETCH(qint64, unanchored);
+
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(10);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 2);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QVariantMap cp = AuditLog::entries()[12].params;
+	EVP_PKEY *key = auditPrivateKey();
+	QVERIFY(key);
+
+	if (forge.startsWith("remove")) {
+		removeCheckpoints(forge == "remove keys");
+	} else if (forge == "seq") {
+		/* Signed with the audit key, but over entry 11 instead of 12 */
+		cp["checkpoint_seq"] = qint64(11);
+		cp["checkpoint_hash"] = QString::fromLatin1(
+				AuditLog::entries()[10].hash);
+		cp["signature"] = signature(key, cp);
+		setParams(13, cp);
+		recomputeFrom(13);
+	} else if (forge == "pem") {
+		EVP_PKEY *other = EVP_PKEY_Q_keygen(NULL, NULL, "ED25519");
+		QVariantMap p = AuditLog::entries()[5].params;
+		p["public_key"] = QString::fromLatin1(publicPem(other));
+		EVP_PKEY_free(other);
+		setParams(6, p);
+		recomputeFrom(6);
+	} else if (forge == "next") {
+		cp["next_key_id"] = QString(64, 'a');
+		cp["signature"] = signature(key, cp);
+		setParams(13, cp);
+		recomputeFrom(13);
+	} else if (forge.startsWith("metadata")) {
+		qint64 seq = forge.mid(9).toLongLong();
+		sql(QString("UPDATE audit_log SET actor='os:mallory', "
+			"created='2020-01-01T00:00:00Z' WHERE seq=%1").arg(seq));
+		recomputeFrom(seq);
+	}
+	EVP_PKEY_free(key);
+
+	r = AuditLog::verify();
+	QCOMPARE(r.chainOk(), reason.isEmpty());
+	QCOMPARE(r.reason, reason);
+	QCOMPARE(r.firstBrokenSeq, firstBroken);
+	QCOMPARE(r.failedCheckpointSeq, failedCheckpoint);
+	QCOMPARE(r.lastCheckpointSeq, lastCheckpoint);
+	QCOMPARE(r.unanchoredEntries, unanchored);
+	/* the hash chain itself holds in every case */
+	QCOMPARE(r.verifiedEntries, r.entries);
+}
+
+void test_service_checkpoint::unsignedTailLimit()
+{
+	/* No password: no checkpoint, the tail grows. Up to interval + 1
+	 * unsigned entries are what a working writer leaves, more means
+	 * checkpoints are missing */
+	Settings["audit_checkpoint_interval"] = 3;
+	pki_evp::passwd.cleanse();
+	PwDialogHeadless *headless = new PwDialogHeadless();
+	pwdialog->delegateTo(headless);
+	appendSample(4);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.unanchoredEntries, qint64(4));
+
+	appendSample(1);
+	r = AuditLog::verify();
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.firstBrokenSeq, qint64(1));
+	QCOMPARE(r.failedCheckpointSeq, qint64(0));
+	QCOMPARE(r.unanchoredEntries, qint64(5));
+
+	/* With the password the next append does not sign so long a tail
+	 * on its own, the explicit adoption does (review of #27) */
+	headless->setSource(pass_info::DatabasePassword,
+				QString("pass:") + dbPassword);
+	appendSample(1);
+	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
+	AuditLog::adoptUnanchored(ctx);
+	r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.checkpoints, qint64(1));
+	QCOMPARE(r.adoptedEntries, qint64(6));
+}
+
+void test_service_checkpoint::unannouncedKeyAlone()
+{
+	/* Short enough for the tail rule: only the key in audit_keys that
+	 * the chain no longer announces reveals the removal */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	removeCheckpoints(false);
+	QCOMPARE(AuditLog::entries().size(), 5);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.firstBrokenSeq, qint64(1));
+}
+
+void test_service_checkpoint::forgedDeletionNotSigned()
+{
+	/* Review of #27, blocker 1: after the removal of every checkpoint,
+	 * announcement and audit key, the next append with the password
+	 * must not take the first-use path and sign the forged history */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(10);
+	removeCheckpoints(true);
+	appendSample(1);
+	QVERIFY(byAction(AuditLog::actionKeyCreate).isEmpty());
+	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 0);
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.entries, qint64(11));
+
+	/* Explicit checkpoints, rotation and export refuse it too */
+	QCOMPARE(errorCode([&]() { AuditLog::checkpoint(ctx); }),
+		QString("audit_checkpoint_missing"));
+	QCOMPARE(errorCode([&]() { AuditLog::rotateKey(ctx); }),
+		QString("audit_checkpoint_missing"));
+	QCOMPARE(errorCode([&]() { AuditLog::exportJsonLines(ctx); }),
+		QString("audit_checkpoint_missing"));
+	QCOMPARE(AuditLog::entries().size(), 11);
+}
+
+void test_service_checkpoint::intervalClamped()
+{
+	/* Review of #27, blocker 2: the unsigned setting cannot switch the
+	 * tail rule off; it is clamped to 1000 */
+	Settings["audit_checkpoint_interval"] = 1000000;
+	QCOMPARE(AuditLog::checkpointInterval(), 1000);
+	Settings["audit_checkpoint_interval"] = QString();
+	appendSample(1010);
+	QVERIFY(!byAction(AuditLog::actionCheckpoint).isEmpty());
+	removeCheckpoints(true);
+	Settings["audit_checkpoint_interval"] = 1000000;
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.unanchoredEntries, qint64(1010));
+}
+
+void test_service_checkpoint::adoptUnanchored_data()
+{
+	QTest::addColumn<bool>("forged");
+
+	/* Both look the same: a log without key and with a long unsigned
+	 * tail. Only the operator who checked it can tell them apart. */
+	QTest::newRow("written without password") << false;
+	QTest::newRow("checkpoints and keys deleted") << true;
+}
+
+void test_service_checkpoint::adoptUnanchored()
+{
+	QFETCH(bool, forged);
+
+	Settings["audit_checkpoint_interval"] = 5;
+	if (forged) {
+		appendSample(10);
+		removeCheckpoints(true);
+	} else {
+		pki_evp::passwd.cleanse();
+		PwDialogHeadless *headless = new PwDialogHeadless();
+		pwdialog->delegateTo(headless);
+		appendSample(10);
+		pki_evp::passwd = dbPassword;
+	}
+	/* Unlocked: the automatic checkpoint is refused, the entry stays */
+	appendSample(1);
+	QCOMPARE(AuditLog::entries().size(), 11);
+	QVERIFY(byAction(AuditLog::actionKeyCreate).isEmpty());
+	QCOMPARE(AuditLog::verify().reason, QString("checkpoint_missing"));
+
+	/* Adopted on request: recorded in the signed announcement */
+	AuditEntry cp = AuditLog::adoptUnanchored(ctx);
+	QCOMPARE(cp.seq, qint64(13));
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list[11].action, QString(AuditLog::actionKeyCreate));
+	QCOMPARE(list[11].params.value("adopted_entries").toLongLong(),
+			qint64(11));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.adoptedEntries, qint64(11));
+	QVERIFY(r.toJson().contains("\"adopted_entries\":11,"));
+
+	/* From now on as usual */
+	appendSample(5);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 2);
+	QVERIFY(byAction(AuditLog::actionKeyCreate)[0].params
+			.contains("adopted_entries"));
+	r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.adoptedEntries, qint64(11));
+
+	/* The adoption is signed: removing the mark breaks the checkpoint */
+	QVariantMap p = list[11].params;
+	p.remove("adopted_entries");
+	setParams(12, p);
+	recomputeFrom(12);
+	r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_hash"));
+	QCOMPARE(r.failedCheckpointSeq, qint64(13));
+	QCOMPARE(r.adoptedEntries, qint64(0));
+}
+
+void test_service_checkpoint::baselineException_data()
+{
+	QTest::addColumn<qint64>("count");
+	QTest::addColumn<QString>("reason");
+
+	QTest::newRow("baseline of an upgrade") << qint64(5) << "";
+	QTest::newRow("forged baseline row") << qint64(4) << "checkpoint_missing";
+}
+
+void test_service_checkpoint::baselineException()
+{
+	/* An upgraded database: one revocation.baseline per revocation row,
+	 * then audit.init with their count, written before any checkpoint
+	 * could be. They do not count against the unsigned tail, but only
+	 * when audit.init counts exactly the baseline rows */
+	QFETCH(qint64, count);
+	QFETCH(QString, reason);
+
+	Settings["audit_checkpoint_interval"] = 2;
+	for (int i = 1; i <= 5; i++)
+		sql(QString("INSERT INTO revocations (caId, serial, date, "
+			"invaldate, crlNo, reasonBit) VALUES (1, '0%1', "
+			"'20260101000000Z', '20260101000000Z', NULL, 0)").arg(i));
+	AuditLog::writeBaseline();
+	pki_evp::passwd.cleanse();
+	PwDialogHeadless *headless = new PwDialogHeadless();
+	pwdialog->delegateTo(headless);
+	appendSample(3);
+	QList<AuditEntry> list = AuditLog::entries();
+	QCOMPARE(list.size(), 9);
+	QCOMPARE(list[5].action, QString(AuditLog::actionInit));
+	if (count != 5) {
+		QVariantMap p = list[5].params;
+		p["count"] = count;
+		setParams(6, p);
+		recomputeFrom(6);
+	}
+
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, reason);
+	QCOMPARE(r.unanchoredEntries, qint64(9));
+	QVERIFY(r.mismatches.isEmpty());
+}
+
+void test_service_checkpoint::missingCurrentKey_data()
+{
+	QTest::addColumn<QString>("statement");
+
+	QTest::newRow("retired") << "UPDATE audit_keys SET retired=1";
+	QTest::newRow("private part dropped") << "UPDATE audit_keys SET private=NULL";
+	QTest::newRow("deleted") << "DELETE FROM audit_keys";
+}
+
+void test_service_checkpoint::missingCurrentKey()
+{
+	QFETCH(QString, statement);
+
+	/* The chain announced a key: a missing current key fails closed
+	 * instead of announcing a new one */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	QCOMPARE(byAction(AuditLog::actionKeyCreate).size(), 1);
+	sql(statement);
+	int keys = sqlValue("SELECT COUNT(*) FROM audit_keys").toInt();
+
+	QCOMPARE(errorCode([&]() { AuditLog::checkpoint(ctx); }),
+		QString("audit_key_missing"));
+	QCOMPARE(errorCode([&]() { AuditLog::rotateKey(ctx); }),
+		QString("audit_key_missing"));
+	/* The automatic checkpoint fails the same way; the entries stay */
+	appendSample(5);
+	QCOMPARE(AuditLog::entries().size(), 12);
+	QCOMPARE(byAction(AuditLog::actionKeyCreate).size(), 1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), keys);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.unanchoredEntries, qint64(6));
 }
 
 void test_service_checkpoint::auditKeyNotUsableForSigning()
@@ -556,7 +1011,8 @@ void test_service_checkpoint::exportWithoutPassword()
 	QCOMPARE(unsignedEntries, qint64(0));
 	QVERIFY(QByteArray(out.split('\n')[3]).contains(
 			"\"action\":\"audit.checkpoint\""));
-	QCOMPARE(AuditLog::verify().unanchoredEntries, qint64(0));
+	/* verify counts the checkpoint row itself (BTD-110) */
+	QCOMPARE(AuditLog::verify().unanchoredEntries, qint64(1));
 
 	/* Covered already: nothing to sign */
 	QCOMPARE(AuditLog::exportJsonLines(ctx, &unsignedEntries), out);
@@ -604,7 +1060,7 @@ void test_service_checkpoint::noPasswordKeepsEntry()
 	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
 	r = AuditLog::verify();
 	QVERIFY2(r.ok(), r.toJson().constData());
-	QCOMPARE(r.unanchoredEntries, qint64(0));
+	QCOMPARE(r.unanchoredEntries, qint64(1));   // the checkpoint row
 }
 
 void test_service_checkpoint::neverSignsBrokenTail()
