@@ -644,6 +644,20 @@ static AuditEntry signHead(const ServiceContext &ctx, const QString &key,
 				key, p);
 }
 
+/* True once the chain announced a key or audit_keys holds one: from then
+ * on a missing current key is an error, not a first use (BTD-110) */
+static bool keyAnnounced()
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "SELECT 1 FROM audit_log WHERE action=? "
+			"UNION ALL SELECT 1 FROM audit_keys LIMIT 1");
+	q.bindValue(0, QString(AuditLog::actionKeyCreate));
+	q.exec();
+	throwOnError(q);
+	return q.next();
+}
+
 /* Every serviceError is thrown before the first write, so that a failed
  * automatic checkpoint does not roll back the caller's transaction */
 static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate)
@@ -660,6 +674,10 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate)
 	qint64 last = lastCheckpointSeq();
 	checkUnsignedTail(last ? last : 1);
 	QString key = AuditKey::current();
+	if (key.isEmpty() && keyAnnounced())
+		throw serviceError("audit_key_missing", QObject::tr(
+			"The audit key that signs the checkpoints is missing "
+			"or retired; run --audit-verify"));
 	AuditEntry e;
 
 	Transaction;
@@ -781,17 +799,34 @@ static QString auditDate(const QVariant &rfc)
 	return AuditLog::rfc3339(t);
 }
 
+/* seq of the audit.init entry that closes the revocation baseline at the
+ * start of the chain (written without a checkpoint), 0 if there is none */
+static qint64 baselineEnd(const QList<AuditEntry> &list)
+{
+	for (const AuditEntry &e : list) {
+		if (e.action == AuditLog::actionInit)
+			return e.seq;
+		if (e.action != AuditLog::actionRevocationBaseline)
+			break;
+	}
+	return 0;
+}
+
 /* Checks the checkpoints of the intact chain list (seq 1, 2, ...) in
- * order: each one signed by the current key over the hash the chain has
- * at its checkpoint_seq. Sets the checkpoint fields of r and, at the
- * first invalid checkpoint, firstBrokenSeq to the entry after the last
- * valid one. */
+ * order: each one signed by the current key over the hash of the entry
+ * just before it. An entry is anchored up to the checkpoint_seq of the
+ * last valid checkpoint; the checkpoint row itself only by the next one.
+ * Sets the checkpoint fields of r and, at the first invalid checkpoint,
+ * firstBrokenSeq to the first entry that is not anchored. A chain that
+ * passes still fails with checkpoint_missing when audit_keys holds a key
+ * the chain never announced, or when more entries are unanchored than a
+ * writer with the database password leaves (interval + 1). */
 static void verifyCheckpoints(const QList<AuditEntry> &list,
 				AuditVerifyResult &r)
 {
 	QMap<QString, QByteArray> announced;	// key id -> public PEM
 	QString signer;
-	qint64 anchored = 0;
+	qint64 anchored = 0, lastValid = 0;
 
 	for (const AuditEntry &e : list) {
 		QString reason;
@@ -823,12 +858,13 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 			else if (!AuditKey::verify(announced[key],
 					AuditLog::checkpointPayload(p), sig))
 				reason = "checkpoint_signature";
-			else if (n < 1 || n >= e.seq || list[n - 1].hash != hash)
+			else if (n < 1 || n != e.seq - 1 || list[n - 1].hash != hash)
 				reason = "checkpoint_hash";
 			else if (!next.isEmpty() && !announced.contains(next))
 				reason = "checkpoint_key";
 			if (reason.isEmpty()) {
-				anchored = e.seq;
+				anchored = n;
+				lastValid = e.seq;
 				r.checkpoints++;
 				if (!next.isEmpty()) {
 					signer = next;
@@ -843,8 +879,23 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 			break;
 		}
 	}
-	r.lastCheckpointSeq = anchored;
+	r.lastCheckpointSeq = lastValid;
 	r.unanchoredEntries = r.entries - anchored;
+	if (!r.reason.isEmpty())
+		return;
+
+	XSqlQuery q;
+	bool unannounced = false;
+	SQL_PREPARE(q, "SELECT key_id FROM audit_keys");
+	q.exec();
+	throwOnError(q);
+	while (q.next())
+		unannounced |= !announced.contains(q.value(0).toString());
+	if (unannounced || r.entries - qMax(anchored, baselineEnd(list)) >
+			AuditLog::checkpointInterval() + 1) {
+		r.firstBrokenSeq = anchored + 1;
+		r.reason = "checkpoint_missing";
+	}
 }
 
 namespace {
