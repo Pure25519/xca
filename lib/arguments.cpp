@@ -20,6 +20,8 @@
 
 
 const QList<arg_option> arguments::opts = {
+	arg_option("audit-adopt", NULL, no_argument, true, true,
+		"Sign an audit log that has no audit key yet and more unsigned entries than the checkpoint interval allows, e.g. written without the database password. Records the number of adopted entries in the log; check the log first. Needs --password."),
 	arg_option("audit-export", "file", file_argument, true, true,
 		"Write the audit log as JSON Lines to <file>, '-' for standard output."),
 	arg_option("audit-verify", NULL, no_argument, true, true,
