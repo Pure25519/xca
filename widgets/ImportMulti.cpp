@@ -195,9 +195,35 @@ void ImportMulti::importIndexes(const QModelIndexList &indexes)
 		if (pki && !pki->getSqlItemId().isValid())
 			items << pki;
 	}
-	foreach(pki_base *pki, items)
+	/* One by one: a failure neither rolls back nor drops the others,
+	 * and the failed item stays in the dialog (BTD-114) */
+	QStringList errors;
+	foreach(pki_base *pki, items) {
+		QString name = pki->getIntName();
+		QList<pki_base *> unstored;
+		ImportSpec spec;
+		spec.items << pki;
+		spec.unstored = &unstored;
 		mcont->remFromCont(pki);
-	importItems(items);
+		try {
+			ImportResult result = Database.importItems(
+				ServiceContext::localUser(ServiceContext::gui),
+				spec);
+			foreach(pki_base *existing, result.existing)
+				XCA_INFO(importExistsMessage(existing));
+		} catch (serviceError &err) {
+			if (err.code != "cancelled")
+				errors << QString("%1: %2").arg(name)
+						.arg(err.getString());
+		} catch (errorEx &err) {
+			errors << QString("%1: %2").arg(name)
+					.arg(err.getString());
+		}
+		foreach(pki_base *back, unstored)
+			mcont->inToCont(back);
+	}
+	if (!errors.isEmpty())
+		XCA_ERROR(errorEx(errors.join("\n")));
 	if (mcont->rowCount(QModelIndex()) == 0)
 		accept();
 }

@@ -25,6 +25,7 @@ class test_main: public QObject
 
 	void openDB();
 	void dbstatus();
+	class ImportMulti *importDialog();
 	static const QMap<QString, QString> pemdata;
 
   public:
@@ -36,6 +37,8 @@ class test_main: public QObject
 	void cleanup();
 	void newKey();
 	void importPEM();
+	void importLockedKeepsItems();
+	void importOneFailingItem();
 	void exportFormat();
 	void revoke();
 	void testValidity();

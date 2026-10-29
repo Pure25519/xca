@@ -88,8 +88,13 @@ bool DbTransaction::finish(const char *oper, const char *file, int line)
 	items.clear();
 
 	bool ret = hasTransaction ? db.commit() : true;
-	if (!ret)
+	if (!ret) {
 		XCA_SQLERROR(db.lastError());
+		/* SQLite keeps the transaction open after a failed COMMIT
+		 * (busy, deferred constraint): every later write would end
+		 * up in it and be lost on close (BTD-114) */
+		db.rollback();
+	}
 	return ret;
 }
 

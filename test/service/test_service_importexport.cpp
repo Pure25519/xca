@@ -6,13 +6,17 @@
  * checked with the openssl program and imported again. Every private key
  * export writes key.export_private without key material or password; a
  * CRL import audits the revocation rows it adds and raises the last CRL
- * number of its CA (BTD-49).
+ * number of its CA (BTD-49). A failed export leaves an existing target
+ * file as it was, a null item is a service error (BTD-114).
  */
 
+#include <QDir>
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QSqlError>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 
 #include "lib/audit.h"
@@ -100,6 +104,9 @@ class test_service_importexport : public ServiceTestCase
 	void crlGeneratedAfterImport();
 	void templateCopyExport();
 	void rejections();
+	void exportFailureKeepsFile();
+	void exportOverwritesKeyOwnerOnly();
+	void exportNullItem();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -970,6 +977,144 @@ void test_service_importexport::rejections()
 	QCOMPARE(entries("key.export_private").size(), 0);
 	QVERIFY(AuditLog::verify().ok());
 #endif
+}
+
+/* The files in the test directory, also hidden ones: a temporary file
+ * of an export would show here */
+static QStringList dirFiles(const QTemporaryDir &dir)
+{
+	return QDir(dir.path()).entryList(QDir::Files | QDir::Hidden |
+					QDir::System, QDir::Name);
+}
+
+/* A COMMIT that fails after the file was written: the export entries
+ * violate a deferred foreign key, which SQLite checks only at COMMIT.
+ * The previous content of the target file stays, a new target is not
+ * created, the failure is audited (BTD-114). Before, the written file
+ * was removed again, also when it had existed before. */
+void test_service_importexport::exportFailureKeepsFile()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	importChain();
+	pki_x509 *leaf = cert("BTD34 Leaf");
+	QVERIFY(leaf);
+	QByteArray previous("previous content, not PKI data\n");
+	QFile old(file("existing.pem"));
+	QVERIFY(old.open(QIODevice::WriteOnly));
+	QCOMPARE(old.write(previous), (qint64)previous.size());
+	old.close();
+	QStringList files = dirFiles(dir);
+
+	QSqlQuery q;
+	QVERIFY2(q.exec("PRAGMA foreign_keys = ON"),
+		CCHAR(q.lastError().text()));
+	QVERIFY2(q.exec("CREATE TABLE btd114_guard (item INTEGER "
+		"REFERENCES items(id) DEFERRABLE INITIALLY DEFERRED)"),
+		CCHAR(q.lastError().text()));
+	QVERIFY2(q.exec("CREATE TEMP TRIGGER btd114_fail_commit AFTER "
+		"INSERT ON audit_log WHEN NEW.action = 'object.export' "
+		"AND NEW.result = 'success' BEGIN "
+		"INSERT INTO btd114_guard VALUES (-1); END"),
+		CCHAR(q.lastError().text()));
+
+	foreach(const QString &name, QStringList({ "existing.pem",
+						"new.pem" })) {
+		qsizetype before = entries("object.export").size();
+		warning->expectMessage("FOREIGN KEY constraint failed");
+		QString code;
+		try {
+			exportTo(Database.model<db_x509>(), leaf, certPem,
+				file(name));
+		} catch (serviceError &err) {
+			code = err.code;
+		} catch (errorEx &err) {
+			code = "errorEx: " + err.getString();
+		}
+		if (name == "existing.pem") {
+			QVERIFY(QFile::exists(file(name)));
+			QFile f(file(name));
+			QVERIFY(f.open(QIODevice::ReadOnly));
+			QCOMPARE(f.readAll(), previous);
+		} else {
+			QVERIFY(!QFile::exists(file(name)));
+		}
+		/* no temporary file of the export is left */
+		QCOMPARE(dirFiles(dir), files);
+		QCOMPARE(code, QString("database_error"));
+		QList<AuditEntry> exports = entries("object.export");
+		QCOMPARE(exports.size(), before + 1);
+		QCOMPARE(exports.last().result, QString("failure"));
+		QCOMPARE(exports.last().errorCode, QString("database_error"));
+	}
+	QVERIFY(q.exec("DROP TRIGGER temp.btd114_fail_commit"));
+	QVERIFY(q.exec("DROP TABLE btd114_guard"));
+	QVERIFY(q.exec("PRAGMA foreign_keys = OFF"));
+
+	/* The database is usable again: the same export succeeds and
+	 * replaces the file */
+	exportTo(Database.model<db_x509>(), leaf, certPem,
+		file("existing.pem"));
+	QCOMPARE(certFingerprint(file("existing.pem"), "PEM"),
+		certFingerprint(file("leaf.pem"), "PEM"));
+	QCOMPARE(entries("object.export").last().result, QString("success"));
+	QVERIFY(AuditLog::verify().ok());
+	QVERIFY(QFile::remove(file("existing.pem")));
+#endif
+}
+
+/* A private key replaces an existing, world-readable file: the result
+ * is readable by the owner only, as a new key file (BTD-114) */
+void test_service_importexport::exportOverwritesKeyOwnerOnly()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	importChain();
+	pki_key *key = cert("BTD34 Leaf")->getRefKey();
+	QFile old(file("key.pem"));
+	QVERIFY(old.open(QIODevice::WriteOnly));
+	old.write("old\n");
+	old.close();
+	QStringList files = dirFiles(dir);
+	QVERIFY(old.setPermissions(QFile::ReadOwner | QFile::WriteOwner |
+				QFile::ReadGroup | QFile::ReadOther));
+
+	exportTo(Database.model<db_key>(), key, keyPemPrivate,
+		file("key.pem"));
+	QCOMPARE(publicKey(file("key.pem"), {}),
+		publicKey(file("leaf.key"), {}));
+	QFile::Permissions others = QFile::ReadGroup | QFile::WriteGroup |
+		QFile::ExeGroup | QFile::ReadOther | QFile::WriteOther |
+		QFile::ExeOther;
+	QVERIFY(!(QFile::permissions(file("key.pem")) & others));
+	QCOMPARE(dirFiles(dir), files);
+	QVERIFY(QFile::remove(file("key.pem")));
+#endif
+}
+
+/* A null item is rejected before any use, audited as a failure; before
+ * BTD-114 a list of one null item crashed at the "name" parameter */
+void test_service_importexport::exportNullItem()
+{
+	ExportSpec spec;
+	spec.items << nullptr;
+	spec.format = pki_export::by_id(certPem);
+	spec.fileName = file("null.pem");
+	try {
+		Database.model<db_x509>()->exportItems(ctx, spec);
+		QFAIL("exportItems() did not throw");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("wrong_object_type"));
+	}
+	QVERIFY(!QFile::exists(file("null.pem")));
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("object.export"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("wrong_object_type"));
+	QVERIFY(!e.params.contains("name"));
+	QVERIFY(AuditLog::verify().ok());
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

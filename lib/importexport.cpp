@@ -19,10 +19,10 @@
 #include "pki_crl.h"
 #include "PwDialogCore.h"
 #include "sql.h"
-#include "xfile.h"
 
 #include <QBuffer>
 #include <QMap>
+#include <QSaveFile>
 
 QString auditObjectType(const pki_base *pki)
 {
@@ -186,11 +186,16 @@ bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p)
 }
 }
 
-/* Deletes the objects not stored, never one of the database */
-static void dropItems(const QList<pki_base *> &items)
+/* Deletes the objects not stored, never one of the database. With
+ * ImportSpec::unstored, the given objects go back to the caller */
+static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 {
 	foreach(pki_base *pki, items) {
-		if (!pki->getSqlItemId().isValid())
+		if (pki->getSqlItemId().isValid())
+			continue;
+		if (spec.unstored && spec.items.contains(pki))
+			*spec.unstored << pki;
+		else
 			delete pki;
 	}
 }
@@ -332,13 +337,13 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			crl->getIssuer()->setCrlExpire(crl->getNextUpdate());
 		}
 	} catch (serviceError &err) {
-		dropItems(items);
+		dropItems(items, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
 		AuditLog::append(ctx, "object.import", "object", QString(),
 				params, "failure", err.code);
 		throw;
 	} catch (...) {
-		dropItems(items);
+		dropItems(items, spec);
 		AuditLog::append(ctx, "object.import", "object", QString(),
 				params, "failure", "internal_error");
 		throw;
@@ -381,10 +386,9 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 	if (!spec.fileName.isEmpty())
 		params.set("file", spec.fileName);
 	params.set("count", (qint64)spec.items.size());
-	if (spec.items.size() == 1)
+	if (spec.items.size() == 1 && spec.items[0])
 		params.set("name", spec.items[0]->getIntName());
 
-	bool written = false;
 	try {
 		if (spec.items.isEmpty())
 			throw serviceError("nothing_to_export",
@@ -448,7 +452,11 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		}
 
 		/* The entries, then the file, then the commit: no private key
-		 * leaves the database without its audit entry */
+		 * leaves the database without its audit entry. The file is
+		 * written beside the target and renamed over it only after
+		 * the commit: a failure leaves an existing file as it was
+		 * (BTD-114); QSaveFile drops the temporary file on failure */
+		QSaveFile file(spec.fileName);
 		Transaction;
 		TransThrow();
 		QList<pki_base *> objects = spec.clipboard ? spec.items :
@@ -474,32 +482,33 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				itemId(key), p);
 		}
 		if (!spec.fileName.isEmpty()) {
-			XFile file(spec.fileName);
+			if (!file.open(QIODevice::WriteOnly))
+				throw serviceError("write_failed",
+					tr("Error opening file: '%1': %2")
+					.arg(spec.fileName).arg(file.errorString()));
+			/* a new key file and a replaced one: owner only */
 			if (xport && xport->match_all(F_PRIVATE))
-				file.open_key();
-			else
-				file.open_write();
-			written = true;
+				file.setPermissions(QFile::ReadOwner |
+						QFile::WriteOwner);
 			if (file.write(out) != out.size())
 				throw serviceError("write_failed",
 					tr("Failed writing to %1").arg(spec.fileName));
-			file.close();
 		}
 		if (!TransCommit())
 			throw serviceError("database_error",
 				tr("Failed to commit the database transaction"));
+		if (!spec.fileName.isEmpty() && !file.commit())
+			throw serviceError("write_failed",
+				tr("Failed writing to %1: %2").arg(spec.fileName)
+				.arg(file.errorString()));
 		return out;
 	} catch (serviceError &err) {
-		if (written)
-			QFile::remove(spec.fileName);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
 		AuditLog::append(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
 			params, "failure", err.code);
 		throw;
 	} catch (...) {
-		if (written)
-			QFile::remove(spec.fileName);
 		AuditLog::append(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
 			params, "failure", "internal_error");
