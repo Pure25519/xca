@@ -1,0 +1,46 @@
+{
+  "description": "Certificate signing requests recorded from lab devices by IDIAL, copied byte for byte for the device CSR acceptance tests (BTD-65). Lab hostnames and IP addresses only, no secrets.",
+  "source_repository": "https://gitlab.com/bxc/idial.git",
+  "files": [
+    {
+      "file": "plc10_csr_sha1.der",
+      "source_path": "tests/plc10_csr_sha1.der",
+      "source_commit": "c861160dd17346a86a835d54e403d12bd739a09b",
+      "sha256": "0c7062a5aec5f16f32fe68583c40a1e4d5b2e1a687070af7ea2fd58b4e6ff9d2",
+      "device": "plc10, Siemens S7-1500, OPC UA server CreateSigningRequest",
+      "firmware": "V02.09.09",
+      "reference": "SMP-573 (tests/test_smp573_sha1_signed_csr.py)",
+      "traits": "sha1WithRSAEncryption, version 0, KU keyCertSign with CA:FALSE, Netscape Comment, SKI, AKI keyid plus DirName plus serial, SAN URI, DNS, IP"
+    },
+    {
+      "file": "plc10_csr_uri_san.der",
+      "source_path": "tests/plc10_csr_uri_san.der",
+      "source_commit": "6936a42491e64b95f485dc921a865c9c9131ba0c",
+      "sha256": "26def6e582000ad3e3454dab10f28871d904adf800b0c1bfd3e119f06e740dac",
+      "device": "plc10, Siemens S7-1500, OPC UA server CreateSigningRequest",
+      "firmware": "V02.09.09 (inferred: the unit's firmware in SMP-573; the source test does not name it)",
+      "reference": "SMP-587 (tests/test_smp587_san_by_type.py)",
+      "traits": "sha1WithRSAEncryption, version 0, RDN order DC, C, ST, L, O, OU, CN, AKI keyid that is not its own SKI, SAN URI, DNS, IP"
+    },
+    {
+      "file": "plc11_web_csr_ecdsa_sha1.der",
+      "source_path": "tests/plc11_web_csr_ecdsa_sha1.der",
+      "source_commit": "0e09df03712cc437ea7407c634c58dbb8eae2aca",
+      "sha256": "d4515c0dd980a5deda0db5fa2edfb9bc6b664edddc1f652a3e0eb4237eceffed",
+      "device": "plc11, Siemens S7-1500, web server CreateSigningRequest",
+      "firmware": "V04.00.04",
+      "reference": "SMP-639 (tests/test_smp639_ecdsa_sha1_csr.py)",
+      "traits": "ecdsa-with-SHA1, P-256, version 0, basicConstraints CA:TRUE, AKI DirName plus serial, SAN IP, DNS"
+    },
+    {
+      "file": "plc12_csr_sha1.der",
+      "source_path": "tests/plc12_csr_sha1.der",
+      "source_commit": "c861160dd17346a86a835d54e403d12bd739a09b",
+      "sha256": "b3d466e77ea80ea02a5c128b354508a16e4b5abc2caf0fd37d17efbf3522b158",
+      "device": "plc12, Siemens S7-1500, OPC UA server CreateSigningRequest",
+      "firmware": "V04.01.06",
+      "reference": "SMP-573 (tests/test_smp573_sha1_signed_csr.py)",
+      "traits": "sha1WithRSAEncryption, version 0, Netscape Comment, SKI, SAN URI urn:SIMATIC:plc12, DNS, IP"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "schema": "urn:bxc-pki:schema:profile-golden:v1",
+  "profile": "opcua-server",
+  "key_type": "ec-p256",
+  "issuer": {
+    "hierarchy": "ot-p256",
+    "ca_key_type": "ec-p256"
+  },
+  "opc_certificate_type": "EccNistP256ApplicationCertificateType",
+  "signature_algorithm": "ecdsa-with-SHA256",
+  "optional_key_usage": [
+    "keyAgreement"
+  ],
+  "extensions": [
+    {
+      "name": "basicConstraints",
+      "oid": "2.5.29.19",
+      "critical": true,
+      "value": {
+        "ca": false
+      }
+    },
+    {
+      "name": "keyUsage",
+      "oid": "2.5.29.15",
+      "critical": true,
+      "value": [
+        "digitalSignature"
+      ]
+    },
+    {
+      "name": "extendedKeyUsage",
+      "oid": "2.5.29.37",
+      "critical": true,
+      "value": [
+        "serverAuth",
+        "clientAuth"
+      ]
+    },
+    {
+      "name": "subjectAltName",
+      "oid": "2.5.29.17",
+      "critical": false,
+      "value": {
+        "uri": 1,
+        "dns": {
+          "min": 0,
+          "max": 4
+        },
+        "ip": {
+          "min": 0,
+          "max": 4
+        }
+      }
+    },
+    {
+      "name": "subjectKeyIdentifier",
+      "oid": "2.5.29.14",
+      "critical": false
+    },
+    {
+      "name": "authorityKeyIdentifier",
+      "oid": "2.5.29.35",
+      "critical": false,
+      "value": {
+        "form": "key-id"
+      }
+    }
+  ],
+  "ca_dependent_extensions": [
+    "crlDistributionPoints",
+    "authorityInfoAccess"
+  ],
+  "no_other_extensions": true
+}
