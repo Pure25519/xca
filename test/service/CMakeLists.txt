@@ -202,6 +202,17 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# ML-DSA keys under an openssl.cnf that changes the default provider
+# (BTD-16): the same test function with data/mldsa-<mode>.cnf
+foreach(mode output retain prefer)
+  add_test(NAME test_service_importexport_cnf_${mode}
+	COMMAND test_service_importexport mlDsaUnderOpensslConf)
+  set_tests_properties(test_service_importexport_cnf_${mode} PROPERTIES
+	LABELS service
+	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
+  Headless(test_service_importexport_cnf_${mode})
+endforeach()
+
 # Secure export defaults (BTD-52); every export read back with openssl
 ServiceTest(test_service_export_defaults)
 if(OPENSSL_PROGRAM)

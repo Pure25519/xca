@@ -445,7 +445,6 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw serviceError("format_not_applicable",
 					tr("An ML-DSA private key format needs a "
 					   "private key export of an ML-DSA key"));
-			params.set("ml_dsa_encoding", spec.privateKeyFormat);
 		}
 		pki_evp::MlDsaFormatScope keyFormat(spec.privateKeyFormat);
 		/* How the key material is protected, where a legacy method is
@@ -514,6 +513,11 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			AuditParams p = params;
 			p.set("name", pki->getIntName());
 			p.set("count", (qint64)objects.size());
+			/* the ML-DSA encoding as written, only for ML-DSA */
+			QString enc = pki_evp::MlDsaFormatScope::written(
+					dynamic_cast<pki_key *>(pki));
+			if (!enc.isEmpty())
+				p.set("ml_dsa_encoding", enc);
 			AuditLog::append(ctx, "object.export",
 				auditObjectType(pki), itemId(pki), p);
 		}
@@ -527,6 +531,9 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			 * a PKCS#12 file with an empty password protects
 			 * nothing */
 			p.set("encrypted", encrypted && !pass.isEmpty());
+			QString enc = pki_evp::MlDsaFormatScope::written(key);
+			if (!enc.isEmpty())
+				p.set("ml_dsa_encoding", enc);
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}
@@ -557,6 +564,9 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				.arg(file.errorString()));
 		return out;
 	} catch (serviceError &err) {
+		/* the encoding asked for, also when it was not possible */
+		if (!spec.privateKeyFormat.isEmpty())
+			params.set("ml_dsa_encoding", spec.privateKeyFormat);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
 		AuditLog::appendFailure(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),

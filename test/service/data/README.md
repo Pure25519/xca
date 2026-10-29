@@ -68,3 +68,10 @@ each object, `stored.xca.json` and `predefined.xca.json` for the templates the t
 `items.json`, `issuers.json`, `index.json`, `hierarchy.json` for the lists. Ids are those of a fresh
 database in the import order of the test; the test checks the creation date against the item and
 compares the rest unchanged. All keys are throwaway test keys.
+
+## `mldsa-output.cnf`, `mldsa-retain.cnf`, `mldsa-prefer.cnf`
+
+OpenSSL configurations for `test_service_importexport::mlDsaUnderOpensslConf` (BTD-16): each
+activates the default provider with one ML-DSA setting (`ml-dsa.output_formats = priv-only`,
+`ml-dsa.retain_seed = no`, `ml-dsa.prefer_seed = no`). ctest runs the function once per file as
+`test_service_importexport_cnf_<mode>` with `OPENSSL_CONF` pointing to it.
