@@ -59,6 +59,10 @@ class PwDialogHeadless: public PwDialogUI_i
 
 	void setSource(enum pass_info::purpose purpose, const QString &source);
 	void clearSources();
+	bool hasSource(enum pass_info::purpose purpose) const
+	{
+		return sources.contains(purpose);
+	}
 	/* The secret of the source for purpose; throws secretError if
 	 * there is none or it cannot be read */
 	Passwd secret(enum pass_info::purpose purpose);
@@ -95,6 +99,11 @@ class PwDialogCore
 	static Passwd cmdline_passwd;
 	static enum open_result execute(pass_info *p, Passwd *passwd,
 			bool write = false, bool abort = false);
+	/* A request of purpose p is answered from a given password (service
+	 * scope, --password without GUI, the GUI's command line password)
+	 * instead of a dialog: the caller must ask even if the current
+	 * password already fits, or the given one is never checked */
+	static bool hasSource(enum pass_info::purpose p);
 	static int selectToken(const QStringList &names, QWidget *w);
 	static void pinPadLogin(pass_info *p, QThread *login);
 	static int pwCallback(char *buf, int size, int rwflag, void *userdata);
