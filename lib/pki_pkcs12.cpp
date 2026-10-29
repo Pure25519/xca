@@ -14,6 +14,7 @@
 #include "exception.h"
 #include "func.h"
 #include "PwDialogCore.h"
+#include "settings.h"
 #include "XcaWarningCore.h"
 
 #include <openssl/err.h>
@@ -180,8 +181,14 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	EVP_PKEY_free(pkey);
 	Q_CHECK_PTR(pkcs12);
 
+	/* The MAC set explicitly, not left to OpenSSL's default: SHA-1 for
+	 * legacy readers only, else HMAC-SHA256 (BTD-52). Not PBMAC1
+	 * (RFC 9579): Windows, Java and OpenSSL before 3.4 cannot check it */
 	if (encAlgo.legacy())
 		PKCS12_set_mac(pkcs12, pass.constData(), -1, NULL, 0, 1, EVP_sha1());
+	else
+		PKCS12_set_mac(pkcs12, pass.constData(), -1, NULL, 0,
+				PKCS12_DEFAULT_ITER, EVP_sha256());
 
 	BioByteArray b;
 	i2d_PKCS12_bio(b, pkcs12);
@@ -207,7 +214,10 @@ const QList<int> encAlgo::all_encAlgos(
 	NID_aes_256_cbc
 });
 
-int encAlgo::default_encAlgo(NID_pbe_WithSHA1And3_Key_TripleDES_CBC);
+/* AES-256-CBC: PBES2 with PBKDF2-HMAC-SHA256 for keys and certificates;
+ * the legacy algorithms only when chosen (BTD-52) */
+int encAlgo::default_encAlgo(NID_aes_256_cbc);
+QString encAlgo::exportName;
 
 encAlgo::encAlgo(int nid) : encAlgo_nid(nid)
 {
@@ -233,6 +243,15 @@ QString encAlgo::displayName() const
 	return n;
 }
 
+QString encAlgo::description() const
+{
+	if (legacy())
+		return QObject::tr("Encryption: %1, MAC: SHA-1 (legacy)")
+			.arg(displayName());
+	return QObject::tr("Encryption: %1 with PBES2/PBKDF2-HMAC-SHA256, "
+			"MAC: HMAC-SHA256").arg(displayName());
+}
+
 int encAlgo::getEncAlgoNid() const
 {
 	return encAlgo_nid;
@@ -246,4 +265,21 @@ const encAlgo encAlgo::getDefault()
 void encAlgo::setDefault(const QString &def)
 {
 	default_encAlgo = encAlgo(def).encAlgo_nid;
+}
+
+const encAlgo encAlgo::forExport()
+{
+	return encAlgo(exportName.isEmpty() ?
+			(QString)Settings["pkcs12_enc_algo"] : exportName);
+}
+
+encAlgo::ExportScope::ExportScope(const QString &name)
+	: saved(exportName)
+{
+	exportName = name;
+}
+
+encAlgo::ExportScope::~ExportScope()
+{
+	exportName = saved;
 }

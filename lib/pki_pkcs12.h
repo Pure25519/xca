@@ -31,6 +31,9 @@ class encAlgo
 
 	QString name() const;
 	QString displayName() const;
+	/* Encryption and MAC of a PKCS#12 file written with it, for the
+	 * export dialog; a legacy algorithm is marked insecure */
+	QString description() const;
 	int getEncAlgoNid() const;
 	bool legacy() const
 	{
@@ -39,6 +42,19 @@ class encAlgo
 	}
 	static void setDefault(const QString &def);
 	static const encAlgo getDefault();
+	/* The algorithm of a PKCS#12 export: the one an ExportSpec names
+	 * while its export runs, else the setting pkcs12_enc_algo (BTD-52) */
+	static const encAlgo forExport();
+	class ExportScope
+	{
+		QString saved{};
+	  public:
+		ExportScope(const QString &name);
+		~ExportScope();
+	};
+
+  private:
+	static QString exportName;
 };
 
 class pki_pkcs12: public pki_multi
