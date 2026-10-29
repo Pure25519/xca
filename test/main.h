@@ -36,6 +36,7 @@ class test_main: public QObject
 	void cleanupTestCase();
 	void cleanup();
 	void newKey();
+	void keyDetailFixed();
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();

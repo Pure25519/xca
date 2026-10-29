@@ -6,8 +6,11 @@
 
 #include <QFile>
 #include <QProcess>
+#include <QSqlDatabase>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 
@@ -16,8 +19,22 @@
 #include "lib/db_key.h"
 #include "lib/exception.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_export.h"
 
 #include "ServiceTestCase.h"
+
+/* The key types without size or curve (BTD-16) and the size of their
+ * raw public key in bytes, which KeyDetail shows */
+static const QList<QPair<QString, int>> fixedTypes {
+	{ "ED25519", 32 }, { "ED448", 57 },
+	{ "ML-DSA-44", 1312 }, { "ML-DSA-65", 1952 }, { "ML-DSA-87", 2592 },
+	{ "SLH-DSA-SHA2-128s", 32 }, { "SLH-DSA-SHA2-128f", 32 },
+	{ "SLH-DSA-SHA2-192s", 48 }, { "SLH-DSA-SHA2-192f", 48 },
+	{ "SLH-DSA-SHA2-256s", 64 }, { "SLH-DSA-SHA2-256f", 64 },
+	{ "SLH-DSA-SHAKE-128s", 32 }, { "SLH-DSA-SHAKE-128f", 32 },
+	{ "SLH-DSA-SHAKE-192s", 48 }, { "SLH-DSA-SHAKE-192f", 48 },
+	{ "SLH-DSA-SHAKE-256s", 64 }, { "SLH-DSA-SHAKE-256f", 64 },
+};
 
 class test_service_key : public ServiceTestCase
 {
@@ -36,6 +53,14 @@ class test_service_key : public ServiceTestCase
 		return list.isEmpty() ? AuditEntry() : list.last();
 	}
 	static QString pkeyText(EVP_PKEY *pkey, int *exitCode);
+	static QVariant sqlValue(const QString &statement)
+	{
+		QSqlQuery q(QSqlDatabase::database());
+		if (!q.exec(statement) || !q.next())
+			return QVariant();
+		return q.value(0);
+	}
+	static void fixedTypeRows();
 
   private slots:
 	void newKey_data();
@@ -51,7 +76,28 @@ class test_service_key : public ServiceTestCase
 	void newKeySmallRsaHeadlessUnconfirmed_data();
 	void newKeySmallRsaHeadlessUnconfirmed();
 	void newKeyTooSmall();
+	void keyjobParse_data();
+	void keyjobParse();
+	void keytypeList();
+	void newKeyFixed_data();
+	void newKeyFixed();
+	void newKeyFixedWithSize_data();
+	void newKeyFixedWithSize();
+	void newKeyUnknownType_data();
+	void newKeyUnknownType();
+	void compareFixed();
+	void exportFlagsFixed_data();
+	void exportFlagsFixed();
 };
+
+void test_service_key::fixedTypeRows()
+{
+	QTest::addColumn<QString>("name");
+	QTest::addColumn<int>("pubLen");
+
+	for (const auto &t : fixedTypes)
+		QTest::newRow(CCHAR(t.first)) << t.first << t.second;
+}
 
 void test_service_key::newKey_data()
 {
@@ -91,7 +137,7 @@ void test_service_key::newKey()
 	QVERIFY(key->isPrivKey());
 	EVP_PKEY *pkey = key->decryptKey();
 	QVERIFY(pkey);
-	QCOMPARE(EVP_PKEY_get_id(pkey), keytype::byName(type).type);
+	QCOMPARE(keytype::nid(pkey), keytype::byName(type).type);
 	EVP_PKEY_free(pkey);
 }
 
@@ -315,6 +361,236 @@ void test_service_key::newKeyTooSmall()
 				keyjob("RSA:16"), "tiny-key");
 	QVERIFY(!key);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+}
+
+void test_service_key::keyjobParse_data()
+{
+	QTest::addColumn<QString>("desc");
+	QTest::addColumn<bool>("valid");
+	QTest::addColumn<QString>("canonical");
+
+	QTest::newRow("lower case") << "ml-dsa-65" << true << "ML-DSA-65";
+	QTest::newRow("ED448") << "ED448" << true << "ED448";
+	QTest::newRow("SLH-DSA mixed case") << "slh-dsa-shake-256F" << true
+			<< "SLH-DSA-SHAKE-256f";
+	QTest::newRow("ed25519") << "ed25519" << true << "ED25519";
+	QTest::newRow("RSA") << "RSA:3072" << true << "RSA:3072";
+#ifndef OPENSSL_NO_EC
+	QTest::newRow("EC") << "ec:prime256v1" << true << "EC:prime256v1";
+#endif
+	/* Rejected, never silently dropped (PLAN.md 8.4) */
+	QTest::newRow("ML-DSA with size") << "ML-DSA-65:2048" << false << "";
+	QTest::newRow("Ed25519 with size") << "ED25519:256" << false << "";
+	QTest::newRow("unknown ML-DSA") << "ML-DSA-99" << false << "";
+	QTest::newRow("unknown Edwards") << "ED449" << false << "";
+}
+
+/* --keygen and the remembered default key take the OpenSSL name in any
+ * case; the job prints it in the canonical spelling */
+void test_service_key::keyjobParse()
+{
+	QFETCH(QString, desc);
+	QFETCH(bool, valid);
+	QFETCH(QString, canonical);
+
+	keyjob job(desc);
+	QCOMPARE(job.isValid(), valid);
+	if (valid)
+		QCOMPARE(job.toString(), canonical);
+}
+
+/* Every fixed type is offered, once, under the name OpenSSL uses */
+void test_service_key::keytypeList()
+{
+	QStringList names;
+	for (const keytype &t : keytype::types())
+		names << t.name;
+	for (const auto &t : fixedTypes) {
+		QCOMPARE(names.count(t.first), 1);
+		keytype k = keytype::byName(t.first);
+		QVERIFY(k.fixed());
+		QCOMPARE(k.traditionalPemName(), QString("PRIVATE KEY"));
+		if (t.first.startsWith("ED"))
+			QCOMPARE(k.type, OBJ_sn2nid(CCHAR(t.first)));
+		else
+			QCOMPARE(k.type, OBJ_ln2nid(CCHAR(t.first)));
+	}
+	for (const char *n : { "RSA", "DSA", "EC" }) {
+		QVERIFY(!keytype::byName(n).fixed());
+		QCOMPARE(keytype::byName(n).traditionalPemName(),
+			QString("%1 PRIVATE KEY").arg(n));
+	}
+}
+
+void test_service_key::newKeyFixed_data()
+{
+	fixedTypeRows();
+}
+
+/* Generated through the service, stored with its full type name, read
+ * back after reopening: the key type resolves for keys that OpenSSL
+ * knows only by name (EVP_PKEY_get_id() -1, BTD-16) */
+void test_service_key::newKeyFixed()
+{
+	QFETCH(QString, name);
+	QFETCH(int, pubLen);
+
+	keytype t = keytype::byName(name);
+	QVERIFY2(t.isValid(), CCHAR(name));
+
+	pki_key *key = Database.model<db_key>()->newKey(ctx, keyjob(name),
+							"fixed-key");
+	QVERIFY(key);
+	QCOMPARE(key->getKeyType(), t.type);
+	QCOMPARE(key->getKeyTypeString(), name);
+	QCOMPARE(QString(EVP_PKEY_get0_type_name(key->getPubKey())).toUpper(),
+			name.toUpper());
+	/* KeyDetail shows the raw public key, the key list its bits */
+	QCOMPARE(key->QByteArrayParam(OSSL_PKEY_PARAM_PUB_KEY).size(), pubLen);
+	QCOMPARE(key->length(), QString("%1 bit").arg(pubLen * 8));
+
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["key_type"].toString(), name);
+	QCOMPARE(e.params["key_size"].toInt(), pubLen * 8);
+	QVERIFY(!e.params.contains("curve"));
+
+	/* The full name in the database, not the first four characters */
+	QCOMPARE(sqlValue("SELECT type FROM public_keys").toString(), name);
+	QCOMPARE(sqlValue("SELECT key_type FROM view_public_keys").toString(),
+			name);
+
+	reopenDatabase();
+	key = onlyKey();
+	QVERIFY(key);
+	QCOMPARE(key->getKeyType(), t.type);
+	QCOMPARE(key->getKeyTypeString(), name);
+	QVERIFY(key->isPrivKey());
+	EVP_PKEY *pkey = key->decryptKey();
+	QVERIFY(pkey);
+	QCOMPARE(keytype::nid(pkey), t.type);
+	QCOMPARE(EVP_PKEY_eq(pkey, key->getPubKey()), 1);
+	/* ML-DSA keeps its seed in the database (RFC 9881 export, BTD-16) */
+	if (name.startsWith("ML-DSA")) {
+		size_t len = 0;
+		QVERIFY(EVP_PKEY_get_octet_string_param(pkey,
+			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len));
+		QCOMPARE(len, size_t(32));
+	}
+	EVP_PKEY_free(pkey);
+
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#endif
+	int rc;
+	QString out = pkeyText(key->getPubKey(), &rc);
+	QCOMPARE(rc, 0);
+	QVERIFY2(out.startsWith(name + " Public-Key:"), CCHAR(out));
+}
+
+void test_service_key::newKeyFixedWithSize_data()
+{
+	QTest::addColumn<QString>("job");
+	QTest::addColumn<QString>("type");
+
+	QTest::newRow("ML-DSA") << "ML-DSA-65:2048" << "ML-DSA-65";
+	QTest::newRow("SLH-DSA") << "SLH-DSA-SHA2-128s:128"
+			<< "SLH-DSA-SHA2-128s";
+	QTest::newRow("Ed25519") << "ED25519:256" << "ED25519";
+}
+
+/* A size for a type without size fails instead of being dropped */
+void test_service_key::newKeyFixedWithSize()
+{
+	QFETCH(QString, job);
+	QFETCH(QString, type);
+	int before = AuditLog::entries().size();
+
+	try {
+		Database.model<db_key>()->newKey(ctx, keyjob(job), "sized");
+		QFAIL("newKey accepted a size for a fixed key type");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_key_size"));
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	QCOMPARE(AuditLog::entries().size(), before + 1);
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("invalid_key_size"));
+	QCOMPARE(e.params["key_type"].toString(), type);
+	QVERIFY(!e.params.contains("key_size"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+void test_service_key::newKeyUnknownType_data()
+{
+	QTest::addColumn<QString>("job");
+
+	QTest::newRow("ML-DSA-99") << "ML-DSA-99";
+	QTest::newRow("ED449") << "ED449";
+}
+
+void test_service_key::newKeyUnknownType()
+{
+	QFETCH(QString, job);
+
+	try {
+		Database.model<db_key>()->newKey(ctx, keyjob(job), "unknown");
+		QFAIL("newKey accepted an unknown key type");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_key_type"));
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("invalid_key_type"));
+	QCOMPARE(e.params["name"].toString(), QString("unknown"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* pki_key::compare() checks the type first: keys that OpenSSL knows
+ * only by name must not all look alike (type -1) */
+void test_service_key::compareFixed()
+{
+	db_key *keys = Database.model<db_key>();
+	pki_key *a = keys->newKey(ctx, keyjob("ML-DSA-65"), "a");
+	pki_key *b = keys->newKey(ctx, keyjob("ML-DSA-65"), "b");
+	pki_key *c = keys->newKey(ctx, keyjob("SLH-DSA-SHA2-128f"), "c");
+	QVERIFY(a && b && c);
+
+	EVP_PKEY *dup = EVP_PKEY_dup(a->getPubKey());
+	QVERIFY(dup);
+	pki_evp copy(dup);
+	QCOMPARE(copy.getKeyType(), a->getKeyType());
+	QVERIFY(a->compare(&copy));
+	QVERIFY(!a->compare(b));
+	QVERIFY(!a->compare(c));
+	/* the database finds the stored key for the same public key */
+	QCOMPARE(keys->getByReference(&copy), static_cast<pki_base*>(a));
+}
+
+void test_service_key::exportFlagsFixed_data()
+{
+	fixedTypeRows();
+}
+
+/* Export formats the type does not have are not offered: no PVK, no
+ * traditional PEM, no JWK; SSH only for Ed25519 */
+void test_service_key::exportFlagsFixed()
+{
+	QFETCH(QString, name);
+
+	db_key *keys = Database.model<db_key>();
+	pki_key *key = keys->newKey(ctx, keyjob(name), "flags");
+	QVERIFY(key);
+	int disabled = keys->exportFlags(key);
+	QVERIFY(disabled & F_PVK);
+	QVERIFY(disabled & F_TRADITION);
+	QVERIFY(disabled & F_JWK);
+	QCOMPARE(bool(disabled & F_SSH2), name != "ED25519");
+	QCOMPARE(key->SSH2_compatible(), name == "ED25519");
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_key)

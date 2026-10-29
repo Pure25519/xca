@@ -359,6 +359,41 @@
 << "UPDATE settings SET value='2' WHERE key_='bxc_schema'"
 	;
 
+	bxc_schemas[2]
+// Full key type names in public_keys (BTD-16): CHAR(4) held "ML-D" for
+// all three ML-DSA and "SLH-" for all twelve SLH-DSA parameter sets.
+// SQLite cannot change a column type, so the table is rebuilt (like
+// schema 5); view_public_keys depends on it and is created again. The
+// "_old" name keeps the table prefix (XSqlQuery::rewriteQuery()).
+<< "DROP VIEW view_public_keys"
+<< "ALTER TABLE public_keys RENAME TO public_keys_old"
+<< "CREATE TABLE public_keys ("
+	"item INTEGER, "                // reference to items(id)
+	"type VARCHAR(32), "            // RSA DSA EC ED25519 ML-DSA-65 ...
+	"hash INTEGER, "                // 32 bit hash
+	"len INTEGER, "                 // key size in bits
+	"\"public\" " B64_BLOB ", "     // B64(DER(public key))
+	"FOREIGN KEY (item) REFERENCES items (id))"
+<< "INSERT INTO public_keys (item, type, hash, len, \"public\") "
+	"SELECT item, type, hash, len, \"public\" FROM public_keys_old"
+<< "DROP TABLE public_keys_old"
+<< "CREATE INDEX i_public_keys_item ON public_keys (item)"
+<< "CREATE INDEX i_public_keys_hash ON public_keys (hash)"
+// The only type longer than four characters before: Ed25519
+<< "UPDATE public_keys SET type='ED25519' WHERE type='ED25'"
+<< "CREATE VIEW view_public_keys AS SELECT "
+	"items.id, items.name, items.type AS item_type, items.date, "
+	"items.source, items.comment, "
+	"public_keys.type as key_type, public_keys.len, public_keys.\"public\", "
+	"private_keys.ownPass, "
+	"tokens.card_manufacturer, tokens.card_serial, tokens.card_model, "
+	"tokens.card_label, tokens.slot_label, tokens.object_id "
+	"FROM public_keys LEFT JOIN items ON public_keys.item = items.id "
+	"LEFT JOIN private_keys ON private_keys.item = public_keys.item "
+	"LEFT JOIN tokens ON public_keys.item = tokens.item"
+<< "UPDATE settings SET value='3' WHERE key_='bxc_schema'"
+	;
+
 /* When adding new tables or views, also add them to the list
  * in XSqlQuery::rewriteQuery(QString) in lib/sql.cpp
  */

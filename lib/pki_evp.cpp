@@ -145,13 +145,15 @@ void pki_evp::generate(const keyjob &task)
 		Q_CHECK_PTR(ctx);
 		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
 		break;
-	case EVP_PKEY_ED25519:
-		// ED25519 and ED448 have no parameters
+#endif
+	default:
+		if (!task.ktype.fixed())
+			throw errorEx(tr("Unknown Keytype %1")
+					.arg(task.ktype.type));
+		/* Ed25519, Ed448, ML-DSA and SLH-DSA: the type names
+		 * the parameters */
 		keygenCheck(EVP_PKEY_keygen_init(ctx), QString(), failed);
 		break;
-	default:
-		throw errorEx(tr("Unknown Keytype %1").arg(task.ktype.type));
-#endif
 	}
 	keygenCheck(EVP_PKEY_keygen(ctx, &pkey), QString(), failed);
 

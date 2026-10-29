@@ -151,6 +151,13 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# --keygen and --help for Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-16)
+add_test(NAME test_cli_keygen_types
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_keygen_types
+		-P ${SERVICE_TEST_DIR}/cli_keygen_types.cmake)
+set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)

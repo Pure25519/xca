@@ -253,7 +253,7 @@ int pki_key::getUcount() const
 
 int pki_key::getKeyType() const
 {
-	return EVP_PKEY_id(key);
+	return keytype::nid(key);
 }
 
 #ifndef OPENSSL_NO_EC
@@ -462,7 +462,7 @@ QSqlError pki_key::insertSqlData()
 	SQL_PREPARE(q, "INSERT INTO public_keys (item, type, hash, len, \"public\") "
 		  "VALUES (?, ?, ?, ?, ?)");
 	q.bindValue(0, sqlItemId);
-	q.bindValue(1, getKeyTypeString().left(4));
+	q.bindValue(1, getKeyTypeString());
 	q.bindValue(2, myhash);
 	q.bindValue(3, EVP_PKEY_bits(key));
 	q.bindValue(4, i2d_b64());
