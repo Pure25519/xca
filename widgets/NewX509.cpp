@@ -35,6 +35,9 @@
 #include "lib/db_x509req.h"
 #include "lib/db_x509.h"
 #include "lib/db_temp.h"
+#include "lib/audit.h"
+#include "lib/exception.h"
+#include "lib/issuance_checks.h"
 #include "lib/oid.h"
 #include "lib/func.h"
 #include "lib/pki_evp.h"
@@ -1322,30 +1325,32 @@ void NewX509::accept()
 		gotoTab(0);
 		xcaWarningBox msg(this, tr("The currently selected hash algorithm '%1' is insecure and should not be used.").arg(hashAlgo->current().name()));
 		msg.addButton(QMessageBox::Ok, tr("Select other algorithm"));
-		msg.addButton(QMessageBox::Yes, tr("Use algorithm anyway"));
-		if (msg.exec() == QMessageBox::Ok)
+		/* a certificate is never signed with it (BTD-55); the
+		 * service would refuse after the dialog closed */
+		if (pt != x509)
+			msg.addButton(QMessageBox::Yes, tr("Use algorithm anyway"));
+		if (msg.exec() == QMessageBox::Ok || pt == x509)
 			return;
 	}
 	if (signer && notBefore->getDate() < signer->getNotBefore()) {
 		gotoTab(2);
-		QString text = tr("The certificate will be earlier valid than the signer. This is probably not what you want.");
+		/* the issuer check refuses it (issuer_not_yet_valid,
+		 * BTD-55): edit or adjust, no way to continue as is */
+		QString text = tr("The certificate would be valid earlier than the signer. Adjust the start date or edit the dates.");
 		xcaWarningBox msg(this, text);
 		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
 		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
-		msg.addButton(QMessageBox::Apply, tr("Continue rollout"));
 		msg.addButton(QMessageBox::Yes, tr("Adjust date and continue"));
 		switch (msg.exec())
 		{
-			case QMessageBox::Ok:
-			case QMessageBox::Cancel:
-				return;
+			case QMessageBox::Yes:
+				notBefore->setDate(signer->getNotBefore());
+				break;
 			case QMessageBox::Close:
 				reject();
 				return;
-			case QMessageBox::Apply:
-				break;
-			case QMessageBox::Yes:
-				notBefore->setDate(signer->getNotBefore());
+			default:
+				return;
 		}
 	}
 	/* The issuance caps the end date at the signer chain (BTD-51),
@@ -1497,6 +1502,19 @@ void NewX509::accept()
 				case QMessageBox::Apply:
 					break;
 			}
+		}
+	}
+	/* the checks the issuance runs, while the input is still here */
+	if (pt == x509) {
+		try {
+			AuditParams params;
+			IssuanceChecks::preflight(getIssuanceSpec(), params);
+		} catch (serviceError &err) {
+			xcaWarningBox msg(this, tr("The certificate cannot be issued: %1")
+				.arg(err.getString()));
+			msg.addButton(QMessageBox::Ok, tr("Edit"));
+			msg.exec();
+			return;
 		}
 	}
 	XcaDetail::accept();

@@ -180,6 +180,9 @@ class AuditParams
 	AuditParams &set(const QString &key, int v);
 	AuditParams &set(const QString &key, bool v);
 	AuditParams &set(const QString &key, const QDateTime &v);
+	/* Adds code to the comma list "warning": something the service
+	 * accepted but the log must show (BTD-55, BTD-65) */
+	AuditParams &warn(const QString &code);
 	/* Secrets and raw bytes never reach the log */
 	AuditParams &set(const QString &key, const Passwd &v) = delete;
 	AuditParams &set(const QString &key, const QByteArray &v) = delete;

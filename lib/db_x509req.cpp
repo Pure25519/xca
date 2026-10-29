@@ -12,6 +12,7 @@
 #include "audit.h"
 #include "exception.h"
 #include "func.h"
+#include "issuance_checks.h"
 #include "request.h"
 #include "XcaWarningCore.h"
 
@@ -86,6 +87,7 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	if (spec.key->isPubKey())
 		throw serviceError("no_private_key",
 			tr("The key you selected for signing is not a private one."));
+	IssuanceChecks::pathLength(spec.extensions);
 
 	req = new pki_x509req();
 	req->pkiSource = spec.source;

@@ -136,6 +136,14 @@ endif()
 # A failed signature is an error, never a stored object (BTD-171)
 ServiceTest(test_service_signing_failure)
 
+# Checks before every signature: path length, issuer, CSR, OPC UA chains
+# (BTD-55)
+ServiceTest(test_service_signing)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_signing PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
