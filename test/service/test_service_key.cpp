@@ -89,6 +89,8 @@ class test_service_key : public ServiceTestCase
 	void compareFixed();
 	void exportFlagsFixed_data();
 	void exportFlagsFixed();
+	void nidOfGeneratedKey_data();
+	void nidOfGeneratedKey();
 };
 
 void test_service_key::fixedTypeRows()
@@ -598,6 +600,32 @@ void test_service_key::exportFlagsFixed()
 	QVERIFY(disabled & F_JWK);
 	QCOMPARE(bool(disabled & F_SSH2), name != "ED25519");
 	QCOMPARE(key->SSH2_compatible(), name == "ED25519");
+}
+
+void test_service_key::nidOfGeneratedKey_data()
+{
+	fixedTypeRows();
+}
+
+/* A key generated from its NID (pki_evp::generate) carries the NID,
+ * which EVP_PKEY_type() does not know; a decoded one has none (-1) and
+ * resolves by name. The stored public key is a decoded one and hid
+ * this; the private key in encryptKey() is the generated one */
+void test_service_key::nidOfGeneratedKey()
+{
+	QFETCH(QString, name);
+	keytype t = keytype::byName(name);
+	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(t.type, nullptr);
+	EVP_PKEY *pkey = nullptr;
+	QVERIFY(ctx && EVP_PKEY_keygen_init(ctx) > 0 &&
+		EVP_PKEY_keygen(ctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(ctx);
+	QCOMPARE(keytype::nid(pkey), t.type);
+	EVP_PKEY_free(pkey);
+	pkey = EVP_PKEY_Q_keygen(nullptr, nullptr, CCHAR(name));
+	QVERIFY(pkey);
+	QCOMPARE(keytype::nid(pkey), t.type);
+	EVP_PKEY_free(pkey);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_key)
