@@ -33,19 +33,34 @@ class AuditKey
   public:
 	static const char typeEd25519[];
 
+	/* A key generated in memory, not stored yet: a checkpoint signs
+	 * before its first write (BTD-111) */
+	class Generated
+	{
+	  public:
+		QString id{};
+		QByteArray publicPem{};
+		QByteArray encryptedPrivate{};   // PKCS#8 DER, AES-256
+	};
+
 	/* The database password as pki_evp::tryDecryptKey() gets it: the
-	 * one the database was unlocked with, else from the password source
-	 * (--password on the command line, the dialog in the GUI).
+	 * one the database was unlocked with, else, if ask is set, from the
+	 * password source (--password on the command line, the dialog in
+	 * the GUI). Automatic checkpoints do not ask (BTD-111).
 	 * Throws serviceError("audit_key_unavailable") without it. */
-	static Passwd password();
-	/* Generates a key, stores it encrypted with pass and returns its id;
-	 * *publicPem receives the public key. The caller announces it in
-	 * the chain. */
-	static QString create(const Passwd &pass, QByteArray *publicPem);
+	static Passwd password(bool ask = true);
+	/* Generates a key encrypted with pass, without storing it */
+	static Generated generate(const Passwd &pass);
+	/* Stores a generated key; the caller announces it in the chain */
+	static void store(const Generated &key);
 	/* The id of the key that signs new checkpoints, empty if none yet */
 	static QString current();
-	/* Signs data with the private key of id */
+	/* Signs data with the private key of id, or of a generated key.
+	 * Throws serviceError("audit_key_unavailable") for a key without
+	 * private part, errorEx if it does not decrypt. Writes nothing. */
 	static QByteArray sign(const QString &id, const QByteArray &data,
+			const Passwd &pass);
+	static QByteArray sign(const Generated &key, const QByteArray &data,
 			const Passwd &pass);
 	/* Drops the private part of id; id no longer signs */
 	static void retire(const QString &id);

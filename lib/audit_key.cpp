@@ -35,7 +35,7 @@ static void throwOnError(XSqlQuery &q)
 		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
 }
 
-Passwd AuditKey::password()
+Passwd AuditKey::password(bool ask)
 {
 	Passwd pass = pki_evp::passwd;
 	pass_info p(XCA_TITLE, QObject::tr("Please enter the database password "
@@ -43,7 +43,7 @@ Passwd AuditKey::password()
 	p.setPurpose(pass_info::DatabasePassword);
 
 	try {
-		while (!pki_evp::validateDatabasePassword(pass)) {
+		while (ask && !pki_evp::validateDatabasePassword(pass)) {
 			if (PwDialogCore::execute(&p, &pass,
 					pki_evp::passHash.isEmpty()) != pw_ok)
 				break;
@@ -117,38 +117,41 @@ static EVP_PKEY *readPublic(const QByteArray &pem)
 	return pkey;
 }
 
-QString AuditKey::create(const Passwd &pass, QByteArray *publicPem)
+AuditKey::Generated AuditKey::generate(const Passwd &pass)
 {
 	EVP_PKEY *pkey = EVP_PKEY_Q_keygen(NULL, NULL, "ED25519");
 	if (!pkey)
 		openssl_error_msg(QObject::tr("Failed to generate the audit key"));
 
-	QString id;
+	Generated key;
 	try {
 		BioByteArray pem;
 		if (!PEM_write_bio_PUBKEY(pem, pkey))
 			openssl_error_msg(QObject::tr("Invalid audit key"));
-		*publicPem = pem.byteArray();
-		id = spkiId(spkiDer(pkey));
-
-		XSqlQuery q;
-		SQL_PREPARE(q, "INSERT INTO audit_keys (key_id, created, "
-			"key_type, public_key, private, retired) "
-			"VALUES (?,?,?,?,?,0)");
-		q.bindValue(0, id);
-		q.bindValue(1, AuditLog::rfc3339(QDateTime::currentDateTimeUtc()));
-		q.bindValue(2, QString(typeEd25519));
-		q.bindValue(3, QString::fromLatin1(*publicPem));
-		q.bindValue(4, QString::fromLatin1(
-				encryptPrivate(pkey, pass).toBase64()));
-		q.exec();
-		throwOnError(q);
+		key.publicPem = pem.byteArray();
+		key.id = spkiId(spkiDer(pkey));
+		key.encryptedPrivate = encryptPrivate(pkey, pass);
 	} catch (...) {
 		EVP_PKEY_free(pkey);
 		throw;
 	}
 	EVP_PKEY_free(pkey);
-	return id;
+	return key;
+}
+
+void AuditKey::store(const Generated &key)
+{
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO audit_keys (key_id, created, "
+		"key_type, public_key, private, retired) "
+		"VALUES (?,?,?,?,?,0)");
+	q.bindValue(0, key.id);
+	q.bindValue(1, AuditLog::rfc3339(QDateTime::currentDateTimeUtc()));
+	q.bindValue(2, QString(typeEd25519));
+	q.bindValue(3, QString::fromLatin1(key.publicPem));
+	q.bindValue(4, QString::fromLatin1(key.encryptedPrivate.toBase64()));
+	q.exec();
+	throwOnError(q);
 }
 
 QString AuditKey::current()
@@ -174,8 +177,16 @@ QByteArray AuditKey::sign(const QString &id, const QByteArray &data,
 		throw serviceError("audit_key_unavailable",
 			QObject::tr("The audit key %1 cannot sign").arg(id));
 
-	EVP_PKEY *pkey = decryptPrivate(QByteArray::fromBase64(
-			q.value(0).toByteArray()), pass);
+	Generated key;
+	key.id = id;
+	key.encryptedPrivate = QByteArray::fromBase64(q.value(0).toByteArray());
+	return sign(key, data, pass);
+}
+
+QByteArray AuditKey::sign(const Generated &key, const QByteArray &data,
+		const Passwd &pass)
+{
+	EVP_PKEY *pkey = decryptPrivate(key.encryptedPrivate, pass);
 	EVP_MD_CTX *ctx = EVP_MD_CTX_new();
 	size_t len = 0;
 	QByteArray sig;

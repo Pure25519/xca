@@ -406,45 +406,51 @@ static void throwOnError(XSqlQuery &q)
 		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
 }
 
-/* append() without the checkpoint check */
-static AuditEntry insertEntry(const ServiceContext &ctx,
-		const QString &action, const QString &objectType,
-		const QString &objectId, const AuditParams &params,
-		const QString &result = "success",
-		const QString &errorCode = QString())
+/* seq and hash of the newest entry; seq 0 for an empty log */
+static AuditEntry headEntry()
 {
-	static const QStringList results { "success", "failure", "denied" };
 	XSqlQuery q;
 	AuditEntry e;
-
-	if (action.isEmpty())
-		throw errorEx("Audit entry without action");
-	if (!results.contains(result))
-		throw errorEx(QString("Invalid audit result '%1'").arg(result));
-
-	Transaction;
-	TransThrow();
 
 	SQL_PREPARE(q, "SELECT seq, hash FROM audit_log "
 			"ORDER BY seq DESC LIMIT 1");
 	q.exec();
 	throwOnError(q);
-	e.seq = 1;
-	e.prevHash = AuditLog::genesisHash;
 	if (q.next()) {
-		e.seq = q.value(0).toLongLong() + 1;
-		e.prevHash = q.value(1).toString().toLatin1();
+		e.seq = q.value(0).toLongLong();
+		e.hash = q.value(1).toString().toLatin1();
 	}
+	return e;
+}
+
+/* The entry that follows prev (headEntry() or an entry made before),
+ * not written yet */
+static AuditEntry makeEntry(const ServiceContext &ctx, const AuditEntry &prev,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const QVariantMap &params,
+		const QString &result = "success",
+		const QString &errorCode = QString())
+{
+	AuditEntry e;
+
+	e.seq = prev.seq + 1;
+	e.prevHash = prev.seq ? prev.hash : AuditLog::genesisHash;
 	e.time = AuditLog::rfc3339(QDateTime::currentDateTimeUtc());
 	e.actor = ctx.actor();
 	e.channel = ctx.channelName();
 	e.action = action;
 	e.objectType = objectType;
 	e.objectId = objectId;
-	e.params = params.getValues();
+	e.params = params;
 	e.result = result;
 	e.errorCode = errorCode;
 	e.hash = e.computeHash();
+	return e;
+}
+
+static void writeEntry(const AuditEntry &e)
+{
+	XSqlQuery q;
 
 	SQL_PREPARE(q, "INSERT INTO audit_log (seq, created, actor, channel, "
 			"action, object_type, object_id, params, result, "
@@ -464,9 +470,33 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 	q.bindValue(11, QString::fromLatin1(e.hash));
 	q.exec();
 	throwOnError(q);
+}
+
+/* append() without the checkpoint check */
+static AuditEntry insertEntry(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &result = "success",
+		const QString &errorCode = QString())
+{
+	static const QStringList results { "success", "failure", "denied" };
+
+	if (action.isEmpty())
+		throw errorEx("Audit entry without action");
+	if (!results.contains(result))
+		throw errorEx(QString("Invalid audit result '%1'").arg(result));
+
+	Transaction;
+	TransThrow();
+	AuditEntry e = makeEntry(ctx, headEntry(), action, objectType,
+			objectId, params.getValues(), result, errorCode);
+	writeEntry(e);
 	TransCommit();
 	return e;
 }
+
+static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
+				bool ask, bool *writing = nullptr);
 
 /* seq of the newest checkpoint entry, 0 if there is none */
 static qint64 lastCheckpointSeq()
@@ -505,13 +535,18 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 				p, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
+	bool writing = false;
 	try {
-		checkpoint(ctx);
-	} catch (serviceError &err) {
-		/* Thrown before anything was written: the entry stays,
-		 * the next append() tries again */
+		writeCheckpoint(ctx, false, false, &writing);
+	} catch (errorEx &err) {
+		/* Failed before its first write: the entry and the caller's
+		 * transaction stay, the next append() tries again. A failure
+		 * while writing rolled the caller's transaction back with
+		 * the checkpoint, so it must reach the caller (BTD-111) */
+		if (writing)
+			throw;
 		qWarning() << "No audit checkpoint after entry" << e.seq
-			<< err.code << err.getString();
+			<< err.getString();
 	}
 	return e;
 }
@@ -605,43 +640,39 @@ static qint64 checkUnsignedTail(qint64 fromSeq)
 	return expected - fromSeq;
 }
 
-/* Announces a new audit key in the chain */
-static QString announceKey(const ServiceContext &ctx, const Passwd &pass)
+/* The announcement of a generated key after prev, not written yet */
+static AuditEntry makeAnnouncement(const ServiceContext &ctx,
+		const AuditEntry &prev, const AuditKey::Generated &key)
 {
-	QByteArray pem;
-	QString id = AuditKey::create(pass, &pem);
 	AuditParams p;
-	p.set("key_id", id).set("key_type", AuditKey::typeEd25519)
-	 .set("public_key", QString::fromLatin1(pem));
-	insertEntry(ctx, AuditLog::actionKeyCreate, "audit_key", id, p);
-	return id;
+	p.set("key_id", key.id).set("key_type", AuditKey::typeEd25519)
+	 .set("public_key", QString::fromLatin1(key.publicPem));
+	return makeEntry(ctx, prev, AuditLog::actionKeyCreate, "audit_key",
+			key.id, p.getValues());
 }
 
-/* Signs the newest entry with key; next names the key that signs the
- * following checkpoints */
-static AuditEntry signHead(const ServiceContext &ctx, const QString &key,
-			const QString &next, const Passwd &pass)
+/* The checkpoint after prev that signs prev with the stored key, or with
+ * fresh if given; next names the key that signs the following
+ * checkpoints. Not written yet. */
+static AuditEntry makeCheckpoint(const ServiceContext &ctx,
+		const AuditEntry &prev, const QString &key,
+		const AuditKey::Generated *fresh, const QString &next,
+		const Passwd &pass)
 {
-	XSqlQuery q;
 	AuditParams p;
 
-	SQL_PREPARE(q, "SELECT seq, hash FROM audit_log "
-			"ORDER BY seq DESC LIMIT 1");
-	q.exec();
-	throwOnError(q);
-	if (!q.next())
-		throw errorEx("No audit entry to sign");
-	p.set("checkpoint_seq", q.value(0).toLongLong());
-	p.set("checkpoint_hash", q.value(1).toString());
+	p.set("checkpoint_seq", prev.seq);
+	p.set("checkpoint_hash", QString::fromLatin1(prev.hash));
 	p.set("checkpoint_time", QDateTime::currentDateTimeUtc());
 	p.set("key_id", key);
 	if (!next.isEmpty())
 		p.set("next_key_id", next);
-	QByteArray sig = AuditKey::sign(key,
-			AuditLog::checkpointPayload(p.getValues()), pass);
+	QByteArray payload = AuditLog::checkpointPayload(p.getValues());
+	QByteArray sig = fresh ? AuditKey::sign(*fresh, payload, pass) :
+				AuditKey::sign(key, payload, pass);
 	p.set("signature", QString::fromLatin1(sig.toBase64()));
-	return insertEntry(ctx, AuditLog::actionCheckpoint, "audit_key",
-				key, p);
+	return makeEntry(ctx, prev, AuditLog::actionCheckpoint, "audit_key",
+			key, p.getValues());
 }
 
 /* True once the chain announced a key or audit_keys holds one: from then
@@ -658,19 +689,19 @@ static bool keyAnnounced()
 	return q.next();
 }
 
-/* Every serviceError is thrown before the first write, so that a failed
- * automatic checkpoint does not roll back the caller's transaction */
-static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate)
+/* Everything that can fail short of a database error happens before the
+ * first write: the password, the key generation, the signature. Only
+ * then *writing is set and the entries are written; a failure from there
+ * on rolls back the caller's transaction too (BTD-111). ask: the password
+ * may be asked for (explicit checkpoints, not automatic ones). */
+static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
+				bool ask, bool *writing)
 {
-	XSqlQuery q;
-	SQL_PREPARE(q, "SELECT 1 FROM audit_log LIMIT 1");
-	q.exec();
-	throwOnError(q);
-	if (!q.next())
+	if (!headEntry().seq)
 		throw serviceError("empty_audit_log",
 			QObject::tr("The audit log has no entry to sign"));
 	/* the password first: without it the export reads only */
-	Passwd pass = AuditKey::password();
+	Passwd pass = AuditKey::password(ask);
 	qint64 last = lastCheckpointSeq();
 	checkUnsignedTail(last ? last : 1);
 	QString key = AuditKey::current();
@@ -678,33 +709,45 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate)
 		throw serviceError("audit_key_missing", QObject::tr(
 			"The audit key that signs the checkpoints is missing "
 			"or retired; run --audit-verify"));
-	AuditEntry e;
 
+	/* first use: a new key announced and signing itself; rotation: a
+	 * new key announced and named by a checkpoint of the old one */
+	bool first = key.isEmpty();
+	AuditKey::Generated fresh;
+	AuditEntry prev = headEntry(), announcement;
+	if (first || rotate) {
+		fresh = AuditKey::generate(pass);
+		announcement = makeAnnouncement(ctx, prev, fresh);
+		prev = announcement;
+	}
+	AuditEntry e = first ?
+		makeCheckpoint(ctx, prev, fresh.id, &fresh, QString(), pass) :
+		makeCheckpoint(ctx, prev, key, nullptr,
+				rotate ? fresh.id : QString(), pass);
+
+	if (writing)
+		*writing = true;
 	Transaction;
 	TransThrow();
-	if (key.isEmpty()) {
-		/* first use */
-		key = announceKey(ctx, pass);
-		e = signHead(ctx, key, QString(), pass);
-	} else if (rotate) {
-		QString next = announceKey(ctx, pass);
-		e = signHead(ctx, key, next, pass);
-		AuditKey::retire(key);
-	} else {
-		e = signHead(ctx, key, QString(), pass);
+	if (announcement.seq) {
+		AuditKey::store(fresh);
+		writeEntry(announcement);
 	}
+	writeEntry(e);
+	if (rotate && !first)
+		AuditKey::retire(key);
 	TransCommit();
 	return e;
 }
 
 AuditEntry AuditLog::checkpoint(const ServiceContext &ctx)
 {
-	return writeCheckpoint(ctx, false);
+	return writeCheckpoint(ctx, false, true);
 }
 
 AuditEntry AuditLog::rotateKey(const ServiceContext &ctx)
 {
-	return writeCheckpoint(ctx, true);
+	return writeCheckpoint(ctx, true, true);
 }
 
 QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
