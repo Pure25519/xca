@@ -418,12 +418,28 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		}
 
 		if (!spec.pkcs12Algorithm.isEmpty() &&
+		    (spec.clipboard || !xport->match_all(F_PKCS12)))
+			throw serviceError("format_not_applicable",
+				tr("A PKCS#12 algorithm needs a PKCS#12 format"));
+		if (!spec.pkcs12Algorithm.isEmpty() &&
 		    !encAlgo::all_encAlgos.contains(
 				encAlgo(spec.pkcs12Algorithm).getEncAlgoNid()))
 			throw serviceError("invalid_pkcs12_algorithm",
 				tr("Unknown PKCS#12 algorithm '%1'")
 				.arg(spec.pkcs12Algorithm));
 		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
+		/* How the key material is protected, where a legacy method is
+		 * possible: the PKCS#12 algorithm, and the legacy marker for
+		 * it and for RFC 1423 PEM encryption (BTD-52) */
+		if (!spec.clipboard && xport->match_all(F_PKCS12)) {
+			encAlgo used = encAlgo::forExport();
+			params.set("pkcs12_algorithm", used.name());
+			if (used.legacy())
+				params.set("legacy", true);
+		} else if (!spec.clipboard &&
+			   xport->match_all(F_TRADITION | F_CRYPT)) {
+			params.set("legacy", true);
+		}
 
 		/* The password, before the database is touched */
 		Passwd pass;

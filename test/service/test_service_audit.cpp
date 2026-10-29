@@ -181,8 +181,9 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
 			.toString(), QString("2"));
 
-	/* Every row is unchanged. settings only gains bxc_schema and the
-	 * option the harness sets on each open. */
+	/* Every row is unchanged. settings only gains bxc_schema, the
+	 * option the harness sets on each open and the marker of the
+	 * one-time PKCS#12 default migration (BTD-52). */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList audit = after.take("audit_log");
 	QCOMPARE(after.take("audit_keys"), QStringList());
@@ -191,7 +192,7 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(after, before);
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
-			s == "bxc_schema|2";
+			s == "bxc_schema|2" || s == "pkcs12_migrated|yes";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 

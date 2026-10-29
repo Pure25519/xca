@@ -71,6 +71,9 @@ void settings::clear()
 	const QMap<QString, QString> def = defaults();
 	for(QString key : def.keys())
 		setAction(key, def[key]);
+	/* A database that stays open (e.g. after a failed password change)
+	 * keeps its stored values: the statics above are read directly */
+	load_settings();
 }
 
 void settings::setAction(const QString &key, const QString &value)

@@ -151,8 +151,13 @@ int Options::exec()
 	Settings["only_token_hashes"] = onlyTokenHashes->checkState();
 	Settings["disable_netscape"] = disableNetscape->checkState();
 
-	Settings["default_hash"] = hashAlgo->current().name();
-    	Settings["pkcs12_enc_algo"] = pkcs12EncAlgo->current().name();
+	/* only a change is stored: an unchanged default stays no choice
+	 * (BTD-52) */
+	if (hashAlgo->current().name() != digest::getDefault().name())
+		Settings["default_hash"] = hashAlgo->current().name();
+	if (pkcs12EncAlgo->current().getEncAlgoNid() !=
+	    encAlgo::getDefault().getEncAlgoNid())
+		Settings["pkcs12_enc_algo"] = pkcs12EncAlgo->current().name();
 	Settings["mandatory_dn"] = getDnString(extDNlist);
 	Settings["explicit_dn"] = getDnString(expDNlist);
 	Settings["string_opt"] = string_opts[mbstring->currentIndex()];

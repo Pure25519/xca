@@ -32,6 +32,28 @@ configuration files.
   SHA256 and SHA512. This option allows to set the hash algorithm to SHA1
   for instance.
 
+- PKCS#12 encryption algorithm
+
+  The default is AES-256-CBC: the key and the certificates are encrypted
+  with PBES2/PBKDF2-HMAC-SHA256 (2048 iterations), the file has an
+  HMAC-SHA256 MAC. Some readers cannot open such a file: Windows before
+  10 1709 and Server 2016, Java 8 before update 301 and many OT devices
+  and PLC importers. For them choose PBE-SHA1-3DES (legacy, SHA-1 MAC)
+  here, or name the algorithm for a single export (``pkcs12Algorithm`` of
+  the export service; the command line follows), and keep the file only
+  as long as needed. RC2-40 encrypts only the
+  certificates with RC2; the key is always encrypted with 3DES.
+  PBMAC1 (RFC 9579) is not used: Windows, Java and OpenSSL before 3.4
+  cannot check it.
+
+  A database that stored PBE-SHA1-3DES before this default changed is
+  moved to AES-256-CBC once, when it is unlocked; legacy can be chosen
+  again afterwards. Only a changed value is stored when the options are
+  saved, so a stored algorithm is always a choice. Every export of a
+  private key records the PKCS#12 algorithm in the audit log
+  (``pkcs12_algorithm``), and a legacy method (3DES, RC2-40, the
+  RFC 1423 "PEM encrypted" key format) is marked ``legacy``.
+
 - Suppress success messages
 
   After importing and generating new items a success message is shown.
