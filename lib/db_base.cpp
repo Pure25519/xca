@@ -692,16 +692,16 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			throw serviceError("database_error", tr(
 				"Failed to commit the database transaction"));
 	} catch (serviceError &err) {
-		AuditLog::append(ctx, action, current.objectType, current.id,
+		AuditLog::appendFailure(ctx, action, current.objectType, current.id,
 				params.getValues().isEmpty() ?
 				AuditParams().set("name", current.name) : params,
-				"failure", err.code);
+				err.code);
 		throw;
 	} catch (...) {
-		AuditLog::append(ctx, action, current.objectType, current.id,
+		AuditLog::appendFailure(ctx, action, current.objectType, current.id,
 				params.getValues().isEmpty() ?
 				AuditParams().set("name", current.name) : params,
-				"failure", "internal_error");
+				"internal_error");
 		throw;
 	}
 	restart_timer();

@@ -34,6 +34,7 @@
 #include "lib/issuance.h"
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_export.h"
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/settings.h"
@@ -91,6 +92,35 @@ class test_service_transaction : public ServiceTestCase
 	void strayRollbackDoesNotLeak();
 	void crlInsertBeginFails();
 	void failedBeginLeavesOuterAlone();
+	void lockedImportKeepsCode();
+	void lockedExportKeepsCode();
+};
+
+/* A second connection holds the write lock of the database file while
+ * it lives (BEGIN IMMEDIATE): reading works, every write fails with
+ * "database is locked" after the busy timeout */
+class WriteLock
+{
+	QString name;
+
+  public:
+	WriteLock(const QString &file) : name("btd138-lock")
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", name);
+		db.setDatabaseName(file);
+		db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=0");
+		if (!db.open() || !QSqlQuery(db).exec("BEGIN IMMEDIATE"))
+			qFatal("BTD-138 test: no write lock");
+	}
+	~WriteLock()
+	{
+		{
+			QSqlDatabase db = QSqlDatabase::database(name);
+			QSqlQuery(db).exec("ROLLBACK");
+			db.close();
+		}
+		QSqlDatabase::removeDatabase(name);
+	}
 };
 
 QString test_service_transaction::errorCode(std::function<void()> call)
@@ -575,6 +605,61 @@ void test_service_transaction::failedBeginLeavesOuterAlone()
 		QVERIFY(TransCommit());
 	}
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd172").toInt(), 2);
+}
+
+/* The import cannot store the certificate while another connection
+ * holds the write lock, and its failure entry cannot be written either.
+ * On 9121ddcd the errorEx of that failure entry replaced the typed
+ * database_error (BTD-138); the original error always wins now, the
+ * lost entry is only logged. */
+void test_service_transaction::lockedImportKeepsCode()
+{
+	pki_x509 *ca = issue("BTD-138 CA", nullptr);
+	QVERIFY(ca);
+	QByteArray pem = Database.model<db_x509>()->exportItems(ctx,
+			[&]() { ExportSpec e; e.items << ca;
+				e.format = pki_export::by_id(1); return e; }());
+	Database.model<db_x509>()->deleteItems(ctx, { ca });
+	int entries = AuditLog::entries().size();
+
+	ImportSpec spec;
+	spec.data = pem;
+	spec.dataName = "btd138.pem";
+	QString code;
+	{
+		WriteLock lock(dbFile);
+		warning->expectMessage("locked");
+		code = errorCode([&]() { Database.importItems(ctx, spec); });
+	}
+	QCOMPARE(code, QString("database_error"));
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM certs").toInt(), 0);
+	/* the failure entry is lost, the chain is intact */
+	QCOMPARE(AuditLog::entries().size(), entries);
+	QVERIFY(AuditLog::verify().ok());
+
+	/* writable again: failure entries are written as before */
+	QCOMPARE(errorCode([&]() { Database.importItems(ctx, ImportSpec()); }),
+		QString("nothing_to_import"));
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	QCOMPARE(AuditLog::entries().last().errorCode,
+		QString("nothing_to_import"));
+}
+
+/* An export that fails before it touches the database, while the
+ * database is locked: its code, not the errorEx of the failure entry */
+void test_service_transaction::lockedExportKeepsCode()
+{
+	int entries = AuditLog::entries().size();
+	ExportSpec spec;
+	QString code;
+	{
+		WriteLock lock(dbFile);
+		code = errorCode([&]() {
+			Database.model<db_key>()->exportItems(ctx, spec); });
+	}
+	QCOMPARE(code, QString("nothing_to_export"));
+	QCOMPARE(AuditLog::entries().size(), entries);
+	QVERIFY(AuditLog::verify().ok());
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_transaction)

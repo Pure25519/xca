@@ -566,6 +566,25 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	return e;
 }
 
+bool AuditLog::appendFailure(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &errorCode, const QString &result)
+{
+	try {
+		append(ctx, action, objectType, objectId, params, result,
+			errorCode);
+		return true;
+	} catch (errorEx &err) {
+		qCritical().noquote() << "Audit entry lost:" << action << result
+			<< errorCode << "-" << err.getString();
+	} catch (...) {
+		qCritical().noquote() << "Audit entry lost:" << action << result
+			<< errorCode;
+	}
+	return false;
+}
+
 /* True if the stored params text is exactly the canonical JSON of an
  * object, as append() writes it */
 static bool canonicalParams(const QString &stored, QVariantMap *params)
