@@ -169,6 +169,17 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# What a CSR adds per extension, and the profile engine (BTD-54)
+foreach(t test_service_merge test_service_profiles)
+  ServiceTest(${t})
+  target_compile_definitions(${t} PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+  if(OPENSSL_PROGRAM)
+    target_compile_definitions(${t} PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+  endif()
+endforeach()
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

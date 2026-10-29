@@ -10,6 +10,14 @@
  * its stored form (the settings map of TMPL_VERSION). The dialog fills
  * and reads its widgets through TemplateSpec, so the mapping between
  * the stored settings and the extensions exists once, here.
+ *
+ * Migration (BTD-54): what a CSR adds per extension is stored in the
+ * settings reqSan, reqKu, reqEku ("", "template", "request", "merge")
+ * and ekuAllowed, ekuDefault (comma lists). A template stored before
+ * has none of them; absent or empty means merge_legacy and no EKU
+ * limit, which is exactly what XCA always did: with "copy extensions
+ * from the request" a CSR extension is added when the template has
+ * none of that kind, otherwise the template alone decides.
  */
 
 #ifndef __TEMPLATE_H
