@@ -6,6 +6,7 @@
 #include "importexport.h"
 #include "audit.h"
 #include "database_model.h"
+#include "db_crl.h"
 #include "db_key.h"
 #include "func.h"
 #include "pass_info.h"
@@ -164,6 +165,25 @@ pki_base *findExisting(db_base *db, pki_base *pki, pki_key **completes)
 	}
 	return old;
 }
+
+/* A stored CRL: its CA, number and nextUpdate, and whether it raised the
+ * CA's last CRL number (BTD-49) */
+bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p)
+{
+	pki_x509 *ca = crl->getIssuer();
+	a1int num;
+
+	if (ca && ca->getSqlItemId().isValid())
+		p.set("ca_id", ca->getSqlItemId().toLongLong());
+	bool numeric = crl->getCrlNumber(&num);
+	qint64 number = numeric ? num.toDec().toLongLong(&numeric) : 0;
+	if (numeric)
+		p.set("crl_number", number);
+	p.set("next_update", (QDateTime)crl->getNextUpdate());
+	bool raised = db->raiseCrlNumber(crl);
+	p.set("authority_updated", raised);
+	return raised;
+}
 }
 
 /* Deletes the objects not stored, never one of the database */
@@ -180,6 +200,7 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 {
 	ImportResult result;
 	QList<pki_base *> items;
+	QList<pki_crl *> raised;
 	AuditParams params;
 	QStringList sources = spec.files;
 
@@ -292,6 +313,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 				throw serviceError("database_error",
 					tr("The item could not be stored"));
 			auditRevocationChanges(ctx, before, readRevocations());
+			pki_crl *crl = dynamic_cast<pki_crl *>(stored);
+			if (crl && raiseCrlNumber(model<db_crl>(), crl, p))
+				raised << crl;
 
 			p.set("name", stored->getIntName());
 			p.set("outcome", completes ? "completed" : "created");
@@ -302,6 +326,11 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		if (!TransCommit())
 			throw serviceError("database_error",
 				tr("Failed to commit the database transaction"));
+		/* in order: a later, higher CRL of the same CA wins */
+		foreach(pki_crl *crl, raised) {
+			crl->getIssuer()->setCrlNumber(crl->getCrlNumber());
+			crl->getIssuer()->setCrlExpire(crl->getNextUpdate());
+		}
 	} catch (serviceError &err) {
 		dropItems(items);
 		/* after the rollback, so the entry is kept (lib/audit.h) */

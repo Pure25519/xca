@@ -5,7 +5,8 @@
  * through db_base::exportItems() in PEM, DER, PKCS#8, PKCS#12 and PKCS#7,
  * checked with the openssl program and imported again. Every private key
  * export writes key.export_private without key material or password; a
- * CRL import audits the revocation rows it adds.
+ * CRL import audits the revocation rows it adds and raises the last CRL
+ * number of its CA (BTD-49).
  */
 
 #include <QFile>
@@ -27,6 +28,7 @@
 #include "lib/pki_temp.h"
 #include "lib/db_temp.h"
 #include "lib/pki_x509.h"
+#include "lib/sql.h"
 
 #include "ServiceTestCase.h"
 
@@ -74,6 +76,11 @@ class test_service_importexport : public ServiceTestCase
 			const QString &name, const QString &source = QString());
 	QList<AuditEntry> entries(const QString &action);
 	void checkNoSecret(const QByteArray &secret);
+	/* An empty CRL of ca.pem with this CRL number, by openssl ca */
+	bool opensslCrl(const QString &name, int number, int days);
+	pki_crl *importCrl(const QString &name);
+	/* authority.crlNo and crlExpire of the CA in the database */
+	QPair<qint64, QString> authorityCrl(pki_x509 *ca);
 
   private slots:
 	void initTestCase();
@@ -89,6 +96,8 @@ class test_service_importexport : public ServiceTestCase
 	void privateExportEncrypted_data();
 	void privateExportEncrypted();
 	void crlImportAuditsRevocations();
+	void crlImportRaisesCrlNumber();
+	void crlGeneratedAfterImport();
 	void templateCopyExport();
 	void rejections();
 };
@@ -739,6 +748,125 @@ void test_service_importexport::crlImportAuditsRevocations()
 	AuditVerifyResult v = AuditLog::verify();
 	QCOMPARE(v.unauditedRevocations, 0);
 	QVERIFY2(v.ok(), v.toJson().constData());
+#endif
+}
+
+bool test_service_importexport::opensslCrl(const QString &name, int number,
+					int days)
+{
+	QFile index(file("crl-index.txt"));
+	QFile crlnumber(file("crl-number"));
+	QFile cnf(file("crl-ca.cnf"));
+	if (!index.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+	    !crlnumber.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
+	    !cnf.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		return false;
+	index.close();
+	crlnumber.write(QString("%1\n").arg(number, 2, 16, QChar('0'))
+			.toUtf8());
+	crlnumber.close();
+	cnf.write(QString("[ ca ]\ndefault_ca = CA_default\n"
+		"[ CA_default ]\ndatabase = %1\ncrlnumber = %2\n"
+		"default_md = sha256\n")
+		.arg(index.fileName(), crlnumber.fileName()).toUtf8());
+	cnf.close();
+	return opensslRun({ "ca", "-gencrl", "-config", cnf.fileName(),
+		"-keyfile", file("ca.key"), "-cert", file("ca.pem"),
+		"-crldays", QString::number(days), "-out", file(name) });
+}
+
+pki_crl *test_service_importexport::importCrl(const QString &name)
+{
+	ImportSpec spec;
+	spec.files << file(name);
+	return dynamic_cast<pki_crl *>(
+		Database.importItems(ctx, spec).created.value(0));
+}
+
+QPair<qint64, QString> test_service_importexport::authorityCrl(pki_x509 *ca)
+{
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT crlNo, crlExpire FROM authority WHERE item=?");
+	q.bindValue(0, ca->getSqlItemId());
+	q.exec();
+	if (!q.first())
+		return QPair<qint64, QString>(-1, QString());
+	return qMakePair(q.value(0).toLongLong(), q.value(1).toString());
+}
+
+/* Regression (BTD-49): a CRL imported for a CA of the database left
+ * authority.crlNo and crlExpire alone, only CRL generation set them.
+ * The CA's CRL state follows the highest CRL number, not the latest
+ * nextUpdate (PLAN.md Phase 4.3, OpenXPKI #980): a lower or equal
+ * number changes nothing, even with a later nextUpdate. */
+void test_service_importexport::crlImportRaisesCrlNumber()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QVERIFY(opensslCrl("crl5.crl", 5, 7));
+	QVERIFY(opensslCrl("crl3.crl", 3, 30));
+	QVERIFY(opensslCrl("crl5-later.crl", 5, 60));
+
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA");
+	QCOMPARE(authorityCrl(ca).first, 0LL);
+
+	pki_crl *crl5 = importCrl("crl5.crl");
+	QVERIFY(crl5);
+	QCOMPARE(crl5->getIssuer(), ca);
+	QString expire5 = crl5->getNextUpdate().toPlain();
+	QCOMPARE(authorityCrl(ca), qMakePair(5LL, expire5));
+	QCOMPARE(ca->getCrlNumber().toDec(), QString("5"));
+	AuditEntry e = entries("object.import").last();
+	QCOMPARE(e.objectType, QString("crl"));
+	QCOMPARE(e.params.value("ca_id").toLongLong(),
+		ca->getSqlItemId().toLongLong());
+	QCOMPARE(e.params.value("crl_number").toLongLong(), 5LL);
+	QCOMPARE(e.params.value("next_update").toString(),
+		AuditLog::rfc3339(crl5->getNextUpdate()));
+	QCOMPARE(e.params.value("authority_updated").toBool(), true);
+
+	/* lower number with a later nextUpdate, then the same number */
+	foreach(const QString &name, QStringList({ "crl3.crl",
+						"crl5-later.crl" })) {
+		pki_crl *crl = importCrl(name);
+		QVERIFY2(crl, qPrintable(name));
+		QVERIFY(crl->getNextUpdate() > crl5->getNextUpdate());
+		QCOMPARE(authorityCrl(ca), qMakePair(5LL, expire5));
+		QCOMPARE(ca->getCrlNumber().toDec(), QString("5"));
+		e = entries("object.import").last();
+		QCOMPARE(e.params.value("crl_number").toLongLong(),
+			crl->getCrlNumber().toDec().toLongLong());
+		QCOMPARE(e.params.value("authority_updated").toBool(), false);
+	}
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+#endif
+}
+
+/* Regression (BTD-49): after the import of CRL 5 the next generated CRL
+ * got number 1, below a CRL already known for the CA (certstrap rule 7) */
+void test_service_importexport::crlGeneratedAfterImport()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QVERIFY(opensslCrl("crl5.crl", 5, 7));
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA");
+	QVERIFY(importCrl("crl5.crl"));
+
+	pki_crl *next = Database.model<db_crl>()->newCrl(ctx, crljob(ca));
+	QVERIFY(next);
+	QFile der(file("next.crl"));
+	QVERIFY(der.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	der.write(next->i2d());
+	der.close();
+	QCOMPARE(opensslOk({ "crl", "-in", der.fileName(), "-inform", "DER",
+		"-noout", "-crlnumber" }).trimmed(), QString("crlNumber=0x06"));
+	QCOMPARE(authorityCrl(ca), qMakePair(6LL,
+		next->getNextUpdate().toPlain()));
 #endif
 }
 

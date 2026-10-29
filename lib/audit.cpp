@@ -88,7 +88,8 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
-		"ca_id", "confirmed", "count", "crl_number", "curve",
+		"authority_updated", "ca_id", "confirmed", "count",
+		"crl_number", "curve",
 		"db_unlock_verified", "der_size", "encrypted", "file",
 		"fingerprint", "format", "hash_algo", "invalidity_date",
 		"issuer", "item_id", "key_size", "key_type", "name",
