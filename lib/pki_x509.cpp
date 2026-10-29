@@ -158,6 +158,23 @@ QSqlError pki_x509::deleteSqlData()
 		if (e.isValid())
 			return e;
 	}
+	/* Another certificate with this name and key takes over the
+	 * childs, as db_x509::remFromCont() shows it after the commit
+	 * (BTD-130: memory changes only then) */
+	SQL_PREPARE(q, "UPDATE certs SET issuer=? WHERE item=?");
+	foreach(pki_base *b, childItems) {
+		pki_x509 *child = dynamic_cast<pki_x509 *>(b);
+		pki_x509 *issuer = child ? child->searchIssuer() : nullptr;
+		if (!issuer)
+			continue;
+		q.bindValue(0, issuer->getSqlItemId());
+		q.bindValue(1, child->getSqlItemId());
+		AffectedItems(child->getSqlItemId());
+		q.exec();
+		e = q.lastError();
+		if (e.isValid())
+			return e;
+	}
 	// Select affected items
 	q = Store.sqlSELECTpki(
 		"SELECT DISTINCT items.id FROM items, certs, crls "
@@ -175,15 +192,23 @@ QSqlError pki_x509::deleteSqlData()
 
 pki_x509 *pki_x509::findIssuer()
 {
-	XSqlQuery q;
-	pki_x509 *issuer = NULL;
-	unsigned hash;
+	pki_x509 *issuer;
 
 	if ((issuer = getSigner()) != NULL)
 		return issuer;
 	// first check for self-signed
 	if (verify(this))
 		return this;
+	issuer = searchIssuer();
+	verify(issuer);
+	return issuer;
+}
+
+pki_x509 *pki_x509::searchIssuer() const
+{
+	XSqlQuery q;
+	pki_x509 *issuer = NULL;
+	unsigned hash;
 
 	hash = getIssuerName().hashNum();
 	/* Select X509 CA certificates with subject-hash == hash */
@@ -206,7 +231,6 @@ pki_x509 *pki_x509::findIssuer()
 			}
 		}
 	}
-	verify(issuer);
 	return issuer;
 }
 

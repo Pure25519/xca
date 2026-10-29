@@ -46,6 +46,9 @@ ServiceTest(test_service_checkpoint)
 # The outer commit after a nested rollback reports failure (BTD-142)
 ServiceTest(test_service_transaction)
 
+# Memory follows the database after a rollback (BTD-130)
+ServiceTest(test_service_memory)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

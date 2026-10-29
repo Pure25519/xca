@@ -469,7 +469,8 @@ void test_service_transaction::schemaUpdateFailureStopsOpen()
  * asked for a password that was never applied. */
 void test_service_transaction::passwordChangeRollbackKeepsOld()
 {
-	QVERIFY(newKey("BTD-142 key"));
+	pki_evp *key = dynamic_cast<pki_evp *>(newKey("BTD-142 key"));
+	QVERIFY(key);
 	QString oldHash = Settings["pwhash"];
 	QVERIFY(!oldHash.isEmpty());
 	Passwd pass;
@@ -484,6 +485,13 @@ void test_service_transaction::passwordChangeRollbackKeepsOld()
 	QCOMPARE(pki_evp::passHash, oldHash);
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='pwhash'")
 		.toString(), oldHash);
+	/* the key in memory still decrypts with the old password: on
+	 * 9121ddcd it carried key material encrypted with the new one
+	 * (BTD-130) */
+	EVP_PKEY *pkey = nullptr;
+	QCOMPARE(errorCode([&]() { pkey = key->decryptKey(); }), QString());
+	QVERIFY(pkey);
+	EVP_PKEY_free(pkey);
 }
 
 /* A TransRollback() after the commit of the same transaction: on
