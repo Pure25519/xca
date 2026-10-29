@@ -13,6 +13,7 @@
 #include "pki_pkcs12.h"
 #include "pki_export.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <openssl/asn1.h>
@@ -175,12 +176,30 @@ void settings::set(QString key, QString value)
 	}
 	q.bindValue(0, value);
 	q.bindValue(1, key);
-	q.exec();
-	/* not stored: memory keeps the stored value. finish() shows a
-	 * failed COMMIT; nothing in here can roll back an inner transaction */
+	/* not stored: memory keeps the stored value, and a caller's
+	 * transaction rolls back with this write (BTD-52) */
+	if (!q.exec()) {
+		qWarning() << "Setting" << key << "not stored:"
+			<< q.lastError().text();
+		TransRollback();
+		return;
+	}
+	/* finish() shows a failed COMMIT */
 	if (!TransCommit())
 		return;
+	bool hadValue = values.contains(origkey);
+	QString oldValue = values.value(origkey);
 	if (insert)
 		db_keys << key;
 	setAction(origkey, value);
+	/* the caller's transaction may still roll back (BTD-130) */
+	DbTransaction::onRollback([this, key, origkey, insert, hadValue,
+				oldValue]() {
+		if (insert)
+			db_keys.removeAll(key);
+		if (hadValue)
+			setAction(origkey, oldValue);
+		else
+			values.remove(origkey);
+	});
 }

@@ -287,8 +287,10 @@ void test_service_audit::upgradeKeyTypeColumn()
 	QCOMPARE(view, QStringList({ "fixture-ed25519|ED25519|256",
 		"fixture-rsa|RSA|2048", "fixture-ec|EC|256" }));
 
-	/* Only the Ed25519 type and bxc_schema changed. No audit entry and
-	 * no baseline: the upgrade changes no audited object. */
+	/* Only the Ed25519 type and bxc_schema changed, plus the marker of
+	 * the PKCS#12 default migration (BTD-52; the fixture stores no
+	 * PKCS#12 algorithm, nothing to migrate). No audit entry and no
+	 * baseline: the upgrade changes no audited object. */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList keysAfter = after.take("public_keys");
 	keysBefore.replaceInStrings(QRegularExpression("^1\\|ED25\\|"),
@@ -299,7 +301,8 @@ void test_service_audit::upgradeKeyTypeColumn()
 	QCOMPARE(after, before);
 	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|3");
 	settingsAfter.removeIf([](const QString &s) {
-		return s.startsWith("suppress_messages|");
+		return s.startsWith("suppress_messages|") ||
+			s == "pkcs12_migrated|yes";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 	AuditVerifyResult r = AuditLog::verify();

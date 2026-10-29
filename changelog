@@ -3,7 +3,8 @@ bxc-main (bxc-pki fork, unreleased)
 
  * BTD-52: PKCS#12 default AES-256-CBC with PBES2/PBKDF2-HMAC-SHA256 and an
    HMAC-SHA256 MAC; legacy 3DES/RC2 only when chosen; a stored old default
-   PBE-SHA1-3DES moves to AES-256-CBC once; the audit log names the
+   PBE-SHA1-3DES moves to AES-256-CBC once (audited; kept when confirmed
+   in the legacy warning); the audit log names the
    PKCS#12 algorithm of every private key export; the database dump
    writes PKCS#8. Interop limits: see the PKCS#12 option in the manual.
 

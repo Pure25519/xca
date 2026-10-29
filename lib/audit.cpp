@@ -31,6 +31,7 @@ const char AuditLog::actionDelete[] = "object.delete";
 const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
+const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -96,7 +97,8 @@ const QStringList &AuditParams::allowList()
 		"hash_algo", "invalidity_date", "issuer", "item_id",
 		"key_size", "key_type", "legacy", "name", "next_update",
 		"not_after",
-		"not_before", "old_name", "on_token", "outcome",
+		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
+		"outcome",
 		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial", "subject",

@@ -14,6 +14,7 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
+#include <QSqlError>
 #include <QSqlQuery>
 #include <QTemporaryDir>
 
@@ -77,6 +78,9 @@ class test_service_export_defaults : public ServiceTestCase
 	void auditNamesProtection();
 	void pkcs12AlgorithmNeedsPkcs12Format();
 	void migrateOldDefault();
+	void keepLegacyIsAChoice();
+	void migrationIsOneTransaction_data();
+	void migrationIsOneTransaction();
 	void clearKeepsOpenDatabase();
 	void pkcs12Default_data();
 	void pkcs12Default();
@@ -620,34 +624,125 @@ void test_service_export_defaults::pkcs12AlgorithmNeedsPkcs12Format()
 	QVERIFY(!QFile::exists(spec.fileName));
 }
 
-/* A database of before BTD-52 stores the old compiled default 3DES
- * (the Options dialog wrote it on every OK) and maybe "keep legacy":
- * once, after the unlock, it becomes AES-256-CBC with a message; a
- * legacy algorithm chosen afterwards is kept */
+static bool sqlExec(const QString &statement)
+{
+	QSqlQuery q(QSqlDatabase::database());
+	if (q.exec(statement))
+		return true;
+	qWarning() << statement << q.lastError().text();
+	return false;
+}
+
+/* The value in the settings table, a null string without a row */
+static QString storedSetting(const QString &key)
+{
+	QSqlQuery q(QSqlDatabase::database());
+	q.prepare("SELECT value FROM settings WHERE key_=?");
+	q.bindValue(0, key);
+	if (q.exec() && q.next())
+		return q.value(0).toString();
+	return QString();
+}
+
+/* The settings of a database of before BTD-52: the old compiled
+ * default 3DES, no marker, and "keep legacy" if the user confirmed it */
+static bool storeOldSettings(bool keepLegacy)
+{
+	return sqlExec("DELETE FROM settings WHERE key_ IN "
+			"('pkcs12_migrated', 'pkcs12_enc_algo', "
+			"'pkcs12_keep_legacy')") &&
+		sqlExec("INSERT INTO settings (key_, value) VALUES "
+			"('pkcs12_enc_algo', 'PBE-SHA1-3DES')") &&
+		(!keepLegacy || sqlExec("INSERT INTO settings (key_, value) "
+			"VALUES ('pkcs12_keep_legacy', 'yes')"));
+}
+
+static QList<AuditEntry> migrationEntries()
+{
+	QList<AuditEntry> list;
+	for (const AuditEntry &e : AuditLog::entries())
+		if (e.action == AuditLog::actionSettingsMigrate)
+			list << e;
+	return list;
+}
+
+/* The stored old compiled default 3DES (the Options dialog wrote it on
+ * every OK) becomes AES-256-CBC once, after the unlock, with a message
+ * and an audit entry; a legacy algorithm chosen afterwards is kept, and
+ * StrictWarning fails on a second message */
 void test_service_export_defaults::migrateOldDefault()
 {
-	auto sql = [](const QString &statement) {
-		QSqlQuery q(QSqlDatabase::database());
-		return q.exec(statement);
-	};
 	QVERIFY(Settings["pkcs12_migrated"]);
-	QVERIFY(sql("DELETE FROM settings WHERE key_ IN ('pkcs12_migrated', "
-		"'pkcs12_enc_algo', 'pkcs12_keep_legacy')"));
-	QVERIFY(sql("INSERT INTO settings (key_, value) VALUES "
-		"('pkcs12_enc_algo', 'PBE-SHA1-3DES')"));
-	QVERIFY(sql("INSERT INTO settings (key_, value) VALUES "
-		"('pkcs12_keep_legacy', 'yes')"));
+	QVERIFY(storeOldSettings(false));
 
 	warning->expectMessage("PBE-SHA1-3DES");
 	reopenDatabase();
 	QCOMPARE(encAlgo::getDefault().getEncAlgoNid(), NID_aes_256_cbc);
-	QVERIFY(!Settings["pkcs12_keep_legacy"]);
-	QVERIFY(Settings["pkcs12_migrated"]);
+	QCOMPARE(storedSetting("pkcs12_enc_algo"), QString("AES-256-CBC"));
+	QCOMPARE(storedSetting("pkcs12_migrated"), QString("yes"));
+	QList<AuditEntry> entries = migrationEntries();
+	QCOMPARE(entries.size(), 1);
+	QCOMPARE(entries[0].objectType, QString("database"));
+	QCOMPARE(entries[0].result, QString("success"));
+	QCOMPARE(entries[0].params.value("old_pkcs12_algorithm").toString(),
+		QString("PBE-SHA1-3DES"));
+	QCOMPARE(entries[0].params.value("pkcs12_algorithm").toString(),
+		QString("AES-256-CBC"));
+	QVERIFY(AuditLog::verify().ok());
 
-	/* chosen now: kept, and no second message */
+	/* chosen now: kept */
 	Settings["pkcs12_enc_algo"] = QString("PBE-SHA1-3DES");
 	reopenDatabase();
 	QVERIFY(encAlgo::getDefault().legacy());
+	QCOMPARE(migrationEntries().size(), 1);
+}
+
+/* pkcs12_keep_legacy is only set when the user confirmed the legacy
+ * algorithm in the warning (Ignore): a choice, so 3DES stays */
+void test_service_export_defaults::keepLegacyIsAChoice()
+{
+	QVERIFY(storeOldSettings(true));
+	reopenDatabase();
+	QVERIFY(encAlgo::getDefault().legacy());
+	QCOMPARE(storedSetting("pkcs12_enc_algo"), QString("PBE-SHA1-3DES"));
+	QCOMPARE(storedSetting("pkcs12_keep_legacy"), QString("yes"));
+	QVERIFY(Settings["pkcs12_keep_legacy"]);
+	QCOMPARE(storedSetting("pkcs12_migrated"), QString("yes"));
+	QCOMPARE(migrationEntries().size(), 0);
+}
+
+void test_service_export_defaults::migrationIsOneTransaction_data()
+{
+	QTest::addColumn<QString>("trigger");
+	QTest::newRow("marker") << "BEFORE INSERT ON settings "
+		"WHEN NEW.key_ = 'pkcs12_migrated'";
+	QTest::newRow("audit entry") << "BEFORE INSERT ON audit_log";
+}
+
+/* Algorithm, audit entry and marker are one transaction: when one write
+ * fails, none is stored, memory keeps the old algorithm, the open goes
+ * on without a message, and the next open migrates */
+void test_service_export_defaults::migrationIsOneTransaction()
+{
+	QFETCH(QString, trigger);
+	QVERIFY(storeOldSettings(false));
+	QVERIFY(sqlExec("CREATE TRIGGER btd52_fault " + trigger +
+		" BEGIN SELECT RAISE(ABORT, 'BTD-52 injected'); END"));
+
+	reopenDatabase();
+	QVERIFY(encAlgo::getDefault().legacy());
+	QVERIFY(!Settings["pkcs12_migrated"]);
+	QCOMPARE(storedSetting("pkcs12_enc_algo"), QString("PBE-SHA1-3DES"));
+	QVERIFY(storedSetting("pkcs12_migrated").isNull());
+	QCOMPARE(migrationEntries().size(), 0);
+	QVERIFY(AuditLog::verify().ok());
+
+	QVERIFY(sqlExec("DROP TRIGGER btd52_fault"));
+	warning->expectMessage("PBE-SHA1-3DES");
+	reopenDatabase();
+	QCOMPARE(encAlgo::getDefault().getEncAlgoNid(), NID_aes_256_cbc);
+	QCOMPARE(storedSetting("pkcs12_migrated"), QString("yes"));
+	QCOMPARE(migrationEntries().size(), 1);
 }
 
 /* Settings.clear() with the database still open (a failed password

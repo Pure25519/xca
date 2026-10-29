@@ -47,8 +47,10 @@ configuration files.
   cannot check it.
 
   A database that stored PBE-SHA1-3DES before this default changed is
-  moved to AES-256-CBC once, when it is unlocked; legacy can be chosen
-  again afterwards. Only a changed value is stored when the options are
+  moved to AES-256-CBC once, when it is unlocked, with an audit entry
+  (``settings.migrate``: ``old_pkcs12_algorithm``, ``pkcs12_algorithm``);
+  legacy can be chosen again afterwards. When the legacy algorithm was
+  confirmed in the warning about it, it stays. Only a changed value is stored when the options are
   saved, so a stored algorithm is always a choice. Every export of a
   private key records the PKCS#12 algorithm in the audit log
   (``pkcs12_algorithm``), and a legacy method (3DES, RC2-40, the
