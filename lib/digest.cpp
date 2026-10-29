@@ -48,7 +48,9 @@ digest::digest(const QString &name) : md_nid(default_md)
 
 void digest::adjust(QList<int> nids)
 {
-	if (!nids.contains(md_nid))
+	/* No list (e.g. ML-DSA before BTD-164): keep the digest, signing
+	 * fails visibly instead of reading past an empty list */
+	if (!nids.isEmpty() && !nids.contains(md_nid))
 		md_nid = nids.last();
 }
 

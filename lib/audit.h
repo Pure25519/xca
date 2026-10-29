@@ -301,6 +301,9 @@ class AuditLog
 	/* Signed checkpoints and their keys (BTD-37, see above) */
 	static const char actionCheckpoint[];
 	static const char actionKeyCreate[];
+	/* A stored setting changed by an upgrade, not by the user: the
+	 * PKCS#12 default of BTD-52 (old_pkcs12_algorithm, pkcs12_algorithm) */
+	static const char actionSettingsMigrate[];
 	static const int defaultCheckpointInterval;
 	static const int maxCheckpointInterval;   // bound of the setting
 
@@ -319,6 +322,16 @@ class AuditLog
 			const AuditParams &params = AuditParams(),
 			const QString &result = "success",
 			const QString &errorCode = QString());
+	/* The failure (or denied) entry of a service function, after its
+	 * rollback: best effort, it never throws. When the database is the
+	 * reason of the failure the entry may not be writable either; then
+	 * it is lost and logged, and the caller rethrows its own error,
+	 * which always wins (BTD-138). Returns whether it was written. */
+	static bool appendFailure(const ServiceContext &ctx,
+			const QString &action, const QString &objectType,
+			const QString &objectId, const AuditParams &params,
+			const QString &errorCode,
+			const QString &result = "failure");
 
 	/* Records the revocation rows of a database that existed before the
 	 * audit log, so that verify() can tell them from rows added later
@@ -395,12 +408,12 @@ void auditedTransaction(const ServiceContext &ctx, const QString &action,
 			throw serviceError("database_error", QObject::tr(
 				"Failed to commit the database transaction"));
 	} catch (serviceError &err) {
-		AuditLog::append(ctx, action, objectType, objectId, params,
-				"failure", err.code);
+		AuditLog::appendFailure(ctx, action, objectType, objectId,
+				params, err.code);
 		throw;
 	} catch (...) {
-		AuditLog::append(ctx, action, objectType, objectId, params,
-				"failure", "internal_error");
+		AuditLog::appendFailure(ctx, action, objectType, objectId,
+				params, "internal_error");
 		throw;
 	}
 }

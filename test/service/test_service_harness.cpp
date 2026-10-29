@@ -10,6 +10,9 @@
 #include "lib/db_key.h"
 #include "lib/settings.h"
 
+#include <QSqlError>
+#include <QSqlQuery>
+
 #include "ServiceTestCase.h"
 
 class test_service_harness : public ServiceTestCase
@@ -25,6 +28,7 @@ class test_service_harness : public ServiceTestCase
 	void expectedMessageIsConsumed();
 	void unexpectedPromptIsRecorded();
 	void selfcheckUnexpectedPrompt();
+	void selfcheckEmptyDerQuery();
 };
 
 void test_service_harness::freshDatabase()
@@ -91,6 +95,18 @@ void test_service_harness::selfcheckUnexpectedPrompt()
 	pass_info p("Harness", "selfcheck probe");
 	Passwd pass;
 	PwDialogCore::execute(&p, &pass);
+}
+
+/* Run by the ctest "test_service_harness_selfcheck_der" (BTD-181): with
+ * the column certs.cert renamed, the empty-DER check of cleanup() cannot
+ * run its query and must fail instead of passing silently */
+void test_service_harness::selfcheckEmptyDerQuery()
+{
+	if (!qEnvironmentVariableIsSet("XCA_SERVICE_SELFCHECK"))
+		QSKIP("only run by test_service_harness_selfcheck_der");
+	QSqlQuery q;
+	QVERIFY2(q.exec("ALTER TABLE certs RENAME COLUMN cert TO cert_renamed"),
+		CCHAR(q.lastError().text()));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_harness)

@@ -253,7 +253,7 @@ int pki_key::getUcount() const
 
 int pki_key::getKeyType() const
 {
-	return EVP_PKEY_id(key);
+	return keytype::nid(key);
 }
 
 #ifndef OPENSSL_NO_EC
@@ -328,8 +328,13 @@ QList<int> pki_key::possibleHashNids()
 			break;
 #ifdef EVP_PKEY_ED25519
 		case EVP_PKEY_ED25519:
-			nids << NID_undef;
 #endif
+#ifdef EVP_PKEY_ED448
+		case EVP_PKEY_ED448:
+#endif
+			/* EdDSA signs the message itself, no digest */
+			nids << NID_undef;
+			break;
 #endif
 	}
 	return nids;
@@ -462,7 +467,7 @@ QSqlError pki_key::insertSqlData()
 	SQL_PREPARE(q, "INSERT INTO public_keys (item, type, hash, len, \"public\") "
 		  "VALUES (?, ?, ?, ?, ?)");
 	q.bindValue(0, sqlItemId);
-	q.bindValue(1, getKeyTypeString().left(4));
+	q.bindValue(1, getKeyTypeString());
 	q.bindValue(2, myhash);
 	q.bindValue(3, EVP_PKEY_bits(key));
 	q.bindValue(4, i2d_b64());

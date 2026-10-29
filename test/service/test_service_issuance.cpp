@@ -17,11 +17,13 @@
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
+#include "lib/db_crl.h"
 #include "lib/db_key.h"
 #include "lib/db_x509.h"
 #include "lib/db_x509req.h"
 #include "lib/exception.h"
 #include "lib/issuance.h"
+#include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
@@ -72,6 +74,8 @@ class test_service_issuance : public ServiceTestCase
 	void validityCappedByRoot();
 	void validityEndsBeforeStart_data();
 	void validityEndsBeforeStart();
+	void edwardsSelfSigned_data();
+	void edwardsSelfSigned();
 };
 
 IssuanceSpec test_service_issuance::caSpec(const QString &cn, pki_key *key,
@@ -426,6 +430,43 @@ void test_service_issuance::forcedDuplicateSerial()
 	} catch (serviceError &err) {
 		QCOMPARE(err.code, QString("serial_exhausted"));
 	}
+}
+
+void test_service_issuance::edwardsSelfSigned_data()
+{
+	QTest::addColumn<QString>("type");
+
+	QTest::newRow("Ed25519") << "ED25519";
+	QTest::newRow("Ed448") << "ED448";
+}
+
+/* EdDSA keys sign without a digest: possibleHashNids() offers only
+ * NID_undef, so the digest that NewX509 and crljob pick from it signs
+ * a self-signed CA and its CRL (BTD-16; Ed448 had no entry and ended in
+ * signing_failed) */
+void test_service_issuance::edwardsSelfSigned()
+{
+	QFETCH(QString, type);
+
+	pki_key *key = Database.model<db_key>()->newKey(ctx, keyjob(type),
+							"edwards-key");
+	QVERIFY(key);
+	QCOMPARE(key->possibleHashNids(), QList<int>({ NID_undef }));
+
+	IssuanceSpec spec = caSpec("Edwards CA", key, nullptr, 365);
+	spec.hashAlgo = digest::getDefault();
+	spec.hashAlgo.adjust(key->possibleHashNids());
+	pki_x509 *ca = issue(spec);
+	QVERIFY(ca);
+	EVP_PKEY *pub = X509_get0_pubkey(ca->getCert());
+	QCOMPARE(X509_verify(ca->getCert(), pub), 1);
+	QCOMPARE(X509_get_signature_nid(ca->getCert()), key->getKeyType());
+
+	crljob job(ca);
+	QCOMPARE(job.hashAlgo.MD(), (const EVP_MD *)nullptr);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+	QCOMPARE(X509_CRL_verify(const_cast<X509_CRL *>(crl->getCrl()), pub), 1);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_issuance)

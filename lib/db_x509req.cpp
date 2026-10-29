@@ -136,13 +136,13 @@ pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
 		return create(spec, params, ctx);
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "request.create", "request",
-				QString(), params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "request.create", "request",
+				QString(), params, err.code);
 		throw;
 	} catch (...) {
 		/* errorEx (database, OpenSSL, key decryption) and anything else */
-		AuditLog::append(ctx, "request.create", "request",
-				QString(), params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "request.create", "request",
+				QString(), params, "internal_error");
 		throw;
 	}
 }

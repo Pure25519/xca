@@ -36,12 +36,14 @@ class test_main: public QObject
 	void cleanupTestCase();
 	void cleanup();
 	void newKey();
+	void keyDetailFixed();
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
 	void exportFormat();
 	void revoke();
+	void renewalSigningFails();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();
