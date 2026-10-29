@@ -195,11 +195,53 @@ void ImportMulti::importIndexes(const QModelIndexList &indexes)
 		if (pki && !pki->getSqlItemId().isValid())
 			items << pki;
 	}
-	foreach(pki_base *pki, items)
-		mcont->remFromCont(pki);
-	importItems(items);
+	/* One by one: a failure neither rolls back nor drops the others,
+	 * and the failed item stays in the dialog (BTD-114) */
+	QStringList errors;
+	foreach(pki_base *pki, items) {
+		QString name = pki->getIntName(), code, error;
+		importOne(pki, &code, &error);
+		/* a cancelled prompt ends the import, the rest stays */
+		if (code == "cancelled")
+			break;
+		if (!error.isEmpty())
+			errors << QString("%1: %2").arg(name).arg(error);
+	}
+	if (!errors.isEmpty())
+		XCA_ERROR(errorEx(errors.join("\n")));
 	if (mcont->rowCount(QModelIndex()) == 0)
 		accept();
+}
+
+/* Stores one item of the dialog. An item the service did not consume
+ * goes back into the dialog (ImportSpec::unstored, BTD-114); code and
+ * error name the failure, both empty on success */
+pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
+				QString *error)
+{
+	QList<pki_base *> unstored;
+	ImportSpec spec;
+	pki_base *stored = nullptr;
+
+	spec.items << pki;
+	spec.unstored = &unstored;
+	mcont->remFromCont(pki);
+	try {
+		ImportResult result = Database.importItems(
+			ServiceContext::localUser(ServiceContext::gui), spec);
+		foreach(pki_base *existing, result.existing)
+			XCA_INFO(importExistsMessage(existing));
+		stored = result.created.value(0);
+	} catch (serviceError &err) {
+		*code = err.code;
+		*error = err.getString();
+	} catch (errorEx &err) {
+		*code = "internal_error";
+		*error = err.getString();
+	}
+	foreach(pki_base *back, unstored)
+		mcont->inToCont(back);
+	return stored;
 }
 
 QList<pki_base *> ImportMulti::importItems(QList<pki_base *> items)
@@ -265,8 +307,6 @@ pki_base *ImportMulti::import(pki_base *pki)
 	if (!pki || pki->getSqlItemId().isValid())
 		return NULL;
 
-	mcont->remFromCont(pki);
-
 	if (!Database.isOpen()) {
 		try {
 			Database.open_default();
@@ -274,12 +314,14 @@ pki_base *ImportMulti::import(pki_base *pki)
 			XCA_INFO(tr("Could not open the default database"));
 		};
 	}
-	if (!Database.isOpen()) {
-		delete pki;
+	/* without a database the item stays in the dialog (BTD-114) */
+	if (!Database.isOpen())
 		return NULL;
-	}
-	QList<pki_base *> stored = importItems(QList<pki_base *>() << pki);
-	return stored.isEmpty() ? NULL : stored[0];
+	QString code, error;
+	pki_base *stored = importOne(pki, &code, &error);
+	if (!error.isEmpty() && code != "cancelled")
+		XCA_ERROR(errorEx(error));
+	return stored;
 }
 
 void ImportMulti::on_butDetails_clicked()
