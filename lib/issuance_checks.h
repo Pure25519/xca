@@ -48,6 +48,11 @@ namespace IssuanceChecks
 			const QList<const pki_x509 *> &chain, pki_key *signkey,
 			AuditParams &params);
 
+	/* spec(), issuers() and request() for a dialog that wants to
+	 * refuse before it closes (NewX509::validateAndAccept()); the same
+	 * checks run again in db_x509::newCert() */
+	void preflight(const IssuanceSpec &spec, AuditParams &params);
+
 	/* Proof of possession: the CSR signature verifies */
 	void request(const IssuanceSpec &spec);
 

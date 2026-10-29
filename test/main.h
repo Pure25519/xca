@@ -45,6 +45,8 @@ class test_main: public QObject
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();
+	void issueMidnightBelowTodaysCa();
+	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
 
