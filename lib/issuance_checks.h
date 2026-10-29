@@ -16,6 +16,7 @@
 
 #include <QList>
 
+class AuditParams;
 class ExtensionSpec;
 class IssuanceSpec;
 class pki_key;
@@ -36,11 +37,16 @@ namespace IssuanceChecks
 	 * SHA-1) */
 	void spec(const IssuanceSpec &spec);
 
-	/* The issuer is a v3 CA with keyCertSign, valid now and from the
-	 * start of the new certificate, signkey belongs to it, and no CA
-	 * of the chain forbids another CA below it (RFC 5280 4.2.1.9) */
+	/* The issuer is a v3 CA, its key usage (if it has one) allows
+	 * keyCertSign, it is valid now and from the start of the new
+	 * certificate, signkey belongs to it, and no CA of the chain
+	 * forbids another CA below it (RFC 5280 4.2.1.9). An issuer without
+	 * key usage may sign (RFC 5280 6.1.4 (n)); params get the warning
+	 * issuer_without_key_usage (boss decision 2026-10-29; the strict
+	 * variant is a policy option of BTD-167). */
 	void issuers(const IssuanceSpec &spec,
-			const QList<const pki_x509 *> &chain, pki_key *signkey);
+			const QList<const pki_x509 *> &chain, pki_key *signkey,
+			AuditParams &params);
 
 	/* Proof of possession: the CSR signature verifies */
 	void request(const IssuanceSpec &spec);

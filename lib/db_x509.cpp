@@ -469,7 +469,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	// the issuer up to the root, checked before anything is signed
 	QList<const pki_x509 *> chain =
 			IssuanceChecks::issuerChain(spec.signer);
-	IssuanceChecks::issuers(spec, chain, signkey);
+	IssuanceChecks::issuers(spec, chain, signkey, params);
 	IssuanceChecks::request(spec);
 
 	X509V3_set_ctx_nodb(&ext_ctx);

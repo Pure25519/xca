@@ -99,6 +99,8 @@ const QStringList &AuditParams::allowList()
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial", "subject",
 		"template", "this_update", "validity_capped",
+		/* accepted with a note: issuer without key usage (BTD-55) */
+		"warning",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
@@ -147,6 +149,15 @@ AuditParams &AuditParams::set(const QString &key, int v)
 AuditParams &AuditParams::set(const QString &key, bool v)
 {
 	return store(key, v);
+}
+
+AuditParams &AuditParams::warn(const QString &code)
+{
+	QStringList w = values.value("warning").toString()
+				.split(',', Qt::SkipEmptyParts);
+	if (!w.contains(code))
+		w << code;
+	return store("warning", w.join(","));
 }
 
 /* Invalid dates and the RFC 5280 "undefined" date of a1time become null */
