@@ -224,11 +224,13 @@ void test_service_profiles::corpus_data()
 		{ "tls-server-web plc10_csr_sha1", "csr_uri_not_allowed" },
 		{ "tls-server-web plc10_csr_uri_san", "csr_uri_not_allowed" },
 		{ "tls-server-web plc12_csr_sha1", "csr_uri_not_allowed" },
-		/* a user token has no DNS name or IP address */
-		{ "opcua-user plc10_csr_sha1", "csr_san_count" },
-		{ "opcua-user plc10_csr_uri_san", "csr_san_count" },
-		{ "opcua-user plc12_csr_sha1", "csr_san_count" },
-		{ "opcua-user plc11_web_csr_ecdsa_sha1", "csr_san_count" },
+		/* a user token accepts no SHA-1 CSR (csr_sha1 reject), and
+		 * the signature is checked before the SAN, which would fail
+		 * too (no DNS name or IP address; userWithoutSan) */
+		{ "opcua-user plc10_csr_sha1", "csr_sha1_rejected" },
+		{ "opcua-user plc10_csr_uri_san", "csr_sha1_rejected" },
+		{ "opcua-user plc12_csr_sha1", "csr_sha1_rejected" },
+		{ "opcua-user plc11_web_csr_ecdsa_sha1", "csr_sha1_rejected" },
 	};
 	for (const QString &p : profiles) {
 		for (const QString &c : csrs) {
