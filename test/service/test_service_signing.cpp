@@ -76,6 +76,7 @@ class test_service_signing : public ServiceTestCase
 	void templateKeepsPathLength();
 	void issuerChecks_data();
 	void issuerChecks();
+	void issuerWithoutKeyUsage();
 	void csrSignatureVerified();
 	void issuerFoundByKey_data();
 	void issuerFoundByKey();
@@ -385,8 +386,6 @@ void test_service_signing::issuerChecks_data()
 	QTest::newRow("issuer not a CA") << "no_ca" << "issuer_not_ca";
 	QTest::newRow("issuer without keyCertSign") << "no_keycertsign"
 				<< "issuer_no_keycertsign";
-	QTest::newRow("issuer without key usage") << "no_key_usage"
-				<< "issuer_no_keycertsign";
 	QTest::newRow("expired issuer") << "expired" << "issuer_expired";
 	QTest::newRow("issuer not yet valid") << "not_yet_valid"
 				<< "issuer_not_yet_valid";
@@ -408,12 +407,10 @@ void test_service_signing::issuerChecks()
 		QVERIFY(root);
 		issuer = issue(leafSpec("not-a-ca.example",
 				newKey("nca", "EC:prime256v1"), root));
-	} else if (variant == "no_keycertsign" || variant == "no_key_usage") {
+	} else if (variant == "no_keycertsign") {
 		IssuanceSpec s = caSpec("Odd Root CA",
 				newKey("root", "EC:prime256v1"), nullptr);
-		s.extensions.keyUsage.clear();
-		if (variant == "no_keycertsign")
-			s.extensions.keyUsage << "cRLSign" << "digitalSignature";
+		s.extensions.keyUsage = QStringList{ "cRLSign", "digitalSignature" };
 		issuer = issue(s);
 	} else if (variant == "expired") {
 		IssuanceSpec s = caSpec("Old Root CA",
@@ -452,6 +449,26 @@ void test_service_signing::issuerChecks()
 	QVERIFY(issuer);
 	expectRejected(leafSpec("leaf.example",
 			newKey("leaf", "EC:prime256v1"), issuer), code);
+}
+
+/* An issuer without key usage may sign (RFC 5280 6.1.4 (n), boss decision
+ * 2026-10-29); the audit entry notes it. With key usage, keyCertSign is
+ * required (issuerChecks). */
+void test_service_signing::issuerWithoutKeyUsage()
+{
+	IssuanceSpec s = caSpec("Plain Root CA", newKey("root", "EC:prime256v1"),
+				nullptr);
+	s.extensions.keyUsage.clear();
+	pki_x509 *root = issue(s);
+	QVERIFY(root);
+	pki_x509 *leaf = issue(leafSpec("leaf.example",
+			newKey("leaf", "EC:prime256v1"), root));
+	QVERIFY(leaf);
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["warning"].toString(),
+		QString("issuer_without_key_usage"));
+	QVERIFY(AuditLog::verify().ok());
 }
 
 /* Proof of possession: a CSR whose signature does not verify is never

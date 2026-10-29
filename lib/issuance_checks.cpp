@@ -63,7 +63,8 @@ void IssuanceChecks::spec(const IssuanceSpec &spec)
 }
 
 void IssuanceChecks::issuers(const IssuanceSpec &spec,
-			const QList<const pki_x509 *> &chain, pki_key *signkey)
+			const QList<const pki_x509 *> &chain, pki_key *signkey,
+			AuditParams &params)
 {
 	if (chain.isEmpty())
 		return;
@@ -79,9 +80,11 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 		throw serviceError("issuer_not_ca",
 			tr("'%1' is not a CA certificate (basicConstraints cA)")
 			.arg(name(issuer)));
-	/* RFC 5280 4.2.1.3: a CA certificate carries key usage */
-	if (!(X509_get_extension_flags(x) & EXFLAG_KUSAGE) ||
-	    !(X509_get_key_usage(x) & KU_KEY_CERT_SIGN))
+	/* keyCertSign is required when the issuer has key usage; without
+	 * it the issuer may sign (RFC 5280 6.1.4 (n)), noted in the log */
+	if (!(X509_get_extension_flags(x) & EXFLAG_KUSAGE))
+		params.warn("issuer_without_key_usage");
+	else if (!(X509_get_key_usage(x) & KU_KEY_CERT_SIGN))
 		throw serviceError("issuer_no_keycertsign",
 			tr("The key usage of '%1' does not allow keyCertSign")
 			.arg(name(issuer)));
@@ -164,7 +167,7 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 			tr("The signature of the certificate signing request '%1' does not verify")
 			.arg(csr));
 	if (mdNid == NID_sha1)
-		params.set("warning", "csr_sha1_accepted");
+		params.warn("csr_sha1_accepted");
 
 	/* keyCertSign or cA=TRUE requested for an end entity: they reach
 	 * the certificate only when the CSR's extensions are copied */
