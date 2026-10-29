@@ -60,6 +60,8 @@ class test_service_profiles : public ServiceTestCase
 	void genericProfiles_data();
 	void genericProfiles();
 	void genericInvalid();
+	void opcSignatureHash_data();
+	void opcSignatureHash();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -605,6 +607,52 @@ void test_service_profiles::genericInvalid()
 				CCHAR(err.getString()));
 		}
 	}
+}
+
+/* The signature hash follows the OPC UA SecurityPolicy of the key
+ * (BTD-167): a profile naming SHA-384 for an RSA-2048 or P-256 key is
+ * refused; the golden files above show SHA-256 passing */
+void test_service_profiles::opcSignatureHash_data()
+{
+	QTest::addColumn<QString>("profile");
+	QTest::addColumn<QString>("type");
+	for (QString p : { "opcua-client", "opcua-server", "opcua-server-only" })
+		for (QString t : { "rsa-2048", "ec-p256" })
+			QTest::newRow(CCHAR(p + " " + t)) << p << t;
+}
+
+void test_service_profiles::opcSignatureHash()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, profile);
+	QFETCH(QString, type);
+	QFile f(QString(SERVICE_TEST_DATA "/profiles/%1.json").arg(profile));
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject sig = doc["signature"].toObject();
+	QJsonObject rsa = sig["rsa"].toObject();
+	rsa["hashes"] = QJsonArray{ "sha384" };
+	sig["rsa"] = rsa;
+	QJsonObject ec = sig["ec"].toObject();
+	QJsonObject curves = ec["hash_by_curve"].toObject();
+	curves["ec-p256"] = "sha384";
+	ec["hash_by_curve"] = curves;
+	sig["ec"] = ec;
+	doc["signature"] = sig;
+	Profile p = Profile::fromJson(doc);
+
+	pki_x509req *req = newCsr(type, "/CN=plc10", "DNS:plc10.example");
+	QVERIFY(req);
+	pki_x509 *ca = issuingCa(type == "rsa-2048" ? "RSA:3072" : "EC:prime256v1");
+	Registration reg;
+	reg.applicationUri = "urn:bxc:lab:plc10";
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, req, nullptr, reg, ca, &cert),
+		QString("opc_signature_hash"));
+	QVERIFY(!cert);
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_profiles)

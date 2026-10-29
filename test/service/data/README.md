@@ -89,3 +89,10 @@ them again.
 templates CA, TLS_server, TLS_client, a sub-CA with pathLen 0, code signing, e-mail), copied
 unchanged from the bxc-pki schema examples at the commit named in `generic/PROVENANCE.json`;
 `test_service_profiles` issues one certificate per profile and checks its extensions.
+
+## `policies/`
+
+The name policies of bxc-pki (`schemas/policy.schema.json`, BTD-167), copied unchanged from the
+schema examples at the commit named in `policies/PROVENANCE.json`. `test_service_names` checks
+issued names against them (allow and deny rules per name form, minimum content, strict issuer
+key usage, uniqueness with a status filter).

@@ -25,6 +25,7 @@
 #include "asn1time.h"
 #include "digest.h"
 #include "pki_base.h"
+#include "policy.h"
 #include "x509name.h"
 #include "x509v3ext.h"
 
@@ -187,6 +188,9 @@ class IssuanceSpec
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
 	QString profile{};          // profile id the spec came from (BTD-54)
+	/* The name policies of the CA and the profile (BTD-167), checked
+	 * by IssuanceChecks::names() before the serial and the signature */
+	QList<Policy> policies{};
 	enum pki_source source{ generated };
 
 	bool selfSigned() const
