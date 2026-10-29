@@ -12,6 +12,7 @@
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
 
+#include "audit.h"
 #include "exception.h"
 #include "issuance.h"
 #include "pki_key.h"
@@ -121,12 +122,113 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 	}
 }
 
-void IssuanceChecks::request(const IssuanceSpec &spec)
+/* The requested extension nid of a CSR, or nullptr */
+static void *requested(X509_REQ *req, int nid)
 {
-	if (spec.request && !spec.request->verify())
+	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
+	void *value = X509V3_get_d2i(exts, nid, nullptr, nullptr);
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	return value;
+}
+
+void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
+{
+	if (!spec.request)
+		return;
+	const CsrPolicy &policy = spec.csrPolicy;
+	X509_REQ *req = spec.request->getReq();
+	QString csr = spec.request->getIntName();
+
+	/* the digest of the device's signature, before verifying it */
+	int sigNid = X509_REQ_get_signature_nid(req), mdNid = NID_undef;
+	OBJ_find_sigid_algs(sigNid, &mdNid, nullptr);
+	params.set("csr_signature_algorithm", OBJ_nid2ln(sigNid));
+	switch (mdNid) {
+	case NID_md2:
+	case NID_md4:
+	case NID_md5:
+	case NID_md5_sha1:
+	case NID_ripemd160:
+		throw serviceError("csr_digest_not_allowed",
+			tr("The certificate signing request '%1' is signed with %2, which is never accepted")
+			.arg(csr, OBJ_nid2ln(sigNid)));
+	case NID_sha1:
+		if (policy.csrSha1 == CsrPolicy::sha1_reject)
+			throw serviceError("csr_sha1_rejected",
+				tr("The profile does not accept the SHA-1 signature of '%1'")
+				.arg(csr));
+		break;
+	}
+	if (!spec.request->verify())
 		throw serviceError("invalid_csr_signature",
 			tr("The signature of the certificate signing request '%1' does not verify")
-			.arg(spec.request->getIntName()));
+			.arg(csr));
+	if (mdNid == NID_sha1)
+		params.set("warning", "csr_sha1_accepted");
+
+	/* keyCertSign or cA=TRUE requested for an end entity: they reach
+	 * the certificate only when the CSR's extensions are copied */
+	bool leaf = spec.extensions.basicCA != ExtensionSpec::bc_ca;
+	bool used = policy.profile || spec.copyRequestExtensions;
+	if (leaf && used &&
+	    policy.keyCertSignRequest == CsrPolicy::keycertsign_reject) {
+		ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)
+				requested(req, NID_key_usage);
+		bool kcs = ku && ASN1_BIT_STRING_get_bit(ku, 5);
+		ASN1_BIT_STRING_free(ku);
+		BASIC_CONSTRAINTS *bc = (BASIC_CONSTRAINTS *)
+				requested(req, NID_basic_constraints);
+		bool ca = bc && bc->ca;
+		BASIC_CONSTRAINTS_free(bc);
+		if (kcs || ca)
+			throw serviceError("csr_keycertsign_not_ca",
+				tr("'%1' asks for %2 in an end-entity certificate (RFC 5280 4.2.1.9)")
+				.arg(csr, kcs ? "keyCertSign" : "cA=TRUE"));
+	}
+
+	/* device classes that break on some characters in the DN */
+	const X509_NAME *subject = spec.subject.get0();
+	for (int i = 0; !policy.forbiddenCharacters.isEmpty() &&
+			i < X509_NAME_entry_count(subject); i++) {
+		unsigned char *utf8 = nullptr;
+		int len = ASN1_STRING_to_UTF8(&utf8, X509_NAME_ENTRY_get_data(
+				X509_NAME_get_entry(subject, i)));
+		QString value = len < 0 ? QString() :
+				QString::fromUtf8((char *)utf8, len);
+		OPENSSL_free(utf8);
+		for (const QChar &c : policy.forbiddenCharacters) {
+			if (value.contains(c))
+				throw serviceError("csr_subject_forbidden_character",
+					tr("The subject value '%1' contains '%2', which the profile forbids")
+					.arg(value, c));
+		}
+	}
+
+	/* the ApplicationUri comes from the registration */
+	if (!policy.profile)
+		return;
+	GENERAL_NAMES *san = (GENERAL_NAMES *)
+			requested(req, NID_subject_alt_name);
+	for (int i = 0; i < sk_GENERAL_NAME_num(san); i++) {
+		GENERAL_NAME *gn = sk_GENERAL_NAME_value(san, i);
+		if (gn->type != GEN_URI)
+			continue;
+		QString uri = QString::fromUtf8((const char *)
+				ASN1_STRING_get0_data(gn->d.uniformResourceIdentifier),
+				ASN1_STRING_get_length(gn->d.uniformResourceIdentifier));
+		if (policy.registeredUri.isEmpty() ||
+		    uri != policy.registeredUri) {
+			GENERAL_NAMES_free(san);
+			if (policy.registeredUri.isEmpty())
+				throw serviceError("csr_uri_not_allowed",
+					tr("The profile allows no URI, '%1' asks for %2")
+					.arg(csr, uri));
+			throw serviceError("csr_uri_mismatch",
+				tr("The URI %1 of '%2' is not the registered %3")
+				.arg(uri, csr, policy.registeredUri));
+		}
+	}
+	GENERAL_NAMES_free(san);
 }
 
 /* OPC UA chains (OPC 10000-6 6.2, PLAN.md 14.4) */

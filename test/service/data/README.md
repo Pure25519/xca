@@ -26,3 +26,16 @@ xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --crlge
 
 Regenerate it only with a build of the schema it stands for; a dump made by a newer schema no
 longer tests the upgrade.
+
+## `idial-csr/`
+
+The four certificate signing requests IDIAL recorded from S7-1500 lab units (OPC UA server and
+web server, SHA-1 signatures, keyCertSign with CA:FALSE, CA:TRUE, unusual RDN orders), byte for
+byte. `test_service_csr_acceptance` (BTD-65) issues them under the profiles; source repository,
+commit, SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`. Never edit them:
+their value is that the devices made them.
+
+## `profiles/golden/`
+
+The golden expectation files of the bxc-pki profiles (BTD-64), copied unchanged from the commit
+named in `profiles/PROVENANCE.json`. Regenerate them in bxc-pki and copy them again.

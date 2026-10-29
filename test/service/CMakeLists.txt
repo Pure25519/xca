@@ -138,6 +138,15 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Device CSRs of the IDIAL corpus under the profiles (BTD-65)
+ServiceTest(test_service_csr_acceptance)
+target_compile_definitions(test_service_csr_acceptance PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_csr_acceptance PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
