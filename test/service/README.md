@@ -17,7 +17,7 @@ ctest --test-dir build -L service --output-on-failure
 | process start (`XCA_SERVICE_TEST_MAIN`) | `HOME` and `XDG_CONFIG_HOME`/`XDG_DATA_HOME`/`XDG_CACHE_HOME`/`XDG_STATE_HOME` point into a temporary directory (`settings.ini`, `dbhistory`, `.rnd` never reach the real profile; `test/TestEnv.h`, which `testxca` uses too); a `QCoreApplication`: the tests link `xcacore` without Qt Gui (BTD-36) and run with `QT_QPA_PLATFORM` removed from the environment |
 | `initTestCase()` | legacy provider, OIDs, entropy; installs `StrictPwDialog` as `PwDialogCore` GUI, `StrictWarning` as `xcaWarning` GUI and an OpenSSL `UI_METHOD` without reader |
 | `init()` | new temporary directory `$TMPDIR/xca-service-XXXXXX`, database `service.xdb` in it, opened with the fixed password `ServiceTestCase::dbPassword` (the only expected prompt) and `PRAGMA synchronous = OFF` (no fsync per transaction in a throwaway database, BTD-82); the database option `suppress_messages` is switched on, so XCA's "Successfully created …" boxes do not count as prompts (a test that checks them sets `Settings["suppress_messages"] = false` and expects the message) |
-| `cleanup()` | closes the database, removes the directory, fails the test if the directory is still there, if an expected prompt was not shown, or if anything unexpected was prompted or shown |
+| `cleanup()` | closes the database, removes the directory, fails the test if the directory is still there, if an expected prompt was not shown, if anything unexpected was prompted or shown, or if a stored certificate, CRL or request has an empty DER (BTD-171) |
 | process exit | the temporary `HOME` is removed |
 
 Nothing is written to the build tree or left in `/tmp`.

@@ -132,9 +132,14 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	pki_openssl_error();
 
 	privkey = key->decryptKey();
-	X509_REQ_sign(request, privkey, digest.MD());
-	pki_openssl_error();
+	/* 0 leaves the request unsigned (BTD-171) */
+	int size = X509_REQ_sign(request, privkey, digest.MD());
 	EVP_PKEY_free(privkey);
+	if (size <= 0)
+		throw serviceError("signing_failed",
+			tr("The certificate signing request could not be signed with %1: %2")
+			.arg(digest.name(), take_openssl_errors()));
+	pki_openssl_error();
 }
 
 QString pki_x509req::getMsg(msg_type msg, int n) const

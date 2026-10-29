@@ -6,6 +6,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QSqlDatabase>
 #include <QSqlError>
 #include <QSqlQuery>
 #include <QThread>
@@ -306,9 +307,29 @@ void ServiceTestCase::init()
 	openDatabase();
 }
 
+/* Every stored certificate, CRL and request carries its DER: a failed
+ * signature once stored an empty one (BTD-171) */
+static QStringList emptyDerRows()
+{
+	static const char *tables[][2] = {
+		{ "certs", "cert" }, { "crls", "crl" }, { "requests", "request" },
+	};
+	QStringList found;
+	if (!QSqlDatabase::database().isOpen())
+		return found;
+	for (const auto &t : tables) {
+		QSqlQuery q(QString("SELECT item FROM %1 WHERE %2 IS NULL OR %2 = ''")
+				.arg(t[0], t[1]));
+		while (q.next())
+			found << QString("%1 item %2").arg(t[0], q.value(0).toString());
+	}
+	return found;
+}
+
 void ServiceTestCase::cleanup()
 {
 	QString dir = dbDir ? dbDir->path() : QString();
+	QStringList empty = emptyDerRows();
 
 	Database.close();
 	delete dbDir;
@@ -321,4 +342,6 @@ void ServiceTestCase::cleanup()
 	QVERIFY2(dir.isEmpty() || !QFileInfo::exists(dir),
 		CCHAR(QString("temporary database directory left: %1").arg(dir)));
 	QVERIFY2(v.isEmpty(), CCHAR(v.join("; ")));
+	QVERIFY2(empty.isEmpty(), CCHAR("stored with an empty DER: " +
+						empty.join(", ")));
 }

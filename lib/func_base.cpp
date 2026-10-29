@@ -185,6 +185,14 @@ void _openssl_error(const QString &txt, const char *file, int line)
 	}
 }
 
+QString take_openssl_errors()
+{
+	QStringList reasons;
+	while (unsigned long e = ERR_get_error())
+		reasons << ERR_error_string(e, NULL);
+	return reasons.join("\n");
+}
+
 #undef PRINT_IGNORED_ANYWAY
 bool _ign_openssl_error(const QString &txt, const char *file, int line)
 {
