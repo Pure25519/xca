@@ -246,6 +246,12 @@ QString encAlgo::displayName() const
 
 QString encAlgo::description() const
 {
+	/* writePKCS12() protects the key of RC2-40 with 3DES */
+	if (encAlgo_nid == NID_pbe_WithSHA1And40BitRC2_CBC)
+		return QObject::tr("Encryption: certificates %1, key %2, "
+			"MAC: SHA-1 (legacy)").arg(displayName())
+			.arg(encAlgo(NID_pbe_WithSHA1And3_Key_TripleDES_CBC)
+				.displayName());
 	if (legacy())
 		return QObject::tr("Encryption: %1, MAC: SHA-1 (legacy)")
 			.arg(displayName());

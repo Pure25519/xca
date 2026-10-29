@@ -18,6 +18,7 @@
 #include "pki_evp.h"
 #include "pki_scard.h"
 #include "pki_multi.h"
+#include "pki_pkcs12.h"
 #include "entropy.h"
 #include "db_base.h"
 #include "sql.h"
@@ -179,6 +180,58 @@ bool database_model::checkForOldDbFormat(const QString &dbfile) const
 	return !memcmp(head, magic, sizeof head);
 }
 
+/* Until BTD-52 PBE-SHA1-3DES was the compiled PKCS#12 default, and the
+ * Options dialog stored it on every OK: in an existing database it is no
+ * choice. Once per database, after the unlock, it becomes AES-256-CBC
+ * with an audit entry, and the user is told that legacy can be chosen
+ * again. pkcs12_keep_legacy is a choice: the user confirmed the legacy
+ * algorithm in the warning, so it stays. A new database only gets the
+ * marker, so that a legacy algorithm chosen later is kept.
+ * Algorithm, audit entry and marker are one transaction: a failure
+ * leaves the database and memory as they were, the open goes on and
+ * the next one tries again. */
+static void migratePkcs12Default(bool existing)
+{
+	if (Settings["pkcs12_migrated"])
+		return;
+	QString old = Settings["pkcs12_enc_algo"];
+	bool migrate = existing && !Settings["pkcs12_keep_legacy"] &&
+		encAlgo(old).getEncAlgoNid() ==
+			NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
+	QString algo = encAlgo::getBuiltinDefault().name();
+	try {
+		Transaction;
+		if (!TransBegin())
+			return;
+		if (migrate) {
+			Settings["pkcs12_enc_algo"] = algo;
+			AuditLog::append(ServiceContext::localUser(
+					ServiceContext::processChannel),
+				AuditLog::actionSettingsMigrate, "database",
+				QString(), AuditParams()
+					.set("old_pkcs12_algorithm", old)
+					.set("pkcs12_algorithm", algo));
+		}
+		Settings["pkcs12_migrated"] = true;
+		if (!TransCommit()) {
+			qWarning() << "PKCS#12 default migration rolled back";
+			return;
+		}
+	} catch (errorEx &err) {
+		qWarning() << "PKCS#12 default migration failed:"
+			<< err.getString();
+		return;
+	}
+	if (!migrate)
+		return;
+	QString msg = QObject::tr("The PKCS#12 export algorithm of this "
+		"database was the old default PBE-SHA1-3DES and is now %1. "
+		"A legacy algorithm can be chosen again in the Options.")
+		.arg(algo);
+	qInfo().noquote() << msg;
+	XCA_INFO(msg);
+}
+
 database_model::database_model(const QString &name, const Passwd &pass)
 {
 	enum open_result result;
@@ -241,6 +294,10 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			throw open_abort;
 		if (existing)
 			initSchema();
+		/* only after the unlock: an open without the password
+		 * writes nothing (BTD-117) */
+		if (result == pw_ok)
+			migratePkcs12Default(existing);
 	} catch (...) {
 		/* No destructor runs for a failed constructor: close the
 		 * connection here, or the next open() inherits its state */

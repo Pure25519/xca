@@ -31,6 +31,7 @@ const char AuditLog::actionDelete[] = "object.delete";
 const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
+const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -94,8 +95,11 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
-		"key_size", "key_type", "name", "next_update", "not_after",
-		"not_before", "old_name", "on_token", "outcome", "question",
+		"key_size", "key_type", "legacy", "name", "next_update",
+		"not_after",
+		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
+		"outcome",
+		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial", "subject",
 		"template", "this_update", "validity_capped",

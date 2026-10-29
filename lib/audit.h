@@ -298,6 +298,9 @@ class AuditLog
 	/* Signed checkpoints and their keys (BTD-37, see above) */
 	static const char actionCheckpoint[];
 	static const char actionKeyCreate[];
+	/* A stored setting changed by an upgrade, not by the user: the
+	 * PKCS#12 default of BTD-52 (old_pkcs12_algorithm, pkcs12_algorithm) */
+	static const char actionSettingsMigrate[];
 	static const int defaultCheckpointInterval;
 	static const int maxCheckpointInterval;   // bound of the setting
 
