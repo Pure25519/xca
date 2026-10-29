@@ -112,6 +112,9 @@ const QStringList &AuditParams::allowList()
 		 * name policies (BTD-167) */
 		"profile", "profile_version", "policies", "policy_result",
 		"version",
+		/* the merge decision per extension, e.g. "ku=union+csr"
+		 * (mr-processor review of xca#47) */
+		"merge",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

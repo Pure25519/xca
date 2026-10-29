@@ -554,14 +554,17 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 	X509_EXTENSION_free(ext);
 }
 
-/* The EKU a CSR asks for: its own, or ekuDefault when it has none;
- * every purpose must be in ekuAllowed when that is set */
+/* The EKU a CSR asks for: its own, or ekuDefault when it has none
+ * (*fromDefault); every purpose must be in ekuAllowed when that is set.
+ * For an end entity anyExtendedKeyUsage, OCSPSigning and codeSigning of
+ * the CSR need ekuAllowed to name them (mr-processor review of xca#47). */
 static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
-			X509_REQ *req, int *critical)
+			X509_REQ *req, int *critical, bool leaf, bool *fromDefault)
 {
 	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)
 			requestedExt(req, NID_ext_key_usage, critical);
-	if (!eku && !e.ekuDefault.isEmpty()) {
+	*fromDefault = !eku && !e.ekuDefault.isEmpty();
+	if (*fromDefault) {
 		eku = sk_ASN1_OBJECT_new_null();
 		*critical = 0;
 		for (const QString &p : e.ekuDefault) {
@@ -570,10 +573,12 @@ static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
 				sk_ASN1_OBJECT_push(eku, o);
 		}
 	}
-	for (int i = 0; eku && !e.ekuAllowed.isEmpty() &&
-			i < sk_ASN1_OBJECT_num(eku); i++) {
+	static const QList<int> sensitive { NID_anyExtendedKeyUsage,
+		NID_OCSP_sign, NID_code_sign };
+	for (int i = 0; eku && i < sk_ASN1_OBJECT_num(eku); i++) {
 		const ASN1_OBJECT *o = sk_ASN1_OBJECT_value(eku, i);
-		bool allowed = false;
+		bool allowed = e.ekuAllowed.isEmpty() && (*fromDefault ||
+			!leaf || !sensitive.contains(OBJ_obj2nid(o)));
 		for (const QString &a : e.ekuAllowed) {
 			ASN1_OBJECT *ao = OBJ_txt2obj(CCHAR(a), 0);
 			allowed |= ao && !OBJ_cmp(o, ao);
@@ -646,43 +651,85 @@ static void freeExtValue(int nid, void *value)
 
 /* SAN, key usage and EKU of the CSR against the template's, each by its
  * merge mode (BTD-54); every other extension of the CSR as XCA always
- * did: added with "copy extensions" when the template lacks it */
-static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert)
+ * did: added with "copy extensions" when the template lacks it.
+ * An end entity never takes keyCertSign or cRLSign from a CSR. The
+ * template's criticality wins (union only adds it); legacy keeps the
+ * CSR's, as XCA always did. *merge receives the decision per extension
+ * for the audit: "ku=union+csr", "eku=request+default", ... */
+static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert,
+			QString *merge)
 {
 	const ExtensionSpec &e = spec.extensions;
 	X509_REQ *req = spec.request->getReq();
 	X509 *x = cert->getCert();
+	bool leaf = e.basicCA != ExtensionSpec::bc_ca;
+	static const char *modeNames[] = { "legacy", "template", "request",
+					   "union" };
 	const QList<QPair<int, ExtensionSpec::requestMerge> > modes {
 		{ NID_subject_alt_name, e.sanMerge },
 		{ NID_key_usage, e.kuMerge },
 		{ NID_ext_key_usage, e.ekuMerge },
 	};
+	QStringList decisions;
 	QList<int> handled;
 	for (const auto &m : modes) {
 		int nid = m.first;
 		ExtensionSpec::requestMerge mode = m.second;
 		bool templ = X509_get_ext_by_NID(x, nid, -1) >= 0;
 		handled << nid;
+		QString decision = QString("%1=%2")
+			.arg(nid == NID_subject_alt_name ? "san" :
+			     nid == NID_key_usage ? "ku" : "eku")
+			.arg(modeNames[mode]);
 		if (mode == ExtensionSpec::merge_template ||
 		    (mode == ExtensionSpec::merge_legacy &&
-		     (!spec.copyRequestExtensions || templ)))
+		     (!spec.copyRequestExtensions || templ))) {
+			decisions << decision;
 			continue;
-		int crit = 0;
-		void *value = nid == NID_ext_key_usage ?
-			requestedEku(e, req, &crit) :
-			requestedExt(req, nid, &crit);
-		if (!value)
-			continue;
-		if (mode == ExtensionSpec::merge_union && templ) {
-			int tcrit = 0;
-			void *t = X509_get_ext_d2i(x, nid, &tcrit, nullptr);
-			value = unionOf(nid, value, t);
-			crit |= tcrit > 0;
-			freeExtValue(nid, t);
 		}
+		int crit = 0;
+		bool fromDefault = false;
+		void *value = nid == NID_ext_key_usage ?
+			requestedEku(e, req, &crit, leaf, &fromDefault) :
+			requestedExt(req, nid, &crit);
+		if (!value) {
+			decisions << decision;
+			continue;
+		}
+		decision += fromDefault ? "+default" : "+csr";
+		decisions << decision;
+		if (nid == NID_key_usage && leaf) {
+			ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)value;
+			for (int bit : { 5, 6 }) {
+				if (!ASN1_BIT_STRING_get_bit(ku, bit))
+					continue;
+				freeExtValue(nid, value);
+				throw serviceError("csr_keycertsign_not_ca",
+					QCoreApplication::translate("db_x509",
+					"'%1' asks for %2 in an end-entity certificate (RFC 5280 4.2.1.9)")
+					.arg(spec.request->getIntName(),
+					     bit == 5 ? "keyCertSign" : "cRLSign"));
+			}
+		}
+		/* the template's flag: its extension, else the spec's */
+		int tcrit = 0;
+		void *t = templ ? X509_get_ext_d2i(x, nid, &tcrit, nullptr) :
+				  nullptr;
+		bool templCrit = templ ? tcrit > 0 :
+			nid == NID_key_usage ? e.keyUsageCritical :
+			nid == NID_ext_key_usage ? e.extKeyUsageCritical :
+						   crit > 0;
+		if (mode == ExtensionSpec::merge_union && templ) {
+			value = unionOf(nid, value, t);
+			crit = templCrit || crit > 0;
+		} else if (mode != ExtensionSpec::merge_legacy) {
+			crit = templCrit;
+		}
+		freeExtValue(nid, t);
 		putExt(cert, nid, value, crit > 0);
 		freeExtValue(nid, value);
 	}
+	*merge = decisions.join(",");
 	if (!spec.copyRequestExtensions)
 		return;
 	extList el = spec.request->getV3ext();
@@ -793,11 +840,17 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 
 	// apply extensions from CSR if requested; a profile takes only
 	// the SAN (BTD-65), SAN, KU and EKU follow their merge mode (BTD-54)
+	QString merge;
 	if (spec.csrPolicy.profile && spec.request) {
 		requestSan(spec, cert);
+		/* eku_default and the purposes a CSR may name (BTD-54) */
+		if (spec.extensions.ekuMerge != ExtensionSpec::merge_legacy)
+			mergeRequest(spec, cert, &merge);
 	} else if (spec.request) {
-		mergeRequest(spec, cert);
+		mergeRequest(spec, cert, &merge);
 	}
+	if (!merge.isEmpty())
+		params.set("merge", merge);
 	orderExtensions(spec.extensionOrder, cert);
 
 	IssuanceChecks::certificate(spec, cert, chain);

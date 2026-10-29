@@ -467,6 +467,12 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 	QString hash = caType.startsWith("rsa") ?
 		doc["signature"].toObject()["rsa"].toObject()["hashes"].toArray().first().toString() :
 		doc["signature"].toObject()["ec"].toObject()["hash_by_curve"].toObject()[caType].toString();
+	/* RSA-PSS is not implemented: refused, never signed as PKCS#1 v1.5 */
+	if (caType.startsWith("rsa") &&
+	    doc["signature"].toObject()["rsa"].toObject()["padding"].toString("pkcs1v15") != "pkcs1v15")
+		throw serviceError("profile_signature_padding",
+			tr("The profile '%1' asks for RSA padding '%2', which is not supported; only pkcs1v15")
+			.arg(id, doc["signature"].toObject()["rsa"].toObject()["padding"].toString()));
 	int md = hash.isEmpty() ? NID_undef : OBJ_sn2nid(CCHAR(hash.toUpper()));
 	if (md == NID_undef)
 		throw serviceError("profile_signature",

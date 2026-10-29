@@ -62,6 +62,9 @@ class test_service_profiles : public ServiceTestCase
 	void genericInvalid();
 	void opcSignatureHash_data();
 	void opcSignatureHash();
+	void ekuDefaultInProfile_data();
+	void ekuDefaultInProfile();
+	void pssPaddingRefused();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -653,6 +656,90 @@ void test_service_profiles::opcSignatureHash()
 	pki_x509 *cert = nullptr;
 	QCOMPARE(issue(p, req, nullptr, reg, ca, &cert),
 		QString("opc_signature_hash"));
+	QVERIFY(!cert);
+#endif
+}
+
+/* MINOR 3 of the xca#47 review: eku_default applies when the CSR asks
+ * for no EKU; a CSR EKU is taken only within eku.purposes */
+void test_service_profiles::ekuDefaultInProfile_data()
+{
+	QTest::addColumn<QString>("csrEku");
+	QTest::addColumn<QString>("expected");
+	QTest::newRow("no EKU in the CSR") << "" << "clientAuth";
+	QTest::newRow("allowed purpose") << "serverAuth" << "serverAuth";
+	QTest::newRow("other purpose") << "codeSigning" << "csr_eku_not_allowed";
+}
+
+void test_service_profiles::ekuDefaultInProfile()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, csrEku);
+	QFETCH(QString, expected);
+	QFile f(SERVICE_TEST_DATA "/profiles/tls-server-web.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	doc["eku"] = QJsonObject{ { "purposes", QJsonArray{ "serverAuth", "clientAuth" } },
+				  { "critical", false } };
+	doc["eku_default"] = QJsonArray{ "clientAuth" };
+	Profile p = Profile::fromJson(doc);
+	QString out = dir.filePath(QString("eku-%1.csr").arg(QTest::currentDataTag()));
+	QStringList args { "req", "-new", "-newkey", "ec", "-pkeyopt",
+		"ec_paramgen_curve:P-256", "-nodes", "-keyout", out + ".key",
+		"-out", out, "-subj", "/CN=web.example",
+		"-addext", "subjectAltName=DNS:web.example" };
+	if (!csrEku.isEmpty())
+		args << "-addext" << "extendedKeyUsage=" + csrEku;
+	QProcess proc;
+	proc.start(OPENSSL_PROGRAM, args);
+	QVERIFY(proc.waitForFinished(30000) && proc.exitCode() == 0);
+	pki_x509req *req = loadCsr(QString("eku-%1").arg(QTest::currentDataTag()), out);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_x509 *cert = nullptr;
+	QString code = issue(p, req, nullptr, Registration(), ca, &cert);
+	if (expected.startsWith("csr_")) {
+		QCOMPARE(code, expected);
+		return;
+	}
+	QCOMPARE(code, QString());
+	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)X509_get_ext_d2i(
+		cert->getCert(), NID_ext_key_usage, nullptr, nullptr);
+	QStringList got;
+	for (int i = 0; i < sk_ASN1_OBJECT_num(eku); i++)
+		got << OBJ_nid2sn(OBJ_obj2nid(sk_ASN1_OBJECT_value(eku, i)));
+	EXTENDED_KEY_USAGE_free(eku);
+	QCOMPARE(got.join(","), expected);
+#endif
+}
+
+/* MINOR 9: RSA-PSS is never signed silently as PKCS#1 v1.5 */
+void test_service_profiles::pssPaddingRefused()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFile f(SERVICE_TEST_DATA "/profiles/tls-server-web.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject sig = doc["signature"].toObject();
+	QJsonObject rsa = sig["rsa"].toObject();
+	rsa["padding"] = "pss";
+	sig["rsa"] = rsa;
+	doc["signature"] = sig;
+	Profile p = Profile::fromJson(doc);
+	QString out = dir.filePath("pss.csr");
+	QProcess proc;
+	proc.start(OPENSSL_PROGRAM, { "req", "-new", "-newkey", "rsa:2048",
+		"-nodes", "-keyout", out + ".key", "-out", out,
+		"-subj", "/CN=web.example", "-addext", "subjectAltName=DNS:web.example" });
+	QVERIFY(proc.waitForFinished(30000) && proc.exitCode() == 0);
+	pki_x509req *req = loadCsr("pss", out);
+	pki_x509 *ca = issuingCa("RSA:3072");
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, req, nullptr, Registration(), ca, &cert),
+		QString("profile_signature_padding"));
 	QVERIFY(!cert);
 #endif
 }
