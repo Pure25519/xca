@@ -11,6 +11,7 @@
 #include "func.h"
 #include "pass_info.h"
 #include "pki_export.h"
+#include "pki_evp.h"
 #include "pki_key.h"
 #include "pki_multi.h"
 #include "pki_pkcs12.h"
@@ -428,6 +429,25 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				tr("Unknown PKCS#12 algorithm '%1'")
 				.arg(spec.pkcs12Algorithm));
 		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
+		/* Only for a format that writes an ML-DSA private key */
+		if (!spec.privateKeyFormat.isEmpty()) {
+			if (!pki_evp::mlDsaFormats.contains(spec.privateKeyFormat))
+				throw serviceError("invalid_ml_dsa_encoding",
+					tr("Unknown ML-DSA private key format '%1'")
+					.arg(spec.privateKeyFormat));
+			bool mlDsa = false;
+			if (!spec.clipboard) {
+				foreach(pki_key *key,
+					exportedPrivateKeys(spec.items, xport))
+					mlDsa |= pki_evp::isMlDsa(key->getKeyType());
+			}
+			if (!mlDsa)
+				throw serviceError("format_not_applicable",
+					tr("An ML-DSA private key format needs a "
+					   "private key export of an ML-DSA key"));
+			params.set("ml_dsa_encoding", spec.privateKeyFormat);
+		}
+		pki_evp::MlDsaFormatScope keyFormat(spec.privateKeyFormat);
 		/* How the key material is protected, where a legacy method is
 		 * possible: the PKCS#12 algorithm, and the legacy marker for
 		 * it and for RFC 1423 PEM encryption (BTD-52) */
