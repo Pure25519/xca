@@ -231,6 +231,46 @@ static a1int storedCrlNumber(pki_x509 *ca)
 	return num;
 }
 
+/* The CA's last CRL: the database and the CA object may differ until
+ * a commit, the higher one counts */
+static a1int lastCrlNumber(pki_x509 *ca)
+{
+	a1int last = storedCrlNumber(ca);
+	if (ca->getCrlNumber() > last)
+		last = ca->getCrlNumber();
+	return last;
+}
+
+static void storeCrlNumber(pki_x509 *ca, uint number, const a1time &expire)
+{
+	XSqlQuery q;
+
+	SQL_PREPARE(q, "UPDATE authority set crlNo=?, crlExpire=? WHERE item=?");
+	q.bindValue(0, number);
+	q.bindValue(1, expire.toPlain());
+	q.bindValue(2, ca->getSqlItemId());
+	AffectedItems(ca->getSqlItemId());
+	execOrThrow(q);
+}
+
+bool db_crl::raiseCrlNumber(pki_crl *crl)
+{
+	pki_x509 *ca = crl ? crl->getIssuer() : nullptr;
+	a1int num;
+
+	if (!ca || !ca->getSqlItemId().isValid() || !crl->getCrlNumber(&num))
+		return false;
+	if (!(num > lastCrlNumber(ca)))
+		return false;
+	/* the authority table keeps the number as unsigned 32 bit */
+	bool numeric;
+	qint64 number = num.toDec().toLongLong(&numeric);
+	if (!numeric || number > UINT_MAX)
+		return false;
+	storeCrlNumber(ca, (uint)number, crl->getNextUpdate());
+	return true;
+}
+
 pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			QString name)
 {
@@ -273,9 +313,7 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			throw serviceError("insecure_hash",
 				tr("A CRL is never signed with %1")
 					.arg(task.hashAlgo.name()));
-		a1int last = storedCrlNumber(cert);
-		if (cert->getCrlNumber() > last)
-			last = cert->getCrlNumber();
+		a1int last = lastCrlNumber(cert);
 		if (!(task.crlNumber > last))
 			throw serviceError("crl_number_not_increasing",
 				tr("The CRL number %1 does not exceed the last CRL number %2 of '%3'")
@@ -313,12 +351,7 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			crl->setNextUpdate(task.nextUpdate);
 			crl->sign(signkey, task.hashAlgo);
 
-			SQL_PREPARE(q, "UPDATE authority set crlNo=?, crlExpire=? WHERE item=?");
-			q.bindValue(0, (uint)number);
-			q.bindValue(1, task.nextUpdate.toPlain());
-			q.bindValue(2, cert->getSqlItemId());
-			AffectedItems(cert->getSqlItemId());
-			execOrThrow(q);
+			storeCrlNumber(cert, (uint)number, task.nextUpdate);
 			SQL_PREPARE(q, "UPDATE revocations set crlNo=? "
 					"WHERE crlNo IS NULL AND caId=?");
 			q.bindValue(0, (uint)number);
