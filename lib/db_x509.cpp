@@ -420,7 +420,36 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 		p.set("template", spec.templateName);
 	if (!spec.profile.isEmpty())
 		p.set("profile", spec.profile);
+	if (spec.profileVersion)
+		p.set("profile_version", spec.profileVersion);
+	QStringList policies;
+	for (const Policy &policy : spec.policies)
+		policies << policy.id;
+	if (!policies.isEmpty())
+		p.set("policies", policies.join(","));
 	return p;
+}
+
+/* The stored profile version and the policies a certificate was issued
+ * under (BTD-167); inside the issuing transaction */
+static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
+{
+	QStringList policies;
+	for (const Policy &p : spec.policies)
+		policies << p.id;
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO issued_profiles (item, profile, version, "
+		"policies) VALUES (?, ?, ?, ?)");
+	q.bindValue(0, cert->getSqlItemId());
+	q.bindValue(1, spec.profile);
+	q.bindValue(2, spec.profileVersion);
+	q.bindValue(3, policies.join(","));
+	q.exec();
+	if (q.lastError().isValid())
+		throw serviceError("database_error",
+			QCoreApplication::translate("db_x509",
+			"The profile of the certificate could not be stored: %1")
+			.arg(q.lastError().text()));
 }
 
 /* The subject as given, byte for byte; with a profile that adds a
@@ -769,6 +798,8 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 
 	IssuanceChecks::certificate(spec, cert, chain);
 	IssuanceChecks::names(spec, cert, chain);
+	if (!spec.policies.isEmpty())
+		params.set("policy_result", "pass");
 
 	// the serial only once every check passed
 	cert->setSerial(getUniqueSerial(spec.signer));
@@ -800,6 +831,8 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	delete tempkey;
 	tempkey = nullptr;
 	markRequestSigned(spec.request, stored);
+	if (spec.profileVersion)
+		recordProfile(spec, stored);
 	AuditLog::append(ctx, "certificate.issue", "certificate",
 			stored->getSqlItemId().toString(), params);
 	if (!TransCommit())

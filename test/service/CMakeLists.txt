@@ -171,7 +171,8 @@ endif()
 
 # What a CSR adds per extension, the profile engine (BTD-54), the name
 # checks and policies (BTD-167)
-foreach(t test_service_merge test_service_profiles test_service_names)
+foreach(t test_service_merge test_service_profiles test_service_names
+	test_service_profile_store)
   ServiceTest(${t})
   target_compile_definitions(${t} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")

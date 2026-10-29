@@ -188,6 +188,7 @@ class IssuanceSpec
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
 	QString profile{};          // profile id the spec came from (BTD-54)
+	int profileVersion{};       // stored version (BTD-167); 0: a file
 	/* The name policies of the CA and the profile (BTD-167), checked
 	 * by IssuanceChecks::names() before the serial and the signature */
 	QList<Policy> policies{};
