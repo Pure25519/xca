@@ -130,6 +130,9 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# A failed signature is an error, never a stored object (BTD-171)
+ServiceTest(test_service_signing_failure)
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
