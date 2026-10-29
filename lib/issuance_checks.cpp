@@ -5,7 +5,10 @@
 
 #include "issuance_checks.h"
 
+#include <memory>
+
 #include <QCoreApplication>
+#include <QMap>
 #include <QRegularExpression>
 #include <QSet>
 
@@ -155,6 +158,40 @@ static void *requested(X509_REQ *req, int nid)
 	return value;
 }
 
+/* The hash of an RSASSA-PSS signature, from its parameters (RFC 4055:
+ * absent means SHA-1); NID_undef when they do not decode */
+static int pssDigest(X509_REQ *req)
+{
+	const X509_ALGOR *alg = nullptr;
+	X509_REQ_get0_signature(req, nullptr, &alg);
+	const ASN1_OBJECT *obj;
+	int ptype;
+	const void *pval;
+	X509_ALGOR_get0(&obj, &ptype, &pval, alg);
+	if (ptype != V_ASN1_SEQUENCE)
+		return NID_undef;
+	RSA_PSS_PARAMS *pss = (RSA_PSS_PARAMS *)ASN1_item_unpack(
+		(const ASN1_STRING *)pval, ASN1_ITEM_rptr(RSA_PSS_PARAMS));
+	if (!pss)
+		return NID_undef;
+	int md = pss->hashAlgorithm ?
+		OBJ_obj2nid(pss->hashAlgorithm->algorithm) : NID_sha1;
+	RSA_PSS_PARAMS_free(pss);
+	return md;
+}
+
+static QString nameType(int type)
+{
+	static const QMap<int, QString> names {
+		{ GEN_OTHERNAME, "otherName" }, { GEN_EMAIL, "rfc822Name" },
+		{ GEN_DNS, "dNSName" }, { GEN_X400, "x400Address" },
+		{ GEN_DIRNAME, "directoryName" }, { GEN_EDIPARTY, "ediPartyName" },
+		{ GEN_URI, "uniformResourceIdentifier" },
+		{ GEN_IPADD, "iPAddress" }, { GEN_RID, "registeredID" },
+	};
+	return names.value(type, QString::number(type));
+}
+
 void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 {
 	if (!spec.request)
@@ -163,25 +200,29 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 	X509_REQ *req = spec.request->getReq();
 	QString csr = spec.request->getIntName();
 
-	/* the digest of the device's signature, before verifying it */
+	/* the digest of the device's signature, before verifying it: SHA-2
+	 * and SHA-3, SHA-1 by policy, none for EdDSA and ML-DSA; the hash of
+	 * RSASSA-PSS is in its parameters */
 	int sigNid = X509_REQ_get_signature_nid(req), mdNid = NID_undef;
 	OBJ_find_sigid_algs(sigNid, &mdNid, nullptr);
+	if (sigNid == NID_rsassaPss)
+		mdNid = pssDigest(req);
 	params.set("csr_signature_algorithm", OBJ_nid2ln(sigNid));
-	switch (mdNid) {
-	case NID_md2:
-	case NID_md4:
-	case NID_md5:
-	case NID_md5_sha1:
-	case NID_ripemd160:
-		throw serviceError("csr_digest_not_allowed",
-			tr("The certificate signing request '%1' is signed with %2, which is never accepted")
-			.arg(csr, OBJ_nid2ln(sigNid)));
-	case NID_sha1:
+	static const QSet<int> secure { NID_sha224, NID_sha256, NID_sha384,
+		NID_sha512, NID_sha512_224, NID_sha512_256, NID_sha3_224,
+		NID_sha3_256, NID_sha3_384, NID_sha3_512 };
+	if (mdNid == NID_sha1) {
 		if (policy.csrSha1 == CsrPolicy::sha1_reject)
 			throw serviceError("csr_sha1_rejected",
 				tr("The profile does not accept the SHA-1 signature of '%1'")
 				.arg(csr));
-		break;
+	} else if (mdNid == NID_undef ? sigNid == NID_rsassaPss :
+					!secure.contains(mdNid)) {
+		throw serviceError("csr_digest_not_allowed",
+			tr("The certificate signing request '%1' is signed with %2 (%3), which is never accepted")
+			.arg(csr, OBJ_nid2ln(sigNid),
+				mdNid == NID_undef ? tr("unreadable parameters") :
+						     QString(OBJ_nid2ln(mdNid))));
 	}
 	if (!spec.request->verify())
 		throw serviceError("invalid_csr_signature",
@@ -190,12 +231,52 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 	if (mdNid == NID_sha1)
 		params.warn("csr_sha1_accepted");
 
+	/* every extension once, a SAN that decodes (mr-processor review of
+	 * xca#44): a second instance could carry what the checks below
+	 * never see, requestSan() copies the only one */
+	if (X509_REQ_get_attr_by_NID(req, NID_ext_req,
+			X509_REQ_get_attr_by_NID(req, NID_ext_req, -1)) >= 0)
+		throw serviceError("csr_duplicate_extension",
+			tr("'%1' requests its extensions twice").arg(csr));
+	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
+	if (!exts && X509_REQ_get_attr_by_NID(req, NID_ext_req, -1) >= 0)
+		throw serviceError("csr_san_invalid",
+			tr("The extensions of '%1' do not decode").arg(csr));
+	std::unique_ptr<GENERAL_NAMES, void (*)(GENERAL_NAMES *)> san(
+			nullptr, GENERAL_NAMES_free);
+	QSet<QString> oids;
+	for (int i = 0; i < sk_X509_EXTENSION_num(exts); i++) {
+		X509_EXTENSION *e = sk_X509_EXTENSION_value(exts, i);
+		char oid[128];
+		OBJ_obj2txt(oid, sizeof oid, X509_EXTENSION_get_object(e), 1);
+		QString error;
+		if (oids.contains(oid))
+			error = "csr_duplicate_extension";
+		oids << oid;
+		if (error.isEmpty() &&
+		    OBJ_obj2nid(X509_EXTENSION_get_object(e)) == NID_subject_alt_name) {
+			san.reset((GENERAL_NAMES *)X509V3_EXT_d2i(e));
+			if (!san)
+				error = "csr_san_invalid";
+		}
+		if (!error.isEmpty()) {
+			sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+			ign_openssl_error();
+			throw serviceError(error, error == "csr_san_invalid" ?
+				tr("The subject alternative name of '%1' does not decode").arg(csr) :
+				tr("'%1' requests the extension %2 more than once").arg(csr, oid));
+		}
+	}
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+
 	/* keyCertSign or cA=TRUE requested for an end entity: they reach
-	 * the certificate only when the CSR's extensions are copied */
+	 * the certificate only when the CSR's extensions are copied; only a
+	 * profile may override them, copying without one refuses */
 	bool leaf = spec.extensions.basicCA != ExtensionSpec::bc_ca;
 	bool used = policy.profile || spec.copyRequestExtensions;
-	if (leaf && used &&
-	    policy.keyCertSignRequest == CsrPolicy::keycertsign_reject) {
+	bool override = policy.profile &&
+		policy.keyCertSignRequest == CsrPolicy::keycertsign_override;
+	if (leaf && used && !override) {
 		ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)
 				requested(req, NID_key_usage);
 		bool kcs = ku && ASN1_BIT_STRING_get_bit(ku, 5);
@@ -210,16 +291,30 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 				.arg(csr, kcs ? "keyCertSign" : "cA=TRUE"));
 	}
 
-	/* device classes that break on some characters in the DN */
+	/* device classes that break on some characters in the DN; the O a
+	 * profile adds counts as well, a value that does not decode is
+	 * refused instead of read as empty */
 	const X509_NAME *subject = spec.subject.get0();
-	for (int i = 0; !policy.forbiddenCharacters.isEmpty() &&
-			i < X509_NAME_entry_count(subject); i++) {
+	QStringList values;
+	/* OpenSSL already refuses such a value when it parses a CSR or
+	 * copies a name (x509_name_ex_d2i); this guards the rest */
+	for (int i = 0; policy.profile && i < X509_NAME_entry_count(subject); i++) {
 		unsigned char *utf8 = nullptr;
 		int len = ASN1_STRING_to_UTF8(&utf8, X509_NAME_ENTRY_get_data(
 				X509_NAME_get_entry(subject, i)));
-		QString value = len < 0 ? QString() :
-				QString::fromUtf8((char *)utf8, len);
+		if (len < 0) {
+			ign_openssl_error();
+			throw serviceError("csr_subject_invalid_encoding",
+				tr("Subject value %1 of '%2' does not decode")
+				.arg(i + 1).arg(csr));
+		}
+		values << QString::fromUtf8((char *)utf8, len);
 		OPENSSL_free(utf8);
+	}
+	if (policy.profile && !policy.missingO.isEmpty() &&
+	    X509_NAME_get_index_by_NID(subject, NID_organizationName, -1) < 0)
+		values << policy.missingO;
+	for (const QString &value : values) {
 		for (const QChar &c : policy.forbiddenCharacters) {
 			if (value.contains(c))
 				throw serviceError("csr_subject_forbidden_character",
@@ -228,31 +323,58 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 		}
 	}
 
-	/* the ApplicationUri comes from the registration */
+	/* the SAN under a profile: the ApplicationUri of the registration,
+	 * once; the name types and counts of the profile, no wildcard
+	 * unless it allows them */
 	if (!policy.profile)
 		return;
-	GENERAL_NAMES *san = (GENERAL_NAMES *)
-			requested(req, NID_subject_alt_name);
-	for (int i = 0; i < sk_GENERAL_NAME_num(san); i++) {
-		GENERAL_NAME *gn = sk_GENERAL_NAME_value(san, i);
-		if (gn->type != GEN_URI)
-			continue;
-		QString uri = QString::fromUtf8((const char *)
+	QMap<int, int> counts;
+	int uris = 0;
+	for (int i = 0; i < sk_GENERAL_NAME_num(san.get()); i++) {
+		GENERAL_NAME *gn = sk_GENERAL_NAME_value(san.get(), i);
+		if (gn->type == GEN_URI) {
+			QString uri = QString::fromUtf8((const char *)
 				ASN1_STRING_get0_data(gn->d.uniformResourceIdentifier),
 				ASN1_STRING_get_length(gn->d.uniformResourceIdentifier));
-		if (policy.registeredUri.isEmpty() ||
-		    uri != policy.registeredUri) {
-			GENERAL_NAMES_free(san);
 			if (policy.registeredUri.isEmpty())
 				throw serviceError("csr_uri_not_allowed",
 					tr("The profile allows no URI, '%1' asks for %2")
 					.arg(csr, uri));
-			throw serviceError("csr_uri_mismatch",
-				tr("The URI %1 of '%2' is not the registered %3")
-				.arg(uri, csr, policy.registeredUri));
+			if (uri != policy.registeredUri)
+				throw serviceError("csr_uri_mismatch",
+					tr("The URI %1 of '%2' is not the registered %3")
+					.arg(uri, csr, policy.registeredUri));
+			if (++uris > 1)
+				throw serviceError("csr_uri_duplicate",
+					tr("'%1' asks for the URI %2 more than once")
+					.arg(csr, uri));
+			continue;
 		}
+		if (!policy.sanCounts.contains(gn->type))
+			throw serviceError("csr_san_type_not_allowed",
+				tr("The profile allows no %1 in the subject alternative name of '%2'")
+				.arg(nameType(gn->type), csr));
+		if (gn->type == GEN_DNS && !policy.sanWildcard &&
+		    memchr(ASN1_STRING_get0_data(gn->d.dNSName), '*',
+				ASN1_STRING_get_length(gn->d.dNSName)))
+			throw serviceError("csr_san_wildcard",
+				tr("The profile allows no wildcard dNSName, '%1' asks for one")
+				.arg(csr));
+		counts[gn->type]++;
 	}
-	GENERAL_NAMES_free(san);
+	for (auto c = policy.sanCounts.begin(); c != policy.sanCounts.end(); ++c) {
+		int n = counts.value(c.key());
+		if (n < c.value().first || n > c.value().second)
+			throw serviceError("csr_san_count",
+				tr("'%1' has %2 entries of type %3, the profile allows %4 to %5")
+				.arg(csr).arg(n).arg(nameType(c.key()))
+				.arg(c.value().first).arg(c.value().second));
+	}
+	if (counts.value(GEN_DNS) + counts.value(GEN_IPADD) < policy.dnsOrIpMin)
+		throw serviceError("csr_san_count",
+			tr("'%1' has %2 DNS names and IP addresses, the profile needs at least %3")
+			.arg(csr).arg(counts.value(GEN_DNS) + counts.value(GEN_IPADD))
+			.arg(policy.dnsOrIpMin));
 }
 
 /* OPC UA chains (OPC 10000-6 6.2, PLAN.md 14.4) */

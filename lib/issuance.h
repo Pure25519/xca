@@ -17,6 +17,8 @@
 #ifndef __ISSUANCE_H
 #define __ISSUANCE_H
 
+#include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -147,6 +149,15 @@ class CsrPolicy
 	QString missingO{};
 	/* subject.forbidden_characters, e.g. "/=" for S7-1500 V02.09.08 */
 	QString forbiddenCharacters{};
+	/* san.* (mr-processor review of xca#44): the name types a CSR SAN
+	 * may carry besides the URI, with their counts (GEN_DNS, GEN_IPADD,
+	 * GEN_EMAIL; any other type is refused), the minimum of dNSName plus
+	 * iPAddress, wildcard dNSNames, and the criticality of the SAN in
+	 * the certificate (the CSR's bytes, the profile's flag) */
+	QMap<int, QPair<int, int>> sanCounts{};
+	int dnsOrIpMin{};
+	bool sanWildcard{};
+	bool sanCritical{};
 };
 
 /* The serial number is not part of the spec: it is always random, positive
