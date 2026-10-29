@@ -43,6 +43,31 @@ class keytype
 #ifdef EVP_PKEY_ED25519
 			keytype(EVP_PKEY_ED25519, "ED25519", CKM_VENDOR_DEFINED, false, false),
 #endif
+#ifdef EVP_PKEY_ED448
+			keytype(EVP_PKEY_ED448, "ED448", CKM_VENDOR_DEFINED, false, false),
+#endif
+#endif
+			/* Post-quantum signature keys (BTD-16). The names are the
+			 * ones of OpenSSL, which knows these keys only through its
+			 * provider (see nid()) */
+#ifdef EVP_PKEY_ML_DSA_44
+			keytype(EVP_PKEY_ML_DSA_44, "ML-DSA-44", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_ML_DSA_65, "ML-DSA-65", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_ML_DSA_87, "ML-DSA-87", CKM_VENDOR_DEFINED, false, false),
+#endif
+#ifdef EVP_PKEY_SLH_DSA_SHA2_128S
+			keytype(EVP_PKEY_SLH_DSA_SHA2_128S, "SLH-DSA-SHA2-128s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHA2_128F, "SLH-DSA-SHA2-128f", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHA2_192S, "SLH-DSA-SHA2-192s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHA2_192F, "SLH-DSA-SHA2-192f", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHA2_256S, "SLH-DSA-SHA2-256s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHA2_256F, "SLH-DSA-SHA2-256f", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_128S, "SLH-DSA-SHAKE-128s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_128F, "SLH-DSA-SHAKE-128f", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_192S, "SLH-DSA-SHAKE-192s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_192F, "SLH-DSA-SHAKE-192f", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_256S, "SLH-DSA-SHAKE-256s", CKM_VENDOR_DEFINED, false, false),
+			keytype(EVP_PKEY_SLH_DSA_SHAKE_256F, "SLH-DSA-SHAKE-256f", CKM_VENDOR_DEFINED, false, false),
 #endif
 		};
 	}
@@ -55,17 +80,35 @@ class keytype
 			: type(t), name(n), mech(m), curve(c), length(l) { }
 	keytype() : type(-1), name(QString()), mech(0),
 			curve(false), length(true) { }
-	bool isValid()
+	bool isValid() const
 	{
 		return type != -1;
 	}
+	/* Neither size nor curve: the type itself names the parameters
+	 * (Ed25519, Ed448, ML-DSA, SLH-DSA) */
+	bool fixed() const
+	{
+		return isValid() && !curve && !length;
+	}
+	/* Only RSA, DSA and EC have a traditional private key format; the
+	 * others are written as PKCS#8 */
 	QString traditionalPemName() const
 	{
-		return
-#ifdef EVP_PKEY_ED25519
-			type == EVP_PKEY_ED25519 ? QString("PRIVATE KEY") :
-#endif
+		return fixed() ? QString("PRIVATE KEY") :
 				QString("%1 PRIVATE KEY").arg(name);
+	}
+	/* The NID of the key type. EVP_PKEY_get_id() is -1 for keys that
+	 * OpenSSL knows only through a provider (ML-DSA, SLH-DSA); they are
+	 * found by their algorithm name (BTD-16) */
+	static int nid(const EVP_PKEY *pkey)
+	{
+		if (!pkey)
+			return NID_undef;
+		int id = EVP_PKEY_get_id(pkey);
+		if (id > 0)
+			return EVP_PKEY_type(id);
+		const char *name = EVP_PKEY_get0_type_name(pkey);
+		return name ? OBJ_ln2nid(name) : NID_undef;
 	}
 	static const keytype byType(int type)
 	{
@@ -86,14 +129,14 @@ class keytype
 	static const keytype byName(const QString &name)
 	{
 		foreach(const keytype t, types()) {
-			if (t.name == name.toUpper())
+			if (t.name.compare(name, Qt::CaseInsensitive) == 0)
 				return t;
 		}
 		return keytype();
 	}
-	static const keytype byPKEY(EVP_PKEY *pkey)
+	static const keytype byPKEY(const EVP_PKEY *pkey)
 	{
-		return byType(EVP_PKEY_type(EVP_PKEY_id(pkey)));
+		return byType(nid(pkey));
 	}
 };
 
@@ -123,14 +166,16 @@ class keyjob
 		ec_nid = NID_undef;
 		if (isEC())
 			ec_nid = OBJ_txt2nid(sl[1].toLatin1());
-		else if (!isED25519())
+		else if (!isFixed())
 			size = sl[1].toInt();
+		else if (!sl[1].isEmpty())
+			size = 0;  /* "ED448:456": the type takes no size */
 		slot = slotid();
 		ign_openssl_error();
 	}
 	QString toString()
 	{
-		if (isED25519())
+		if (isFixed())
 			return ktype.name;
 		return QString("%1:%2").arg(ktype.name) .arg(isEC() ?
 					OBJ_obj2QString(OBJ_nid2obj(ec_nid)) :
@@ -144,20 +189,16 @@ class keyjob
 	{
 		return ktype.type == EVP_PKEY_EC;
 	}
-	bool isED25519() const
+	bool isFixed() const
 	{
-#ifdef EVP_PKEY_ED25519
-		return ktype.type == EVP_PKEY_ED25519;
-#else
-		return false;
-#endif
+		return ktype.fixed();
 	}
 	bool isValid()
 	{
 		if (!ktype.isValid())
 			return false;
-		if (isED25519())
-			return true;
+		if (isFixed())
+			return size > 0;
 		if (isEC() && builtinCurves.containNid(ec_nid))
 			return true;
 		if (!isEC() && size > 0)
