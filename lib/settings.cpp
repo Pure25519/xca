@@ -170,7 +170,8 @@ void settings::set(QString key, QString value)
 	q.bindValue(0, value);
 	q.bindValue(1, key);
 	q.exec();
-	/* not stored (finish() showed why): memory keeps the stored value */
+	/* not stored: memory keeps the stored value. finish() shows a
+	 * failed COMMIT; nothing in here can roll back an inner transaction */
 	if (!TransCommit())
 		return;
 	if (insert)

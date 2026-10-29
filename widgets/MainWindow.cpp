@@ -519,36 +519,11 @@ int MainWindow::checkOldGetNewPass(Passwd &pass)
 void MainWindow::changeDbPass()
 {
 	Passwd pass;
-	XSqlQuery q;
-	QSqlDatabase db = QSqlDatabase::database();
 
 	if (!checkOldGetNewPass(pass))
 		return;
-
-	QString salt = Entropy::makeSalt();
-	QString passhash = pki_evp::sha512passwT(pass, salt);
-	QList<pki_evp*> key_list = Store.sqlSELECTpki<pki_evp>(
-		"SELECT item FROM private_keys WHERE ownPass=0");
-
 	try {
-		Transaction;
-		if (!TransBegin()) {
-			errorEx e(tr("Transaction start failed"));
-			XCA_ERROR(e);
-			return;
-		}
-		foreach(pki_evp *key, key_list) {
-			EVP_PKEY *evp = key->decryptKey();
-			key->set_evp_key(evp);
-			key->encryptKey(pass.constData());
-			key->sqlUpdatePrivateKey();
-		}
-		AuditKey::reencrypt(pass);
-		Settings["pwhash"] = passhash;
-		if (!TransCommit())
-			throw errorEx(tr("The new password was not stored"));
-		pki_evp::passHash = passhash;
-		pki_evp::passwd = pass;
+		Database.model<db_key>()->changeDatabasePassword(pass);
 	} catch (errorEx &e) {
 		XCA_ERROR(e);
 	}

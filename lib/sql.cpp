@@ -129,6 +129,10 @@ bool DbTransaction::commit(const char *file, int line)
 
 bool DbTransaction::rollback(const char *file, int line)
 {
+	/* A stray rollback after the commit must not fail the next
+	 * transaction (BTD-142) */
+	if (!has_begun)
+		return true;
 	/* The first rollback names the cause of a failed outer commit; the
 	 * destructor names where its transaction began */
 	if (!error++)

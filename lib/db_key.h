@@ -57,6 +57,11 @@ class db_key: public db_base
 			QIODevice &file, const Passwd &pass) const;
 		const pki_export *clipboardFormat() const;
 		void updateKeyEncryptionScheme();
+		/* The database password becomes pass: re-encrypts the private
+		 * keys without a password of their own and the audit keys,
+		 * stores the hash of pass. Throws errorEx when it was not
+		 * stored. */
+		void changeDatabasePassword(const Passwd &pass);
 
 	signals:
 		void delKey(pki_key *delkey);

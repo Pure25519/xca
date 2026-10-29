@@ -8,7 +8,10 @@
  * revocation rows cannot be written (x509revList::sqlUpdate() returns
  * false and its caller carries on). The others use
  * DbTransaction::injectNestedRollback(), which turns a nested commit into
- * the same kind of swallowed rollback.
+ * the same kind of swallowed rollback. Follow-up of the review of xca#31:
+ * a failed schema update stops the open, a failed password change keeps
+ * the old password in memory too, a stray rollback after a commit does
+ * not fail the next transaction.
  */
 
 #include <functional>
@@ -83,6 +86,9 @@ class test_service_transaction : public ServiceTestCase
 	void templateNestedRollback();
 	void checkpointNestedRollback();
 	void appendCommitFails();
+	void schemaUpdateFailureStopsOpen();
+	void passwordChangeRollbackKeepsOld();
+	void strayRollbackDoesNotLeak();
 };
 
 QString test_service_transaction::errorCode(std::function<void()> call)
@@ -407,6 +413,98 @@ void test_service_transaction::appendCommitFails()
 	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
 	QCOMPARE(AuditLog::entries().size(), before);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd142_child").toInt(), 0);
+}
+
+/* A failing statement of the fork's schema update: initSqlDB() rolls back
+ * and returns the error. On 31a33a95 both callers in
+ * database_model::open() ignored it and the database opened half
+ * upgraded. */
+void test_service_transaction::schemaUpdateFailureStopsOpen()
+{
+	Database.close();
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "btd142");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		for (const char *statement : {
+			"DROP INDEX i_audit_log_action",
+			"DROP TABLE audit_keys",
+			"UPDATE settings SET value='1' WHERE key_='bxc_schema'",
+			"CREATE TRIGGER btd142_schema BEFORE UPDATE ON settings "
+			"WHEN NEW.key_='bxc_schema' BEGIN SELECT RAISE(ABORT, "
+			"'BTD-142 test: schema update refused'); END" })
+			QVERIFY2(q.exec(statement), CCHAR(q.lastError().text()));
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("btd142");
+
+	pwdialog->expect(dbPassword);
+	QString code = errorCode([&]() { Database.open(dbFile); });
+	QVERIFY2(code.contains("schema update refused"), CCHAR(code));
+	QVERIFY(!Database.isOpen());
+
+	QString version;
+	bool keysTable = true;
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "btd142");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		q.exec("SELECT value FROM settings WHERE key_='bxc_schema'");
+		if (q.next())
+			version = q.value(0).toString();
+		q.exec("SELECT COUNT(*) FROM sqlite_master WHERE name='audit_keys'");
+		keysTable = q.next() && q.value(0).toInt() > 0;
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("btd142");
+	QCOMPARE(version, QString("1"));
+	QVERIFY(!keysTable);
+}
+
+/* The nested settings::set() of the new hash commits at once in memory;
+ * on 31a33a95 a rolled-back password change left Settings["pwhash"] at
+ * the new hash while the database kept the old one, so the next change
+ * asked for a password that was never applied. */
+void test_service_transaction::passwordChangeRollbackKeepsOld()
+{
+	QVERIFY(newKey("BTD-142 key"));
+	QString oldHash = Settings["pwhash"];
+	QVERIFY(!oldHash.isEmpty());
+	Passwd pass;
+	pass = "BTD-142-new-password";
+
+	DbTransaction::injectNestedRollback();
+	QString code = errorCode([&]() {
+		Database.model<db_key>()->changeDatabasePassword(pass); });
+	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
+
+	QCOMPARE(QString(Settings["pwhash"]), oldHash);
+	QCOMPARE(pki_evp::passHash, oldHash);
+	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='pwhash'")
+		.toString(), oldHash);
+}
+
+/* A TransRollback() after the commit of the same transaction: on
+ * 31a33a95 it raised the error counter anyway, and the next, unrelated
+ * transaction rolled back */
+void test_service_transaction::strayRollbackDoesNotLeak()
+{
+	sql("CREATE TABLE btd142 (x INTEGER)");
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		QVERIFY(TransCommit());
+		QVERIFY(TransRollback());
+	}
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		sql("INSERT INTO btd142 VALUES (1)");
+		QVERIFY(TransCommit());
+	}
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd142").toInt(), 1);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_transaction)

@@ -13,6 +13,8 @@
 #include "pki_x509super.h"
 
 #include "audit.h"
+#include "audit_key.h"
+#include "entropy.h"
 #include "exception.h"
 #include "pkcs11.h"
 
@@ -391,6 +393,36 @@ void db_key::updateKeyEncryptionScheme()
 	}
 	if (common_success && withOwnPassword.isEmpty())
 		Settings["legacy-keys-updated"] = true;
+}
+
+void db_key::changeDatabasePassword(const Passwd &pass)
+{
+	QString salt = Entropy::makeSalt();
+	QString passhash = pki_evp::sha512passwT(pass, salt);
+	QList<pki_evp*> key_list = Store.sqlSELECTpki<pki_evp>(
+		"SELECT item FROM private_keys WHERE ownPass=0");
+
+	try {
+		Transaction;
+		TransThrow();
+		foreach(pki_evp *key, key_list) {
+			EVP_PKEY *evp = key->decryptKey();
+			key->set_evp_key(evp);
+			key->encryptKey(pass.constData());
+			key->sqlUpdatePrivateKey();
+		}
+		AuditKey::reencrypt(pass);
+		Settings["pwhash"] = passhash;
+		if (!TransCommit())
+			throw errorEx(tr("The new password was not stored"));
+	} catch (...) {
+		/* The nested settings::set() changed memory before the
+		 * outer commit failed: read the settings again (BTD-142) */
+		Settings.clear();
+		throw;
+	}
+	pki_evp::passHash = passhash;
+	pki_evp::passwd = pass;
 }
 
 void db_key::setOwnPass(QModelIndex idx, enum pki_key::passType x)
