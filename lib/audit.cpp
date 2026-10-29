@@ -101,6 +101,8 @@ const QStringList &AuditParams::allowList()
 		"template", "this_update", "validity_capped",
 		/* device CSRs (BTD-65) */
 		"csr_signature_algorithm", "warning",
+		/* certificate profiles (BTD-54) */
+		"profile",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

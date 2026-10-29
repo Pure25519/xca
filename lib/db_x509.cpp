@@ -28,6 +28,7 @@
 #include "PwDialogCore.h"
 
 #include <QCoreApplication>
+#include <algorithm>
 #include <QRegularExpression>
 #include <QTimeZone>
 
@@ -406,6 +407,8 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
+	if (!spec.profile.isEmpty())
+		p.set("profile", spec.profile);
 	return p;
 }
 
@@ -462,6 +465,190 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 	GENERAL_NAMES_free(names);
 	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
 	openssl_error();
+}
+
+/* An extension of the CSR, decoded; nullptr if it has none */
+static void *requestedExt(X509_REQ *req, int nid, int *critical)
+{
+	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
+	void *value = X509V3_get_d2i(exts, nid, critical, nullptr);
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	return value;
+}
+
+/* Replaces or adds the extension nid of cert, keeping its place */
+static void putExt(pki_x509 *cert, int nid, void *value, int critical)
+{
+	X509 *x = cert->getCert();
+	int at = X509_get_ext_by_NID(x, nid, -1);
+	if (at >= 0)
+		X509_EXTENSION_free(X509_delete_ext(x, at));
+	X509_EXTENSION *ext = X509V3_EXT_i2d(nid, critical, value);
+	if (ext)
+		X509_add_ext(x, ext, at);
+	X509_EXTENSION_free(ext);
+}
+
+/* The EKU a CSR asks for: its own, or ekuDefault when it has none;
+ * every purpose must be in ekuAllowed when that is set */
+static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
+			X509_REQ *req, int *critical)
+{
+	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)
+			requestedExt(req, NID_ext_key_usage, critical);
+	if (!eku && !e.ekuDefault.isEmpty()) {
+		eku = sk_ASN1_OBJECT_new_null();
+		*critical = 0;
+		for (const QString &p : e.ekuDefault) {
+			ASN1_OBJECT *o = OBJ_txt2obj(CCHAR(p), 0);
+			if (o)
+				sk_ASN1_OBJECT_push(eku, o);
+		}
+	}
+	for (int i = 0; eku && !e.ekuAllowed.isEmpty() &&
+			i < sk_ASN1_OBJECT_num(eku); i++) {
+		const ASN1_OBJECT *o = sk_ASN1_OBJECT_value(eku, i);
+		bool allowed = false;
+		for (const QString &a : e.ekuAllowed) {
+			ASN1_OBJECT *ao = OBJ_txt2obj(CCHAR(a), 0);
+			allowed |= ao && !OBJ_cmp(o, ao);
+			ASN1_OBJECT_free(ao);
+		}
+		if (!allowed) {
+			QString name = OBJ_obj2QString(o);
+			EXTENDED_KEY_USAGE_free(eku);
+			ign_openssl_error();
+			throw serviceError("csr_eku_not_allowed",
+				QCoreApplication::translate("db_x509",
+				"The request asks for the extended key usage %1, which the template does not allow")
+				.arg(name));
+		}
+	}
+	ign_openssl_error();
+	return eku;
+}
+
+/* Union of two values of extension nid, the CSR's entries first */
+static void *unionOf(int nid, void *req, void *templ)
+{
+	if (nid == NID_key_usage) {
+		ASN1_BIT_STRING *a = (ASN1_BIT_STRING *)req,
+				*b = (ASN1_BIT_STRING *)templ;
+		for (int bit = 0; bit < 9; bit++) {
+			if (ASN1_BIT_STRING_get_bit(b, bit))
+				ASN1_BIT_STRING_set_bit(a, bit, 1);
+		}
+		return a;
+	}
+	if (nid == NID_subject_alt_name) {
+		GENERAL_NAMES *a = (GENERAL_NAMES *)req,
+				*b = (GENERAL_NAMES *)templ;
+		for (int i = 0; i < sk_GENERAL_NAME_num(b); i++) {
+			GENERAL_NAME *gn = sk_GENERAL_NAME_value(b, i);
+			bool seen = false;
+			for (int j = 0; j < sk_GENERAL_NAME_num(a); j++)
+				seen |= !GENERAL_NAME_cmp(gn,
+						sk_GENERAL_NAME_value(a, j));
+			if (!seen)
+				sk_GENERAL_NAME_push(a, GENERAL_NAME_dup(gn));
+		}
+		return a;
+	}
+	EXTENDED_KEY_USAGE *a = (EXTENDED_KEY_USAGE *)req,
+			*b = (EXTENDED_KEY_USAGE *)templ;
+	for (int i = 0; i < sk_ASN1_OBJECT_num(b); i++) {
+		const ASN1_OBJECT *o = sk_ASN1_OBJECT_value(b, i);
+		bool seen = false;
+		for (int j = 0; j < sk_ASN1_OBJECT_num(a); j++)
+			seen |= !OBJ_cmp(o, sk_ASN1_OBJECT_value(a, j));
+		if (!seen)
+			sk_ASN1_OBJECT_push(a, OBJ_dup(o));
+	}
+	return a;
+}
+
+static void freeExtValue(int nid, void *value)
+{
+	if (!value)
+		return;
+	if (nid == NID_key_usage)
+		ASN1_BIT_STRING_free((ASN1_BIT_STRING *)value);
+	else if (nid == NID_subject_alt_name)
+		GENERAL_NAMES_free((GENERAL_NAMES *)value);
+	else
+		EXTENDED_KEY_USAGE_free((EXTENDED_KEY_USAGE *)value);
+}
+
+/* SAN, key usage and EKU of the CSR against the template's, each by its
+ * merge mode (BTD-54); every other extension of the CSR as XCA always
+ * did: added with "copy extensions" when the template lacks it */
+static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert)
+{
+	const ExtensionSpec &e = spec.extensions;
+	X509_REQ *req = spec.request->getReq();
+	X509 *x = cert->getCert();
+	const QList<QPair<int, ExtensionSpec::requestMerge> > modes {
+		{ NID_subject_alt_name, e.sanMerge },
+		{ NID_key_usage, e.kuMerge },
+		{ NID_ext_key_usage, e.ekuMerge },
+	};
+	QList<int> handled;
+	for (const auto &m : modes) {
+		int nid = m.first;
+		ExtensionSpec::requestMerge mode = m.second;
+		bool templ = X509_get_ext_by_NID(x, nid, -1) >= 0;
+		handled << nid;
+		if (mode == ExtensionSpec::merge_template ||
+		    (mode == ExtensionSpec::merge_legacy &&
+		     (!spec.copyRequestExtensions || templ)))
+			continue;
+		int crit = 0;
+		void *value = nid == NID_ext_key_usage ?
+			requestedEku(e, req, &crit) :
+			requestedExt(req, nid, &crit);
+		if (!value)
+			continue;
+		if (mode == ExtensionSpec::merge_union && templ) {
+			int tcrit = 0;
+			void *t = X509_get_ext_d2i(x, nid, &tcrit, nullptr);
+			value = unionOf(nid, value, t);
+			crit |= tcrit > 0;
+			freeExtValue(nid, t);
+		}
+		putExt(cert, nid, value, crit > 0);
+		freeExtValue(nid, value);
+	}
+	if (!spec.copyRequestExtensions)
+		return;
+	extList el = spec.request->getV3ext();
+	for (int i = 0; i < el.count(); i++) {
+		if (!handled.contains(el[i].nid()))
+			cert->addV3ext(el[i], true);
+	}
+}
+
+/* The extensions named in order first, in that order (BTD-54) */
+static void orderExtensions(const QList<int> &order, pki_x509 *cert)
+{
+	if (order.isEmpty())
+		return;
+	X509 *x = cert->getCert();
+	QList<QPair<int, X509_EXTENSION *> > exts;
+	while (X509_get_ext_count(x) > 0) {
+		X509_EXTENSION *ext = X509_delete_ext(x, 0);
+		int rank = order.indexOf(OBJ_obj2nid(
+				X509_EXTENSION_get_object(ext)));
+		exts << qMakePair(rank < 0 ? order.size() : rank, ext);
+	}
+	std::stable_sort(exts.begin(), exts.end(),
+		[](const QPair<int, X509_EXTENSION *> &a,
+		   const QPair<int, X509_EXTENSION *> &b) {
+			return a.first < b.first;
+		});
+	for (const auto &p : exts) {
+		X509_add_ext(x, p.second, -1);
+		X509_EXTENSION_free(p.second);
+	}
 }
 
 pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
@@ -540,15 +727,13 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
 
 	// apply extensions from CSR if requested; a profile takes only
-	// the SAN (BTD-65)
+	// the SAN (BTD-65), SAN, KU and EKU follow their merge mode (BTD-54)
 	if (spec.csrPolicy.profile && spec.request) {
 		requestSan(spec, cert);
-	} else if (spec.copyRequestExtensions && spec.request) {
-		extList el = spec.request->getV3ext();
-		int m = el.count();
-		for (int i=0; i<m; i++)
-			cert->addV3ext(el[i], true);
+	} else if (spec.request) {
+		mergeRequest(spec, cert);
 	}
+	orderExtensions(spec.extensionOrder, cert);
 
 	IssuanceChecks::certificate(spec, cert, chain);
 	IssuanceChecks::names(spec, cert, chain);

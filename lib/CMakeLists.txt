@@ -43,6 +43,7 @@ cmdline.cpp   pkcs11_provider.cpp
 audit.cpp	audit.h	audit_key.cpp	audit_key.h
 issuance.cpp	issuance.h
 issuance_checks.cpp	issuance_checks.h
+profile.cpp	profile.h
 request.cpp	request.h
 importexport.cpp	importexport.h
 template.cpp	template.h

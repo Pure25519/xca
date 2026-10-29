@@ -35,7 +35,10 @@ byte. `test_service_csr_acceptance` (BTD-65) issues them under the profiles; sou
 commit, SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`. Never edit them:
 their value is that the devices made them.
 
-## `profiles/golden/`
+## `profiles/`
 
-The golden expectation files of the bxc-pki profiles (BTD-64), copied unchanged from the commit
-named in `profiles/PROVENANCE.json`. Regenerate them in bxc-pki and copy them again.
+The certificate profiles of bxc-pki (`<id>.json`) and their golden expectation files
+(`golden/`, BTD-64), copied unchanged from the commit named in `profiles/PROVENANCE.json`.
+`test_service_profiles` (BTD-54) applies every profile and compares with the golden files,
+`test_service_csr_acceptance` (BTD-65) uses the golden files. Regenerate them in bxc-pki and copy
+them again.
