@@ -28,6 +28,7 @@
 #include "lib/importexport.h"
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
+#include "lib/pki_multi.h"
 #include "lib/pki_export.h"
 #include "lib/pki_temp.h"
 #include "lib/db_temp.h"
@@ -107,6 +108,7 @@ class test_service_importexport : public ServiceTestCase
 	void exportFailureKeepsFile();
 	void exportOverwritesKeyOwnerOnly();
 	void exportNullItem();
+	void importRollbackHandsBack();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -1115,6 +1117,71 @@ void test_service_importexport::exportNullItem()
 	QCOMPARE(e.errorCode, QString("wrong_object_type"));
 	QVERIFY(!e.params.contains("name"));
 	QVERIFY(AuditLog::verify().ok());
+}
+
+/* Rows of the items table: only what was committed */
+static int committedItems()
+{
+	QSqlQuery q("SELECT COUNT(*) FROM items");
+	return q.next() ? q.value(0).toInt() : -1;
+}
+
+/* The object.import entry of the second object fails after its insert:
+ * the database rolls back both, and both leave the store and the views
+ * again and go back to the caller through ImportSpec::unstored; the
+ * retry stores them. Before, they stayed in memory with the id of a
+ * rolled-back row: shown as stored, gone after a restart, and a new
+ * import of the same file found them as "already in the database"
+ * (BTD-114, mr-processor review of xca#29). */
+void test_service_importexport::importRollbackHandsBack()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_multi read;
+	read.probeAnything(file("ca.pem"));
+	read.probeAnything(file("leaf.pem"));
+	QList<pki_base *> given = read.pull();
+	QCOMPARE(given.size(), 2);
+
+	QSqlQuery q;
+	QVERIFY2(q.exec("CREATE TEMP TRIGGER btd114_fail_audit BEFORE "
+		"INSERT ON audit_log WHEN NEW.action = 'object.import' "
+		"AND NEW.result = 'success' "
+		"AND NEW.params LIKE '%BTD34 Leaf%' BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-114 test: audit refused'); END"),
+		CCHAR(q.lastError().text()));
+	QList<pki_base *> unstored;
+	ImportSpec spec;
+	spec.items = given;
+	spec.unstored = &unstored;
+	try {
+		Database.importItems(ctx, spec);
+		QFAIL("importItems() did not throw");
+	} catch (errorEx &) {
+	}
+	QVERIFY(q.exec("DROP TRIGGER temp.btd114_fail_audit"));
+
+	QCOMPARE(Store.getAll<pki_base>().size(), 0);
+	QCOMPARE(Database.model<db_x509>()->rowCount(QModelIndex()), 0);
+	QCOMPARE(committedItems(), 0);
+	QCOMPARE(unstored.size(), 2);
+	foreach(pki_base *pki, unstored) {
+		QVERIFY(given.contains(pki));
+		QVERIFY(!pki->getSqlItemId().isValid());
+	}
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("object.import"));
+	QCOMPARE(e.result, QString("failure"));
+
+	ImportSpec retry;
+	retry.items = unstored;
+	ImportResult result = Database.importItems(ctx, retry);
+	QCOMPARE(result.created.size(), 2);
+	QCOMPARE(result.existing.size(), 0);
+	QCOMPARE(committedItems(), 2);
+	QVERIFY(AuditLog::verify().ok());
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

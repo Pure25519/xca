@@ -177,3 +177,42 @@ void test_main::importOneFailingItem()
 	}
 	dbstatus();
 }
+
+/* One item fails after its insert, at its object.import entry: the
+ * database rolls it back, and it goes back into the dialog instead of
+ * staying in memory as if stored; the others are stored. A second OK
+ * stores it (BTD-114, mr-processor review of xca#29). */
+void test_main::importAuditFailureKeepsItem()
+{
+	try {
+
+	ImportMulti *dlg = importDialog();
+	QString file = QFileInfo("testdb.xdb").absoluteFilePath();
+	QSqlQuery trigger;
+	QVERIFY2(trigger.exec("CREATE TEMP TRIGGER btd114_audit BEFORE "
+		"INSERT ON audit_log WHEN NEW.action = 'object.import' "
+		"AND NEW.result = 'success' "
+		"AND NEW.params LIKE '%Inter CA 1%' BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-114 test: audit refused'); END"),
+		CCHAR(trigger.lastError().text()));
+	dlg->on_butOk_clicked();
+	QSqlQuery("DROP TRIGGER temp.btd114_audit");
+	QStringList stored;
+	foreach(pki_x509 *cert, Store.getAll<pki_x509>())
+		stored << cert->getIntName();
+	stored.sort();
+	QCOMPARE(stored, QStringList({ "Endentity", "Root CA" }));
+	QCOMPARE(committedItems(file), 2);
+	QCOMPARE(dlg->entries(), 1);
+
+	dlg->on_butOk_clicked();
+	QCOMPARE(dlg->entries(), 0);
+	QCOMPARE(Store.getAll<pki_x509>().size(), 3);
+	QCOMPARE(committedItems(file), 3);
+	delete dlg;
+
+	} catch (...) {
+		QVERIFY2(false, "Exception thrown");
+	}
+	dbstatus();
+}

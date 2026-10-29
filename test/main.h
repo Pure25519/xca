@@ -39,6 +39,7 @@ class test_main: public QObject
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();
+	void importAuditFailureKeepsItem();
 	void exportFormat();
 	void revoke();
 	void testValidity();

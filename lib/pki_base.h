@@ -139,6 +139,11 @@ class pki_base : public QObject
 		{
 			return sqlItemId;
 		}
+		/* Not stored after all: its insert was rolled back */
+		void clearSqlItemId()
+		{
+			sqlItemId = QVariant();
+		}
 		enum pki_type getType() const
 		{
 			return pkiType;

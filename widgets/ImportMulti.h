@@ -24,6 +24,8 @@ class ImportMulti: public QDialog, private Ui::ImportMulti
 		slotid slot{};
 		db_token *mcont{};
 		void importError(QStringList failed);
+		pki_base *importOne(pki_base *pki, QString *code,
+				QString *error);
 
 	public:
 		ImportMulti(QWidget *parent);
