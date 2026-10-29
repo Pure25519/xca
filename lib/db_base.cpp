@@ -11,6 +11,9 @@
 #include "XcaWarningCore.h"
 #include "audit.h"
 #include "importexport.h"
+#include "pki_crl.h"
+#include "pki_key.h"
+#include "pki_x509.h"
 
 #include <QDir>
 #include <QDebug>
@@ -63,11 +66,11 @@ void db_base::createSuccess(const pki_base *pki) const
 	XCA_INFO(pki->getMsg(pki_base::msg_create).arg(pki->getIntName()));
 }
 
-void db_base::remFromCont(const QModelIndex &idx)
+void db_base::remFromCont(pki_base *pki)
 {
+	QModelIndex idx = index(pki);
 	if (!idx.isValid())
 		return;
-	pki_base *pki = fromIndex(idx);
 	pki_base *parent_pki = pki->getParent();
 	int row = rownumber(pki);
 
@@ -253,30 +256,25 @@ pki_base *db_base::insertPKI(pki_base *pki)
 	return pki;
 }
 
-void db_base::deletePKI(QModelIndex idx)
+bool db_base::isStored(const pki_base *pki) const
 {
-	pki_base *pki = fromIndex(idx);
-	QSqlDatabase db = QSqlDatabase::database();
-	try {
-		try {
-			pki->deleteFromToken();
-		} catch (errorEx &err) {
-			XCA_ERROR(err);
-		}
-		Transaction;
-		if (TransBegin()) {
-			QSqlError e = pki->deleteSql();
-			TransDone(e);
-			if (!e.isValid())
-				remFromCont(idx);
-			AffectedItems(pki->getSqlItemId());
-			XCA_SQLERROR(e);
-			Store.remove(pki->getSqlItemId());
-			delete pki;
-		}
-	} catch (errorEx &err) {
-		XCA_ERROR(err);
-	}
+	return pki && pki->getSqlItemId().isValid() &&
+		Store.find(pki->getSqlItemId().toULongLong()) == pki;
+}
+
+void db_base::removeItem(pki_base *pki)
+{
+	QVariant id = pki->getSqlItemId();
+	Transaction;
+	TransThrow();
+	QSqlError e = pki->deleteSql();
+	if (e.isValid())
+		throw serviceError("database_error", e.text());
+	AffectedItems(id);
+	remFromCont(pki);
+	Store.remove(id);
+	delete pki;
+	TransCommit();
 }
 
 void db_base::insertChild(pki_base *child, pki_base *parent)
@@ -502,41 +500,95 @@ Qt::ItemFlags db_base::flags(const QModelIndex &index) const
 
 bool db_base::setData(const QModelIndex &index, const QVariant &value, int role)
 {
-	QString newname;
-	pki_base *item;
-	if (index.isValid() && role == Qt::EditRole) {
-		newname = value.toString();
-		item = fromIndex(index);
-		if (newname == item->getIntName())
-			return true;
-		item->setIntName(newname);
-		updateItem(item);
+	if (!index.isValid() || role != Qt::EditRole)
+		return false;
+	try {
+		rename(ServiceContext::localUser(ServiceContext::gui),
+			fromIndex(index), value.toString());
 		return true;
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
 	}
 	return false;
 }
 
-void db_base::updateItem(pki_base *pki)
+static QString itemId(const pki_base *pki)
+{
+	return pki && pki->getSqlItemId().isValid() ?
+		pki->getSqlItemId().toString() : QString();
+}
+
+void db_base::writeNameComment(pki_base *pki)
 {
 	XSqlQuery q;
-	QSqlError e;
-
-	if (!pki->getSqlItemId().isValid())
-		return;
-
-	Transaction;
-	TransThrow();
 
 	SQL_PREPARE(q, "UPDATE items SET name=?, comment=? WHERE id=?");
 	q.bindValue(0, pki->getIntName());
 	q.bindValue(1, pki->getComment());
 	q.bindValue(2, pki->getSqlItemId());
 	q.exec();
-	e = q.lastError();
+	QSqlError e = q.lastError();
+	if (e.isValid())
+		throw serviceError("database_error", e.text());
 	AffectedItems(pki->getSqlItemId());
+}
 
-	XCA_SQLERROR(e);
-	TransDone(e);
+void db_base::rename(const ServiceContext &ctx, pki_base *pki,
+			const QString &name)
+{
+	updateProperties(ctx, pki, name, pki ? pki->getComment() : QString());
+}
+
+void db_base::updateProperties(const ServiceContext &ctx, pki_base *pki,
+			const QString &name, const QString &comment)
+{
+	QString oldName = pki ? pki->getIntName() : QString();
+	QString oldComment = pki ? pki->getComment() : QString();
+	bool newName = !pki || name != oldName;
+	bool newComment = pki && comment != oldComment;
+	AuditParams renameParams, commentParams;
+
+	if (!newName && !newComment)
+		return;
+	renameParams.set("name", name);
+	if (pki)
+		renameParams.set("old_name", oldName);
+	commentParams.set("name", name);
+	try {
+		auditedTransaction(ctx, newName ? "object.rename" :
+				"object.update_comment", auditObjectType(pki),
+				itemId(pki), newName ? renameParams :
+				commentParams, [&]() {
+			if (pki && !pkitype.contains(pki->getType()))
+				throw serviceError("wrong_object_type",
+					tr("The item does not belong to this list"));
+			if (!isStored(pki))
+				throw serviceError("missing_object",
+					tr("The item is not in the database"));
+			pki->setIntName(name);
+			pki->setComment(comment);
+			writeNameComment(pki);
+			if (newName)
+				AuditLog::append(ctx, "object.rename",
+					auditObjectType(pki), itemId(pki),
+					renameParams);
+			if (newComment)
+				AuditLog::append(ctx, "object.update_comment",
+					auditObjectType(pki), itemId(pki),
+					commentParams);
+		});
+	} catch (...) {
+		if (isStored(pki)) {
+			pki->setIntName(oldName);
+			pki->setComment(oldComment);
+		}
+		throw;
+	}
+	emitDataChanged(pki);
+}
+
+void db_base::emitDataChanged(pki_base *pki)
+{
 	pki->recheckVisibility();
 
 	QModelIndex i, j;
@@ -545,6 +597,115 @@ void db_base::updateItem(pki_base *pki)
 	emit dataChanged(i, j);
 	emit pkiChanged(pki);
 	restart_timer();
+}
+
+/* The objects that refer to pki and stay when it is deleted */
+static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
+{
+	QList<pki_base *> list;
+	QList<QVariant> id { pki->getSqlItemId() };
+
+	*revocations = 0;
+	if (dynamic_cast<pki_key *>(pki)) {
+		foreach(pki_x509super *x, Store.sqlSELECTpki<pki_x509super>(
+				"SELECT item FROM x509super WHERE pkey=?", id))
+			list << x;
+	} else if (dynamic_cast<pki_x509 *>(pki)) {
+		foreach(pki_x509 *x, Store.sqlSELECTpki<pki_x509>(
+				"SELECT item FROM certs WHERE issuer=? AND item<>?",
+				id + id))
+			list << x;
+		foreach(pki_crl *x, Store.sqlSELECTpki<pki_crl>(
+				"SELECT item FROM crls WHERE issuer=?", id))
+			list << x;
+		XSqlQuery q;
+		SQL_PREPARE(q, "SELECT COUNT(*) FROM revocations WHERE caId=?");
+		q.bindValue(0, id[0]);
+		q.exec();
+		QSqlError e = q.lastError();
+		if (e.isValid())
+			throw serviceError("database_error", e.text());
+		if (q.next())
+			*revocations = q.value(0).toInt();
+	}
+	return list;
+}
+
+DeleteResult db_base::deleteItems(const ServiceContext &ctx,
+			const QList<pki_base *> &items)
+{
+	DeleteResult result;
+	DeleteResult::Deleted current;
+	QString action = "object.delete";
+	AuditParams params;
+
+	try {
+		Transaction;
+		TransThrow();
+		if (items.isEmpty())
+			throw serviceError("nothing_to_delete",
+				tr("No item selected"));
+		foreach(pki_base *pki, items) {
+			current.objectType = auditObjectType(pki);
+			current.id = itemId(pki);
+			current.name = pki ? pki->getIntName() : QString();
+			action = pki && pki->getType() == tmpl ?
+				"template.delete" : "object.delete";
+			if (pki && !pkitype.contains(pki->getType()))
+				throw serviceError("wrong_object_type",
+					tr("The item does not belong to this list"));
+			if (!isStored(pki) || items.count(pki) > 1)
+				throw serviceError("missing_object",
+					tr("The item is not in the database"));
+		}
+		foreach(pki_base *pki, items) {
+			int revocations;
+			current.objectType = auditObjectType(pki);
+			current.id = itemId(pki);
+			current.name = pki->getIntName();
+			action = pki->getType() == tmpl ? "template.delete" :
+							"object.delete";
+			params = AuditParams();
+			params.set("name", current.name);
+
+			QList<pki_base *> deps = dependentsOf(pki, &revocations);
+			int count = 0;
+			foreach(pki_base *d, deps) {
+				if (items.contains(d))
+					continue;
+				count++;
+				if (!result.dependents.contains(d))
+					result.dependents << d;
+			}
+			params.set("dependents", count);
+			if (pki->getType() == x509)
+				params.set("revocations", revocations);
+
+			removeItem(pki);
+			AuditLog::append(ctx, action, current.objectType,
+					current.id, params);
+			result.deleted << current;
+			result.revocations += revocations;
+		}
+		if (!TransCommit())
+			throw serviceError("database_error", tr(
+				"Failed to commit the database transaction"));
+	} catch (serviceError &err) {
+		AuditLog::append(ctx, action, current.objectType, current.id,
+				params.getValues().isEmpty() ?
+				AuditParams().set("name", current.name) : params,
+				"failure", err.code);
+		throw;
+	} catch (...) {
+		AuditLog::append(ctx, action, current.objectType, current.id,
+				params.getValues().isEmpty() ?
+				AuditParams().set("name", current.name) : params,
+				"failure", "internal_error");
+		throw;
+	}
+	restart_timer();
+	emit columnsContentChanged();
+	return result;
 }
 
 void db_base::timerMaintenance()

@@ -7,6 +7,9 @@
 
 #include "lib/pki_temp.h"
 #include "lib/load_obj.h"
+#include "lib/audit.h"
+#include "lib/exception.h"
+#include "lib/template.h"
 #include "TempTreeView.h"
 #include "ExportDialog.h"
 #include "NewX509.h"
@@ -31,16 +34,25 @@ void TempTreeView::fillContextMenu(QMenu *menu, QMenu *,
 			SLOT(reqFromTemp())), ctxId("createRequest"));
 }
 
+/* The template dialogs fill a TemplateSpec; storing is the service
+ * function of db_temp (BTD-35) */
 void TempTreeView::duplicateTemp()
 {
 	pki_temp *temp = db_base::fromIndex<pki_temp>(currentIndex());
-    db_temp* db_temp = temps();
-    if (!temp || !basemodel || !db_temp)
+	if (!temp || !temps())
 		return;
 
-	pki_temp *newtemp = new pki_temp(temp);
-	newtemp->setIntName(newtemp->getIntName() + " " + tr("copy"));
-    db_temp->insertPKI(newtemp);
+	/* as pki_temp(const pki_temp *) always did: without the comment */
+	TemplateSpec spec = TemplateSpec::fromTemplate(temp);
+	spec.name += " " + tr("copy");
+	spec.comment.clear();
+	spec.source = unknown;
+	try {
+		temps()->newTemplate(ServiceContext::localUser(
+				ServiceContext::gui), spec);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
 }
 
 void TempTreeView::certFromTemp()
@@ -62,7 +74,8 @@ void TempTreeView::showPki(pki_base *pki)
 	alterTemp(dynamic_cast<pki_temp *>(pki));
 }
 
-bool TempTreeView::runTempDlg(pki_temp *temp)
+/* Shows temp in the template dialog; *spec receives the input */
+bool TempTreeView::runTempDlg(pki_temp *temp, TemplateSpec *spec)
 {
 	NewX509 *dlg = new NewX509(this);
 
@@ -71,48 +84,59 @@ bool TempTreeView::runTempDlg(pki_temp *temp)
 		delete dlg;
 		return false;
 	}
-	dlg->toTemplate(temp);
+	*spec = dlg->templateSpec();
 	delete dlg;
 	return true;
 }
 
 void TempTreeView::newItem()
 {
-	pki_temp *temp = NULL;
-	QString type;
-
-	if (!basemodel)
+	if (!temps())
 		return;
 
 	itemComboTemp *ic = new itemComboTemp(NULL);
 	ic->insertPkiItems(temps()->getPredefs());
 	XcaDialog *dlg = new XcaDialog(this, tmpl, ic,
 				tr("Preset Template values"), QString());
-	if (dlg->exec()) {
-		temp = new pki_temp(ic->currentPkiItem());
-		if (temp) {
-			temp->pkiSource = generated;
-			if (runTempDlg(temp)) {
-				temp = dynamic_cast<pki_temp *>(
-						temps()->insertPKI(temp));
-				temps()->createSuccess(temp);
-			} else {
-				delete temp;
-			}
-		}
-	}
+	pki_temp *preset = dlg->exec() ? ic->currentPkiItem() : nullptr;
 	delete dlg;
+	if (!preset)
+		return;
+
+	/* the dialog shows a copy of the preset */
+	pki_temp *temp = new pki_temp(preset);
+	TemplateSpec spec;
+	bool ok = runTempDlg(temp, &spec);
+	delete temp;
+	if (!ok)
+		return;
+	spec.source = generated;
+	try {
+		temps()->createSuccess(temps()->newTemplate(
+			ServiceContext::localUser(ServiceContext::gui), spec));
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
 }
 
 bool TempTreeView::alterTemp(pki_temp *temp)
 {
-	if (!basemodel || !temp)
+	TemplateSpec spec;
+
+	if (!temps() || !temp)
 		return false;
 
-	if (!runTempDlg(temp))
+	if (!runTempDlg(temp, &spec))
 		return false;
 
-	temps()->alterTemp(temp);
+	spec.source = temp->pkiSource;
+	try {
+		temps()->updateTemplate(ServiceContext::localUser(
+				ServiceContext::gui), temp, spec);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+		return false;
+	}
 	return true;
 }
 

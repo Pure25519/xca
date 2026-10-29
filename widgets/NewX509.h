@@ -13,6 +13,7 @@
 #include "lib/oid.h"
 #include "lib/issuance.h"
 #include "lib/request.h"
+#include "lib/template.h"
 #include "kvView.h"
 #include "XcaDetail.h"
 #include <openssl/x509v3.h>
@@ -65,8 +66,6 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		extList getExtDuplicates(const extList &el);
 		void checkIcon(const QString &text, int nid, QLabel*img);
 		void selfComment(QString msg);
-		QMap<QString, QLineEdit*> templateLineEdits{};
-		QMap<QString, QCheckBox*> templateCheckBoxes{};
 		pki_temp *caTemplate(pki_x509 *ca) const;
 		void setupExplicitDN(NIDlist my_dn_nid);
 		QList<nameEdit> setupExplicitInputs(NIDlist nid_list,
@@ -83,6 +82,7 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		void setCert(); // reduce to certificate form
 		void toTemplate(pki_temp *temp);
 		void fromTemplate(pki_temp *temp);
+		TemplateSpec templateSpec();
 		void defineTemplate(pki_temp *temp);
 		void defineRequest(pki_x509req *req);
 		void defineSigner(pki_x509 *defcert, bool applyTemp);

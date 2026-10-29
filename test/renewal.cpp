@@ -15,6 +15,7 @@
 #include "widgets/ImportMulti.h"
 #include "ui_ImportMulti.h"
 #include "widgets/CertExtend.h"
+#include "lib/audit.h"
 #include "ui_CertExtend.h"
 #include "widgets/RevocationList.h"
 #include "ui_RevocationList.h"
@@ -129,7 +130,8 @@ void test_main::revoke()
 	QCOMPARE(2, l.size());
 	// Delete one of the certs
 	if (l.size() > 0)
-		certs->deletePKI(certs->index(l[0]));
+		certs->deleteItems(ServiceContext::localUser(
+				ServiceContext::cli), { l[0] });
 	l = getcerts("Inter CA 1");
 	QCOMPARE(1, l.size());
 

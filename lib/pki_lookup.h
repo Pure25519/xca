@@ -32,6 +32,11 @@ class pki_lookup
 	}
 
     public:
+	/* The item with this id, NULL if there is none; no warning */
+	pki_base *find(quint64 id) const
+	{
+		return lookup.value(id);
+	}
 
 	~pki_lookup()
 	{

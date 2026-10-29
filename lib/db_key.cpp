@@ -81,9 +81,9 @@ QList<pki_key *> db_key::getUnusedKeys()
 		"WHERE x509super.item IS NULL");
 }
 
-void db_key::remFromCont(const QModelIndex &idx)
+void db_key::remFromCont(pki_base *pki)
 {
-	db_base::remFromCont(idx);
+	db_base::remFromCont(pki);
 	XSqlQuery q;
 
 	QList<pki_x509super*> items = Store.sqlSELECTpki<pki_x509super>(
@@ -150,7 +150,8 @@ pki_key *db_key::insertKey(pki_key *lkey, pki_key *oldkey)
 			.arg(oldkey->getInsertionDate().toPretty())
 			.arg(lkey->getIntName()));
 		lkey->setIntName(oldkey->getIntName());
-		deletePKI(index(oldkey));
+		/* part of the import, which audits it (outcome completed) */
+		removeItem(oldkey);
 	}
 	return dynamic_cast<pki_key *>(insertPKI(lkey));
 }

@@ -1,6 +1,8 @@
 
 #include "db_token.h"
+#include "audit.h"
 #include "exception.h"
+#include "importexport.h"
 #include "pki_scard.h"
 #include "sql.h"
 #include "XcaWarningCore.h"
@@ -35,27 +37,31 @@ void db_token::rename_token_in_database(pki_scard *token)
 	TransCommit();
 }
 
-bool db_token::setData(const QModelIndex &index, const QVariant &value, int role)
+void db_token::rename(const ServiceContext &ctx, pki_base *pki,
+			const QString &name)
 {
-	QString on, nn;
-	pki_base *item;
-	if (index.isValid() && role == Qt::EditRole) {
-		nn = value.toString();
-		item = fromIndex(index);
-		on = item->getIntName();
-		if (on == nn)
-			return true;
-		try {
-			if (item->renameOnToken(slot, nn)) {
-				item->setIntName(nn);
-				rename_token_in_database(
-					dynamic_cast<pki_scard*>(item));
-				emit dataChanged(index, index);
-				return true;
-			}
-		} catch (errorEx &err) {
-			XCA_ERROR(err);
-		}
-	}
-	return false;
+	QString oldName = pki ? pki->getIntName() : QString();
+	AuditParams params;
+
+	if (pki && name == oldName)
+		return;
+	params.set("name", name);
+	params.set("old_name", oldName);
+	params.set("on_token", true);
+	auditedTransaction(ctx, "object.rename", auditObjectType(pki),
+				QString(), params, [&]() {
+		if (!pki || rootItem->indexOf(pki) == -1)
+			throw serviceError("missing_object",
+				tr("The item is not on the token"));
+		if (!pki->renameOnToken(slot, name))
+			throw serviceError("token_error",
+				tr("The object '%1' was not renamed on the token")
+					.arg(oldName));
+		pki->setIntName(name);
+		rename_token_in_database(dynamic_cast<pki_scard*>(pki));
+		AuditLog::append(ctx, "object.rename", auditObjectType(pki),
+				QString(), params);
+	});
+	QModelIndex i = index(pki);
+	emit dataChanged(i, i);
 }

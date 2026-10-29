@@ -44,6 +44,7 @@ audit.cpp	audit.h	audit_key.cpp	audit_key.h
 issuance.cpp	issuance.h
 request.cpp	request.h
 importexport.cpp	importexport.h
+template.cpp	template.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)

@@ -43,6 +43,9 @@ until the database is reopened. The `failure` entry is written; the caller sees 
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
 | BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `write_failed`, `database_error` |
+| BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
+| BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
+| BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
 
 Import and export (BTD-34):
 
@@ -62,6 +65,34 @@ Import and export (BTD-34):
   `ExportSpec::clipboard`. `xca --import` uses `importItems()` with channel `cli`.
 - `lib/` signatures of the group take `pki_base *` lists, no `QModelIndex`; only the Qt model
   override `db_base::mimeData(QModelIndexList)` remains and calls `exportItems()`.
+
+Templates, rename and delete (BTD-35):
+
+- `TemplateSpec` (`lib/template.h`) is a template as value: subject, `ExtensionSpec` and the
+  validity period relative to the issuance (`validity`, `unit`, `midnight`,
+  `noWellDefinedExpDate`). `fromTemplate()`/`toTemplate()` convert to and from the stored
+  settings of `pki_temp`, `applyTo(IssuanceSpec&)` is the dialog's "Apply all" (it sets
+  `templateName`, so `certificate.issue` names the template), `fromIssuanceSpec()` and
+  `fromObject()` (Transform > Template) make one. The dialog fills and reads its widgets through
+  `TemplateSpec` (`NewX509::extensionsFromTemplate()`, `NewX509::templateSpec()`), so the mapping
+  exists once. Applying a template changes nothing in the database and writes no entry.
+- Audit parameters: `template.create`/`template.update` `name`, `subject`, `old_name` (only when
+  the name changed); `object.rename` `name`, `old_name`, `on_token` (renamed on a token,
+  `db_token`); `object.update_comment` `name` (never the comment); `object.delete` and
+  `template.delete` `name`, `dependents` (objects that stay and referred to it),
+  `revocations` (certificates only: the revocation rows it had as a CA).
+- `deleteItems()` deletes all objects of the call in one transaction or none. The objects that
+  refer to a deleted one are handled as XCA always did and listed in `DeleteResult::dependents`:
+  certificates and requests lose their private key; certificates lose their issuer (and move to
+  another certificate with the issuer's subject and key, if there is one); CRLs lose their issuer;
+  the CA's revocation rows are deleted. `AuditLog::verify()` replays an `object.delete` of a
+  certificate as the removal of its revocation rows. The question `item.delete` and the deletion
+  on a token (`pki_base::deleteFromToken()`) stay with the GUI caller (`XcaTreeView::deleteItems`,
+  `xcaWarning::confirmOkCancel()` records the answer in the `ServiceContext`).
+- `lib/` signatures of the group take `pki_base *`; `db_base::remFromCont(pki_base *)` replaces
+  the `QModelIndex` variant and `db_base::removeItem()` the old `deletePKI(QModelIndex)` (no
+  audit, used by the import that completes a public key). Only the Qt model override
+  `db_base::setData(QModelIndex, ...)` (inline editor, F2) remains and calls `rename()`.
 
 Where an existing value-based entry point asked a question or showed a message (key generation:
 "Key size too small", the question before an RSA/DSA size outside 1024..8192, the success

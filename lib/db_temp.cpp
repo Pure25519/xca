@@ -10,6 +10,9 @@
 #include "pki_temp.h"
 #include "load_obj.h"
 #include "func.h"
+#include "audit.h"
+#include "exception.h"
+#include "template.h"
 #include "XcaWarningCore.h"
 #include <QDir>
 #include <QFileInfo>
@@ -85,28 +88,91 @@ QList<pki_temp *> db_temp::getPredefs() const
 	return predefs;
 }
 
-bool db_temp::alterTemp(pki_temp *temp)
+static AuditParams templateParams(const TemplateSpec &spec)
 {
-	XSqlQuery q;
-	QSqlError e;
+	AuditParams p;
+	p.set("name", spec.name);
+	p.set("subject", spec.subject.oneLine());
+	return p;
+}
 
-	Transaction;
-	if (!TransBegin())
-		return false;
-	SQL_PREPARE(q, "UPDATE templates SET version=?, template=? WHERE item=?");
-	q.bindValue(0, TMPL_VERSION);
-	q.bindValue(1, temp->toB64Data());
-	q.bindValue(2, temp->getSqlItemId());
-	q.exec();
-	e = q.lastError();
-	XCA_SQLERROR(e);
-	if (e.isValid()) {
-		TransRollback();
-		return false;
+static QString itemId(const pki_base *pki)
+{
+	return pki && pki->getSqlItemId().isValid() ?
+		pki->getSqlItemId().toString() : QString();
+}
+
+pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
+				const TemplateSpec &spec)
+{
+	pki_temp *temp = new pki_temp();
+	AuditParams params = templateParams(spec);
+
+	spec.toTemplate(temp);
+	temp->pkiSource = spec.source;
+	try {
+		auditedTransaction(ctx, "template.create", "template",
+				QString(), params, [&]() {
+			QSqlError e = temp->insertSql();
+			if (e.isValid())
+				throw serviceError("database_error",
+					e.text());
+			Store.add(temp->getSqlItemId(), temp);
+			inToCont(temp);
+			AuditLog::append(ctx, "template.create", "template",
+					itemId(temp), params);
+		});
+	} catch (...) {
+		/* Known limit until BTD-50: rolled back in the database,
+		 * but already in the store and the view */
+		if (!isStored(temp))
+			delete temp;
+		throw;
 	}
-	updateItem(temp);
-	TransCommit();
-	return true;
+	restart_timer();
+	emit columnsContentChanged();
+	return temp;
+}
+
+void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
+				const TemplateSpec &spec)
+{
+	AuditParams params = templateParams(spec);
+	TemplateSpec old;
+
+	if (temp) {
+		old = TemplateSpec::fromTemplate(temp);
+		if (old.name != spec.name)
+			params.set("old_name", old.name);
+	}
+	try {
+		auditedTransaction(ctx, "template.update", "template",
+				itemId(temp), params, [&]() {
+			if (!isStored(temp))
+				throw serviceError("missing_template",
+					tr("The template is not in the database"));
+			XSqlQuery q;
+			spec.toTemplate(temp);
+			SQL_PREPARE(q, "UPDATE templates SET version=?, template=? WHERE item=?");
+			q.bindValue(0, TMPL_VERSION);
+			q.bindValue(1, temp->toB64Data());
+			q.bindValue(2, temp->getSqlItemId());
+			q.exec();
+			QSqlError e = q.lastError();
+			if (e.isValid())
+				throw serviceError("database_error", e.text());
+			writeNameComment(temp);
+			AuditLog::append(ctx, "template.update", "template",
+					itemId(temp), params);
+		});
+	} catch (...) {
+		if (isStored(temp)) {
+			old.toTemplate(temp);
+			emitDataChanged(temp);
+		}
+		throw;
+	}
+	emitDataChanged(temp);
 }
 
 void db_temp::writeItem(pki_base *pki, const pki_export *,

@@ -147,29 +147,3 @@ void db_x509super::extractPubkey(QModelIndex index)
 	XCA_INFO(key->getMsg(pki_base::msg_import).arg(pki->getIntName()));
 }
 
-void db_x509super::toTemplate(QModelIndex index)
-{
-	db_temp *temps = Database.model<db_temp>();
-	pki_x509super *pki = fromIndex<pki_x509super>(index);
-	if (!pki || !temps)
-		return;
-
-	try {
-		pki_temp *temp = new pki_temp();
-		Q_CHECK_PTR(temp);
-		temp->setIntName(pki->getIntName());
-		extList el = temp->fromCert(pki);
-		if (el.size()) {
-			xcaWarning::warningv3(tr("The following extensions were not ported into the template"), el);
-		}
-		temp->pkiSource = transformed;
-		temp->selfComment(tr("Transformed from %1 '%2'")
-			.arg(pki->getType() == x509 ?
-				tr("Certificate") : tr("Certificate request"))
-			.arg(pki->getIntName()));
-		createSuccess(temps->insert(temp));
-	}
-	catch (errorEx &err) {
-		XCA_ERROR(err);
-	}
-}

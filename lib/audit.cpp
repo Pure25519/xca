@@ -27,6 +27,7 @@ const char AuditLog::actionRevoke[] = "certificate.revoke";
 const char AuditLog::actionUnrevoke[] = "certificate.unrevoke";
 const char AuditLog::actionCrlGenerate[] = "crl.generate";
 const char AuditLog::actionRevocationBaseline[] = "revocation.baseline";
+const char AuditLog::actionDelete[] = "object.delete";
 const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
@@ -89,12 +90,13 @@ const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
 		"ca_id", "confirmed", "count", "crl_number", "curve",
-		"db_unlock_verified", "der_size", "encrypted", "file",
-		"fingerprint", "format", "hash_algo", "invalidity_date",
-		"issuer", "item_id", "key_size", "key_type", "name",
-		"next_update", "not_after", "not_before", "outcome",
-		"question", "reason", "reason_bit", "requested_not_after",
-		"revocation_date", "serial", "subject", "template",
+		"db_unlock_verified", "dependents", "der_size", "encrypted",
+		"file", "fingerprint", "format", "hash_algo",
+		"invalidity_date", "issuer", "item_id", "key_size",
+		"key_type", "name", "next_update", "not_after", "not_before",
+		"old_name", "on_token", "outcome", "question", "reason",
+		"reason_bit", "requested_not_after", "revocation_date",
+		"revocations", "serial", "subject", "template",
 		"this_update", "validity_capped",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
@@ -924,6 +926,17 @@ AuditVerifyResult AuditLog::verify()
 			revocationState s;
 			s.seq = e.seq;
 			state[key] = s;
+		} else if (e.action == actionDelete &&
+			   e.objectType == "certificate") {
+			/* pki_x509::deleteSqlData() removes the revocation
+			 * rows of the deleted certificate as a CA (BTD-35) */
+			qint64 deleted = e.objectId.toLongLong();
+			for (auto i = state.begin(); i != state.end(); ++i) {
+				if (i.key().first == deleted && i->present) {
+					*i = revocationState();
+					i->seq = e.seq;
+				}
+			}
 		} else if (e.action == actionCrlGenerate) {
 			/* db_crl::newCrl(): crlNo=? WHERE crlNo IS NULL */
 			qint64 num = e.params.value("crl_number").toLongLong();

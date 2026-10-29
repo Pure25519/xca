@@ -7,6 +7,13 @@
 
 #include "lib/db_x509super.h"
 #include "lib/database_model.h"
+#include "lib/db_temp.h"
+#include "lib/pki_temp.h"
+#include "lib/audit.h"
+#include "lib/exception.h"
+#include "lib/func.h"
+#include "lib/template.h"
+#include "XcaWarning.h"
 #include "X509SuperTreeView.h"
 #include "CertDetail.h"
 #include "MainWindow.h"
@@ -43,12 +50,29 @@ void X509SuperTreeView::extractPubkey()
 		x509super()->extractPubkey(idx);
 }
 
+/* Transform > Template: db_temp::newTemplate() (BTD-35) */
 void X509SuperTreeView::toTemplate()
 {
-	QModelIndex idx = currentIndex();
+	pki_x509super *pki = db_base::fromIndex<pki_x509super>(currentIndex());
+	db_temp *temps = Database.model<db_temp>();
+	extList notPorted;
 
-	if (idx.isValid() && basemodel)
-		x509super()->toTemplate(idx);
+	if (!pki || !temps)
+		return;
+
+	TemplateSpec spec = TemplateSpec::fromObject(pki, &notPorted);
+	if (notPorted.size())
+		xcaWarning::warningv3(tr("The following extensions were not ported into the template"), notPorted);
+	spec.comment = appendXcaComment(QString(), tr("Transformed from %1 '%2'")
+		.arg(pki->getType() == x509 ?
+			tr("Certificate") : tr("Certificate request"))
+		.arg(pki->getIntName()));
+	try {
+		temps->createSuccess(temps->newTemplate(
+			ServiceContext::localUser(ServiceContext::gui), spec));
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
 }
 
 void X509SuperTreeView::showPki(pki_base *pki)

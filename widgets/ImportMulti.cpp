@@ -157,8 +157,8 @@ void ImportMulti::on_butRemove_clicked()
 	foreach(index, indexes) {
 		if (index.column() != 0)
 			continue;
-		mcont->remFromCont(index);
 		pki_base *pki = db_base::fromIndex(index);
+		mcont->remFromCont(pki);
 		delete pki;
 	}
 	if (mcont->rowCount(QModelIndex()) == 0)
@@ -196,7 +196,7 @@ void ImportMulti::importIndexes(const QModelIndexList &indexes)
 			items << pki;
 	}
 	foreach(pki_base *pki, items)
-		mcont->remFromCont(mcont->index(pki));
+		mcont->remFromCont(pki);
 	importItems(items);
 	if (mcont->rowCount(QModelIndex()) == 0)
 		accept();
@@ -234,7 +234,7 @@ void ImportMulti::on_deleteToken_clicked()
 		pki_base *pki = db_base::fromIndex(index);
 		try {
 			pki->deleteFromToken(slot);
-			mcont->remFromCont(index);
+			mcont->remFromCont(pki);
 			delete pki;
 		} catch (errorEx &err) {
 			XCA_ERROR(err);
@@ -265,9 +265,7 @@ pki_base *ImportMulti::import(pki_base *pki)
 	if (!pki || pki->getSqlItemId().isValid())
 		return NULL;
 
-	QModelIndex idx = mcont->index(pki);
-	if (idx.isValid())
-		mcont->remFromCont(idx);
+	mcont->remFromCont(pki);
 
 	if (!Database.isOpen()) {
 		try {
@@ -334,8 +332,9 @@ ImportMulti::~ImportMulti()
 {
 	QModelIndex idx = listView->currentIndex();
 	while (idx != QModelIndex()) {
-		mcont->remFromCont(idx);
-		delete db_base::fromIndex(idx);
+		pki_base *pki = db_base::fromIndex(idx);
+		mcont->remFromCont(pki);
+		delete pki;
 		idx = listView->currentIndex();
 	}
 	listView->setModel(NULL);

@@ -327,7 +327,7 @@ void test_service_issuance::auditOnRejectedSpec()
 			QVERIFY(signer);
 			/* keep the certificate, drop its private key */
 			db_key *keys = Database.model<db_key>();
-			keys->deletePKI(keys->index(k));
+			keys->deleteItems(ctx, { k });
 			QVERIFY(!signer->getRefKey());
 		}
 		spec = eeSpec(req, signer);

@@ -27,6 +27,29 @@ class ExportSpec;
 class Passwd;
 class pki_key;
 
+/* What db_base::deleteItems() did (BTD-35) */
+class DeleteResult
+{
+  public:
+	class Deleted
+	{
+	  public:
+		QString objectType{};   // audit object type, e.g. "certificate"
+		QString id{};           // item id the object had
+		QString name{};
+	};
+	/* The deleted objects, in the order of the call */
+	QList<Deleted> deleted{};
+	/* Objects that stay and referred to a deleted one, as XCA always
+	 * handled them: certificates and requests that lost their private
+	 * key, certificates that lost their issuer (they move to another
+	 * certificate with the issuer's subject and key, if there is one),
+	 * CRLs that lost their issuer */
+	QList<pki_base *> dependents{};
+	/* Revocation rows of deleted CA certificates that were removed */
+	int revocations{};
+};
+
 class db_base: public QAbstractItemModel
 {
 	Q_OBJECT
@@ -47,13 +70,20 @@ class db_base: public QAbstractItemModel
 		QVariant selected{};
 
 		void _writePKI(pki_base *pki, bool overwrite);
+		/* Removes pki from the database, the store and the view,
+		 * moves or unlinks the objects that refer to it and frees
+		 * it. No question, no token, no audit entry: the caller
+		 * owns the transaction. Throws errorEx on a database error. */
+		void removeItem(pki_base *pki);
+		/* UPDATE of the items row (name, comment); the caller owns
+		 * the transaction. Throws serviceError database_error. */
+		static void writeNameComment(pki_base *pki);
 		virtual dbheaderList getHeaders();
 		QString sqlItemSelector();
 		bool isValidCol(int col) const;
 
 	public:
 		void restart_timer();
-		void updateItem(pki_base *pki);
 
 		virtual pki_base *newPKI(enum pki_type type = none);
 		db_base(const char *classname);
@@ -66,7 +96,9 @@ class db_base: public QAbstractItemModel
 		void reloadContainer(const QList<enum pki_type> &typelist);
 		virtual pki_base* insert(pki_base *item);
 		virtual void inToCont(pki_base *pki);
-		virtual void remFromCont(const QModelIndex &idx);
+		virtual void remFromCont(pki_base *pki);
+		/* pki is an object of this list stored in the database */
+		bool isStored(const pki_base *pki) const;
 		void changeView();
 		/* The export flags (F_*) the items do not support */
 		int exportFlags(const QList<pki_base *> &items) const;
@@ -118,8 +150,30 @@ class db_base: public QAbstractItemModel
 		QVariant headerData(int section, Qt::Orientation orientation,
 				int role) const;
 		Qt::ItemFlags flags(const QModelIndex &index) const;
+		/* The inline editor of the view (F2): rename() */
 		bool setData(const QModelIndex &index, const QVariant &value, int role);
-		void deleteSelectedItems(QModelIndexList indexes);
+		/* Service functions (BTD-35). No question or message; call
+		 * them outside a transaction. Rejections throw serviceError. */
+		/* object.rename: one entry with old_name and name; nothing
+		 * is written when the name does not change */
+		virtual void rename(const ServiceContext &ctx, pki_base *pki,
+				const QString &name);
+		/* Name and comment (Properties, detail dialogs): one entry
+		 * object.rename and one object.update_comment for what
+		 * changed, in one transaction */
+		void updateProperties(const ServiceContext &ctx, pki_base *pki,
+				const QString &name, const QString &comment);
+		/* object.delete (template.delete for templates), one entry
+		 * per object, all in one transaction: either all objects are
+		 * deleted or none, then one failure entry names the object
+		 * that failed (known limit until BTD-50: objects before the
+		 * failed one are already gone from memory until the database
+		 * is reopened). The confirmation (question item.delete) and
+		 * the deletion of a key or certificate on its token belong
+		 * to the caller. The pointers in items are invalid after a
+		 * successful call. */
+		DeleteResult deleteItems(const ServiceContext &ctx,
+				const QList<pki_base *> &items);
 		static pki_base *fromIndex(const QModelIndex &index)
 		{
 			if (!index.isValid())
@@ -155,7 +209,6 @@ class db_base: public QAbstractItemModel
 			return allHeaders;
 		}
 
-		void deletePKI(QModelIndex idx);
 		QMimeData *mimeData(const QModelIndexList &indexes) const;
 		void emitDataChanged(pki_base *pki);
 		bool containsType(enum pki_type t) const;
