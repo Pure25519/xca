@@ -19,7 +19,8 @@ const QList<int> digest::all_digests(
 #endif
 });
 
-int digest::default_md(NID_sha256);
+const int digest::builtin_md(NID_sha256);
+int digest::default_md(builtin_md);
 
 digest::digest(int nid) : md_nid(nid)
 {

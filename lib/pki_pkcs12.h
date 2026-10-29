@@ -18,6 +18,7 @@ class pki_x509;
 class encAlgo
 {
   private:
+	static const int builtin_encAlgo;
 	static int default_encAlgo;
 	int encAlgo_nid { NID_undef };
 
@@ -42,6 +43,11 @@ class encAlgo
 	}
 	static void setDefault(const QString &def);
 	static const encAlgo getDefault();
+	/* The compiled-in default, whatever a database set (BTD-174) */
+	static const encAlgo getBuiltinDefault()
+	{
+		return encAlgo(builtin_encAlgo);
+	}
 	/* The algorithm of a PKCS#12 export: the one an ExportSpec names
 	 * while its export runs, else the setting pkcs12_enc_algo (BTD-52) */
 	static const encAlgo forExport();
