@@ -9,6 +9,12 @@
  * the OPC UA chain rules of BTD-55. A profile is selected by its id (EST
  * label, CMP alias, registration), never by the content of a CSR.
  *
+ * Validity: validity.default from now, notBefore backdated by
+ * validity.backdate for device clocks. The backdating is a default, not
+ * a requested date, so it ends at the issuer's notBefore: a CA made an
+ * hour ago issues from its own start, never refused as
+ * issuer_not_yet_valid (BTD-55; boss decision 2026-10-29).
+ *
  * Profile::fromJson() takes the document from anywhere: a file
  * (fromFile()), or the profile store of BTD-167. apply() neither writes
  * to the database nor draws a serial.
