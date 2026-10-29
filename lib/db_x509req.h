@@ -29,7 +29,6 @@ class db_x509req: public db_x509super
 		db_x509req();
 		pki_base* insert(pki_base *item);
 		pki_base *newPKI(enum pki_type type = none);
-		void fillContextMenu(QMenu *menu, const QModelIndex &index);
 		QList<pki_x509req*> getAllRequests();
 		void resetX509count();
 		/* Creates one certificate signing request (BTD-32). Throws
@@ -42,12 +41,6 @@ class db_x509req: public db_x509super
 		void setSigned(QModelIndex index, bool signe);
 		void writeItem(pki_base *pki, const pki_export *xport,
 				QIODevice &file, const Passwd &pass) const;
-
-	public slots:
-		/* GUI: the New Request dialog, defined in
-		 * widgets/NewX509_request.cpp; it fills a RequestSpec */
-		void newItem(pki_temp *temp, pki_x509req *orig = NULL);
-		void newItem();
 };
 
 #endif

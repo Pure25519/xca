@@ -150,7 +150,7 @@ void KeyTreeView::toToken()
 		pkcs11 p11;
 		slotid slot;
 
-		if (!p11.selectToken(&slot, mainwin))
+		if (!p11.selectToken(&slot))
 			return;
 		card = new pki_scard(key->getIntName());
 		card->store_token(slot, key->decryptKey());

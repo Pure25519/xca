@@ -83,8 +83,12 @@ file(GLOB UI_FILES ${CMAKE_AUTOUIC_SEARCH_PATHS}/*.ui)
 configure_file(local.h.in local.h)
 
 ##### Libraries and executables
-add_library(xcalib STATIC)
-add_executable(${CMAKE_PROJECT_NAME} img/imgres.qrc lib/main.cpp
+# xcacore: lib/, OpenSSL, Qt Core and Qt Sql only; the headless base of
+# the command line, the services and their tests (BTD-36).
+# xcagui: widgets/, the GUI glue on top of it with Qt Widgets and Help.
+add_library(xcacore STATIC)
+add_library(xcagui STATIC)
+add_executable(${CMAKE_PROJECT_NAME} img/imgres.qrc widgets/main.cpp
         ${UI_FILES} ${PROJECT_BINARY_DIR}/local.h)
 add_executable(xcadoc ${PROJECT_BINARY_DIR}/local.h)
 add_executable(xcaexport ${PROJECT_BINARY_DIR}/local.h)
@@ -131,16 +135,15 @@ if (NOT OPENSSL_ROOT_DIR)
 endif()
 file(TO_CMAKE_PATH ${OPENSSL_ROOT_DIR}  OPENSSL_ROOT_DIR)
 
-target_link_libraries(xcalib
-    OpenSSL::Crypto
-    ${QT}::Widgets ${QT}::Core ${QT}::Sql ${QT}::Help
-    ${ASAN_LIB}
+target_link_libraries(xcacore PUBLIC
+    OpenSSL::Crypto ${QT}::Core ${QT}::Sql ${ASAN_LIB}
 )
+target_link_libraries(xcagui PUBLIC xcacore ${QT}::Widgets ${QT}::Help)
 target_link_libraries(xcadoc
     OpenSSL::Crypto ${QT}::Core ${ASAN_LIB}
 )
 target_link_libraries(xcaexport ${QT}::Core ${ASAN_LIB})
-target_link_libraries(${CMAKE_PROJECT_NAME} ${ASAN_LIB} xcalib)
+target_link_libraries(${CMAKE_PROJECT_NAME} ${ASAN_LIB} xcagui)
 
 if (APPLE)
 

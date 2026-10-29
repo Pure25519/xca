@@ -60,15 +60,10 @@ class db_x509: public db_x509super
 		 * caller's transaction would be rolled back with it. */
 		pki_x509 *newCert(const ServiceContext &ctx,
 				const IssuanceSpec &spec);
-		/* GUI: New Certificate dialog preset from a certificate,
-		 * also newItem() and the newCert() slots below: defined in
-		 * widgets/NewX509_issue.cpp, they fill an IssuanceSpec */
-		void newCert(pki_x509 *cert);
 		void writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
 				const Passwd &pass) const;
 		void writePKCS7(const QList<pki_base *> &certs,
 				QIODevice &file) const;
-		void fillContextMenu(QMenu *menu, const QModelIndex &index);
 		void inToCont(pki_base *pki);
 		/* Serial number rule of BTD-31, see randomSerial() */
 		static a1int randomSerial();
@@ -78,9 +73,6 @@ class db_x509: public db_x509super
 		void toToken(QModelIndex idx, bool alwaysSelect);
 		void toRequest(QModelIndex idx);
 		void updateCaProperties(pki_x509 *cert);
-		void toCertificate(QModelIndex index);
-		/* GUI: Renewal dialog, defined in widgets/CertExtend.cpp */
-		void certRenewal(QModelIndexList indexes);
 
 		/* Revocation (BTD-33). Each call writes exactly one audit
 		 * entry certificate.revoke / certificate.unrevoke and throws
@@ -126,12 +118,6 @@ class db_x509: public db_x509super
 				const QList<pki_base *> &items,
 				const pki_export *xport) const;
 		const pki_export *clipboardFormat() const;
-
-	public slots:
-		void newItem();
-
-		void newCert(pki_temp *);
-		void newCert(pki_x509req *);
 };
 
 #endif

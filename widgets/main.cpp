@@ -10,17 +10,18 @@
 #include <QDir>
 #include <QDebug>
 
-#include "widgets/MainWindow.h"
+#include "MainWindow.h"
 #include "ui_MainWindow.h"
-#include "widgets/XcaApplication.h"
-#include "func.h"
-#include "entropy.h"
-#include "settings.h"
-#include "pki_multi.h"
-#include "arguments.h"
-#include "pki_export.h"
-#include "debug_info.h"
-#include "json_report.h"
+#include "XcaApplication.h"
+#include "lib/func.h"
+#include "lib/entropy.h"
+#include "lib/settings.h"
+#include "lib/pki_multi.h"
+#include "lib/pkcs11.h"
+#include "lib/arguments.h"
+#include "lib/pki_export.h"
+#include "lib/debug_info.h"
+#include "lib/json_report.h"
 #if defined(Q_OS_WIN32)
 //For the segfault handler
 #include <windows.h>
@@ -30,8 +31,6 @@
 #include <openssl/ui.h>
 
 #include <QTextStream>
-
-char segv_data[1024];
 
 #if defined(Q_OS_WIN32)
 static LONG CALLBACK w32_segfault(LPEXCEPTION_POINTERS e)

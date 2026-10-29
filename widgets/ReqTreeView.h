@@ -27,6 +27,9 @@ class ReqTreeView: public X509SuperTreeView
 	ExportDialog *exportDialog(const QModelIndexList &indexes);
 
     public slots:
+	/* The New Request dialog (NewX509_request.cpp, BTD-36) */
+	void newItem();
+	void newItem(pki_temp *temp, pki_x509req *orig = NULL);
 	void toRequest();
 	void signReq();
 	void markSigned();

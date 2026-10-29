@@ -51,7 +51,12 @@ class PwDialogMock: public PwDialogUI_i
 		return pwe->result;
 	}
 
-	int selectToken(const QStringList &, QWidget *)
+	int selectToken(const QStringList &)
+	{
+		return -1;
+	}
+
+	int selectKeySlot(const QString &, const QStringList &)
 	{
 		return -1;
 	}

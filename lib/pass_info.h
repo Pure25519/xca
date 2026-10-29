@@ -10,11 +10,8 @@
 
 #include <QString>
 #include <QObject>
-#include <QApplication>
 
 #include "lib/exception.h"
-
-class QWidget;
 
 class pass_info: public QObject
 {
@@ -38,7 +35,6 @@ class pass_info: public QObject
   private:
 	QString title{};
 	QString description{};
-	QWidget *widget{};
 	QString type{};
 	QString pixmap{};
 	enum open_result result{};
@@ -47,7 +43,7 @@ class pass_info: public QObject
 	secretError error{};
 
   public:
-	pass_info(const QString &t, const QString &d, QWidget *w = nullptr);
+	pass_info(const QString &t, const QString &d);
 	QString getTitle() const
 	{
 		return title;
@@ -55,12 +51,6 @@ class pass_info: public QObject
 	QString getDescription() const
 	{
 		return description;
-	}
-	QWidget *getWidget()
-	{
-		if (!widget)
-			widget = qApp->activeWindow();
-		return widget;
 	}
 	QString getType() const
 	{
@@ -90,10 +80,6 @@ class pass_info: public QObject
 	void setDescription(QString d)
 	{
 		description = d;
-	}
-	void setWidget(QWidget *w)
-	{
-		widget = w;
 	}
 	void setResult(enum open_result r)
 	{

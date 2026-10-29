@@ -28,13 +28,11 @@ void waitcursor(int start, int line)
 {
 	qDebug() << "Waitcursor" << (start ? "start" : "end") << line;
 	ign_openssl_error();
-	if (!IS_GUI_APP)
-		return;
-	if (start)
-		QApplication::setOverrideCursor(QCursor(Qt::WaitCursor));
-	else
-		QApplication::restoreOverrideCursor();
+	XcaPresentation::busy(start);
 }
+
+/* Names the PKCS#11 call in progress for the crash handler of the GUI */
+char segv_data[1024];
 
 pkcs11_lib_list pkcs11::libraries;
 int pkcs11::pctr;
@@ -240,7 +238,7 @@ QString pkcs11::tokenLogin(const QString &name, bool so, bool force)
 	return QString(pin);
 }
 
-bool pkcs11::selectToken(slotid *slot, QWidget *w)
+bool pkcs11::selectToken(slotid *slot)
 {
 	slotidList p11_slots = getSlotList();
 
@@ -268,7 +266,7 @@ bool pkcs11::selectToken(slotid *slot, QWidget *w)
 		*slot = p11_slots[slotsWithToken[0]];
 		return true;
 	}
-	int selected = PwDialogCore::selectToken(slotnames, w);
+	int selected = PwDialogCore::selectToken(slotnames);
 	if (selected < 0 || selected >= slotsWithToken.count())
 		return false;
 	*slot = p11_slots[slotsWithToken[selected]];

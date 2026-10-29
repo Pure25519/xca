@@ -35,13 +35,14 @@ if (${QT_VERSION} VERSION_LESS 6.0.0)
   message(STATUS "Updating translations from source with 'lupdate' only supported with QT6")
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE ${QM_FILES})
 else()
-  get_target_property(LIBSRC xcalib SOURCES)
+  get_target_property(LIBSRC xcacore SOURCES)
+  get_target_property(GUISRC xcagui SOURCES)
   get_target_property(XCASRC xca SOURCES)
   qt_add_translations(xca TS_FILES ${TS_FILES} ${S}/xca.ts
                           LRELEASE_OPTIONS -silent
                           QM_FILES_OUTPUT_VARIABLE QM_FILES
                           PLURALS_TS_FILE ${S}/xca_en.ts
-                          SOURCES ${LIBSRC} ${XCASRC}
+                          SOURCES ${LIBSRC} ${GUISRC} ${XCASRC}
   )
   if (${QT_VERSION} VERSION_LESS 6.7.0)
     message(STATUS "At least QT 6.7.0 required for PLURALS_TS_FILE")

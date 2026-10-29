@@ -16,9 +16,6 @@
 #include "sql.h"
 #include "oid.h"
 
-/* Required by pkcs11.cpp which is compiled into xcalib */
-char segv_data[1024];
-
 #define DBFILE "test_takey.xdb"
 
 static const char ca_pem[] =

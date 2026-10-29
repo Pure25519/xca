@@ -4,13 +4,14 @@
  *
  * All rights reserved.
  *
- * GUI glue of request creation (BTD-32): the db_x509req entry points that
- * open the New Request dialog. They moved here from lib/db_x509req.cpp so
- * that lib/ creates requests from a RequestSpec only; BTD-36 moves them
- * out of the db_x509req class.
+ * GUI glue of request creation (BTD-32): the entry points that open the
+ * New Request dialog. They moved here from lib/db_x509req.cpp so that
+ * lib/ creates requests from a RequestSpec only, and from the db_x509req
+ * class into the request view with BTD-36.
  */
 
 #include "NewX509.h"
+#include "ReqTreeView.h"
 
 #include "lib/audit.h"
 #include "lib/db_x509req.h"
@@ -20,13 +21,15 @@
 #include "lib/request.h"
 #include "lib/XcaWarningCore.h"
 
-void db_x509req::newItem()
+void ReqTreeView::newItem()
 {
 	newItem(NULL, NULL);
 }
 
-void db_x509req::newItem(pki_temp *temp, pki_x509req *orig)
+void ReqTreeView::newItem(pki_temp *temp, pki_x509req *orig)
 {
+	if (!basemodel)
+		return;
 	NewX509 *dlg = new NewX509();
 
 	if (temp) {
@@ -42,7 +45,7 @@ void db_x509req::newItem(pki_temp *temp, pki_x509req *orig)
 	RequestSpec spec = dlg->getRequestSpec();
 	delete dlg;
 	try {
-		createSuccess(newRequest(
+		reqs()->createSuccess(reqs()->newRequest(
 			ServiceContext::localUser(ServiceContext::gui), spec));
 	} catch (errorEx &err) {
 		XCA_ERROR(err);

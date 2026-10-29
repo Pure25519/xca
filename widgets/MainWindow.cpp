@@ -42,6 +42,7 @@
 #include "XcaDialog.h"
 #include "XcaWarning.h"
 #include "XcaProgressGui.h"
+#include "XcaPresentationGui.h"
 #include "PwDialog.h"
 #include "OpenDb.h"
 #include "Help.h"
@@ -133,7 +134,7 @@ MainWindow::MainWindow() : QMainWindow()
 
 	views << keyView << reqView << certView << crlView << tempView;
 
-	pki_base::setupColors(palette());
+	XcaPresentationGui::setupColors(palette());
 
 	foreach(XcaTreeView *v, views) {
 		v->setMainwin(this, searchEdit);
@@ -143,6 +144,7 @@ MainWindow::MainWindow() : QMainWindow()
 	XcaProgress::setGui(new XcaProgressGui(this));
 	xcaWarning::setGui(new xcaWarningGui());
 	PwDialogCore::setGui(new PwDialogUI());
+	XcaPresentation::setGui(new XcaPresentationGui());
 }
 
 void MainWindow::dropEvent(QDropEvent *event)
@@ -287,7 +289,7 @@ void MainWindow::initToken()
 		Passwd pin;
 		int ret;
 
-		if (!p11.selectToken(&slot, this))
+		if (!p11.selectToken(&slot))
 			return;
 
 		tkInfo ti = p11.tokenInfo(slot);
@@ -326,7 +328,7 @@ void MainWindow::changePin(bool so)
 		pkcs11 p11;
 		slotid slot;
 
-		if (!p11.selectToken(&slot, this))
+		if (!p11.selectToken(&slot))
 			return;
 		p11.changePin(slot, so);
 	} catch (errorEx &err) {
@@ -347,7 +349,7 @@ void MainWindow::initPin()
 		pkcs11 p11;
 		slotid slot;
 
-		if (!p11.selectToken(&slot, this))
+		if (!p11.selectToken(&slot))
 			return;
 		p11.initPin(slot);
 	} catch (errorEx &err) {
@@ -370,7 +372,7 @@ void MainWindow::manageToken()
 		return;
 
 	try {
-		if (!p11.selectToken(&slot, this))
+		if (!p11.selectToken(&slot))
 			return;
 
 		tkInfo ti(p11.tokenInfo(slot));
@@ -470,6 +472,7 @@ MainWindow::~MainWindow()
 	XcaProgress::setGui(nullptr);
 	xcaWarning::setGui(nullptr);
 	PwDialogCore::setGui(nullptr);
+	XcaPresentation::setGui(nullptr);
 }
 
 void MainWindow::closeEvent(QCloseEvent *e)
@@ -494,7 +497,7 @@ int MainWindow::checkOldGetNewPass(Passwd &pass)
 	QString passHash = Settings["pwhash"];
 	if (!passHash.isEmpty()) {
 		pass_info p(tr("Current Password"),
-			tr("Please enter the current database password"), this);
+			tr("Please enter the current database password"));
 
 		/* Try empty password */
 		if (pki_evp::sha512passwT(pass, passHash) != passHash) {
@@ -510,8 +513,7 @@ int MainWindow::checkOldGetNewPass(Passwd &pass)
 	}
 
 	pass_info p(tr("New Password"), tr("Please enter the new password "
-			"to encrypt your private keys in the database-file"),
-			this);
+			"to encrypt your private keys in the database-file"));
 
 	return PwDialogCore::execute(&p, &pass, true) != 1 ? 0 : 1;
 }
@@ -654,9 +656,9 @@ enum open_result MainWindow::setup_open_database()
 	statusBar()->addWidget(searchEdit, 1);
 
 	connect(tempView, SIGNAL(newCert(pki_temp *)),
-		Database.model<db_x509>(), SLOT(newCert(pki_temp *)));
+		certView, SLOT(newCert(pki_temp *)), Qt::UniqueConnection);
 	connect(tempView, SIGNAL(newReq(pki_temp *)),
-		Database.model<db_x509req>(), SLOT(newItem(pki_temp *)));
+		reqView, SLOT(newItem(pki_temp *)), Qt::UniqueConnection);
 
 	return pw_ok;
 }

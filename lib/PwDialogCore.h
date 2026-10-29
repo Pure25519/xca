@@ -15,10 +15,9 @@
 #include "pass_info.h"
 
 class QThread;
-class QWidget;
 
 /* Everything the core asks the user for: passwords, PINs and the
- * token to use. Implementations: PwDialogUI (widgets/, dialogs),
+ * token to use. Implementations: PwDialogUI (the GUI dialogs),
  * PwDialogHeadless (below, sources instead of prompts), test mocks. */
 class PwDialogUI_i
 {
@@ -27,7 +26,11 @@ class PwDialogUI_i
 			bool write = false, bool abort = false) = 0;
 	/* Several tokens are present: returns the index of the selected
 	 * name or -1 if the selection was cancelled */
-	virtual int selectToken(const QStringList &names, QWidget *w) = 0;
+	virtual int selectToken(const QStringList &names) = 0;
+	/* The token has a fixed set of key slots (label: its model):
+	 * returns the index of the selected name or -1 */
+	virtual int selectKeySlot(const QString &label,
+			const QStringList &names) = 0;
 	/* The PIN is entered on the PIN pad of the reader: starts the
 	 * login thread and returns when it has finished */
 	virtual void pinPadLogin(pass_info *p, QThread *login) = 0;
@@ -80,7 +83,9 @@ class PwDialogHeadless: public PwDialogUI_i
 
 	enum open_result execute(pass_info *p, Passwd *passwd,
 			bool write = false, bool abort = false) override;
-	int selectToken(const QStringList &names, QWidget *w) override;
+	int selectToken(const QStringList &names) override;
+	int selectKeySlot(const QString &label,
+			const QStringList &names) override;
 	void pinPadLogin(pass_info *p, QThread *login) override;
 };
 
@@ -104,7 +109,9 @@ class PwDialogCore
 	 * instead of a dialog: the caller must ask even if the current
 	 * password already fits, or the given one is never checked */
 	static bool hasSource(enum pass_info::purpose p);
-	static int selectToken(const QStringList &names, QWidget *w);
+	static int selectToken(const QStringList &names);
+	static int selectKeySlot(const QString &label,
+			const QStringList &names);
 	static void pinPadLogin(pass_info *p, QThread *login);
 	static int pwCallback(char *buf, int size, int rwflag, void *userdata);
 	static void setGui(PwDialogUI_i *p);

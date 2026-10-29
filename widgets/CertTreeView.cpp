@@ -173,8 +173,16 @@ void CertTreeView::genCrl()
 
 void CertTreeView::toCertificate()
 {
-	if (basemodel)
-		certs()->toCertificate(currentIndex());
+	if (!basemodel)
+		return;
+	QModelIndex index = currentIndex();
+	pki_x509 *cert = db_base::fromIndex<pki_x509>(index);
+	if (!cert)
+		return;
+	if (!cert->getRefKey() && cert->getSigner() != cert)
+		certs()->extractPubkey(index);
+	cert->pkiSource = transformed;
+	newCert(cert);
 }
 
 void CertTreeView::deleteFromToken()
@@ -257,8 +265,7 @@ void CertTreeView::caProperties()
 
 void CertTreeView::certRenewal()
 {
-	if (basemodel)
-		certs()->certRenewal(getSelectedIndexes());
+	renewal(getSelectedIndexes());
 }
 
 void CertTreeView::revoke()

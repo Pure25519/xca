@@ -16,11 +16,12 @@
 #include "x509name.h"
 #include "func.h"
 #include "XcaProgress.h"
+#include "XcaPresentation.h"
 
 #include "XcaWarningCore.h"
+#include "PwDialogCore.h"
 
 #include <QThread>
-#include <QInputDialog>
 #include <QSharedPointer>
 
 #include <openssl/ec.h>
@@ -607,21 +608,23 @@ pk11_attr_data pki_scard::select_id(const pkcs11 &p11) const
 	pk11_attr_data new_id(CKA_ID);
 
 	QList<QStringList> fixed_ids = ti.fixed_ids();
-	if (fixed_ids.size() > 0) {
-		QMap<QString, unsigned long> map;
-		QStringList items;
-		for (QStringList item : fixed_ids) {
-			items << item[0];
-			map[item[0]] = item[1].toULong();
-		}
-		QString idname = QInputDialog::getItem(nullptr, XCA_TITLE,
-			tr("Select Slot of %1").arg(ti.model()),
-			items, 0, false);
-		if (map.contains(idname))
-			new_id.setULong(map[idname]);
-	} else {
+	if (fixed_ids.size() > 0)
+		new_id = fixedSlotId(ti.model(), fixed_ids);
+	else
 		new_id = p11.findUniqueID(CKO_PUBLIC_KEY);
-	}
+	return new_id;
+}
+
+pk11_attr_data pki_scard::fixedSlotId(const QString &model,
+				const QList<QStringList> &fixed_ids)
+{
+	pk11_attr_data new_id(CKA_ID);
+	QStringList items;
+	for (const QStringList &item : fixed_ids)
+		items << item[0];
+	int i = PwDialogCore::selectKeySlot(model, items);
+	if (i >= 0 && i < fixed_ids.size())
+		new_id.setULong(fixed_ids[i][1].toULong());
 	return new_id;
 }
 
@@ -738,7 +741,7 @@ bool pki_scard::isToken()
 QVariant pki_scard::getIcon(const dbheader *hd) const
 {
 	return hd->id == HD_internal_name ?
-		QVariant(QPixmap(":scardIco")) : QVariant();
+		XcaPresentation::icon(":scardIco") : QVariant();
 }
 
 bool pki_scard::visible() const

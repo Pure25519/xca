@@ -16,6 +16,8 @@
 #include <QDebug>
 #include <QPushButton>
 #include <QThread>
+#include <QApplication>
+#include <QInputDialog>
 
 static int hex2bin(QString &x, Passwd *final)
 {
@@ -50,10 +52,10 @@ enum open_result PwDialogUI::execute(pass_info *p, Passwd *passwd,
 	return result;
 }
 
-int PwDialogUI::selectToken(const QStringList &names, QWidget *w)
+int PwDialogUI::selectToken(const QStringList &names)
 {
 	Ui::SelectToken ui;
-	QDialog *select_slot = new QDialog(w);
+	QDialog *select_slot = new QDialog(qApp->activeWindow());
 	ui.setupUi(select_slot);
 	ui.image->setPixmap(QPixmap(":scardImg"));
 	ui.tokenBox->addItems(names);
@@ -66,6 +68,16 @@ int PwDialogUI::selectToken(const QStringList &names, QWidget *w)
 	int selected = ui.tokenBox->currentIndex();
 	delete select_slot;
 	return selected;
+}
+
+int PwDialogUI::selectKeySlot(const QString &label, const QStringList &names)
+{
+	/* Cancel returns the first slot, as the dialog always did */
+	QString name = QInputDialog::getItem(nullptr, XCA_TITLE,
+			QCoreApplication::translate("pki_scard",
+				"Select Slot of %1").arg(label),
+			names, 0, false);
+	return names.indexOf(name);
 }
 
 static QDialog *newPinPadBox()
@@ -97,7 +109,7 @@ void PwDialogUI::pinPadLogin(pass_info *p, QThread *login)
 }
 
 PwDialog::PwDialog(pass_info *p, bool write)
-	:QDialog(p->getWidget()), pi(p)
+	:QDialog(qApp->activeWindow()), pi(p)
 {
 	pi = p;
 	setupUi(this);

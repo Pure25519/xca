@@ -16,7 +16,7 @@
 #include <QValidator>
 #include "XcaWarning.h"
 #include "lib/exception.h"
-#include "lib/ipvalidator.h"
+#include "ipvalidator.h"
 #include "lib/x509v3ext.h"
 
 #include <openssl/err.h>

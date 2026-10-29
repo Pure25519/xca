@@ -22,7 +22,6 @@
 #define IS_GUI_APP (is_gui_app)
 
 class Validity;
-class QPixmap;
 extern bool is_gui_app;
 
 int console_write(FILE *fp, const QByteArray &ba);

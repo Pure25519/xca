@@ -41,7 +41,8 @@ class PwDialogUI: public PwDialogUI_i
 {
 	enum open_result execute(pass_info *p, Passwd *passwd,
 	               bool write = false, bool abort = false);
-	int selectToken(const QStringList &names, QWidget *w);
+	int selectToken(const QStringList &names);
+	int selectKeySlot(const QString &label, const QStringList &names);
 	void pinPadLogin(pass_info *p, QThread *login);
 };
 #endif

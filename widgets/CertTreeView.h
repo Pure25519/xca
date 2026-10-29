@@ -30,7 +30,17 @@ class CertTreeView: public X509SuperTreeView
 			const QModelIndex &index, QModelIndexList indexes);
 	ExportDialog *exportDialog(const QModelIndexList &index);
 
+	/* New Certificate dialog preset from a certificate */
+	void newCert(pki_x509 *cert);
+	/* Renewal dialog for the certificates of the source model
+	 * indexes (CertExtend.cpp) */
+	void renewal(QModelIndexList indexes);
+
     public slots:
+	/* The New Certificate dialog (NewX509_issue.cpp, BTD-36) */
+	void newItem();
+	void newCert(pki_temp *temp);
+	void newCert(pki_x509req *req);
 	void changeView();
 	void toRequest();
 	void toCertificate();

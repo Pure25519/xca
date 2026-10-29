@@ -26,6 +26,7 @@
 #include "ExportDialog.h"
 #include "ImportMulti.h"
 #include "AutomationId.h"
+#include "XcaPresentationGui.h"
 #include "lib/load_obj.h"
 #include "lib/pass_info.h"
 #include "lib/PwDialogCore.h"
@@ -128,12 +129,39 @@ void XcaTreeView::setModel(QAbstractItemModel *model)
 			this, SLOT(itemSelectionChanged(const QModelIndex &,
 										const QModelIndex &)));
 
-		basemodel->initHeaderView(header());
+		initHeaderView();
 		setSortingEnabled(true);
 		header()->setStretchLastSection(true);
 
 	}
 	showHideSections();
+}
+
+void XcaTreeView::initHeaderView()
+{
+	QHeaderView *hv = header();
+	dbheaderList allHeaders = basemodel->getAllHeaders();
+	int max = allHeaders.count();
+	basemodel->colResizeStart();
+	for (int i=0; i<max; i++) {
+		dbheader *hd = allHeaders[i];
+		hv->setSectionHidden(i, !hd->show);
+		if (hd->size != -1)
+			hv->resizeSection(i, hd->size);
+		if (hd->sortIndicator != -1) {
+			hv->setSortIndicator(i, hd->sortIndicator ?
+				Qt::DescendingOrder : Qt::AscendingOrder);
+		}
+	}
+	for (int i=0; i<max; i++) {
+		if (allHeaders[i]->visualIndex == -1)
+			continue;
+		if (hv->visualIndex(i) != allHeaders[i]->visualIndex) {
+			hv->moveSection(hv->visualIndex(i),
+					allHeaders[i]->visualIndex);
+		}
+	}
+	basemodel->colResizeEnd();
 }
 
 void XcaTreeView::headerEvent(QContextMenuEvent *e, int col)
@@ -292,12 +320,6 @@ void XcaTreeView::showItems()
 		showItem(index);
 }
 
-void XcaTreeView::newItem()
-{
-	if (basemodel)
-		basemodel->newItem();
-}
-
 void XcaTreeView::load_default(load_base *load)
 {
 	QString s;
@@ -381,8 +403,9 @@ void XcaTreeView::headerDetails()
 
 void XcaTreeView::columnRemove(void)
 {
-	if (curr_hd->action)
-		curr_hd->action->setChecked(false);
+	QAction *a = headerActions.value(curr_hd);
+	if (a)
+		a->setChecked(false);
 }
 
 void XcaTreeView::showItem(const QModelIndex &index)
@@ -516,7 +539,7 @@ void XcaTreeView::contextMenu(QContextMenuEvent *e, QMenu *parent, int col)
 		a->setCheckable(true);
 		a->setChecked(hd->show);
 		a->setToolTip(hd->getTooltip());
-		hd->action = a;
+		headerActions[hd] = a;
 	}
 
 	menu->addSeparator();
@@ -535,11 +558,12 @@ void XcaTreeView::contextMenu(QContextMenuEvent *e, QMenu *parent, int col)
 		menu->exec(e->globalPos());
 	}
 	foreach(hd, allHeaders) {
-		if (hd->action)
-			hd->show = hd->action->isChecked();
+		a = headerActions.value(hd);
+		if (a)
+			hd->show = a->isChecked();
 		shown += hd->show ? 1 : 0;
-		hd->action = NULL;
 	}
+	headerActions.clear();
 	if (!shown)
 		allHeaders[0]->show = true;
 	delete menu;
@@ -579,8 +603,7 @@ void XcaTreeView::exportItems(const QModelIndexList &indexes)
 							tr("Please enter the password to encrypt all %n "
 							   "exported private key(s) in:\n%1",
 							   "Singular form for 0 or 1 item can be ignored. Will always be called with n >= 2",
-									indexes.size()).arg(fname),
-							this);
+									indexes.size()).arg(fname));
 
 					// Ask for an encryption password once
 					if (PwDialogCore::execute(&p, &pass, true) != 1)
@@ -706,7 +729,7 @@ void XcaTreeView::changeEvent(QEvent *event)
 		case QEvent::StyleChange:
 		case QEvent::PaletteChange:
 			qDebug() << "Style change event" << event->type();
-			pki_base::setupColors(palette());
+			XcaPresentationGui::setupColors(palette());
 			break;
 		default:
 			break;
