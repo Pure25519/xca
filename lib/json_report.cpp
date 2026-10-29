@@ -147,9 +147,10 @@ QJsonObject JsonReport::publicKey(const EVP_PKEY *pkey)
 		return o;
 
 	int base = EVP_PKEY_get_base_id(pkey);
-	QString type = keytype::byType(base).name;
+	/* ML-DSA and SLH-DSA by their name (keytype::nid(), BTD-16) */
+	QString type = keytype::byPKEY(pkey).name;
 	if (type.isEmpty()) {
-		/* Not one of XCA's key types (e.g. PQC): the OpenSSL name */
+		/* Not one of XCA's key types: the OpenSSL name */
 		const char *n = EVP_PKEY_get0_type_name(pkey);
 		type = n ? QString(n) : QString("unknown");
 	}

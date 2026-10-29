@@ -39,10 +39,10 @@ x509v3ext ExtensionSpec::basicConstraintsExt(X509V3_CTX *ctx) const
 		if (basicCritical)
 			cont << "critical";
 		cont << (basicCA == bc_ca ? "CA:TRUE" : "CA:FALSE");
-		if (basicCA == bc_ca && !pathLen.isEmpty()) {
-			cont << QString("pathlen:") +
-				QString::number(pathLen.toInt());
-		}
+		/* IssuanceChecks::spec() rejects anything but a number;
+		 * OpenSSL refuses the rest instead of reading it as 0 */
+		if (basicCA == bc_ca && !pathLen.isEmpty())
+			cont << QString("pathlen:") + pathLen;
 		ext.create(NID_basic_constraints, cont.join(", "), ctx);
 	}
 	return ext;

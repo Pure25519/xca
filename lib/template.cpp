@@ -135,8 +135,8 @@ void TemplateSpec::toTemplate(pki_temp *temp) const
 	temp->setSetting("ca", e.basicCA == ExtensionSpec::bc_ca ? 1 :
 			e.basicCA == ExtensionSpec::bc_not_ca ? 2 : 0);
 	temp->setSetting("bcCritical", e.basicCritical);
-	temp->setSetting("basicPath", e.pathLen.isEmpty() ? QString() :
-			QString::number(e.pathLen.toInt()));
+	/* as given: toInt() made 0 of every non-number (BTD-55) */
+	temp->setSetting("basicPath", e.pathLen);
 	temp->setSetting("subKey", e.subjectKeyId);
 	temp->setSetting("authKey", e.authorityKeyId);
 	temp->setSetting("keyUse", toMask(e.keyUsage, keyUsageNames));

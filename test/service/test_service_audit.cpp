@@ -48,7 +48,8 @@ class test_service_audit : public ServiceTestCase
 		return q.value(0);
 	}
 	static QMap<QString, QStringList> tableRows(QSqlDatabase db);
-	void loadForkDump(QMap<QString, QStringList> *rows);
+	void loadForkDump(QMap<QString, QStringList> *rows,
+			const QString &name = "schema8-fork.sql");
 	QMap<QString, QStringList> fileRows();
 	static void appendSample(int count);
 	static QDateTime utc(const QString &iso)
@@ -60,6 +61,8 @@ class test_service_audit : public ServiceTestCase
 
   private slots:
 	void upgradeForkDatabase();
+	void upgradeKeyTypeColumn();
+	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
 	void canonicalJson();
 	void chainHashVector();
@@ -107,15 +110,17 @@ QMap<QString, QStringList> test_service_audit::tableRows(QSqlDatabase db)
 	return rows;
 }
 
-/* Replaces service.xdb with the dump of a database that the unmodified
+/* Replaces service.xdb with the dump of an older fork database
+ * (data/README.md): by default schema8-fork.sql, which the unmodified
  * fork (bxc-main 119d539, schema 8) created: two keys, a CA certificate,
- * a CRL and one revocation (data/README.md). *rows: its rows */
-void test_service_audit::loadForkDump(QMap<QString, QStringList> *rows)
+ * a CRL and one revocation. *rows: its rows */
+void test_service_audit::loadForkDump(QMap<QString, QStringList> *rows,
+				const QString &name)
 {
 	Database.close();
 	QVERIFY(QFile::remove(dbFile));
 	{
-		QFile dump(SERVICE_TEST_DATA "/schema8-fork.sql");
+		QFile dump(QString(SERVICE_TEST_DATA "/") + name);
 		QVERIFY(dump.open(QIODevice::ReadOnly));
 		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "fixture");
 		db.setDatabaseName(dbFile);
@@ -179,10 +184,11 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='schema'")
 			.toString(), QString("8"));
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("2"));
+			.toString(), QString("3"));
 
-	/* Every row is unchanged. settings only gains bxc_schema and the
-	 * option the harness sets on each open. */
+	/* Every row is unchanged. settings only gains bxc_schema, the
+	 * option the harness sets on each open and the marker of the
+	 * one-time PKCS#12 default migration (BTD-52). */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList audit = after.take("audit_log");
 	QCOMPARE(after.take("audit_keys"), QStringList());
@@ -191,7 +197,7 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(after, before);
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
-			s == "bxc_schema|2";
+			s == "bxc_schema|3" || s == "pkcs12_migrated|yes";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 
@@ -249,13 +255,89 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(r.mismatches[0].seq, qint64(0));
 }
 
+/* bxc_schema 3 (BTD-16): public_keys.type grows from CHAR(4) to
+ * VARCHAR(32), so that view_public_keys tells ML-DSA-44 from ML-DSA-87.
+ * The dump (data/README.md) is a bxc_schema 2 database of bxc-main
+ * 2700efa7 with an Ed25519, an RSA and an EC key; XCA stored the
+ * Ed25519 type cut to "ED25". */
+void test_service_audit::upgradeKeyTypeColumn()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "schema8-bxc2.sql");
+	QStringList keysBefore = before.take("public_keys");
+	QCOMPARE(keysBefore.filter(QRegularExpression("^1\\|ED25\\|")).size(), 1);
+	QCOMPARE(before["audit_log"].size(), 3);
+
+	openDatabase();
+	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
+			.toString(), QString("3"));
+	QVERIFY(sqlValue("SELECT sql FROM sqlite_master WHERE type='table' "
+		"AND name='public_keys'").toString().contains("type VARCHAR(32)"));
+	QCOMPARE(sqlValue("SELECT count(*) FROM sqlite_master WHERE "
+		"type='index' AND tbl_name='public_keys'").toInt(), 2);
+
+	/* The view shows the full type; RSA and EC were complete before */
+	QSqlQuery q(QSqlDatabase::database());
+	QVERIFY(q.exec("SELECT name, key_type, len FROM view_public_keys "
+			"ORDER BY id"));
+	QStringList view;
+	while (q.next())
+		view << QString("%1|%2|%3").arg(q.value(0).toString(),
+			q.value(1).toString(), q.value(2).toString());
+	QCOMPARE(view, QStringList({ "fixture-ed25519|ED25519|256",
+		"fixture-rsa|RSA|2048", "fixture-ec|EC|256" }));
+
+	/* Only the Ed25519 type and bxc_schema changed, plus the marker of
+	 * the PKCS#12 default migration (BTD-52; the fixture stores no
+	 * PKCS#12 algorithm, nothing to migrate). No audit entry and no
+	 * baseline: the upgrade changes no audited object. */
+	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
+	QStringList keysAfter = after.take("public_keys");
+	keysBefore.replaceInStrings(QRegularExpression("^1\\|ED25\\|"),
+				"1|ED25519|");
+	QCOMPARE(keysAfter, keysBefore);
+	QStringList settingsBefore = before.take("settings");
+	QStringList settingsAfter = after.take("settings");
+	QCOMPARE(after, before);
+	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|3");
+	settingsAfter.removeIf([](const QString &s) {
+		return s.startsWith("suppress_messages|") ||
+			s == "pkcs12_migrated|yes";
+	});
+	QCOMPARE(settingsAfter, settingsBefore);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.entries, qint64(3));
+
+	/* The keys load with their type, and a new one keeps its full name */
+	QStringList types;
+	for (pki_key *key : Store.getAll<pki_key>())
+		types << key->getKeyTypeString();
+	types.sort();
+	QCOMPARE(types, QStringList({ "EC", "ED25519", "RSA" }));
+	QVERIFY(Database.model<db_key>()->newKey(cliAlice,
+			keyjob("ML-DSA-87"), "pqc-key"));
+	QCOMPARE(sqlValue("SELECT key_type FROM view_public_keys WHERE "
+			"name='pqc-key'").toString(), QString("ML-DSA-87"));
+}
+
+void test_service_audit::upgradeWaitsForPassword_data()
+{
+	QTest::addColumn<QString>("dump");
+
+	QTest::newRow("schema 8") << "schema8-fork.sql";
+	QTest::newRow("bxc_schema 2") << "schema8-bxc2.sql";
+}
+
 void test_service_audit::upgradeWaitsForPassword()
 {
 	/* BTD-117: the password of an old database is checked before the
 	 * fork upgrade writes. A rejected one leaves every row as it was:
-	 * no audit_log, no bxc_schema, no baseline. */
+	 * no audit_log, no bxc_schema, no baseline, no new key type column
+	 * (BTD-16). */
+	QFETCH(QString, dump);
 	QMap<QString, QStringList> before;
-	loadForkDump(&before);
+	loadForkDump(&before, dump);
 
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");

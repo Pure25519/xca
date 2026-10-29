@@ -17,11 +17,13 @@
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
+#include "lib/db_crl.h"
 #include "lib/db_key.h"
 #include "lib/db_x509.h"
 #include "lib/db_x509req.h"
 #include "lib/exception.h"
 #include "lib/issuance.h"
+#include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
@@ -72,6 +74,8 @@ class test_service_issuance : public ServiceTestCase
 	void validityCappedByRoot();
 	void validityEndsBeforeStart_data();
 	void validityEndsBeforeStart();
+	void edwardsSelfSigned_data();
+	void edwardsSelfSigned();
 };
 
 IssuanceSpec test_service_issuance::caSpec(const QString &cn, pki_key *key,
@@ -428,6 +432,43 @@ void test_service_issuance::forcedDuplicateSerial()
 	}
 }
 
+void test_service_issuance::edwardsSelfSigned_data()
+{
+	QTest::addColumn<QString>("type");
+
+	QTest::newRow("Ed25519") << "ED25519";
+	QTest::newRow("Ed448") << "ED448";
+}
+
+/* EdDSA keys sign without a digest: possibleHashNids() offers only
+ * NID_undef, so the digest that NewX509 and crljob pick from it signs
+ * a self-signed CA and its CRL (BTD-16; Ed448 had no entry and ended in
+ * signing_failed) */
+void test_service_issuance::edwardsSelfSigned()
+{
+	QFETCH(QString, type);
+
+	pki_key *key = Database.model<db_key>()->newKey(ctx, keyjob(type),
+							"edwards-key");
+	QVERIFY(key);
+	QCOMPARE(key->possibleHashNids(), QList<int>({ NID_undef }));
+
+	IssuanceSpec spec = caSpec("Edwards CA", key, nullptr, 365);
+	spec.hashAlgo = digest::getDefault();
+	spec.hashAlgo.adjust(key->possibleHashNids());
+	pki_x509 *ca = issue(spec);
+	QVERIFY(ca);
+	EVP_PKEY *pub = X509_get0_pubkey(ca->getCert());
+	QCOMPARE(X509_verify(ca->getCert(), pub), 1);
+	QCOMPARE(X509_get_signature_nid(ca->getCert()), key->getKeyType());
+
+	crljob job(ca);
+	QCOMPARE(job.hashAlgo.MD(), (const EVP_MD *)nullptr);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+	QCOMPARE(X509_CRL_verify(const_cast<X509_CRL *>(crl->getCrl()), pub), 1);
+}
+
 XCA_SERVICE_TEST_MAIN(test_service_issuance)
 #include "test_service_issuance.moc"
 
@@ -577,7 +618,8 @@ void test_service_issuance::validityCappedByRoot()
  * that ends before (or when) it starts: below an expired issuer chain,
  * or with a notBefore at or after the CA's end. The rows above keep
  * notBefore at now below CAs that end later, so the capped end always
- * came after the start. */
+ * came after the start. An issuer that has already expired is refused
+ * before the cap with issuer_expired (BTD-55). */
 void test_service_issuance::validityEndsBeforeStart_data()
 {
 	QTest::addColumn<QString>("caStart");
@@ -585,22 +627,23 @@ void test_service_issuance::validityEndsBeforeStart_data()
 	QTest::addColumn<QString>("notBefore");   // empty: now
 	QTest::addColumn<QString>("notAfter");
 	QTest::addColumn<bool>("valid");
+	QTest::addColumn<QString>("code");   // of a rejection
 
 	QTest::newRow("expired issuer")
 		<< "20000101000000Z" << "20100101000000Z" << QString()
-		<< "20500101000000Z" << false;
+		<< "20500101000000Z" << false << "issuer_expired";
 	QTest::newRow("expired issuer, unlimited request")
 		<< "20000101000000Z" << "20100101000000Z" << QString()
-		<< "unlimited" << false;
+		<< "unlimited" << false << "issuer_expired";
 	QTest::newRow("notBefore after CA end")
 		<< "20200101000000Z" << "20400101000000Z" << "20410101000000Z"
-		<< "20500101000000Z" << false;
+		<< "20500101000000Z" << false << "invalid_validity";
 	QTest::newRow("notBefore equal to CA end")
 		<< "20200101000000Z" << "20400101000000Z" << "20400101000000Z"
-		<< "20500101000000Z" << false;
+		<< "20500101000000Z" << false << "invalid_validity";
 	QTest::newRow("notBefore one second before CA end")
 		<< "20200101000000Z" << "20400101000000Z" << "20391231235959Z"
-		<< "20500101000000Z" << true;
+		<< "20500101000000Z" << true << QString();
 }
 
 void test_service_issuance::validityEndsBeforeStart()
@@ -610,6 +653,7 @@ void test_service_issuance::validityEndsBeforeStart()
 	QFETCH(QString, notBefore);
 	QFETCH(QString, notAfter);
 	QFETCH(bool, valid);
+	QFETCH(QString, code);
 
 	IssuanceSpec caS = validitySpec("Window CA", nullptr, caEnd);
 	caS.notBefore = plainTime(caStart);
@@ -634,14 +678,14 @@ void test_service_issuance::validityEndsBeforeStart()
 		Database.model<db_x509>()->newCert(ctx, spec);
 		QFAIL("newCert issued a certificate without a validity window");
 	} catch (serviceError &err) {
-		QCOMPARE(err.code, QString("invalid_validity"));
+		QCOMPARE(err.code, code);
 	}
 	QCOMPARE(Store.getAll<pki_x509>().size(), certs);
 	QList<AuditEntry> entries = AuditLog::entries();
 	QCOMPARE(entries.size(), before + 1);
 	QCOMPARE(entries.last().action, QString("certificate.issue"));
 	QCOMPARE(entries.last().result, QString("failure"));
-	QCOMPARE(entries.last().errorCode, QString("invalid_validity"));
+	QCOMPARE(entries.last().errorCode, code);
 	QCOMPARE(entries.last().params["validity_capped"].toBool(), true);
 	QVERIFY(entries.last().objectId.isEmpty());
 	QVERIFY(AuditLog::verify().ok());

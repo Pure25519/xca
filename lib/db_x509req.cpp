@@ -12,6 +12,7 @@
 #include "audit.h"
 #include "exception.h"
 #include "func.h"
+#include "issuance_checks.h"
 #include "request.h"
 #include "XcaWarningCore.h"
 
@@ -86,6 +87,7 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	if (spec.key->isPubKey())
 		throw serviceError("no_private_key",
 			tr("The key you selected for signing is not a private one."));
+	IssuanceChecks::pathLength(spec.extensions);
 
 	req = new pki_x509req();
 	req->pkiSource = spec.source;
@@ -134,13 +136,13 @@ pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
 		return create(spec, params, ctx);
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "request.create", "request",
-				QString(), params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "request.create", "request",
+				QString(), params, err.code);
 		throw;
 	} catch (...) {
 		/* errorEx (database, OpenSSL, key decryption) and anything else */
-		AuditLog::append(ctx, "request.create", "request",
-				QString(), params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "request.create", "request",
+				QString(), params, "internal_error");
 		throw;
 	}
 }

@@ -136,6 +136,14 @@ endif()
 # A failed signature is an error, never a stored object (BTD-171)
 ServiceTest(test_service_signing_failure)
 
+# Checks before every signature: path length, issuer, CSR, OPC UA chains
+# (BTD-55)
+ServiceTest(test_service_signing)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_signing PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -156,6 +164,13 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_key PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# --keygen and --help for Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-16)
+add_test(NAME test_cli_keygen_types
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_keygen_types
+		-P ${SERVICE_TEST_DIR}/cli_keygen_types.cmake)
+set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
 
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)

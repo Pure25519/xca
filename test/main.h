@@ -36,6 +36,7 @@ class test_main: public QObject
 	void cleanupTestCase();
 	void cleanup();
 	void newKey();
+	void keyDetailFixed();
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();
@@ -45,6 +46,8 @@ class test_main: public QObject
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();
+	void issueMidnightBelowTodaysCa();
+	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
 

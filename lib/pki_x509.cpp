@@ -796,9 +796,20 @@ bool pki_x509::cmpIssuerAndSerial(pki_x509 *refcert)
 	return ret;
 }
 
+/* Names and AKI/SKI only name a candidate; two CAs with the same DN and
+ * no AKI look alike, so a signature that does not verify rules a
+ * candidate out (BTD-55) */
 bool pki_x509::verify_only(const pki_x509 *signer) const
 {
-	return X509_check_issued(signer->getCert(), cert) == X509_V_OK;
+	if (X509_check_issued(signer->getCert(), cert) != X509_V_OK)
+		return false;
+	/* 0: signed by another key; -1: cannot be checked (unknown or
+	 * disabled algorithm), then the name and AKI match decide as
+	 * before, so such a certificate does not lose its issuer */
+	EVP_PKEY *pub = X509_get0_pubkey(signer->getCert());
+	int verified = pub ? X509_verify(cert, pub) : -1;
+	ign_openssl_error();
+	return verified != 0;
 }
 
 bool pki_x509::verify(pki_x509 *signer)

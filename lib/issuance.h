@@ -41,7 +41,8 @@ class ExtensionSpec
 
 	enum basicConstraints basicCA{ bc_absent };
 	bool basicCritical{};
-	QString pathLen{};          // empty: no path length constraint
+	QString pathLen{};          // empty: no path length constraint;
+	                            // 0 is a constraint, never a default
 
 	bool subjectKeyId{};
 	bool authorityKeyId{};      // never added to a self-signed certificate
@@ -152,6 +153,11 @@ class IssuanceSpec
 	/* With copyRequestExtensions: only CSR extensions of these NIDs,
 	 * empty: all (BTD-41: bxc-pki copies the SAN only, rule 3) */
 	QList<int> requestExtensionNids{};
+
+	/* chain_opcua adds the OPC UA chain rules (PLAN.md 14.4) to the
+	 * checks before the signature; a profile of family opcua sets it */
+	enum chainRules { chain_rfc5280, chain_opcua };
+	enum chainRules chainRules{ chain_rfc5280 };
 
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit

@@ -31,6 +31,7 @@ const char AuditLog::actionDelete[] = "object.delete";
 const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
+const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -94,11 +95,16 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
-		"key_size", "key_type", "name", "next_update", "not_after",
-		"not_before", "old_name", "on_token", "outcome", "question",
+		"key_size", "key_type", "legacy", "name", "next_update",
+		"not_after",
+		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
+		"outcome",
+		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial", "subject",
 		"template", "this_update", "validity_capped",
+		/* accepted with a note: issuer without key usage (BTD-55) */
+		"warning",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
@@ -147,6 +153,15 @@ AuditParams &AuditParams::set(const QString &key, int v)
 AuditParams &AuditParams::set(const QString &key, bool v)
 {
 	return store(key, v);
+}
+
+AuditParams &AuditParams::warn(const QString &code)
+{
+	QStringList w = values.value("warning").toString()
+				.split(',', Qt::SkipEmptyParts);
+	if (!w.contains(code))
+		w << code;
+	return store("warning", w.join(","));
 }
 
 /* Invalid dates and the RFC 5280 "undefined" date of a1time become null */
@@ -552,19 +567,43 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	bool writing = false;
+	/* insertEntry() has committed or joined the caller's transaction */
+	bool callerTransaction = DbTransaction::active();
 	try {
 		writeCheckpoint(ctx, false, false, false, &writing);
 	} catch (errorEx &err) {
 		/* Failed before its first write: the entry and the caller's
 		 * transaction stay, the next append() tries again. A failure
 		 * while writing rolled the caller's transaction back with
-		 * the checkpoint, so it must reach the caller (BTD-111) */
-		if (writing)
+		 * the checkpoint, so it must reach the caller (BTD-111).
+		 * Without a caller transaction (a failure entry after the
+		 * rollback) the entry is committed: the caller keeps its own
+		 * error and the next append() tries again (BTD-143) */
+		if (writing && callerTransaction)
 			throw;
 		qWarning() << "No audit checkpoint after entry" << e.seq
 			<< err.getString();
 	}
 	return e;
+}
+
+bool AuditLog::appendFailure(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &errorCode, const QString &result)
+{
+	try {
+		append(ctx, action, objectType, objectId, params, result,
+			errorCode);
+		return true;
+	} catch (errorEx &err) {
+		qCritical().noquote() << "Audit entry lost:" << action << result
+			<< errorCode << "-" << err.getString();
+	} catch (...) {
+		qCritical().noquote() << "Audit entry lost:" << action << result
+			<< errorCode;
+	}
+	return false;
 }
 
 /* True if the stored params text is exactly the canonical JSON of an

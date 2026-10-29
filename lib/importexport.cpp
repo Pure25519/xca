@@ -344,13 +344,13 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		 * back to the caller or is deleted (BTD-114) */
 		dropItems(items + result.created, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "object.import", "object", QString(),
-				params, "failure", err.code);
+		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
+				params, err.code);
 		throw;
 	} catch (...) {
 		dropItems(items + result.created, spec);
-		AuditLog::append(ctx, "object.import", "object", QString(),
-				params, "failure", "internal_error");
+		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
+				params, "internal_error");
 		throw;
 	}
 	return result;
@@ -418,12 +418,28 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		}
 
 		if (!spec.pkcs12Algorithm.isEmpty() &&
+		    (spec.clipboard || !xport->match_all(F_PKCS12)))
+			throw serviceError("format_not_applicable",
+				tr("A PKCS#12 algorithm needs a PKCS#12 format"));
+		if (!spec.pkcs12Algorithm.isEmpty() &&
 		    !encAlgo::all_encAlgos.contains(
 				encAlgo(spec.pkcs12Algorithm).getEncAlgoNid()))
 			throw serviceError("invalid_pkcs12_algorithm",
 				tr("Unknown PKCS#12 algorithm '%1'")
 				.arg(spec.pkcs12Algorithm));
 		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
+		/* How the key material is protected, where a legacy method is
+		 * possible: the PKCS#12 algorithm, and the legacy marker for
+		 * it and for RFC 1423 PEM encryption (BTD-52) */
+		if (!spec.clipboard && xport->match_all(F_PKCS12)) {
+			encAlgo used = encAlgo::forExport();
+			params.set("pkcs12_algorithm", used.name());
+			if (used.legacy())
+				params.set("legacy", true);
+		} else if (!spec.clipboard &&
+			   xport->match_all(F_TRADITION | F_CRYPT)) {
+			params.set("legacy", true);
+		}
 
 		/* The password, before the database is touched */
 		Passwd pass;
@@ -522,14 +538,14 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		return out;
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::append(ctx, "object.export", objectType,
+		AuditLog::appendFailure(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
-			params, "failure", err.code);
+			params, err.code);
 		throw;
 	} catch (...) {
-		AuditLog::append(ctx, "object.export", objectType,
+		AuditLog::appendFailure(ctx, "object.export", objectType,
 			spec.items.size() == 1 ? itemId(spec.items[0]) : QString(),
-			params, "failure", "internal_error");
+			params, "internal_error");
 		throw;
 	}
 }

@@ -144,6 +144,16 @@ void KeyDetail::setKey(pki_key *key, bool import)
 #endif
 #endif
 		default:
+			/* Ed448, ML-DSA, SLH-DSA (BTD-16) */
+			if (keytype::byType(key->getKeyType()).fixed()) {
+				tlModulus->setTitle(tr("Public key"));
+				tlPrivEx->setText(tr("Private key"));
+				tlPubEx->setText(tr("Algorithm"));
+				keyPubEx->setText(key->getKeyTypeString());
+				keyModulus->setText(toHexBlock(key->QByteArrayParam(
+						OSSL_PKEY_PARAM_PUB_KEY)));
+				break;
+			}
 			tlHeader->setText(tr("Unknown key"));
 	}
 }
