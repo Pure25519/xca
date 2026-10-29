@@ -486,6 +486,7 @@ void NewX509::extensionsFromTemplate(pki_temp *temp)
 
 	TemplateSpec t = TemplateSpec::fromTemplate(temp);
 	const ExtensionSpec &e = t.extensions;
+	requestMerge = e;
 
 	nameCons->setText(e.nameConstraints);
 	subAltName->setText(e.subjectAltName);

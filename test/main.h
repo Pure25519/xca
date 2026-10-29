@@ -49,6 +49,7 @@ class test_main: public QObject
 	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
+	void templateMergeRoundTrip();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

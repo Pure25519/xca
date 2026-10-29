@@ -49,7 +49,23 @@ class test_service_merge : public ServiceTestCase
 	void modes();
 	void ekuDefaultAndAllowed();
 	void legacyTemplates();
+	void caBitsNeverIntoLeaf_data();
+	void caBitsNeverIntoLeaf();
+	void criticalityFromTemplate_data();
+	void criticalityFromTemplate();
+	void mergeDecisionAudited();
 };
+
+/* the code of the issuance, "" when it issued */
+static QString code(const ServiceContext &ctx, const IssuanceSpec &s)
+{
+	try {
+		Database.model<db_x509>()->newCert(ctx, s);
+		return QString();
+	} catch (serviceError &err) {
+		return err.code;
+	}
+}
 
 pki_x509 *test_service_merge::ca()
 {
@@ -314,4 +330,138 @@ void test_service_merge::legacyTemplates()
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_merge)
+/* mr-processor review of xca#47, blocker 1: keyCertSign and cRLSign of
+ * a CSR never reach an end entity, in any mode that takes its key usage,
+ * with or without "copy extensions"; anyExtendedKeyUsage, OCSPSigning
+ * and codeSigning only when ekuAllowed names them. A CA may take them. */
+void test_service_merge::caBitsNeverIntoLeaf_data()
+{
+	QTest::addColumn<QString>("addext");
+	QTest::addColumn<ExtensionSpec::requestMerge>("mode");
+	QTest::addColumn<bool>("copy");
+	QTest::addColumn<QString>("allowed");
+	QTest::addColumn<bool>("ca");
+	QTest::addColumn<QString>("code");
+
+	const QString kcs = "keyUsage=digitalSignature,keyCertSign";
+	const QString crl = "keyUsage=digitalSignature,cRLSign";
+	for (auto mode : { ExtensionSpec::merge_union, ExtensionSpec::merge_request }) {
+		QString m = mode == ExtensionSpec::merge_union ? "union" : "request";
+		for (bool copy : { false, true }) {
+			QString c = copy ? " copy" : "";
+			QTest::newRow(CCHAR(m + c + " keyCertSign")) << kcs << mode
+				<< copy << "" << false << "csr_keycertsign_not_ca";
+			QTest::newRow(CCHAR(m + c + " cRLSign")) << crl << mode
+				<< copy << "" << false << "csr_keycertsign_not_ca";
+			for (QString p : { "anyExtendedKeyUsage", "OCSPSigning", "codeSigning" })
+				QTest::newRow(CCHAR(m + c + " " + p))
+					<< "extendedKeyUsage=" + p << mode << copy
+					<< "" << false << "csr_eku_not_allowed";
+		}
+		QTest::newRow(CCHAR(m + " anyEKU allowed"))
+			<< "extendedKeyUsage=anyExtendedKeyUsage" << mode << false
+			<< "anyExtendedKeyUsage" << false << "";
+		QTest::newRow(CCHAR(m + " keyCertSign for a CA")) << kcs << mode
+			<< false << "" << true << "";
+	}
+	QTest::newRow("legacy copy keyCertSign") << kcs
+		<< ExtensionSpec::merge_legacy << true << "" << false
+		<< "csr_keycertsign_not_ca";
+	QTest::newRow("legacy without copy") << kcs
+		<< ExtensionSpec::merge_legacy << false << "" << false << "";
+}
+
+void test_service_merge::caBitsNeverIntoLeaf()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, addext);
+	QFETCH(ExtensionSpec::requestMerge, mode);
+	QFETCH(bool, copy);
+	QFETCH(QString, allowed);
+	QFETCH(bool, ca);
+	QFETCH(QString, code);
+	pki_x509 *signer = this->ca();
+	pki_x509req *req = csr({ addext });
+	QVERIFY(signer && req);
+	IssuanceSpec s = spec(req, signer);
+	s.copyRequestExtensions = copy;
+	s.extensions.kuMerge = mode;
+	s.extensions.ekuMerge = mode;
+	if (!allowed.isEmpty())
+		s.extensions.ekuAllowed << allowed;
+	if (ca)
+		s.extensions.basicCA = ExtensionSpec::bc_ca;
+	QCOMPARE(::code(ctx, s), code);
+#endif
+}
+
+/* MINOR 4: the template's criticality wins; union may only add it */
+void test_service_merge::criticalityFromTemplate_data()
+{
+	QTest::addColumn<ExtensionSpec::requestMerge>("mode");
+	QTest::addColumn<bool>("templateCritical");
+	QTest::addColumn<bool>("csrCritical");
+	QTest::addColumn<bool>("expected");
+	QTest::newRow("request, template critical") << ExtensionSpec::merge_request
+		<< true << false << true;
+	QTest::newRow("request, CSR critical") << ExtensionSpec::merge_request
+		<< false << true << false;
+	QTest::newRow("union, CSR critical") << ExtensionSpec::merge_union
+		<< false << true << true;
+	QTest::newRow("union, none") << ExtensionSpec::merge_union
+		<< false << false << false;
+}
+
+void test_service_merge::criticalityFromTemplate()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(ExtensionSpec::requestMerge, mode);
+	QFETCH(bool, templateCritical);
+	QFETCH(bool, csrCritical);
+	QFETCH(bool, expected);
+	pki_x509 *signer = ca();
+	pki_x509req *req = csr({ QString("keyUsage=%1digitalSignature")
+			.arg(csrCritical ? "critical," : "") });
+	QVERIFY(signer && req);
+	IssuanceSpec s = spec(req, signer);
+	s.copyRequestExtensions = false;
+	s.extensions.kuMerge = mode;
+	s.extensions.keyUsage << "keyEncipherment";
+	s.extensions.keyUsageCritical = templateCritical;
+	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, s);
+	QVERIFY(cert);
+	X509 *x = cert->getCert();
+	QCOMPARE((bool)X509_EXTENSION_get_critical(X509_get_ext(x,
+		X509_get_ext_by_NID(x, NID_key_usage, -1))), expected);
+#endif
+}
+
+/* MINOR 10: the audit entry says per extension which mode decided and
+ * whether the CSR or ekuDefault gave the value */
+void test_service_merge::mergeDecisionAudited()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *signer = ca();
+	pki_x509req *req = csr({ "keyUsage=digitalSignature",
+				"subjectAltName=DNS:device.example" });
+	QVERIFY(signer && req);
+	IssuanceSpec s = spec(req, signer);
+	s.copyRequestExtensions = false;
+	s.extensions.sanMerge = ExtensionSpec::merge_template;
+	s.extensions.kuMerge = ExtensionSpec::merge_union;
+	s.extensions.keyUsage << "keyEncipherment";
+	s.extensions.ekuMerge = ExtensionSpec::merge_request;
+	s.extensions.ekuDefault << "clientAuth";
+	QVERIFY(Database.model<db_x509>()->newCert(ctx, s));
+	QCOMPARE(AuditLog::entries().last().params.value("merge").toString(),
+		QString("san=template,ku=union+csr,eku=request+default"));
+#endif
+}
+
 #include "test_service_merge.moc"
