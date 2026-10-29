@@ -102,10 +102,12 @@ class keytype
 	 * found by their algorithm name (BTD-16) */
 	static int nid(const EVP_PKEY *pkey)
 	{
+		if (!pkey)
+			return NID_undef;
 		int id = EVP_PKEY_get_id(pkey);
 		if (id > 0)
 			return EVP_PKEY_type(id);
-		const char *name = pkey ? EVP_PKEY_get0_type_name(pkey) : nullptr;
+		const char *name = EVP_PKEY_get0_type_name(pkey);
 		return name ? OBJ_ln2nid(name) : NID_undef;
 	}
 	static const keytype byType(int type)

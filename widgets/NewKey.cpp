@@ -204,7 +204,9 @@ keyjob NewKey::getKeyJob() const
 	if (job.isEC()) {
 		int idx = curveBox->currentIndex();
 		job.ec_nid = curveBox->itemData(idx).toInt();
-	} else {
+	} else if (job.ktype.length) {
+		/* The size field is hidden for the types without size; its
+		 * text is no size of theirs (BTD-16) */
 		QString size = keyLength->currentText();
 		size.replace(QRegularExpression("[^0-9]"), "");
 		job.size = size.toInt();

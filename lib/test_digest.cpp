@@ -17,6 +17,7 @@ class test_digest: public QObject
 private slots:
     void default_digest();
     void convert();
+    void adjustEmpty();
 };
 
 void test_digest::default_digest()
@@ -38,6 +39,15 @@ void test_digest::convert()
 	d.adjust(QList<int>({ NID_md5, NID_sha256, NID_sha384 }));
 	QCOMPARE(d.name(), "SHA384");
 
+}
+
+/* A key type without a digest list (ML-DSA before BTD-164) keeps the
+ * digest instead of reading past the empty list */
+void test_digest::adjustEmpty()
+{
+	digest d(EVP_sha384());
+	d.adjust(QList<int>());
+	QCOMPARE(d.name(), "SHA384");
 }
 
 QTEST_MAIN(test_digest)
