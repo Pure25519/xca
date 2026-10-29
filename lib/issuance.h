@@ -39,7 +39,8 @@ class ExtensionSpec
 
 	enum basicConstraints basicCA{ bc_absent };
 	bool basicCritical{};
-	QString pathLen{};          // empty: no path length constraint
+	QString pathLen{};          // empty: no path length constraint;
+	                            // 0 is a constraint, never a default
 
 	bool subjectKeyId{};
 	bool authorityKeyId{};      // never added to a self-signed certificate
@@ -114,6 +115,11 @@ class IssuanceSpec
 
 	ExtensionSpec extensions{};
 	bool copyRequestExtensions{};   // CSR extensions the spec lacks
+
+	/* chain_opcua adds the OPC UA chain rules (PLAN.md 14.4) to the
+	 * checks before the signature; a profile of family opcua sets it */
+	enum chainRules { chain_rfc5280, chain_opcua };
+	enum chainRules chainRules{ chain_rfc5280 };
 
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit

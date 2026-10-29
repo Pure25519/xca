@@ -21,6 +21,7 @@
 #include "entropy.h"
 #include "audit.h"
 #include "issuance.h"
+#include "issuance_checks.h"
 #include "request.h"
 
 #include "XcaWarningCore.h"
@@ -418,6 +419,8 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	Transaction;
 	TransThrow();
 
+	IssuanceChecks::spec(spec);
+
 	// Step 1 - Subject and key
 	if (spec.request) {
 		clientkey = spec.request->getRefKey();
@@ -452,13 +455,18 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 		throw serviceError("no_private_signing_key",
 			tr("The key you selected for signing is not a private one."));
 
+	// the issuer up to the root, checked before anything is signed
+	QList<const pki_x509 *> chain =
+			IssuanceChecks::issuerChain(spec.signer);
+	IssuanceChecks::issuers(spec, chain, signkey);
+	IssuanceChecks::request(spec);
+
 	X509V3_set_ctx_nodb(&ext_ctx);
 	X509V3_set_ctx(&ext_ctx, signcert->getCert(), cert->getCert(),
 			NULL, NULL, 0);
 
 	// set the issuers name
 	cert->setIssuer(signcert->getSubject());
-	cert->setSerial(getUniqueSerial(spec.signer));
 
 	// Step 3 - Choose the Date, capped at the issuer chain
 	bool capped;
@@ -483,8 +491,16 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 			cert->addV3ext(el[i], true);
 	}
 
+	IssuanceChecks::certificate(spec, cert, chain);
+	IssuanceChecks::names(spec, cert, chain);
+
+	// the serial only once every check passed
+	cert->setSerial(getUniqueSerial(spec.signer));
+
 	// and finally sign the request
 	cert->sign(signkey, spec.hashAlgo);
+	/* the issuer is the CA that signed, not the latest one with its DN */
+	cert->setSigner(spec.signer);
 
 	// set the comment field
 	cert->setComment(spec.comment);

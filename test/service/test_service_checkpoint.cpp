@@ -1014,6 +1014,12 @@ void test_service_checkpoint::auditKeyNotUsableForSigning()
 				NID_basic_constraints, "critical,CA:TRUE");
 	X509_add_ext(x, bc, -1);
 	X509_EXTENSION_free(bc);
+	/* a CA the issuer checks accept (BTD-55): only the audit key
+	 * stands in the way */
+	X509_EXTENSION *ku = X509V3_EXT_conf_nid(NULL, &ext,
+				NID_key_usage, "critical,keyCertSign,cRLSign");
+	X509_add_ext(x, ku, -1);
+	X509_EXTENSION_free(ku);
 	QVERIFY(X509_sign(x, caKey, NULL) > 0);
 	EVP_PKEY_free(caKey);
 	pki_x509 *ca = new pki_x509(x);
