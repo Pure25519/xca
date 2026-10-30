@@ -29,17 +29,6 @@ const Command *Registry::find(const QString &name) const
 	return nullptr;
 }
 
-static OptionSpec opt(const QString &name, enum OptionSpec::kind type,
-		const QString &valueName, const QString &help)
-{
-	OptionSpec o;
-	o.name = name;
-	o.type = type;
-	o.valueName = valueName;
-	o.help = help;
-	return o;
-}
-
 static OptionSpec secretOpt(const QString &name, const QString &help,
 		QList<enum pass_info::purpose> purposes,
 		const QString &reserved = QString())

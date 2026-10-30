@@ -27,6 +27,31 @@
 
 using namespace bxcpki;
 
+#ifdef BXC_PKI_FAULTS
+#include <unistd.h>
+#include "lib/staged_file.h"
+
+/* Test build only (bxc-pki-faults, BTD-42): BXC_PKI_FAULT=<mode>:<step>:<text>
+ * makes the step (create, write, sync, publish, recheck) of every staged
+ * file whose target contains <text> fail (mode fail) or ends the process
+ * there with exit code 137 like a killed run (mode kill) */
+static void installFaults()
+{
+	QStringList f = QString::fromLocal8Bit(qgetenv("BXC_PKI_FAULT"))
+				.split(':');
+	if (f.size() != 3)
+		return;
+	StagedFile::faultHook = [f](enum StagedFile::step s,
+				const QString &target) {
+		if (StagedFile::stepName(s) != f[1] || !target.contains(f[2]))
+			return false;
+		if (f[0] == "kill")
+			_exit(137);
+		return true;
+	};
+}
+#endif
+
 /* Messages to stderr as text (stdout carries only results); remembers
  * the last SQL error for the cause of a write error (rule 11) and the
  * errors of the OID initialisation */
@@ -233,6 +258,8 @@ static int run(const QStringList &argv)
 		}
 		ResultCollector result(cmd->name, ctx.plan);
 		ctx.result = &result;
+		OutputFiles files(ctx.opts.has("force"), ctx.plan);
+		ctx.files = &files;
 		runInTransaction(ctx, { cmd->handler });
 		if (ctx.text)
 			console_write(stdout, result.text().toUtf8());
@@ -270,6 +297,9 @@ int main(int argc, char *argv[])
 	xcaWarning::setGui(new CliWarning());
 	XcaProgress::setGui(new SilentProgress());
 	registerCommands(Registry::instance());
+#ifdef BXC_PKI_FAULTS
+	installFaults();
+#endif
 	Settings.clear();
 
 	int ret;

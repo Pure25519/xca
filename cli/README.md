@@ -1,9 +1,9 @@
 # bxc-pki command line
 
-`bxc-pki` is the headless command line of the bxc-pki fork (BTD-41, part 1; bxc-pki
-`docs/PLAN.md` 8.1). It works directly on an XCA database (default `./bxc-pki.xdb`), links only
-`xcacore` (no Qt Gui, Widgets or Help; `test_core_link` checks the binary) and never prompts
-unless `--interactive` is given.
+`bxc-pki` is the headless command line of the bxc-pki fork (BTD-41 part 1, BTD-42 part 2;
+bxc-pki `docs/PLAN.md` 8.1). It works directly on an XCA database (default `./bxc-pki.xdb`),
+links only `xcacore` (no Qt Gui, Widgets or Help; `test_core_link` checks the binary) and never
+prompts unless `--interactive` is given.
 
 ```
 bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
@@ -12,6 +12,10 @@ bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 
 bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
+bxc-pki revoke plc10 --reason keyCompromise --ca "BxC OT Issuing" --password env:PKI_PW
+bxc-pki crl --ca "BxC OT Issuing" --out ./pki --layout certstrap --password env:PKI_PW
+bxc-pki export plc10 --type certificate --format p12 --out ./out --password env:PKI_PW --export-pass env:P12_PW
+bxc-pki export "BxC OT Issuing" --format trustlist --target-format opcua-dir --out ./tl --password env:PKI_PW
 ```
 
 `bxc-pki --help` documents every command and option; the option names are a stable interface
@@ -43,7 +47,8 @@ bxc-pki show plc10 --type certificate
 - Every write goes through the service layer, which writes the audit entries (channel `cli`,
   actor `os:<login>`). `list` and `show` only read and write no audit entry (PLAN.md 6.1).
 
-Result document of `init`, `request-cert`, `sign` (schema `urn:bxc-pki:schema:cli-result:v1`):
+Result document of `init`, `request-cert`, `sign`, `revoke`, `crl` and `export` (schema
+`urn:bxc-pki:schema:cli-result:v1`):
 
 ```json
 {"schema": "urn:bxc-pki:schema:cli-result:v1", "command": "sign", "plan": false,
@@ -54,10 +59,20 @@ Result document of `init`, `request-cert`, `sign` (schema `urn:bxc-pki:schema:cl
 `objects` lists only what was actually written, after the commit. A certificate entry carries
 `validity_capped` and, when capped at the issuer chain, `requested_not_after` (BTD-51).
 
+Members of part 2 (BTD-42), present only when a command sets them:
+
+| Member | Set by | Content |
+|---|---|---|
+| `files` | every command with `--out`, `export` | one entry per file: `path`, `kind` (key, csr, crt, crl, der, chain, p12, public_key, pem_bundle, manifest), `secret`, `written`, `size` and `sha256` (not with `--plan`), `object_type`/`object_id`/`object_name` of the object in it; `export` adds `format`, `encrypted`, `pkcs12_algorithm` (p12) and `ml_dsa_encoding` (ML-DSA key) |
+| `crls` | init, revoke, crl, sign (re-issue), export trustlist | one entry per CRL: `ca_id`, `ca_name`, `crl_id`, `crl_name`, `crl_number`, `revoked_count`, `this_update`, `next_update`, `reissue_fraction`, `reissue_at`, `remaining_seconds`, `remaining_validity` (ISO 8601), `reissue_due`, `expired`, `der_size`, `size_budget`, `within_budget`, `trigger` (init, revoke, command, reissue_due, missing); trustlist also `role` (trusted, issuer) and `reissued`. With `--plan` a CRL to be issued has `crl_id` null and only the times and settings |
+| `revocation` | revoke | `certificate_id`, `certificate_name`, `serial`, `reason` (RFC 5280 name), `ca_id`, `ca_name`, `revocation_date` (not with `--plan`) |
+| `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates and CRLs), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
+| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--force`), `stale_files`, `crl_not_issued` (init of a CA not valid now); also printed on stderr |
+
 `--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
-that need no signature — key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
+that need no signature â€” key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
 CSR signature), the signer's private key and its unlock (the key is decrypted, nothing is
-signed), the validity cap — and list the objects that would be written with `"id": null` and
+signed), the validity cap â€” and list the objects that would be written with `"id": null` and
 `"document": null` (no PEM, serial, signature or fingerprint), certificates with
 `validity_capped`/`requested_not_after`. The extension checks of a real issue (duplicate
 extensions, CSR merge rules, OPC UA chain rules) run only when the certificate is built. One
@@ -77,6 +92,9 @@ error code, after the failure entries of service calls.
 | `runInTransaction()` | `framework.cpp` | runs a list of handlers in ONE transaction it owns and commits. On failure everything is rolled back and the failure audit entries of the service calls are written again after the rollback (`AuditFailureCapture`, `lib/audit.h`). With `--plan` the handlers write and sign nothing (see below) |
 | references | `framework.cpp` | `--ca`, `--parent`, `--use-key`, `--template` and `show` take a database id or a unique name; an ambiguous name is `ambiguous_reference` with the candidates |
 | input checks | `input.cpp` | RFC 4514 subjects (order kept, multi-valued RDNs, DC, UTF8String), strict IP/URI/DNS/e-mail SANs, RFC 3339, ISO 8601 durations (`IsoDuration`, `lib/issuance.h`), key types |
+| CRL lifecycle | `lifecycle.cpp` | `revoke`, `crl`; `issueCrl()`, `reissueIfDue()`, `crlReport()` shared by init, sign and export; CRL settings per CA (`lib/crl_policy.h`) |
+| export | `export.cpp` | single objects through `db_base::exportItems()` (BTD-34), the trust list and its format registry |
+| files | `output.cpp` | `OutputFiles`: staged before the commit, published by the runner after it (`lib/staged_file.h`); `--out`, `--layout`, the certstrap file names |
 
 `bootstrap` plugs in as one more command: it parses its file into the same `Options`-like inputs,
 calls `runInTransaction(ctx, steps)` with one handler per object of the file, so the whole PKI
@@ -108,9 +126,164 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   key with a template that names keyEncipherment or dataEncipherment is refused with
   `key_usage_not_for_key_type`. `--profile` is reserved until Phase 2.
 
+## Part 2 (BTD-42): revoke, crl, export, files
+
+### Commands
+
+- `revoke [<certificate>] --reason <reason>`: the certificate is a database id or a unique name
+  (an ambiguous name is `ambiguous_reference` with the candidates), or `--serial <serial> --ca
+  <ca>` (hex as XCA shows it, with or without `0x` and colons, or decimal; normalised by
+  `db_x509::certBySerial()`: `unknown_serial`, `ambiguous_serial`), or `--fingerprint <sha256>`.
+  `--reason` is required and takes the RFC 5280 names (`removeFromCRL` is refused: delta CRLs
+  only). With `--ca` the issuer must be that CA (`wrong_issuer`). The revocation and the new CRL
+  of the issuing CA are written in one transaction; sign, revoke and crl unlock the CA key the
+  same way (`--password`, also for a key with a password of its own).
+- `crl --ca <ca> [--this-update <date-time>]`: the next CRL of the CA. Given `--crl-*` options
+  become the CA's stored settings. Publishing to targets is Phase 4.
+- `export <object>... --format pem|der|pkcs8|p12|chain|trustlist --out <dir>`: see Export.
+- `--out <dir>` on init, request-cert, sign, crl and revoke: see Files.
+
+### CRL lifecycle (rule 7, PLAN.md 14.6)
+
+- `init` issues the empty CRL of the new CA at once (a CA not valid now, e.g. `--not-before` in
+  the future, gets the warning `crl_not_issued` instead). CRL numbers come from the database
+  and only grow (`db_crl::newCrl()`, `crl_number_not_increasing`).
+- nextUpdate = thisUpdate + the CRL validity of the CA. Defaults (user decision 2026-10-27,
+  bootstrap schema `$defs/crlSettings`): validity `P7D`, re-issue fraction 1/3, CRL size budget
+  4096 bytes; trust-list budget 65535 bytes.
+- Re-issue point: thisUpdate + fraction x validity (P7D: 56 hours, before IDIAL's CrlRefreshScheduler
+  replaces a CRL at half of its lifetime). A command that finds a CRL of the CA it works with
+  past that point issues a new one: `sign` (for `--ca`) and `export --format trustlist` (for
+  every CA of the list); `revoke` and `crl` always issue one. The new CRL has `trigger`
+  `reissue_due` in the result and in its `crl.generate` audit entry.
+- Settings per CA: `--crl-validity <duration>`, `--crl-reissue-fraction <1/3|0.25>` (strictly
+  between 0 and 1/2), `--crl-size-budget <bytes>` on `init` and `crl`. Storage: the validity
+  also sets the CA's `crlDays` (authority table, rounded up to whole days, what the GUI shows);
+  the whole setting is one row of the `settings` table, key `crlpolicy_<CA item id>`, value
+  `{"validity":"P7D","reissue_fraction":0.333...,"size_budget":4096}` (`lib/crl_policy.h`;
+  no schema change). Writing it is audited (`ca.crl_settings`). Per export target the same
+  options plus `--trust-list-budget` and `--on-budget-exceeded` override them for one export
+  and are not stored.
+
+### Files (rules 7, 10, 11)
+
+Every file goes through one helper, `lib/staged_file.h` (`StagedFile`): a temporary file
+`.<name>.bxc-tmp-<random>` is created in the target directory with `O_EXCL`, mode 0600 from its
+creation for private keys (Windows: a protected DACL with OWNER RIGHTS only; written for
+BTD-13, not yet compiled or tested), written, `fsync`ed; only after the database commit it is
+published: without `--force` with `link()` (an existing file, also one that appeared meanwhile,
+is never replaced: `file_exists`), with `--force` with `rename()`; then the directory is
+`fsync`ed and the mode of a key file is checked again (`permission_check_failed`). Everything
+that can fail before (key unlock, encoding, export password, directory and collision checks,
+writing the temporary file) runs before the commit, so a refused file leaves the database
+unchanged. A failure of the publish step is `publish_failed`: its detail names the objects that
+are stored (id and name) and the files that are missing, and a failure entry `object.export`
+follows; export the objects again instead of issuing them twice. A run killed at any point
+leaves the target absent or complete (an old file unchanged); at most the hidden temporary file
+stays. Public files are not refused for their mode.
+
+Names under `--out`:
+
+- `--layout id` (default, rule 10): `<name>-<id>.<ext>`, the internal name and the database id
+  of the object in the file, so two objects with the same CN never meet in one file.
+- `--layout certstrap`: `<name>.<ext>` as certstrap writes them, i.e. `<CN>.key`, `<CN>.csr`,
+  `<CN>.crt`, `<CN>.crl` (the CRL is named after its CA). An existing file is refused
+  (`file_exists`) unless `--force`.
+- `<name>`: the internal name (by default the CN); like certstrap, spaces become `_`; any other
+  character outside `[A-Za-z0-9._+@-]` and a leading `.` become `_` as well.
+- Files: init `key`, `crt`, `crl`; request-cert `key`, `csr`; sign `crt`; crl and revoke the
+  CRL. Certificates, requests and CRLs are PEM. The key file is encrypted PKCS#8 (PBES2) with
+  `--export-pass`; `--key-unencrypted` writes unencrypted PKCS#8 (as certstrap without a
+  passphrase), `--no-key-file` none; without one of the three a command that writes a key
+  stops before generating anything (`missing_password` naming `--export-pass`).
+- certstrap compatibility is the file names and the PEM content only, not certstrap's CA
+  directory structure or its depot; `cli/test/cli_out.cmake` runs a script written for
+  certstrap's output unchanged against the files (`certstrap-script.log` in its work directory).
+
+### Export (rule 9)
+
+| `--format` | certificate | key | request | crl |
+|---|---|---|---|---|
+| `pem` | `.crt` | public key `.pub.pem` | `.csr` | `.crl` |
+| `der` | `.der` | public key `.pub.der` | `.csr.der` | `.crl.der` |
+| `chain` | `.chain.pem`, the chain up to the root | - | - | - |
+| `p12` | `.p12`: certificate, key and chain, AES-256-CBC with PBKDF2 and an SHA-256 MAC (BTD-52) | - | - | - |
+| `pkcs8` | its private key | `.key`, encrypted PKCS#8 with PBES2 | - | - |
+
+Encrypted formats take their password from `--export-pass` only; without it the export fails
+with `missing_password` and writes no file. Legacy only on request: `--pkcs12-algorithm
+<name>` (e.g. `PBE-SHA1-3DES`, audited with `legacy`), `--key-unencrypted` (unencrypted
+PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
+`--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
+(`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
+`key.export_private` name it; on another key it is `format_not_applicable`. Every export writes
+`object.export`, a private key also `key.export_private`. `--type` selects the object kind when
+a name is used by more than one.
+
+### Trust lists
+
+Decision (user, 2026-10-27; recorded in BTD-42): the OPC UA directory layout is the trust list
+format for OT devices, but targets are not only OPC UA devices, so the format is selected per
+target: `--target-format opcua-dir` (default), `pem-bundle`, `der-files`. SCALANCE XB208 has no
+trust-list management (IDIAL research), device leaf packages are BTD-66.
+
+- Content: the given CAs are trusted; their chains up to the root and `--issuer-ca` are issuers
+  (only for chain building, OPC 10000-12 7.8.2). Every CA comes with its latest CRL. `--leaf`
+  adds leaf certificates after them. One export is meant for one hierarchy; CAs of several roots
+  share the same `trusted/` and `issuer/` directories.
+- `opcua-dir`: `trusted/certs/<name>-<id>.der`, `trusted/crl/<CA>-<crl id>.crl` (DER),
+  `issuer/certs/`, `issuer/crl/`, leaves in `own/certs/`. `pem-bundle`: `trustlist.pem` with
+  all CA certificates, then all CRLs (leaves in `leaves.pem`). `der-files`: one DER file per
+  certificate (`.der`) and CRL (`.crl`).
+- `manifest.json` (`urn:bxc-pki:schema:trust-list-manifest:v1`) lists every entry with
+  `position`, `kind`, `role`, `path`, `name`, `object_id`, `der_size`, `sha256` and for CRLs
+  number and times: CA certificates first, then CRLs, then leaves (OPC UA push order: the trust
+  list before CreateSigningRequest and UpdateCertificate).
+- CRL freshness: a missing CRL or one past its re-issue point is renewed with the CA key; with
+  `--no-reissue` (or a CA without private key) an expired CRL is `crl_expired`, one past its
+  re-issue point `crl_reissue_due`, a missing one `crl_missing`; `--force` exports them with a
+  warning (an S7 refuses the whole trust list for one expired CRL, SMP-831).
+- Budgets: per CRL (`--crl-size-budget`, else the CA's setting, default 4096) and for the whole
+  list (`--trust-list-budget`, default 65535; the size is the sum of the DER sizes of the CA
+  certificates and CRLs). `--on-budget-exceeded warning` (default) exports and warns,
+  `error` refuses (`budget_exceeded`) and writes nothing. The result reports every size and the
+  remaining validity of every CRL.
+- Files of an earlier export that stay in `trusted/`, `issuer/` or `own/` are reported
+  (`stale_files`); nothing is deleted.
+- One audit entry `trustlist.export` (object type `object`) with `format`, `file` (the
+  directory), `count`, `der_size`, `trust_list_budget`, `name` (the trusted CAs) and `warning`;
+  a refusal is the same action with result `failure`.
+
+Extension point: a device-specific layout is one more `TrustListFormat` in
+`trustListFormats()` (`export.cpp`): a name, a description, its default budget action and a
+`layout()` function that maps the content (CA certificates, CRLs and leaves in manifest order,
+each with DER and PEM) to files. Content, CRL checks, budgets, manifest and audit stay the same
+for every format, so the existing formats do not change.
+
+### Audit (part 2)
+
+New actions: `ca.crl_settings`, `trustlist.export`. New parameters (allow-list in
+`lib/audit.cpp`): `crl_validity`, `reissue_fraction`, `size_budget` (ca.crl_settings),
+`trigger` (crl.generate), `trust_list_budget` (trustlist.export). The other entries are those
+of the services (`certificate.revoke`, `crl.generate`, `object.export`, `key.export_private`).
+
+### Error codes (part 2)
+
+`invalid_reason`, `invalid_fingerprint`, `wrong_issuer` (revoke); `file_exists`,
+`invalid_output`, `write_failed`, `permission_check_failed`, `publish_failed` (files);
+`format_not_applicable` (export format for the object), `crl_missing`, `crl_expired`,
+`crl_reissue_due`, `budget_exceeded` (trust lists); from the services `unknown_serial`,
+`ambiguous_serial`, `already_revoked`, `self_signed`, `unknown_issuer`, `missing_password`.
+
 ## Tests
 
 `ctest -L cli` (build container, `deploy/build/linux/dev.py test -L cli` in bxc-pki): the
 scripts in `cli/test/` run the binary against fresh databases; each keeps a `transcript.log`
 of every call in its work directory under the build tree. `cli_fixture` is a test helper that
-creates what part 1 cannot (templates with a custom EKU).
+creates what the command line cannot (templates with a custom EKU, a key with a password of
+its own, many revocations for a large CRL). Part 2: `cli_revoke`, `cli_crl`, `cli_export`,
+`cli_out` (certstrap layout and script), `cli_trustlist`, `cli_files`. `cli_files` runs
+`bxc-pki-faults`, the same command line built with `BXC_PKI_FAULTS`: `BXC_PKI_FAULT=<fail|kill>:
+<create|write|sync|publish|recheck>:<text>` makes that step of every file whose path contains
+the text fail, or ends the process there (exit code 137) like a killed run. The shipped
+`bxc-pki` has no such hook.

@@ -14,7 +14,7 @@ bxc("init root" 0 init --db "${DB}" ${PW} --cn "BxC Lab Root"
     --validity P10Y)
 one_doc("init root" "${out}" cli-result root)
 result_objects("${root}" objs)
-if(NOT objs STREQUAL "key:BxC Lab Root;certificate:BxC Lab Root")
+if(NOT objs STREQUAL "key:BxC Lab Root;certificate:BxC Lab Root;crl:BxC Lab Root")
   fail("init root wrote '${objs}'")
 endif()
 object_doc("${root}" certificate root_crt)
@@ -159,9 +159,10 @@ endforeach()
 bxc("list" 0 list --db "${DB}" ${PW})
 one_doc("list" "${out}" list l)
 string(JSON n LENGTH "${l}" items)
-# 2 CAs (key + cert), 4 end entities (key + request + cert), 1 template
-if(NOT n EQUAL 17)
-  fail("list: ${n} items, expected 17:\n${l}")
+# 2 CAs (key + cert + the empty CRL of rule 7, BTD-42), 4 end entities
+# (key + request + cert), 1 template
+if(NOT n EQUAL 19)
+  fail("list: ${n} items, expected 19:\n${l}")
 endif()
 bxc("list certificates" 0 list --db "${DB}" ${PW} --type certificate)
 one_doc("list certificates" "${out}" list l)
@@ -233,6 +234,12 @@ foreach(word init request-cert sign list show
     --subject --name --parent --path-len --key --use-key --key-file
     --validity --not-before --not-after --backdate --hash --dns --ip
     --uri --email --ca --template --profile --type --file
+    revoke crl export --reason --serial --fingerprint --invalidity-date
+    --this-update --crl-validity --crl-reissue-fraction --crl-size-budget
+    --out --layout --force --key-unencrypted --no-key-file --format
+    --legacy-key-pem --pkcs12-algorithm --mldsa-key-format --target-format
+    --issuer-ca --leaf --no-reissue --trust-list-budget --on-budget-exceeded
+    opcua-dir pem-bundle der-files
     rsa-2048 ec-p256 ed25519 ml-dsa-65 slh-dsa-sha2-128s)
   string(FIND "${out}" "${word}" pos)
   if(pos EQUAL -1)

@@ -391,6 +391,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		params.set("format", (qint64)xport->id);
 	if (!spec.fileName.isEmpty())
 		params.set("file", spec.fileName);
+	else if (!spec.publishedFile.isEmpty())
+		params.set("file", spec.publishedFile);
 	params.set("count", (qint64)spec.items.size());
 	if (spec.items.size() == 1 && spec.items[0])
 		params.set("name", spec.items[0]->getIntName());
@@ -532,8 +534,11 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			 * nothing */
 			p.set("encrypted", encrypted && !pass.isEmpty());
 			QString enc = pki_evp::MlDsaFormatScope::written(key);
-			if (!enc.isEmpty())
+			if (!enc.isEmpty()) {
 				p.set("ml_dsa_encoding", enc);
+				if (spec.mlDsaWritten)
+					(*spec.mlDsaWritten)[itemId(key)] = enc;
+			}
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}

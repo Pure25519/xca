@@ -11,6 +11,7 @@
 #include <openssl/objects.h>
 
 #include "lib/BioByteArray.h"
+#include "lib/crl_policy.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/db_temp.h"
@@ -21,6 +22,7 @@
 #include "lib/issuance.h"
 #include "lib/issuance_checks.h"
 #include "lib/json_report.h"
+#include "lib/pki_crl.h"
 #include "lib/pki_key.h"
 #include "lib/pki_multi.h"
 #include "lib/pki_temp.h"
@@ -33,9 +35,9 @@
 
 namespace bxcpki {
 
-static OptionSpec opt(const QString &name, enum OptionSpec::kind type,
+OptionSpec opt(const QString &name, enum OptionSpec::kind type,
 		const QString &valueName, const QString &help,
-		bool repeatable = false, bool required = false)
+		bool repeatable, bool required)
 {
 	OptionSpec o;
 	o.name = name;
@@ -71,7 +73,7 @@ static x509name subjectFrom(const Options &o)
 	return x509name();
 }
 
-static digest hashFrom(const Options &o, const pki_key *signKey)
+digest hashFrom(const Options &o, const pki_key *signKey)
 {
 	if (!o.has("hash")) {
 		/* Key types without size or curve (EdDSA, ML-DSA, SLH-DSA)
@@ -91,7 +93,7 @@ static digest hashFrom(const Options &o, const pki_key *signKey)
 	return digest(nid);
 }
 
-static QDateTime nowSeconds()
+QDateTime nowSeconds()
 {
 	QDateTime t = QDateTime::currentDateTimeUtc();
 	t.setTime(QTime(t.time().hour(), t.time().minute(),
@@ -212,7 +214,7 @@ static pki_key *obtainKey(CommandContext &ctx, const QString &name,
 
 /* --plan: the key would sign; decrypting it checks its password (or
  * PIN) without making a signature */
-static void unlockCheck(const pki_key *key)
+void unlockCheck(const pki_key *key)
 {
 	if (!key)
 		return;
@@ -307,16 +309,48 @@ static void cmdInit(CommandContext &ctx)
 	e.keyUsageCritical = true;
 	e.netscape = false;
 
+	/* the CRL settings and --out before anything is generated */
+	CrlPolicy policy = crlPolicy(o, nullptr);
+	checkOutOptions(ctx, true);
+
 	pki_multi fileItems;
 	spec.key = obtainKey(ctx, spec.name, "ec-p384", &fileItems);
 	spec.hashAlgo = hashFrom(o, parent ? parent->getRefKey() : spec.key);
 	ctx.step = QObject::tr("certificate '%1'").arg(spec.name);
 	if (ctx.plan) {
 		planCertificate(ctx, spec);
+		/* rule 7: the empty CRL of the new CA */
+		ctx.result->planned("crl", spec.name);
+		writeOut(ctx, spec.key, "key", spec.name);
+		writeOut(ctx, nullptr, "crt", spec.name);
+		writeOut(ctx, nullptr, "crl", spec.name);
 		return;
 	}
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
 	ctx.result->writtenCertificate(cert, spec);
+	if (hasCrlOptions(o)) {
+		ctx.step = QObject::tr("CRL settings of '%1'").arg(spec.name);
+		policy.store(ctx.svc, cert);
+	}
+	/* rule 7: a new CA issues its empty CRL at once; a CA that is not
+	 * valid now (--not-before in the future, --not-after in the past)
+	 * cannot sign one (IssuanceChecks::crlIssuer) */
+	pki_crl *crl = nullptr;
+	QDateTime now = nowSeconds();
+	if ((QDateTime)cert->getNotBefore() <= now &&
+	    now < (QDateTime)cert->getNotAfter())
+		crl = issueCrl(ctx, cert, policy, "init");
+	else
+		ctx.result->warning("crl_not_issued", QObject::tr(
+			"The CA '%1' is not valid now (%2 to %3); it issues "
+			"its first CRL with 'bxc-pki crl --ca' while it is")
+			.arg(cert->getIntName())
+			.arg(cert->getNotBefore().toPrettyGMT())
+			.arg(cert->getNotAfter().toPrettyGMT()));
+	writeOut(ctx, spec.key, "key");
+	writeOut(ctx, cert, "crt");
+	if (crl)
+		writeOut(ctx, crl, "crl");
 }
 
 /* --- request-cert ----------------------------------------------------- */
@@ -351,6 +385,8 @@ static void cmdRequestCert(CommandContext &ctx)
 		throw usageError("missing_option",
 			QObject::tr("request-cert needs --name"));
 
+	checkOutOptions(ctx, !o.has("key-file"));
+
 	pki_multi fileItems;
 	spec.key = obtainKey(ctx, spec.name, "ec-p256", &fileItems);
 	spec.hashAlgo = hashFrom(o, spec.key);
@@ -359,11 +395,18 @@ static void cmdRequestCert(CommandContext &ctx)
 		/* the key that would sign the request must unlock */
 		unlockCheck(spec.key);
 		ctx.result->planned("request", spec.name);
+		if (!o.has("key-file"))
+			writeOut(ctx, spec.key, "key", spec.name);
+		writeOut(ctx, nullptr, "csr", spec.name);
 		return;
 	}
 	pki_x509req *req = Database.model<db_x509req>()->newRequest(ctx.svc,
 								spec);
 	ctx.result->written(req);
+	/* a --key-file key is not stored, so it is not written either */
+	if (!o.has("key-file"))
+		writeOut(ctx, spec.key, "key");
+	writeOut(ctx, req, "csr");
 }
 
 /* --- sign ------------------------------------------------------------- */
@@ -417,13 +460,19 @@ static void cmdSign(CommandContext &ctx)
 	applyValidity(o, spec, parseDuration("P1Y", "validity"),
 			fromTemplate);
 	spec.hashAlgo = hashFrom(o, ca->getRefKey());
+	checkOutOptions(ctx, false);
 	ctx.step = QObject::tr("certificate '%1'").arg(spec.name);
 	if (ctx.plan) {
 		planCertificate(ctx, spec);
+		writeOut(ctx, nullptr, "crt", spec.name);
+		reissueIfDue(ctx, ca, CrlPolicy::of(ca));
 		return;
 	}
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
 	ctx.result->writtenCertificate(cert, spec);
+	writeOut(ctx, cert, "crt");
+	/* rule 7: a CRL of the CA past its re-issue point is renewed */
+	reissueIfDue(ctx, ca, CrlPolicy::of(ca));
 }
 
 /* --- list and show (read only) --------------------------------------- */
@@ -521,7 +570,8 @@ void registerCommands(Registry &r)
 		"cRLSign critical,\n  subject and authority key identifier. "
 		"Without --path-len the path length is\n  not constrained "
 		"(never an implicit 0). Default validity P10Y, P5Y with "
-		"--parent.");
+		"--parent.\n  The empty CRL of the new CA is issued at once "
+		"(rule 7).");
 	c.options = QList<OptionSpec> {
 		opt("cn", OptionSpec::string, "<name>",
 			QObject::tr("subject CN (UTF8String)")),
@@ -535,9 +585,12 @@ void registerCommands(Registry &r)
 			"issuing CA: creates an intermediate CA")),
 		opt("path-len", OptionSpec::integer, "<n>", QObject::tr(
 			"basicConstraints pathLenConstraint; only when given")),
-	} + keyOptions("ec-p384", false) + validityOptions("P10Y");
+	} + keyOptions("ec-p384", false) + validityOptions("P10Y") +
+		crlOptions(QObject::tr("; stored as the CA's setting")) +
+		outOptions(true);
 	c.conflicts = QList<QPair<QString, QString> > {
-		{ "cn", "subject" }, { "key", "use-key" } } +
+		{ "cn", "subject" }, { "key", "use-key" },
+		{ "key-unencrypted", "no-key-file" } } +
 		validityConflicts();
 	c.writes = true;
 	c.handler = cmdInit;
@@ -572,10 +625,11 @@ void registerCommands(Registry &r)
 		opt("hash", OptionSpec::string, "<digest>", QObject::tr(
 			"signature digest of the request (default: the database "
 			"default; none for Ed25519)")),
-	} + keyOptions("ec-p256", true);
+	} + keyOptions("ec-p256", true) + outOptions(true);
 	c.conflicts = QList<QPair<QString, QString> > {
 		{ "cn", "subject" }, { "key", "use-key" },
-		{ "use-key", "key-file" }, { "key", "key-file" } };
+		{ "use-key", "key-file" }, { "key", "key-file" },
+		{ "key-unencrypted", "no-key-file" } };
 	c.writes = true;
 	c.handler = cmdRequestCert;
 	r.add(c);
@@ -600,7 +654,7 @@ void registerCommands(Registry &r)
 		opt("name", OptionSpec::string, "<name>", QObject::tr(
 			"internal name of the certificate (default: the "
 			"request's)")),
-	} + validityOptions("P1Y");
+	} + validityOptions("P1Y") + outOptions(false);
 	for (OptionSpec &s : c.options)
 		if (s.name == "profile") {
 			s.help = QObject::tr("certificate profile");
@@ -612,6 +666,9 @@ void registerCommands(Registry &r)
 	c.writes = true;
 	c.handler = cmdSign;
 	r.add(c);
+
+	registerLifecycleCommands(r);
+	registerExportCommands(r);
 
 	c = Command();
 	c.name = "list";

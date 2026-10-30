@@ -215,3 +215,161 @@ endfunction()
 if(NOT OPENSSL OR NOT EXISTS "${OPENSSL}")
   fail("the openssl program is needed (OPENSSL)")
 endif()
+
+# --- part 2 (BTD-42) ------------------------------------------------------
+
+# fixture(<label> <args>...): cli_fixture ${DB} env:BXC_DB_PW <args>
+function(fixture label)
+  execute_process(COMMAND "${FIXTURE}" "${DB}" env:BXC_DB_PW ${ARGN}
+    WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 120)
+  string(REPLACE ";" " " cmd "${ARGN}")
+  file(APPEND "${TRANSCRIPT}"
+    "### ${label}\n$ cli_fixture ${cmd}\nexit ${r}\n${o}${e}\n")
+  if(NOT r EQUAL 0)
+    fail("${label}: cli_fixture failed (${r}): ${o}${e}")
+  endif()
+endfunction()
+
+# jget(<var> <doc> <path>...): string(JSON GET), NOTFOUND if absent
+function(jget var doc)
+  string(JSON v ERROR_VARIABLE je GET "${doc}" ${ARGN})
+  if(je)
+    set(v NOTFOUND)
+  endif()
+  set(${var} "${v}" PARENT_SCOPE)
+endfunction()
+
+# jlen(<var> <doc> <path>...): array length, 0 if absent
+function(jlen var doc)
+  string(JSON v ERROR_VARIABLE je LENGTH "${doc}" ${ARGN})
+  if(je)
+    set(v 0)
+  endif()
+  set(${var} "${v}" PARENT_SCOPE)
+endfunction()
+
+# result_files(<doc> <var>): the paths of the files member
+function(result_files doc var)
+  jlen(n "${doc}" files)
+  set(l "")
+  if(n GREATER 0)
+    math(EXPR last "${n} - 1")
+    foreach(i RANGE ${last})
+      string(JSON p GET "${doc}" files ${i} path)
+      list(APPEND l "${p}")
+    endforeach()
+  endif()
+  set(${var} "${l}" PARENT_SCOPE)
+endfunction()
+
+# warning_codes(<doc> <var>): the codes of the warnings member
+function(warning_codes doc var)
+  jlen(n "${doc}" warnings)
+  set(l "")
+  if(n GREATER 0)
+    math(EXPR last "${n} - 1")
+    foreach(i RANGE ${last})
+      string(JSON c GET "${doc}" warnings ${i} code)
+      list(APPEND l "${c}")
+    endforeach()
+  endif()
+  set(${var} "${l}" PARENT_SCOPE)
+endfunction()
+
+# crl_entry(<doc> <index> <var>): one entry of the crls member
+function(crl_entry doc index var)
+  string(JSON v ERROR_VARIABLE je GET "${doc}" crls ${index})
+  if(je)
+    fail("no crls entry ${index} in:\n${doc}")
+  endif()
+  set(${var} "${v}" PARENT_SCOPE)
+endfunction()
+
+# file_mode(<file> <var>): octal mode, e.g. 600
+function(file_mode f var)
+  execute_process(COMMAND stat -c %a "${f}" OUTPUT_VARIABLE m
+    RESULT_VARIABLE r OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(NOT r EQUAL 0)
+    fail("stat ${f} failed")
+  endif()
+  set(${var} "${m}" PARENT_SCOPE)
+endfunction()
+
+# openssl_fails(<var> <args>...): output of an openssl run that must fail
+function(openssl_fails var)
+  execute_process(COMMAND "${OPENSSL}" ${ARGN} WORKING_DIRECTORY "${WORK}"
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e)
+  string(REPLACE ";" " " cmd "${ARGN}")
+  file(APPEND "${TRANSCRIPT}" "### openssl ${cmd} (must fail)\nexit ${r}\n${o}${e}\n")
+  if(r EQUAL 0)
+    fail("openssl ${cmd} succeeded, expected a failure:\n${o}${e}")
+  endif()
+  set(${var} "${o}${e}" PARENT_SCOPE)
+endfunction()
+
+# time_ago(<var> <seconds>): RFC 3339 UTC time that many seconds before now
+function(time_ago var secs)
+  set(old "$ENV{SOURCE_DATE_EPOCH}")
+  unset(ENV{SOURCE_DATE_EPOCH})
+  string(TIMESTAMP now "%s" UTC)
+  math(EXPR t "${now} - ${secs}")
+  set(ENV{SOURCE_DATE_EPOCH} "${t}")
+  string(TIMESTAMP v "%Y-%m-%dT%H:%M:%SZ" UTC)
+  if(old STREQUAL "")
+    unset(ENV{SOURCE_DATE_EPOCH})
+  else()
+    set(ENV{SOURCE_DATE_EPOCH} "${old}")
+  endif()
+  set(${var} "${v}" PARENT_SCOPE)
+endfunction()
+
+# count_items(<type> <var>): number of objects of a type in ${DB}
+function(count_items type var)
+  bxc("list ${type}" 0 list --db "${DB}" ${PW} --type ${type})
+  string(STRIP "${out}" l)
+  jlen(n "${l}" items)
+  set(${var} "${n}" PARENT_SCOPE)
+endfunction()
+
+# audit_has(<entries> <regex> <label>): one JSON line of the audit export
+# matches the regex
+function(audit_has entries regex label)
+  split_lines("${entries}" lines)
+  foreach(line IN LISTS lines)
+    string(REPLACE "@SEMI@" ";" line "${line}")
+    if(line MATCHES "${regex}")
+      return()
+    endif()
+  endforeach()
+  fail("${label}: no audit entry matches ${regex}")
+endfunction()
+
+# hex2dec(<var> <hex>): a hex number of any length as decimal text
+function(hex2dec var hex)
+  string(TOUPPER "${hex}" hex)
+  set(digits "0")   # decimal digits, least significant first, ';' list
+  string(LENGTH "${hex}" n)
+  math(EXPR last "${n} - 1")
+  foreach(i RANGE ${last})
+    string(SUBSTRING "${hex}" ${i} 1 h)
+    string(FIND "0123456789ABCDEF" "${h}" add)
+    set(new "")
+    foreach(d IN LISTS digits)
+      math(EXPR v "${d} * 16 + ${add}")
+      math(EXPR keep "${v} % 10")
+      math(EXPR add "${v} / 10")
+      list(APPEND new ${keep})
+    endforeach()
+    while(add GREATER 0)
+      math(EXPR keep "${add} % 10")
+      math(EXPR add "${add} / 10")
+      list(APPEND new ${keep})
+    endwhile()
+    set(digits "${new}")
+  endforeach()
+  list(REVERSE digits)
+  string(REPLACE ";" "" dec "${digits}")
+  string(REGEX REPLACE "^0+([0-9])" "\\1" dec "${dec}")
+  set(${var} "${dec}" PARENT_SCOPE)
+endfunction()

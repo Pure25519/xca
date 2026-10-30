@@ -302,6 +302,8 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 	params.set("this_update", (QDateTime)task.lastUpdate);
 	params.set("next_update", (QDateTime)task.nextUpdate);
 	params.set("hash_algo", task.hashAlgo.name());
+	if (!task.trigger.isEmpty())
+		params.set("trigger", task.trigger);
 
 	try {
 		auditedTransaction(ctx, AuditLog::actionCrlGenerate, "crl",

@@ -35,6 +35,10 @@ class crljob
     digest hashAlgo{};
 	a1time lastUpdate{};
 	a1time nextUpdate{};
+	/* Why the CRL is issued, the audit param trigger of crl.generate
+	 * (BTD-42): command, init, revoke, reissue_due, missing; empty
+	 * for the GUI */
+	QString trigger{};
 
 	crljob(pki_x509 *x = nullptr) : issuer(x),
 		withReason(true),

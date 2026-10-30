@@ -1,6 +1,17 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-42: bxc-pki command line part 2: revoke (by name, serial or
+   SHA-256 fingerprint; reason required; issuer checked) with the new CRL
+   of the CA at once, crl, export (pem, der, pkcs8, p12, chain and the
+   trust list in the target formats opcua-dir, pem-bundle, der-files) and
+   --out with the certstrap file names. init issues the empty CRL of the
+   new CA (its result lists the CRL too). CRL settings per CA (validity,
+   re-issue at one third, size budget); sign and the trust-list export
+   renew a CRL past its re-issue point. All files are staged, written
+   atomically (keys owner-only) and published after the database commit
+   (lib/staged_file.h). New audit actions ca.crl_settings and
+   trustlist.export, parameter trigger of crl.generate.
  * BTD-195: key usage by the type of the subject key on every issuance
    (template, profile, CSR merge, GUI, CLI): EC keys get no
    keyEncipherment or dataEncipherment, Ed25519, Ed448, ML-DSA and

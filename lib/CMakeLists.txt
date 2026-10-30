@@ -49,6 +49,8 @@ importexport.cpp	importexport.h
 template.cpp	template.h
 XcaPresentation.cpp	XcaPresentation.h
 json_report.cpp	json_report.h
+staged_file.cpp	staged_file.h
+crl_policy.cpp	crl_policy.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)
