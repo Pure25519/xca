@@ -122,13 +122,15 @@ void test_service_template_migration::identicalExtensions_data()
 	QTest::addColumn<QString>("file");
 	QTest::addColumn<QString>("id");
 	QTest::addColumn<QString>("type");
-	for (QString t : { "rsa-2048", "ec-p256" }) {
+	/* TLS_server and TLS_client carry keyEncipherment: an EC key is
+	 * refused with them on both paths since BTD-195 (key usage by key
+	 * type), so they are compared with RSA keys only */
+	for (QString t : { "rsa-2048", "ec-p256" })
 		QTest::newRow(CCHAR("CA " + t)) << "CA" << "xca-ca" << t;
-		QTest::newRow(CCHAR("TLS_server " + t)) << "TLS_server"
-			<< "xca-tls-server" << t;
-		QTest::newRow(CCHAR("TLS_client " + t)) << "TLS_client"
-			<< "xca-tls-client" << t;
-	}
+	QTest::newRow("TLS_server rsa-2048") << "TLS_server" << "xca-tls-server"
+		<< "rsa-2048";
+	QTest::newRow("TLS_client rsa-2048") << "TLS_client" << "xca-tls-client"
+		<< "rsa-2048";
 }
 
 void test_service_template_migration::identicalExtensions()
