@@ -65,6 +65,10 @@ class test_main: public QObject
 	void keyUsageByKeyType();
 	void issueInAccept_data();
 	void issueInAccept();
+	void ekuRows_data();
+	void ekuRows();
+	void ekuOwnOidAndReplace();
+	void ekuBuiltInList();
 	void dnUpperBounds();
 
   public:
@@ -99,6 +103,8 @@ class test_main: public QObject
  * with that object name, for at most ten seconds. test_main::cleanup()
  * ends the timers of a test, so none acts on a later test's dialog. */
 extern int dialogDriverRun;
+/* extkeyuse_nid as initOIDs() left it, without eku.txt (BTD-215) */
+extern QList<int> ekuListAtStart;
 
 template <class T> static T *visibleWidget(const QString &name)
 {

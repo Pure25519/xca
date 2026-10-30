@@ -53,7 +53,8 @@ ExtensionSpec NewX509::getExtensionSpec()
 	rows = ekeyUsage->count();
 	for (i=0; i<rows; i++) {
 		if (ekeyUsage->item(i)->isSelected())
-			e.extKeyUsage << QString(OBJ_nid2sn(extkeyuse_nid[i]));
+			e.extKeyUsage <<
+				ekeyUsage->item(i)->data(Qt::UserRole).toString();
 	}
 	e.extKeyUsageCritical = ekuCritical->isChecked();
 
