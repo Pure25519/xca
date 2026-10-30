@@ -15,6 +15,10 @@
 #define __ISSUANCE_CHECKS_H
 
 #include <QList>
+#include <QString>
+#include <QStringList>
+
+#include <openssl/types.h>
 
 class AuditParams;
 class ExtensionSpec;
@@ -24,6 +28,20 @@ class pki_x509;
 
 namespace IssuanceChecks
 {
+	/* The key usage bits a subject key of this type may carry (BTD-195;
+	 * RFC 5480 3, RFC 8410 5, RFC 9881), one table for every issuance
+	 * and for Profile::apply(): RSA all but keyAgreement, encipherOnly,
+	 * decipherOnly; EC no keyEncipherment, dataEncipherment; Ed25519,
+	 * Ed448, ML-DSA, SLH-DSA and DSA only digitalSignature,
+	 * nonRepudiation, keyCertSign, cRLSign; X25519 and X448 only
+	 * keyAgreement, encipherOnly, decipherOnly. *keyType receives the
+	 * name of the family. An unknown key type: every bit. */
+	QStringList keyUsageAllowed(const EVP_PKEY *key, QString *keyType);
+	/* Throws key_usage_not_for_key_type for the first of bits a key of
+	 * this type may not carry; source names where the bit comes from */
+	void keyUsageFits(const EVP_PKEY *key, const QStringList &bits,
+			const QString &source);
+
 	/* The issuer and its issuers up to the self-signed root, nearest
 	 * first; empty for a self-signed certificate. A broken or looping
 	 * chain ends where it breaks. */

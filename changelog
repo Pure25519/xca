@@ -1,6 +1,14 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-195: key usage by the type of the subject key on every issuance
+   (template, profile, CSR merge, GUI, CLI): EC keys get no
+   keyEncipherment or dataEncipherment, Ed25519, Ed448, ML-DSA and
+   SLH-DSA keys only digitalSignature, nonRepudiation, keyCertSign and
+   cRLSign, RSA keys no keyAgreement. A forbidden bit is refused with
+   key_usage_not_for_key_type, naming the bit. XCA's default TLS_server
+   and TLS_client templates carry keyEncipherment and therefore refuse EC
+   and EdDSA keys: remove the bit from the template for them.
  * BTD-52: PKCS#12 default AES-256-CBC with PBES2/PBKDF2-HMAC-SHA256 and an
    HMAC-SHA256 MAC; legacy 3DES/RC2 only when chosen; a stored old default
    PBE-SHA1-3DES moves to AES-256-CBC once (audited; kept when confirmed

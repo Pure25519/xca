@@ -93,7 +93,7 @@ TemplateSpec test_service_template::serverTemplate()
 	e.basicCritical = true;
 	e.subjectKeyId = true;
 	e.authorityKeyId = true;
-	e.keyUsage << "digitalSignature" << "keyEncipherment";
+	e.keyUsage << "digitalSignature" << "keyAgreement";
 	e.keyUsageCritical = true;
 	e.extKeyUsage << "serverAuth" << "clientAuth";
 	e.subjectAltName = "DNS:server.lab, IP:10.10.10.10";
@@ -264,7 +264,7 @@ void test_service_template::templateRoundTrip()
 	QCOMPARE(sk_GENERAL_NAME_num(san), 2);
 	GENERAL_NAMES_free(san);
 	QCOMPARE(X509_get_key_usage(x), (uint32_t)(KU_DIGITAL_SIGNATURE |
-				KU_KEY_ENCIPHERMENT));
+				KU_KEY_AGREEMENT));
 	QCOMPARE(X509_get_extended_key_usage(x), (uint32_t)(XKU_SSL_SERVER |
 				XKU_SSL_CLIENT));
 	QVERIFY(X509_get_extension_flags(x) & EXFLAG_BCONS);
