@@ -23,34 +23,26 @@
 #include "lib/pki_x509req.h"
 #include "lib/XcaWarningCore.h"
 
-/* Issues the certificate the accepted dialog describes */
+/* After the dialog issued the certificate in accept() (BTD-212): the
+ * success message and the token copy */
 static void issueFromDialog(db_x509 *certs, NewX509 *dlg)
 {
-	IssuanceSpec spec = dlg->getIssuanceSpec();
-	/* The dialog used to return silently without a selection */
-	if (!spec.request && !spec.key)
+	pki_x509 *cert = dlg->issued();
+	if (!cert)
 		return;
-	if (dlg->foreignSignRB->isChecked() && !spec.signer)
-		return;
-	try {
-		pki_x509 *cert = certs->newCert(
-			ServiceContext::localUser(ServiceContext::gui), spec);
-		certs->createSuccess(cert);
-		pki_key *clientkey = cert->getRefKey();
-		if (clientkey && clientkey->isToken()) {
-			pki_scard *card = (pki_scard*)clientkey;
-			if (XCA_YESNO("token.store_certificate", QObject::tr("Store the certificate to the key on the token '%1 (#%2)' ?").
-				arg(card->getCardLabel()).arg(card->getSerial())))
-			{
-				try {
-					cert->store_token(false);
-				} catch (errorEx &err) {
-					XCA_ERROR(err);
-				}
+	certs->createSuccess(cert);
+	pki_key *clientkey = cert->getRefKey();
+	if (clientkey && clientkey->isToken()) {
+		pki_scard *card = (pki_scard*)clientkey;
+		if (XCA_YESNO("token.store_certificate", QObject::tr("Store the certificate to the key on the token '%1 (#%2)' ?").
+			arg(card->getCardLabel()).arg(card->getSerial())))
+		{
+			try {
+				cert->store_token(false);
+			} catch (errorEx &err) {
+				XCA_ERROR(err);
 			}
 		}
-	} catch (errorEx &err) {
-		XCA_ERROR(err);
 	}
 }
 
@@ -68,6 +60,7 @@ void CertTreeView::newItem()
 		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
+	dlg->issueOnAccept(certs());
 	dlg->defineSigner(selectedSigner(certs()), true);
 	if (dlg->exec()) {
 		issueFromDialog(certs(), dlg);
@@ -82,6 +75,7 @@ void CertTreeView::newCert(pki_x509req *req)
 	NewX509 *dlg = new NewX509();
 	pki_x509 *sigcert = selectedSigner(certs());
 	dlg->setCert();
+	dlg->issueOnAccept(certs());
 	dlg->defineRequest(req);
 	dlg->defineSigner(sigcert, true);
 	if (dlg->exec()) {
@@ -96,6 +90,7 @@ void CertTreeView::newCert(pki_temp *temp)
 		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
+	dlg->issueOnAccept(certs());
 	dlg->defineTemplate(temp);
 	if (dlg->exec()) {
 		issueFromDialog(certs(), dlg);
@@ -109,6 +104,7 @@ void CertTreeView::newCert(pki_x509 *cert)
 		return;
 	NewX509 *dlg = new NewX509();
 	dlg->setCert();
+	dlg->issueOnAccept(certs());
 	dlg->fromX509super(cert, false);
 	if (dlg->exec()) {
 		issueFromDialog(certs(), dlg);

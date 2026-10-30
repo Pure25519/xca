@@ -60,6 +60,8 @@ class test_main: public QObject
 	void crlRefusedWithoutCrlSign();
 	void keyUsageByKeyType_data();
 	void keyUsageByKeyType();
+	void issueInAccept_data();
+	void issueInAccept();
 	void dnUpperBounds();
 
   public:
