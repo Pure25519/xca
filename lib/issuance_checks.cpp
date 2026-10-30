@@ -192,10 +192,115 @@ static QString nameType(int type)
 	return names.value(type, QString::number(type));
 }
 
+/* One SAN entry as text for a message, e.g. "email:op@plc.example" */
+static QString entryText(const GENERAL_NAME *gn)
+{
+	BIO *b = BIO_new(BIO_s_mem());
+	GENERAL_NAME_print(b, (GENERAL_NAME *)gn);
+	char *data;
+	long len = BIO_get_mem_data(b, &data);
+	QString text = QString::fromUtf8(data, len);
+	BIO_free(b);
+	return text;
+}
+
+/* The SAN rules of a profile, for a CSR's SAN and for the SAN of a
+ * server-side key from its registration (BTD-65, BTD-191): the
+ * ApplicationUri of the registration, once; the name types and counts of
+ * the profile; no wildcard unless it allows them. label names the
+ * source in messages. */
+static void sanRules(const GENERAL_NAMES *san, const CsrPolicy &policy,
+		const QString &label)
+{
+	QMap<int, int> counts;
+	int uris = 0;
+	for (int i = 0; i < sk_GENERAL_NAME_num(san); i++) {
+		const GENERAL_NAME *gn = sk_GENERAL_NAME_value(san, i);
+		if (gn->type == GEN_URI) {
+			QString uri = QString::fromUtf8((const char *)
+				ASN1_STRING_get0_data(gn->d.uniformResourceIdentifier),
+				ASN1_STRING_get_length(gn->d.uniformResourceIdentifier));
+			if (policy.registeredUri.isEmpty())
+				throw serviceError("csr_uri_not_allowed",
+					tr("The profile allows no URI, %1 asks for %2")
+					.arg(label, uri));
+			if (uri != policy.registeredUri)
+				throw serviceError("csr_uri_mismatch",
+					tr("The URI %1 of %2 is not the registered %3")
+					.arg(uri, label, policy.registeredUri));
+			if (++uris > 1)
+				throw serviceError("csr_uri_duplicate",
+					tr("%1 asks for the URI %2 more than once")
+					.arg(label, uri));
+			continue;
+		}
+		if (!policy.sanCounts.contains(gn->type))
+			throw serviceError("csr_san_type_not_allowed",
+				tr("The profile allows no %1 in the subject alternative name of %2: %3")
+				.arg(nameType(gn->type), label, entryText(gn)));
+		if (gn->type == GEN_DNS && !policy.sanWildcard &&
+		    memchr(ASN1_STRING_get0_data(gn->d.dNSName), '*',
+				ASN1_STRING_get_length(gn->d.dNSName)))
+			throw serviceError("csr_san_wildcard",
+				tr("The profile allows no wildcard dNSName, %1 asks for %2")
+				.arg(label, entryText(gn)));
+		counts[gn->type]++;
+	}
+	for (auto c = policy.sanCounts.begin(); c != policy.sanCounts.end(); ++c) {
+		int n = counts.value(c.key());
+		if (n < c.value().first || n > c.value().second)
+			throw serviceError("csr_san_count",
+				tr("%1 has %2 entries of type %3, the profile allows %4 to %5")
+				.arg(label).arg(n).arg(nameType(c.key()))
+				.arg(c.value().first).arg(c.value().second));
+	}
+	if (counts.value(GEN_DNS) + counts.value(GEN_IPADD) < policy.dnsOrIpMin)
+		throw serviceError("csr_san_count",
+			tr("%1 has %2 DNS names and IP addresses, the profile needs at least %3")
+			.arg(label).arg(counts.value(GEN_DNS) + counts.value(GEN_IPADD))
+			.arg(policy.dnsOrIpMin));
+}
+
+/* The SAN a profile built from the registration of a server-side key,
+ * as it is in the certificate: after DNS:copycn, email:copy and the UPN
+ * alias were expanded with the certificate's subject (mr-processor review
+ * of xca#53) */
+static void registrationSan(const IssuanceSpec &spec, const pki_x509 *cert)
+{
+	X509 *x = cert->getCert();
+	QString label = tr("the registration of '%1'").arg(spec.name);
+	int crit = 0;
+	GENERAL_NAMES *names = (GENERAL_NAMES *)X509_get_ext_d2i(x,
+			NID_subject_alt_name, &crit, nullptr);
+	ign_openssl_error();
+	/* absent although the registration names one: OpenSSL built none */
+	if (!names && (crit != -1 ||
+		       !spec.extensions.subjectAltName.trimmed().isEmpty()))
+		throw serviceError("registration_san_invalid",
+			tr("The subject alternative name of %1 cannot be built: %2")
+			.arg(label, spec.extensions.subjectAltName));
+	try {
+		sanRules(names, spec.csrPolicy, label);
+	} catch (...) {
+		GENERAL_NAMES_free(names);
+		throw;
+	}
+	GENERAL_NAMES_free(names);
+}
+
 void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 {
-	if (!spec.request)
+	if (!spec.request) {
+		/* a profile never takes a dNSName from the CN (san.dns_from_cn
+		 * is false in schema v1) */
+		if (spec.csrPolicy.profile &&
+		    spec.extensions.subjectAltName.contains("copycn",
+						Qt::CaseInsensitive))
+			throw serviceError("registration_san_invalid",
+				tr("The profile takes no dNSName from the CN, the registration of '%1' asks for DNS:copycn")
+				.arg(spec.name));
 		return;
+	}
 	const CsrPolicy &policy = spec.csrPolicy;
 	X509_REQ *req = spec.request->getReq();
 	QString csr = spec.request->getIntName();
@@ -323,58 +428,9 @@ void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 		}
 	}
 
-	/* the SAN under a profile: the ApplicationUri of the registration,
-	 * once; the name types and counts of the profile, no wildcard
-	 * unless it allows them */
-	if (!policy.profile)
-		return;
-	QMap<int, int> counts;
-	int uris = 0;
-	for (int i = 0; i < sk_GENERAL_NAME_num(san.get()); i++) {
-		GENERAL_NAME *gn = sk_GENERAL_NAME_value(san.get(), i);
-		if (gn->type == GEN_URI) {
-			QString uri = QString::fromUtf8((const char *)
-				ASN1_STRING_get0_data(gn->d.uniformResourceIdentifier),
-				ASN1_STRING_get_length(gn->d.uniformResourceIdentifier));
-			if (policy.registeredUri.isEmpty())
-				throw serviceError("csr_uri_not_allowed",
-					tr("The profile allows no URI, '%1' asks for %2")
-					.arg(csr, uri));
-			if (uri != policy.registeredUri)
-				throw serviceError("csr_uri_mismatch",
-					tr("The URI %1 of '%2' is not the registered %3")
-					.arg(uri, csr, policy.registeredUri));
-			if (++uris > 1)
-				throw serviceError("csr_uri_duplicate",
-					tr("'%1' asks for the URI %2 more than once")
-					.arg(csr, uri));
-			continue;
-		}
-		if (!policy.sanCounts.contains(gn->type))
-			throw serviceError("csr_san_type_not_allowed",
-				tr("The profile allows no %1 in the subject alternative name of '%2'")
-				.arg(nameType(gn->type), csr));
-		if (gn->type == GEN_DNS && !policy.sanWildcard &&
-		    memchr(ASN1_STRING_get0_data(gn->d.dNSName), '*',
-				ASN1_STRING_get_length(gn->d.dNSName)))
-			throw serviceError("csr_san_wildcard",
-				tr("The profile allows no wildcard dNSName, '%1' asks for one")
-				.arg(csr));
-		counts[gn->type]++;
-	}
-	for (auto c = policy.sanCounts.begin(); c != policy.sanCounts.end(); ++c) {
-		int n = counts.value(c.key());
-		if (n < c.value().first || n > c.value().second)
-			throw serviceError("csr_san_count",
-				tr("'%1' has %2 entries of type %3, the profile allows %4 to %5")
-				.arg(csr).arg(n).arg(nameType(c.key()))
-				.arg(c.value().first).arg(c.value().second));
-	}
-	if (counts.value(GEN_DNS) + counts.value(GEN_IPADD) < policy.dnsOrIpMin)
-		throw serviceError("csr_san_count",
-			tr("'%1' has %2 DNS names and IP addresses, the profile needs at least %3")
-			.arg(csr).arg(counts.value(GEN_DNS) + counts.value(GEN_IPADD))
-			.arg(policy.dnsOrIpMin));
+	/* the SAN under a profile (BTD-65) */
+	if (policy.profile)
+		sanRules(san.get(), policy, QString("'%1'").arg(csr));
 }
 
 /* OPC UA chains (OPC 10000-6 6.2, PLAN.md 14.4) */
@@ -492,6 +548,9 @@ void IssuanceChecks::certificate(const IssuanceSpec &spec,
 	}
 	if (spec.chainRules == IssuanceSpec::chain_opcua)
 		opcChain(spec, cert, chain);
+	/* the SAN of a server-side key under a profile (BTD-191) */
+	if (spec.csrPolicy.profile && !spec.request)
+		registrationSan(spec, cert);
 }
 
 void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
