@@ -159,12 +159,20 @@ after a failure checks the OpenSSL result itself:
   object it decoded and throws an `errorEx` that names the file or item and the OpenSSL reasons
   (`throw_unreadable()` in `lib/pki_base.h`); it never keeps an object without content. The
   import then fails with `no_pki_data` or `unreadable_input` and a `failure` entry, and a database
-  row that does not decode is reported and left out on open (`db_base::loadContainer()`). An
+  row that does not decode is left out on open (`db_base::loadContainer()`). The rows left out
+  are reported once for the whole load, each with its reason. After the unlock they are also
+  audited: one `database.rows_skipped` entry with `count`, `skipped_items` (`key:3,template:7`)
+  and `warning=rows_skipped` (BTD-209). It is written on every open, including reading commands
+  (doc/audit-checkpoints.md, "Entries written on open"). An
   `errorEx` without text is shown nowhere (`xcaWarning::error()` drops it), so a loader never
   throws one.
 - The template loader, which the import probe tries last, accepts only a well-formed template
   export (size field equal to the rest, known version, the settings consumed completely), so it
-  does not hide the errors of the loaders before it (BTD-88).
+  does not hide the errors of the loaders before it (BTD-88). A stored template row is not
+  checked for data after the settings (BTD-209).
+- `ign_openssl_error()` empties the queue into the debug log with the same text as
+  `take_openssl_errors()`. Neither uses OpenSSL's static buffer of `ERR_error_string(e, NULL)`,
+  which threads would share (BTD-209).
 - Key material and the audit log: `pki_evp::encryptKey()` throws `key_encryption_failed`
   before it replaces the private key by the public one, `changeDatabasePassword()` fails when a
   key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or

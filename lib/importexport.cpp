@@ -382,6 +382,56 @@ static QString exportPasswordPrompt(const pki_export *xport,
 			"key '%1' in file:\n%2").arg(name).arg(file);
 }
 
+void db_base::checkExportSpec(const ExportSpec &spec) const
+{
+	const pki_export *xport = spec.clipboard ? clipboardFormat() :
+							spec.format;
+	if (spec.items.isEmpty())
+		throw serviceError("nothing_to_export",
+			tr("No item selected"));
+	foreach(pki_base *pki, spec.items) {
+		if (!pki || !pkitype.contains(pki->getType()))
+			throw serviceError("wrong_object_type",
+				tr("The item does not belong to this list"));
+	}
+	if (!spec.clipboard) {
+		if (!xport || !pkitype.contains(xport->pki_type))
+			throw serviceError("invalid_format",
+				tr("Unknown export format"));
+		if ((xport->flags & F_SINGLE) && spec.items.size() > 1)
+			throw serviceError("single_item_format",
+				tr("The format '%1' takes only one item")
+				.arg(xport->desc));
+		if (xport->flags & exportFlags(spec.items))
+			throw serviceError("format_not_applicable",
+				tr("The format '%1' is not possible for the "
+				   "selected items").arg(xport->desc));
+	}
+
+	if (!spec.pkcs12Algorithm.isEmpty() &&
+	    (spec.clipboard || !xport->match_all(F_PKCS12)))
+		throw serviceError("format_not_applicable",
+			tr("A PKCS#12 algorithm needs a PKCS#12 format"));
+	if (!spec.pkcs12Algorithm.isEmpty() &&
+	    !encAlgo::all_encAlgos.contains(
+			encAlgo(spec.pkcs12Algorithm).getEncAlgoNid()))
+		throw serviceError("invalid_pkcs12_algorithm",
+			tr("Unknown PKCS#12 algorithm '%1'")
+			.arg(spec.pkcs12Algorithm));
+	/* Only for a format that writes an ML-DSA private key */
+	if (!spec.privateKeyFormat.isEmpty()) {
+		if (!pki_evp::mlDsaFormats.contains(spec.privateKeyFormat))
+			throw serviceError("invalid_ml_dsa_encoding",
+				tr("Unknown ML-DSA private key format '%1'")
+				.arg(spec.privateKeyFormat));
+		if (spec.clipboard ||
+		    !exportsMlDsaPrivateKey(spec.items, xport))
+			throw serviceError("format_not_applicable",
+				tr("An ML-DSA private key format needs a "
+				   "private key export of an ML-DSA key"));
+	}
+}
+
 QByteArray db_base::exportItems(const ServiceContext &ctx,
 				const ExportSpec &spec)
 {
@@ -404,51 +454,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		params.set("name", spec.items[0]->getIntName());
 
 	try {
-		if (spec.items.isEmpty())
-			throw serviceError("nothing_to_export",
-				tr("No item selected"));
-		foreach(pki_base *pki, spec.items) {
-			if (!pki || !pkitype.contains(pki->getType()))
-				throw serviceError("wrong_object_type",
-					tr("The item does not belong to this list"));
-		}
-		if (!spec.clipboard) {
-			if (!xport || !pkitype.contains(xport->pki_type))
-				throw serviceError("invalid_format",
-					tr("Unknown export format"));
-			if ((xport->flags & F_SINGLE) && spec.items.size() > 1)
-				throw serviceError("single_item_format",
-					tr("The format '%1' takes only one item")
-					.arg(xport->desc));
-			if (xport->flags & exportFlags(spec.items))
-				throw serviceError("format_not_applicable",
-					tr("The format '%1' is not possible for the "
-					   "selected items").arg(xport->desc));
-		}
-
-		if (!spec.pkcs12Algorithm.isEmpty() &&
-		    (spec.clipboard || !xport->match_all(F_PKCS12)))
-			throw serviceError("format_not_applicable",
-				tr("A PKCS#12 algorithm needs a PKCS#12 format"));
-		if (!spec.pkcs12Algorithm.isEmpty() &&
-		    !encAlgo::all_encAlgos.contains(
-				encAlgo(spec.pkcs12Algorithm).getEncAlgoNid()))
-			throw serviceError("invalid_pkcs12_algorithm",
-				tr("Unknown PKCS#12 algorithm '%1'")
-				.arg(spec.pkcs12Algorithm));
+		checkExportSpec(spec);
 		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
-		/* Only for a format that writes an ML-DSA private key */
-		if (!spec.privateKeyFormat.isEmpty()) {
-			if (!pki_evp::mlDsaFormats.contains(spec.privateKeyFormat))
-				throw serviceError("invalid_ml_dsa_encoding",
-					tr("Unknown ML-DSA private key format '%1'")
-					.arg(spec.privateKeyFormat));
-			if (spec.clipboard ||
-			    !exportsMlDsaPrivateKey(spec.items, xport))
-				throw serviceError("format_not_applicable",
-					tr("An ML-DSA private key format needs a "
-					   "private key export of an ML-DSA key"));
-		}
 		pki_evp::MlDsaFormatScope keyFormat(spec.privateKeyFormat);
 		/* How the key material is protected, where a legacy method is
 		 * possible: the PKCS#12 algorithm, and the legacy marker for

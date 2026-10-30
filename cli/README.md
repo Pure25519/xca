@@ -66,7 +66,7 @@ Members of part 2 (BTD-42), present only when a command sets them:
 | `files` | every command with `--out`, `export` | one entry per file: `path`, `kind` (key, csr, crt, crl, der, chain, p12, public_key, pem_bundle, manifest), `secret`, `written`, `size` and `sha256` (not with `--plan`), `object_type`/`object_id`/`object_name` of the object in it; `export` adds `format`, `encrypted`, `pkcs12_algorithm` (p12) and `ml_dsa_encoding` (ML-DSA key) |
 | `crls` | init, revoke, crl, sign (re-issue), export trustlist | one entry per CRL: `ca_id`, `ca_name`, `crl_id`, `crl_name`, `crl_number`, `revoked_count`, `this_update`, `next_update`, `reissue_fraction`, `reissue_at`, `remaining_seconds`, `remaining_validity` (ISO 8601), `reissue_due`, `expired`, `der_size`, `size_budget`, `within_budget`, `trigger` (init, revoke, command, reissue_due, missing); trustlist also `role` (trusted, issuer) and `reissued`. With `--plan` a CRL to be issued has `crl_id` null and only the times and settings |
 | `revocation` | revoke | `certificate_id`, `certificate_name`, `serial`, `reason` (RFC 5280 name), `ca_id`, `ca_name`, `revocation_date` (not with `--plan`) |
-| `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates and CRLs), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
+| `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates, CRLs and leaves), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
 | `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `cleanup_incomplete` (trustlist), `crl_not_issued` (init of a CA not valid now); also printed on stderr |
 
 `--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
@@ -139,11 +139,18 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   `--fingerprint <sha256>`. A refusal before the revocation (unknown or ambiguous reference,
   serial or fingerprint, `wrong_issuer`) gets a `certificate.revoke` failure entry as well.
   `--reason` is required and takes the RFC 5280 names (`removeFromCRL` is refused: delta CRLs
-  only). With `--ca` the issuer must be that CA (`wrong_issuer`). The revocation and the new CRL
+  only). With `--ca` the issuer must be that CA (`wrong_issuer`). `--invalidity-date` must not
+  be after the revocation date, which is now: a later one, also within a clock skew, is
+  `invalid_invalidity_date` (exit code 2, audited like the refusals above; BTD-211). The
+  revocation and the new CRL
   of the issuing CA are written in one transaction; sign, revoke and crl unlock the CA key the
   same way (`--password`, also for a key with a password of its own).
 - `crl --ca <ca> [--this-update <date-time>]`: the next CRL of the CA. Given `--crl-*` options
-  become the CA's stored settings. Publishing to targets is Phase 4.
+  become the CA's stored settings. Publishing to targets is Phase 4. `--this-update` more than
+  5 minutes (clock skew) in the future, before the thisUpdate of the CA's latest CRL, or giving
+  a CRL whose nextUpdate is already past is `invalid_this_update` (exit code 2, also with
+  `--plan`; BTD-211). `--allow-stale-crl` (only with `--this-update`) issues the last two
+  anyway, for lab and test CRLs; a thisUpdate in the future is never accepted.
 - `export <object>... --format pem|der|pkcs8|p12|chain|trustlist --out <dir>`: see Export.
 - `--out <dir>` on init, request-cert, sign, crl and revoke: see Files.
 
@@ -161,11 +168,21 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   every CA of the list); `revoke` and `crl` always issue one. The new CRL has `trigger`
   `reissue_due` in the result and in its `crl.generate` audit entry.
 - Settings per CA: `--crl-validity <duration>`, `--crl-reissue-fraction <1/3|0.25>` (strictly
-  between 0 and 1/2), `--crl-size-budget <bytes>` on `init` and `crl`. Storage: the validity
-  also sets the CA's `crlDays` (authority table, rounded up to whole days, what the GUI shows);
+  between 0 and 1/2), `--crl-size-budget <bytes>` (at least 512) on `init` and `crl`. The
+  validity is a whole number of days, at least `P1D` (`P7D`, `P1W`, also `PT48H`; no years,
+  months or parts of a day, else `invalid_validity`): the GUI issues the CRLs of a CA for its
+  `crlDays`, so both paths give the same validity (BTD-211; the GUI reading the CRL settings
+  instead stays possible later). Storage: the validity also sets the CA's `crlDays`
+  (authority table, the validity in days, what the GUI shows and uses);
   the whole setting is one row of the `settings` table, key `crlpolicy_<CA item id>`, value
   `{"validity":"P7D","reissue_fraction":0.333...,"size_budget":4096}` (`lib/crl_policy.h`;
-  no schema change). Writing it is audited (`ca.crl_settings`). Per export target the same
+  no schema change). Writing it is audited (`ca.crl_settings`). The row is read fail-closed
+  (BTD-211): broken JSON, no object, an unknown or missing member, a validity that the option
+  would refuse, a fraction outside (0, 1/2) or a size budget below 512 or not whole is
+  `crl_settings_invalid` (exit code 1), naming the CA, the row and the member, on every command
+  that reads the setting (`crl`, `revoke`, `sign`, the trust list). Giving all three `--crl-*`
+  options does not read the row, so `crl` with all three replaces an invalid one. A CA without
+  the row has the defaults with its `crlDays`. Per export target the same
   options plus `--trust-list-budget` and `--on-budget-exceeded` override them for one export
   and are not stored.
 
@@ -254,7 +271,9 @@ encoding, read the first byte of the RFC 9881 `ML-DSA-PrivateKey` inside the dec
 `0x80` seed, `0x04` expanded, `0x30` both. `openssl pkcs8` and `openssl pkey` are no proof:
 they decode the key and encode it again, so a seed-only key comes back as both.
 `misc/mldsa-key-encoding.sh <file> [<password variable>]` decrypts PBES2 without decoding the
-key and prints the encoding as JSON (password from `EXPORT_PASS` by default). Every export writes
+key and prints the encoding as JSON (password from `EXPORT_PASS` by default). `--plan` runs the
+option checks of the export service (`db_base::checkExportSpec()`: format, PKCS#12 algorithm,
+ML-DSA key format) and reports the error of the real run (BTD-211). Every export writes
 `object.export`, a private key also `key.export_private`. `--type` selects the object kind when
 a name is used by more than one.
 
@@ -267,7 +286,7 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
 
 - Content: the given CAs are trusted; their chains up to the root and `--issuer-ca` are issuers
   (only for chain building, OPC 10000-12 7.8.2). Every CA comes with its latest CRL. `--leaf`
-  adds leaf certificates after them. One export is meant for one hierarchy; CAs of several roots
+  adds trusted leaf certificates (peers) after them, role `trusted` in the manifest. One export is meant for one hierarchy; CAs of several roots
   share the same `trusted/` and `issuer/` directories.
 - The trust list owns `--out`: it must be empty or hold exactly an earlier trust list, i.e. a
   `manifest.json` with the schema `urn:bxc-pki:schema:trust-list-manifest:v1` and nothing but
@@ -281,7 +300,9 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
   device sees the old or the new list, never a mix, and no file of an earlier export stays.
 - `opcua-dir`: `trusted/certs/<name>-<id>.der`, `trusted/crl/<CA>-<CA id>.crl` (DER; named after
   the CA, so a new CRL replaces the old one),
-  `issuer/certs/`, `issuer/crl/`, leaves in `own/certs/`. `pem-bundle`: `trustlist.pem` with
+  `issuer/certs/`, `issuer/crl/`, leaves in `trusted/certs/` as trusted peers (BTD-211; they
+  were in `own/certs/` before, which OPC 10000-12 7.8.2 keeps for the application's own
+  certificate; no device used that layout yet, and no option writes `own/`). `pem-bundle`: `trustlist.pem` with
   all CA certificates, then all CRLs (leaves in `leaves.pem`). `der-files`: one DER file per
   certificate (`.der`) and CRL (`.crl`).
 - `manifest.json` (`urn:bxc-pki:schema:trust-list-manifest:v1`) lists every entry with
@@ -295,7 +316,7 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
   `--force` only replaces the files; a routine re-export needs it and keeps the CRL check.
 - Budgets: per CRL (`--crl-size-budget`, else the CA's setting, default 4096) and for the whole
   list (`--trust-list-budget`, default 65535; the size is the sum of the DER sizes of the CA
-  certificates and CRLs). `--on-budget-exceeded warning` (default) exports and warns,
+  certificates, CRLs and leaves, in every target format; BTD-211). `--on-budget-exceeded warning` (default) exports and warns,
   `error` refuses (`budget_exceeded`) and writes nothing. The result reports every size and the
   remaining validity of every CRL.
 - One audit entry `trustlist.export` (object type `object`) with `format`, `file` (the
