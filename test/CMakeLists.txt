@@ -1,6 +1,6 @@
 
 list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp templateRoundTrip.cpp
+	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp crlRefused.cpp templateRoundTrip.cpp
 	automationIds.cpp issuanceExt.cpp TestEnv.cpp TestEnv.h)
 
 list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)

@@ -19,6 +19,7 @@
 class AuditParams;
 class ExtensionSpec;
 class IssuanceSpec;
+class digest;
 class pki_key;
 class pki_x509;
 
@@ -59,6 +60,16 @@ namespace IssuanceChecks
 	 * ApplicationUri. Writes csr_signature_algorithm and, for an
 	 * accepted SHA-1 signature, warning=csr_sha1_accepted. */
 	void request(const IssuanceSpec &spec, AuditParams &params);
+
+	/* The issuer of a CRL (BTD-188), before the CRL number and any
+	 * write: no insecure hash (signature_hash_not_allowed), version 3
+	 * and cA (issuer_v1, issuer_not_ca), cRLSign when it has key usage
+	 * (issuer_no_crlsign; without key usage warning
+	 * issuer_without_key_usage, RFC 5280 6.1.4 (n) as for keyCertSign),
+	 * valid now (issuer_expired, issuer_not_yet_valid), signkey its key
+	 * (issuer_key_mismatch). The same codes as for certificates. */
+	void crlIssuer(const pki_x509 *ca, pki_key *signkey,
+			const digest &hashAlgo, AuditParams &params);
 
 	/* The certificate to be signed: one instance per extension, and the
 	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them */
