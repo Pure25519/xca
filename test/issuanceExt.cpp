@@ -154,3 +154,49 @@ void test_main::issuanceExtensions()
 		QVERIFY2(false, CCHAR(err.getString()));
 	}
 }
+
+/* The extension line edits are checked on every key (BTD-197): a prefix
+ * that OpenSSL cannot encode shows the warning icon. Since BTD-197 the
+ * build throws for such input; uncaught in the textChanged slot it was an
+ * error box on the first key typed. The icon state is its accessible
+ * name, "valid" or "invalid". */
+void test_main::lineExtensionTyping()
+{
+	try {
+		openDB();
+		NewX509 *dlg = new NewX509(mainwin);
+		dlg->setCert();
+		struct {
+			QLineEdit *edit;
+			QLabel *icon;
+			QString text;
+			bool valid;
+		} typed[] = {
+			{ dlg->subAltName, dlg->subAltIco, "DNS:plc10", true },
+			{ dlg->subAltName, dlg->subAltIco, "IP:300.1.1.1", false },
+			{ dlg->issAltName, dlg->issAltIco, "DNS:ca.plc10", true },
+			{ dlg->nameCons, dlg->nameConsIco, "permitted;DNS:.plc", true },
+			{ dlg->crlDist, dlg->crlDistIco,
+				"URI:http://crl.plc/ca.crl", true },
+			{ dlg->authInfAcc, dlg->authInfAccIco,
+				"OCSP;URI:http://ocsp.plc", true },
+		};
+		for (const auto &t : typed) {
+			t.edit->clear();
+			QCOMPARE(t.icon->accessibleName(), QString());
+			QStringList states;
+			/* one textChanged per key, as typed */
+			for (int i = 1; i <= t.text.size(); i++) {
+				t.edit->setText(t.text.left(i));
+				states << t.icon->accessibleName();
+			}
+			QVERIFY2(states.first() == "invalid",
+				CCHAR(t.text + ": " + states.join(",")));
+			QCOMPARE(states.last(),
+				QString(t.valid ? "valid" : "invalid"));
+		}
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}

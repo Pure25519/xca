@@ -53,6 +53,7 @@ class test_main: public QObject
 	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
+	void lineExtensionTyping();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
 	void keyUsageByKeyType_data();
