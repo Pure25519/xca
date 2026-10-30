@@ -21,8 +21,7 @@ void db_token::rename_token_in_database(pki_scard *token)
 	if (!token)
 		return;
 	Transaction;
-	if (!TransBegin())
-		return;
+	TransThrow();
 	QList<pki_scard*> list = Store.sqlSELECTpki<pki_scard>(
                 QString("SELECT item FROM tokens "
 			"WHERE card_serial=? AND card_model=? and object_id=?"),
@@ -34,7 +33,7 @@ void db_token::rename_token_in_database(pki_scard *token)
 		if (token->compare(item))
 			item->updateLabel(token->getIntName());
 	}
-	TransCommit();
+	TransCommitThrow();
 }
 
 void db_token::rename(const ServiceContext &ctx, pki_base *pki,

@@ -102,6 +102,8 @@ class pki_evp: public pki_key
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool verify(EVP_PKEY *pkey) const;
 		QVariant getIcon(const dbheader *hd) const;
+		/* false: no encrypted key to store; a failed write throws
+		 * (BTD-50) */
 		bool sqlUpdatePrivateKey();
 		QSqlError insertSqlData();
 		QSqlError deleteSqlData();

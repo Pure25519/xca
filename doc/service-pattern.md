@@ -11,7 +11,7 @@ Certificate issuance is the reference implementation.
 | Location | a member of the existing model class in `lib/db_*.cpp`, named as `service_function` in the parity matrix | `db_x509::newCert` in `lib/db_x509.cpp` |
 | Signature | `ServiceContext` first (BTD-29, `lib/audit.h`), then one value object; returns the new or changed object | `pki_x509 *newCert(const ServiceContext &, const IssuanceSpec &)` |
 | Value object | `<Action>Spec` in its own file `lib/<area>.h/.cpp`; plain public members, defaults that match the dialog's defaults; references to database objects are non-owning pointers; created per call, nothing static or shared | `IssuanceSpec`, `ExtensionSpec` in `lib/issuance.h` |
-| Errors | a rejected spec throws `serviceError(code, message)` (`lib/exception.h`); `code` is stable snake_case and becomes the audit `error_code`; any other `errorEx` is an internal error | `missing_key`, `invalid_public_key`, `no_private_signing_key`, `duplicate_certificate`, `serial_exhausted`, `random_failure`, `database_error`; every other exception is audited as `internal_error` and rethrown |
+| Errors | a rejected spec throws `serviceError(code, message)` (`lib/exception.h`); `code` is stable snake_case and becomes the audit `error_code`; any other `errorEx` is an internal error | `missing_key`, `invalid_public_key`, `no_private_signing_key`, `duplicate_certificate`, `serial_exhausted`, `random_failure`, `database_error`, `read_only_database`, `disk_full`; every other exception is audited as `internal_error` and rethrown |
 | No interaction | no dialog, message box, question or password prompt in the service path; secrets come from `PasswordSource` (BTD-30); success messages (`createSuccess`) and follow-up questions belong to the GUI caller | the token question "Store the certificate to the key on the token?" moved to the GUI caller |
 | Audit | exactly one `AuditLog::append()` per call: `success` inside the operation's transaction, `failure` (or `denied`) after the rollback, with the parameters known at that point (allow-list of `AuditParams`, no secrets) | action `certificate.issue`, object type `certificate`, object id = item id (empty on failure); params `name`, `subject`, `issuer`, `ca_id`, `serial`, `not_before`, `not_after` (the certificate's end date after the cap at the issuer chain; null for the undefined date 99991231235959Z), `validity_capped`, `requested_not_after` (only when capped, BTD-51; a cap that leaves no window, end at or before `not_before`, fails with `invalid_validity`), `hash_algo`, `template`, `fingerprint` |
 | GUI caller | the dialog only fills the value object (`NewX509::getIssuanceSpec()`), calls the service function with `ServiceContext::localUser(ServiceContext::gui)` and shows the `serviceError` with `XCA_ERROR` | `widgets/NewX509_issue.cpp` |
@@ -34,6 +34,23 @@ transaction then rolls everything back (BTD-142; before, it returned the result 
 true, and the caller reported success with nothing stored). Every outermost commit is checked; a
 service function turns false into `database_error` with a `failure` entry. The log names the first
 inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
+
+A failed SQL write is a typed error, never a message box in a service path (BTD-50).
+
+- **The helper.** `throwSqlError(QSqlError, what)` in `lib/sql.h` picks the code from SQLite's result code:
+  - `read_only_database`: read-only file or mount, `PRAGMA query_only`, or the database file removed while open;
+  - `disk_full`;
+  - `database_error` for everything else.
+- **Where it is used.** These functions throw it:
+  - `execOrThrow(q, what)`;
+  - `TransThrow()`;
+  - `TransCommitThrow()`, which carries the error of the failed COMMIT.
+- **The text.** It is `what` and SQLite's reason, never the statement and its values (they may hold key material). The full statement goes to the debug log.
+- **Helpers throw instead of returning false.** This covers `x509revList::sqlUpdate()`, `pki_x509req::markSigned()`, `pki_evp::sqlUpdatePrivateKey()` and the UPDATEs of `db_x509::markRequestSigned()`, `pki_x509::getTaKey()` and `pki_scard::updateLabel()`. Their callers therefore stop at the first failure instead of running on in a transaction that can only roll back.
+- **`db_base::insertPKI()` and the `insert()` overrides** throw without deleting:
+  - the object stays with the caller, unstored and without id;
+  - `importItems()` hands it back through `ImportSpec::unstored`, with the other objects;
+  - `insert()` returns NULL only for a duplicate, which it deleted.
 
 An operation that changes several revocation rows (`db_x509::setRevocations`, the Manage
 revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` entry per changed

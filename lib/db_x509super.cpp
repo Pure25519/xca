@@ -138,7 +138,13 @@ void db_x509super::extractPubkey(QModelIndex index)
 		.arg(pki->getType() == x509 ?
 			tr("Certificate") : tr("Certificate request"))
 		.arg(pki->getIntName()));
-	key = dynamic_cast<pki_key*>(keys->insert(key));
+	try {
+		key = dynamic_cast<pki_key*>(keys->insert(key));
+	} catch (...) {
+		/* not stored: still ours (BTD-50) */
+		delete key;
+		throw;
+	}
 	if (!key)
 		return;
 	if (Settings["suppress_messages"])

@@ -70,13 +70,11 @@ void pki_x509req::markSigned(bool signe)
 	SQL_PREPARE(q, "UPDATE requests SET signed=? WHERE item=?");
 	q.bindValue(0, signe ? 1 : 0);
 	q.bindValue(1, sqlItemId);
-	q.exec();
-
-	if (q.lastError().isValid())
-		return;
+	execOrThrow(q, tr("The request '%1' could not be marked")
+			.arg(getIntName()));
 	AffectedItems(sqlItemId);
-	if (TransCommit())
-		done = signe;
+	TransCommitThrow();
+	done = signe;
 }
 
 void pki_x509req::restoreSql(const QSqlRecord &rec)

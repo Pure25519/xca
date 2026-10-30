@@ -27,6 +27,7 @@ class DbTransaction
 		static bool hasTransaction;
 		static int injected;
 		static QString firstRollback;
+		static QSqlError failure;
 		static QList<std::function<void()> > undoActions;
 		static QList<std::function<void()> > commitActions;
 		static void runActions(QList<std::function<void()> > &list,
@@ -65,6 +66,12 @@ class DbTransaction
 		{
 			return mutex > 0;
 		}
+		/* The SQL error of the last failed BEGIN or COMMIT; invalid if
+		 * a commit failed because an inner transaction rolled back */
+		static QSqlError lastFailure()
+		{
+			return failure;
+		}
 		static void addItems(QVariant v)
 		{
 			items << v.toULongLong();
@@ -92,12 +99,27 @@ class DbTransaction
 #define Transaction DbTransaction __trans
 #define TransBegin() __trans.begin(__FILE__, __LINE__)
 #define TransThrow() if (!__trans.begin(__FILE__, __LINE__)) { \
-	throw errorEx(QObject::tr("Failed to start a database transaction")); }
+	throwSqlError(DbTransaction::lastFailure(), \
+		QObject::tr("Failed to start a database transaction")); }
 #define TransCommit() __trans.commit(__FILE__, __LINE__)
+#define TransCommitThrow() if (!__trans.commit(__FILE__, __LINE__)) { \
+	throwSqlError(DbTransaction::lastFailure(), \
+		QObject::tr("Failed to commit the database transaction")); }
 #define TransRollback() __trans.rollback(__FILE__, __LINE__)
 #define TransDone(e) __trans.done(e, __FILE__, __LINE__);
 #define AffectedItems(v) (DbTransaction::addItems(v))
 
+
+/* A failed SQL statement, BEGIN or COMMIT as a typed service error
+ * (BTD-50): read_only_database or disk_full where SQLite says so,
+ * database_error otherwise. The text is what failed and SQLite's
+ * reason, never the statement and its values (they may hold key
+ * material); those go to the debug log. */
+[[noreturn]] void throwSqlError(const QSqlError &e, const QString &what);
+/* The service error code of a native error code of the Qt driver:
+ * QSQLITE result codes (the low byte of an extended one), QPSQL
+ * SQLSTATEs, QMYSQL/QMARIADB error numbers; database_error otherwise */
+QString sqlErrorCode(const QString &driver, const QString &native);
 
 class XSqlQuery: public QSqlQuery
 {
@@ -127,5 +149,9 @@ class XSqlQuery: public QSqlQuery
 		bool prepare(QString q);
 		void location(const char *f, int l);
 };
+
+/* Executes q; a failure is throwSqlError() with what, or "Database
+ * error" (BTD-50) */
+void execOrThrow(XSqlQuery &q, const QString &what = QString());
 
 #endif

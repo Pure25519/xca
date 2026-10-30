@@ -12,12 +12,14 @@
 #include "sql.h"
 #include "settings.h"
 #include "XcaWarningCore.h"
+#include "exception.h"
 
 int DbTransaction::mutex;
 int DbTransaction::error;
 bool DbTransaction::hasTransaction;
 int DbTransaction::injected;
 QString DbTransaction::firstRollback;
+QSqlError DbTransaction::failure;
 QList<quint64> DbTransaction::items;
 QList<std::function<void()> > DbTransaction::undoActions;
 QList<std::function<void()> > DbTransaction::commitActions;
@@ -53,10 +55,13 @@ bool DbTransaction::begin(const char *file, int line)
 	if (mutex > 1 || !hasTransaction)
 		return true;
 
+	failure = QSqlError();
 	QSqlDatabase db = QSqlDatabase::database();
 	bool ret = db.transaction();
 	if (!ret) {
-		XCA_SQLERROR(db.lastError());
+		failure = db.lastError();
+		/* TransThrow() throws it typed, no message box first */
+		qWarning() << "BEGIN failed:" << failure.databaseText();
 		/* Not begun: the level as before, and the destructor ends
 		 * no transaction this object did not start (BTD-172) */
 		mutex--;
@@ -118,7 +123,9 @@ bool DbTransaction::finish(bool commit, const char *file, int line)
 
 	bool ret = hasTransaction ? db.commit() : true;
 	if (!ret) {
-		XCA_SQLERROR(db.lastError());
+		failure = db.lastError();
+		/* TransCommitThrow() throws it typed */
+		qWarning() << "COMMIT failed:" << failure.databaseText();
 		/* SQLite keeps the transaction open after a failed COMMIT
 		 * (busy, deferred constraint): every later write would end
 		 * up in it and be lost on close (BTD-114) */
@@ -188,6 +195,61 @@ bool DbTransaction::rollback(const char *file, int line)
 bool DbTransaction::done(QSqlError e, const char *file, int line)
 {
 	return e.isValid() ? rollback(file, line) : commit(file, line);
+}
+
+QString sqlErrorCode(const QString &driver, const QString &native)
+{
+	static const QString readOnly("read_only_database"),
+		full("disk_full"), other("database_error");
+	if (driver == "QSQLITE") {
+		/* primary result codes; an extended code keeps them in its
+		 * low byte, e.g. SQLITE_READONLY_DBMOVED (file removed) */
+		switch (native.toInt() & 0xff) {
+		case 8: return readOnly;        /* SQLITE_READONLY */
+		case 13: return full;           /* SQLITE_FULL */
+		}
+		return other;
+	}
+	if (driver == "QPSQL") {
+		if (native == "25006")          /* read_only_sql_transaction */
+			return readOnly;
+		if (native == "53100")          /* disk_full */
+			return full;
+		return other;
+	}
+	if (driver == "QMYSQL" || driver == "QMARIADB") {
+		switch (native.toInt()) {
+		case 1036:      /* ER_OPEN_AS_READONLY */
+		case 1290:      /* ER_OPTION_PREVENTS_STATEMENT (read_only) */
+		case 1792:      /* ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION */
+			return readOnly;
+		case 1021:      /* ER_DISK_FULL */
+		case 1114:      /* ER_RECORD_FILE_FULL */
+			return full;
+		}
+	}
+	return other;
+}
+
+void throwSqlError(const QSqlError &e, const QString &what)
+{
+	QString code = sqlErrorCode(QSqlDatabase::database(
+			QSqlDatabase::defaultConnection, false).driverName(),
+			e.nativeErrorCode());
+	qDebug() << "SQL error:" << code << what << e.text();
+	/* The reason of the database only: the driver text of XSqlQuery
+	 * carries the statement and its bound values, which may be a
+	 * tls-auth key or an encrypted private key (review of xca#68) */
+	QString reason = e.databaseText().trimmed();
+	throw serviceError(code, reason.isEmpty() ? what :
+				QString("%1: %2").arg(what, reason));
+}
+
+void execOrThrow(XSqlQuery &q, const QString &what)
+{
+	if (!q.exec())
+		throwSqlError(q.lastError(), what.isEmpty() ?
+				QObject::tr("Database error") : what);
 }
 
 QString XSqlQuery::table_prefix;

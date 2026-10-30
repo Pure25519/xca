@@ -323,8 +323,7 @@ QString pki_x509::getTaKey()
 		return issuer->getTaKey();
 
 	Transaction;
-	if (!TransBegin())
-		return QString();
+	TransThrow();
 
 	SQL_PREPARE(q, "SELECT value FROM takeys WHERE item = ?");
 	q.bindValue(0, sqlItemId);
@@ -338,11 +337,12 @@ QString pki_x509::getTaKey()
 		SQL_PREPARE(q, "INSERT INTO takeys (item, value) VALUES ( ?, ? )");
 		q.bindValue(0, sqlItemId);
 		q.bindValue(1, b.toBase64());
-		q.exec();
+		/* unchecked, every call made a new key that was never
+		 * stored (BTD-50) */
+		execOrThrow(q, tr("The tls-auth key could not be stored"));
 		qDebug() << "Generated TA key" << this << b.size() << QString::fromLatin1(b.toHex()).left(6);
 	}
-	if (!TransCommit())
-		throw errorEx(tr("The tls-auth key could not be stored"));
+	TransCommitThrow();
 	QString takey(D5 "BEGIN " OVPN_TA_KEY D5 "\n");
 	QString hex(QString::fromLatin1(b.toHex()));
 	for (int i=0; i<16; i++)

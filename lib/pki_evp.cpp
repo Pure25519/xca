@@ -94,8 +94,7 @@ bool pki_evp::sqlUpdatePrivateKey()
 	if (encKey.size() <= 0)
 		return false;
 	Transaction;
-	if (!TransBegin())
-		return false;
+	TransThrow();
 	XSqlQuery q;
 	SQL_PREPARE(q, "UPDATE private_keys SET private=?, ownPass=? "
 		"WHERE item=?");
@@ -103,14 +102,19 @@ bool pki_evp::sqlUpdatePrivateKey()
 	q.bindValue(1, ownPass);
 	q.bindValue(2, sqlItemId);
 	AffectedItems(sqlItemId);
-	q.exec();
+	bool ok = q.exec();
 
 	encKey.fill(0);
 	encKey.clear();
 
-	if (!q.lastError().isValid() && q.numRowsAffected() == 1)
-		return TransCommit();
-	return false;
+	if (!ok)
+		throwSqlError(q.lastError(), tr("The private key '%1' could "
+			"not be stored").arg(getIntName()));
+	if (q.numRowsAffected() != 1)
+		throw serviceError("database_error", tr("The private key '%1' "
+			"is not in the database").arg(getIntName()));
+	TransCommitThrow();
+	return true;
 }
 
 /* A failed OpenSSL call must not end in a key with OpenSSL's defaults:

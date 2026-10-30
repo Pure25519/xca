@@ -89,6 +89,10 @@ class db_base: public QAbstractItemModel
 		db_base(const char *classname);
 		virtual void updateHeaders();
 		virtual ~db_base();
+		/* Stores pki and returns it. A failed write throws the typed
+		 * error of throwSqlError() and leaves pki with the caller,
+		 * not stored and without id (BTD-50); it used to delete it
+		 * and return NULL. */
 		virtual pki_base *insertPKI(pki_base *pki);
 		/* Takes an object whose insert was rolled back out of the
 		 * views and the store again; it loses its id (BTD-142).

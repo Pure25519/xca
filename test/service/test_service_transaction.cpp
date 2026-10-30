@@ -436,7 +436,7 @@ void test_service_transaction::appendCommitFails()
 		"BEGIN INSERT INTO btd142_child VALUES (42); END");
 	int before = AuditLog::entries().size();
 
-	warning->expectMessage("FOREIGN KEY");
+	/* no SQL message box before the typed error (review of xca#68) */
 	QString code = errorCode([&]() {
 		AuditLog::append(ctx, "object.rename", "key", "1",
 			AuditParams().set("name", "BTD-142"));
@@ -551,7 +551,8 @@ void test_service_transaction::strayRollbackDoesNotLeak()
  * transaction the connection already has outside DbTransaction). On
  * 9121ddcd it returned the CRL, neither stored nor deleted, so the
  * caller took it for imported (BTD-149). Now it follows the contract of
- * insertPKI(): NULL, the CRL deleted, nothing stored. */
+ * insertPKI(): since BTD-50 a typed error, the CRL still the caller's,
+ * nothing stored. */
 void test_service_transaction::crlInsertBeginFails()
 {
 	pki_x509 *ca = issue("BTD-149 CA", nullptr);
@@ -565,11 +566,15 @@ void test_service_transaction::crlInsertBeginFails()
 	pki_crl *crl = new pki_crl();
 	crl->fromBytes(der, "btd149.crl");
 	sql("BEGIN");
-	warning->expectMessage("transaction");
-	pki_base *stored = Database.model<db_crl>()->insert(crl);
+	/* no SQL message box before the typed error (review of xca#68) */
+	QString code = errorCode([&]() {
+		Database.model<db_crl>()->insert(crl);
+	});
 	sql("ROLLBACK");
 
-	QVERIFY(!stored);
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY(!crl->getSqlItemId().isValid());
+	delete crl;
 	QCOMPARE(Store.getAll<pki_crl>().size(), crls);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM crls").toInt(), 0);
 }
@@ -586,7 +591,7 @@ void test_service_transaction::failedBeginLeavesOuterAlone()
 	bool begun, active;
 	{
 		Transaction;
-		warning->expectMessage("transaction");
+		/* no SQL message box before the typed error (review of xca#68) */
 		begun = TransBegin();
 		active = DbTransaction::active();
 	}
@@ -628,7 +633,7 @@ void test_service_transaction::lockedImportKeepsCode()
 	QString code;
 	{
 		WriteLock lock(dbFile);
-		warning->expectMessage("locked");
+		/* no SQL message box in the service path since BTD-50 */
 		code = errorCode([&]() { Database.importItems(ctx, spec); });
 	}
 	QCOMPARE(code, QString("database_error"));

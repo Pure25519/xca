@@ -55,14 +55,24 @@ void ReqTreeView::toRequest()
 
 void ReqTreeView::markSigned()
 {
-	if (basemodel)
+	if (!basemodel)
+		return;
+	try {
 		reqs()->setSigned(currentIndex(), true);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
 }
 
 void ReqTreeView::unmarkSigned()
 {
-	if (basemodel)
+	if (!basemodel)
+		return;
+	try {
 		reqs()->setSigned(currentIndex(), false);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+	}
 }
 
 void ReqTreeView::load(void)
