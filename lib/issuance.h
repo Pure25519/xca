@@ -19,6 +19,8 @@
 
 #include <QDateTime>
 #include <QList>
+#include <QMap>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -46,6 +48,8 @@ class ExtensionSpec
 
 	bool subjectKeyId{};
 	bool authorityKeyId{};      // never added to a self-signed certificate
+	bool authorityKeyIdIssuer{}; // keyid plus issuer and serial, not
+	                             // only the keyid (profile aki.form)
 
 	QStringList keyUsage{};     // OpenSSL names, e.g. "keyCertSign"
 	bool keyUsageCritical{};
@@ -62,6 +66,27 @@ class ExtensionSpec
 
 	/* OpenSSL configuration file, section "default" (Advanced tab) */
 	QString advanced{};
+
+	/* What a CSR adds to SAN, key usage and EKU (BTD-54):
+	 * merge_legacy   as XCA always did: with "copy extensions from the
+	 *                request" the CSR's extension when the template has
+	 *                none, otherwise the template alone;
+	 * merge_template the template alone, the CSR is ignored;
+	 * merge_request  the CSR's extension if it has one, else the
+	 *                template's;
+	 * merge_union    both: the CSR's entries first, then the template's
+	 *                that are not there yet (KU: the bits of both).
+	 * Every mode yields at most one instance of each extension. */
+	enum requestMerge { merge_legacy, merge_template, merge_request,
+				merge_union };
+	enum requestMerge sanMerge{ merge_legacy };
+	enum requestMerge kuMerge{ merge_legacy };
+	enum requestMerge ekuMerge{ merge_legacy };
+	/* EKU a CSR may ask for (short names or OIDs); empty: any. A CSR
+	 * without EKU counts as asking for ekuDefault when that is set
+	 * (Nexus style: clientAuth, PLAN.md 9.1). */
+	QStringList ekuAllowed{};
+	QStringList ekuDefault{};
 
 	bool netscape{};            // add the Netscape extensions below
 	QStringList nsCertType{};   // "client", "server", "email", "objsign", ...
@@ -128,6 +153,45 @@ class IsoDuration
 	QString toString() const;
 };
 
+/* How a device CSR is accepted (BTD-65). The members are the CSR fields
+ * of a profile (profiles/<id>.json of bxc-pki, BTD-64); the profile engine
+ * (BTD-54) fills them, the GUI keeps the defaults. */
+class CsrPolicy
+{
+  public:
+	/* csr_sha1: a SHA-1 CSR signature after the proof of possession,
+	 * with an audit warning, or never. MD5 is never accepted. */
+	enum sha1 { sha1_accept_with_warning, sha1_reject };
+	/* keycertsign_request: a leaf request asking for keyCertSign or
+	 * cA=TRUE is refused (RFC 5280 4.2.1.9) or its bits are ignored */
+	enum keyCertSign { keycertsign_reject, keycertsign_override };
+
+	/* A profile decides: the CSR's KU, EKU, basicConstraints, AKI, SKI
+	 * and Netscape extensions never reach the certificate, its SAN is
+	 * taken as it is (order kept), the URI rule below applies */
+	bool profile{};
+	enum sha1 csrSha1{ sha1_accept_with_warning };
+	enum keyCertSign keyCertSignRequest{ keycertsign_reject };
+	/* san.uri: with a profile, the ApplicationUri of the registration;
+	 * a CSR URI must equal it, a CSR without one gets it appended.
+	 * Empty: the profile allows no URI. */
+	QString registeredUri{};
+	/* subject.add_missing_o: the O of the registration, appended when
+	 * the CSR subject has none; empty: off */
+	QString missingO{};
+	/* subject.forbidden_characters, e.g. "/=" for S7-1500 V02.09.08 */
+	QString forbiddenCharacters{};
+	/* san.* (mr-processor review of xca#44): the name types a CSR SAN
+	 * may carry besides the URI, with their counts (GEN_DNS, GEN_IPADD,
+	 * GEN_EMAIL; any other type is refused), the minimum of dNSName plus
+	 * iPAddress, wildcard dNSNames, and the criticality of the SAN in
+	 * the certificate (the CSR's bytes, the profile's flag) */
+	QMap<int, QPair<int, int>> sanCounts{};
+	int dnsOrIpMin{};
+	bool sanWildcard{};
+	bool sanCritical{};
+};
+
 /* The serial number is not part of the spec: it is always random, positive
  * and unique per issuer (rule 2 of the certstrap triage), see
  * db_x509::getUniqueSerial(). */
@@ -150,17 +214,22 @@ class IssuanceSpec
 
 	ExtensionSpec extensions{};
 	bool copyRequestExtensions{};   // CSR extensions the spec lacks
-	/* With copyRequestExtensions: only CSR extensions of these NIDs,
-	 * empty: all (BTD-41: bxc-pki copies the SAN only, rule 3) */
-	QList<int> requestExtensionNids{};
 
 	/* chain_opcua adds the OPC UA chain rules (PLAN.md 14.4) to the
 	 * checks before the signature; a profile of family opcua sets it */
 	enum chainRules { chain_rfc5280, chain_opcua };
 	enum chainRules chainRules{ chain_rfc5280 };
 
+	CsrPolicy csrPolicy{};          // with a request
+
+	/* Extension order of the certificate as NIDs, e.g. the order of
+	 * the golden files of a profile; the rest keeps its place after
+	 * them. Empty: the dialog order. */
+	QList<int> extensionOrder{};
+
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
+	QString profile{};          // profile id the spec came from (BTD-54)
 	enum pki_source source{ generated };
 
 	bool selfSigned() const

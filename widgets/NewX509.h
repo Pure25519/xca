@@ -48,6 +48,10 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		Q_OBJECT
 	private:
 		NIDlist aia_nid{};
+		/* What the dialog does not show yet (BTD-185) but must keep
+		 * when it edits or applies a template: the merge modes and the
+		 * EKU limits of BTD-54 */
+		ExtensionSpec requestMerge{};
 		NIDlist attr_nid{};
 		QList<nameEdit> attrEdits{};
 		QList<nameEdit> nameEdits{};

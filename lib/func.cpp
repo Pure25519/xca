@@ -104,6 +104,13 @@ Passwd readPass()
 	Passwd pw;
 #if !defined(Q_OS_WIN32)
 	struct termios t, back;
+	/* Without a terminal nobody can type the password, and tcgetattr()
+	 * would only fail with ENOTTY (BTD-145) */
+	if (!isatty(0))
+		throw secretError(secretError::missing, QObject::tr(
+			"The password cannot be asked for: there is no terminal on "
+			"standard input. Give it with --password "
+			"(pass:, env:, file:, fd: or stdin)."));
 	if (tcgetattr(0, &t))
 		throw errorEx(strerror(errno));
 	back = t;

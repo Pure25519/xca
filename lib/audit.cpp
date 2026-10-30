@@ -95,7 +95,8 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
-		"key_size", "key_type", "legacy", "name", "next_update",
+		"key_size", "key_type", "legacy", "ml_dsa_encoding", "name",
+		"next_update",
 		"not_after",
 		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
 		"outcome",
@@ -103,8 +104,16 @@ const QStringList &AuditParams::allowList()
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial", "subject",
 		"template", "this_update", "validity_capped",
-		/* accepted with a note: issuer without key usage (BTD-55) */
+		/* accepted with a note: issuer without key usage (BTD-55),
+		 * SHA-1 CSR (BTD-65) */
 		"warning",
+		/* device CSRs (BTD-65) */
+		"csr_signature_algorithm",
+		/* certificate profiles (BTD-54) */
+		"profile",
+		/* the merge decision per extension, e.g. "ku=union+csr"
+		 * (mr-processor review of xca#47) */
+		"merge",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

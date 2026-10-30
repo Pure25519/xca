@@ -347,9 +347,16 @@ static void cmdSign(CommandContext &ctx)
 	spec.subject = req->getSubject();
 	spec.request = req;
 	spec.signer = ca;
-	/* rule 3 and 4: from the CSR only its SAN */
-	spec.copyRequestExtensions = true;
-	spec.requestExtensionNids = QList<int>{ NID_subject_alt_name };
+	/* Rules 3 and 4 with the merge modes of BTD-54: no other CSR
+	 * extension is copied; the CSR's SAN is taken (the template's
+	 * only without one); key usage and EKU as the template's merge
+	 * settings say, without a template from the template part alone */
+	ExtensionSpec &m = spec.extensions;
+	spec.copyRequestExtensions = false;
+	if (m.sanMerge == ExtensionSpec::merge_legacy)
+		m.sanMerge = ExtensionSpec::merge_request;
+	if (!fromTemplate)
+		m.kuMerge = m.ekuMerge = ExtensionSpec::merge_template;
 	spec.name = o.value("name", req->getIntName());
 	applyValidity(o, spec, parseDuration("P1Y", "validity"),
 			fromTemplate);

@@ -64,6 +64,15 @@ set_tests_properties(test_service_harness_selfcheck PROPERTIES LABELS service
 	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckUnexpectedPrompt\\(\\)[^\n]*unexpected password prompt")
 Headless(test_service_harness_selfcheck)
 
+# The empty-DER check of cleanup() must fail when its query cannot run
+# (BTD-181), not pass silently
+add_test(NAME test_service_harness_selfcheck_der
+	COMMAND test_service_harness selfcheckEmptyDerQuery)
+set_tests_properties(test_service_harness_selfcheck_der PROPERTIES
+	LABELS service ENVIRONMENT XCA_SERVICE_SELFCHECK=1
+	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckEmptyDerQuery\\(\\)[^\n]*empty DER check failed[^\n]*cert")
+Headless(test_service_harness_selfcheck_der)
+
 # xca --no-gui with a missing password exits non-zero instead of prompting
 add_test(NAME test_cli_missing_password
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -71,6 +80,13 @@ add_test(NAME test_cli_missing_password
 		-P ${SERVICE_TEST_DIR}/cli_missing_password.cmake)
 set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
+
+# xca --no-gui --interactive without a terminal: a password error (BTD-145)
+add_test(NAME test_cli_interactive_no_tty
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_interactive_no_tty
+		-P ${SERVICE_TEST_DIR}/cli_interactive_no_tty.cmake)
+set_tests_properties(test_cli_interactive_no_tty PROPERTIES LABELS service)
 
 # xca --no-gui answers questions only with --yes or --confirm (BTD-71)
 add_test(NAME test_cli_confirmations
@@ -143,6 +159,26 @@ if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_signing PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
+
+# Device CSRs of the IDIAL corpus under the profiles (BTD-65)
+ServiceTest(test_service_csr_acceptance)
+target_compile_definitions(test_service_csr_acceptance PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_csr_acceptance PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# What a CSR adds per extension, and the profile engine (BTD-54)
+foreach(t test_service_merge test_service_profiles)
+  ServiceTest(${t})
+  target_compile_definitions(${t} PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+  if(OPENSSL_PROGRAM)
+    target_compile_definitions(${t} PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+  endif()
+endforeach()
 
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes

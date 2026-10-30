@@ -163,7 +163,9 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	if (keyAlgoNid == NID_pbe_WithSHA1And40BitRC2_CBC)
 		keyAlgoNid = NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
 
-	EVP_PKEY *pkey = key->decryptKey();
+	/* A token key never gets here (db_x509::writePKCS12) */
+	pki_evp *evp = dynamic_cast<pki_evp *>(key);
+	EVP_PKEY *pkey = evp ? evp->decryptKeyForExport() : key->decryptKey();
 	for (const QString &line : key->getComment().split('\n')) {
 		QStringList kv = line.split(":");
 		qDebug() << line << kv;

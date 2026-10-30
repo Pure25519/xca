@@ -10,6 +10,7 @@
 #include "request.h"
 #include "settings.h"
 
+#include <QMap>
 #include <QRegularExpression>
 
 const QStringList TemplateSpec::keyUsageNames {
@@ -65,6 +66,33 @@ static QStringList extKeyUsageList(const QString &stored)
 	return known + unknown;
 }
 
+/* The merge modes as stored (BTD-54); a template without them, i.e.
+ * every template made before, keeps the XCA behaviour (merge_legacy) */
+static const QMap<ExtensionSpec::requestMerge, QString> mergeNames {
+	{ ExtensionSpec::merge_legacy, QString() },
+	{ ExtensionSpec::merge_template, "template" },
+	{ ExtensionSpec::merge_request, "request" },
+	{ ExtensionSpec::merge_union, "merge" },
+};
+
+static ExtensionSpec::requestMerge mergeFrom(const QString &stored)
+{
+	return mergeNames.key(stored, ExtensionSpec::merge_legacy);
+}
+
+static QString mergeName(ExtensionSpec::requestMerge mode)
+{
+	return mergeNames.value(mode);
+}
+
+static QStringList listFrom(const QString &stored)
+{
+	QStringList list;
+	for (const QString &s : stored.split(',', Qt::SkipEmptyParts))
+		list << s.trimmed();
+	return list;
+}
+
 TemplateSpec TemplateSpec::fromTemplate(const pki_temp *temp)
 {
 	TemplateSpec t;
@@ -98,6 +126,11 @@ TemplateSpec TemplateSpec::fromTemplate(const pki_temp *temp)
 	e.authInfoAccess = temp->getSetting("authInfAcc");
 	e.ocspMustStaple = temp->getSettingInt("OCSPstaple");
 	e.advanced = temp->getSetting("adv_ext");
+	e.sanMerge = mergeFrom(temp->getSetting("reqSan"));
+	e.kuMerge = mergeFrom(temp->getSetting("reqKu"));
+	e.ekuMerge = mergeFrom(temp->getSetting("reqEku"));
+	e.ekuAllowed = listFrom(temp->getSetting("ekuAllowed"));
+	e.ekuDefault = listFrom(temp->getSetting("ekuDefault"));
 
 	e.netscape = !Settings["disable_netscape"];
 	e.nsCertType = fromMask(temp->getSettingInt("nsCertType"),
@@ -150,6 +183,11 @@ void TemplateSpec::toTemplate(pki_temp *temp) const
 	temp->setSetting("authInfAcc", e.authInfoAccess);
 	temp->setSetting("OCSPstaple", e.ocspMustStaple);
 	temp->setSetting("adv_ext", e.advanced);
+	temp->setSetting("reqSan", mergeName(e.sanMerge));
+	temp->setSetting("reqKu", mergeName(e.kuMerge));
+	temp->setSetting("reqEku", mergeName(e.ekuMerge));
+	temp->setSetting("ekuAllowed", e.ekuAllowed.join(", "));
+	temp->setSetting("ekuDefault", e.ekuDefault.join(", "));
 
 	temp->setSetting("nsCertType", toMask(e.nsCertType, nsCertTypeNames));
 	temp->setSetting("nsBaseUrl", e.nsBaseUrl);

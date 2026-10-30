@@ -71,7 +71,8 @@ x509v3ext ExtensionSpec::authorityKeyIdExt(X509V3_CTX *ctx,
 	if (!authorityKeyId || selfSigned)
 		return ext;
 
-	ext.create(NID_authority_key_identifier, "keyid,issuer", ctx);
+	ext.create(NID_authority_key_identifier, authorityKeyIdIssuer ?
+			"keyid:always,issuer:always" : "keyid,issuer", ctx);
 	return ext;
 }
 

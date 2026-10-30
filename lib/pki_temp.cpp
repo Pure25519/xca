@@ -87,6 +87,12 @@ const QList<QString> pki_temp::tmpl_keys = {
 	"adv_ext",
 	"noWellDefinedExpDate",
 	"OCSPstaple",
+	/* what a CSR adds (BTD-54); empty: as XCA always did */
+	"reqSan",
+	"reqKu",
+	"reqEku",
+	"ekuAllowed",
+	"ekuDefault",
 };
 
 pki_temp::pki_temp(const pki_temp *pk)

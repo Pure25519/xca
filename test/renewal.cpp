@@ -23,6 +23,11 @@
 
 #include "lib/pki_multi.h"
 
+#include "widgets/XcaWarning.h"
+#include "lib/db_key.h"
+#include "lib/issuance.h"
+#include <QMessageBox>
+#include "lib/XcaWarningCore.h"
 #include "main.h"
 
 #define ZERO_SECS "yyyyMMddHHmm'00Z'"
@@ -75,6 +80,97 @@ QList<pki_x509*> getcerts(const QString &name)
 			l << pki;
 	}
 	return l;
+}
+
+static QStringList renewErrors;
+
+/* testxca answers like the command line (xcaWarningCore); this one also
+ * keeps the error messages the renewal reports */
+class renewalErrors : public xcaWarningCore
+{
+  public:
+	void error(const QString &msg) override
+	{
+		renewErrors << msg;
+	}
+};
+
+/* Accepts the renewal dialog as it is */
+static void renewAsIs()
+{
+	CertExtend *dlg = test_main::findWindow<CertExtend>("CertExtend");
+	if (!dlg)
+		return;
+	dlg->replace->setCheckState(Qt::Unchecked);
+	dlg->revoke->setCheckState(Qt::Unchecked);
+	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
+}
+
+/* BTD-181: the renewal signs with the issuer's key and the digest of the
+ * old certificate; when that signature fails (an RSA-512 CA key with
+ * SHA-512), the dialog shows the error and stores nothing, never a
+ * certificate with an empty DER (BTD-171) */
+void test_main::renewalSigningFails()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		db_key *keys = Database.model<db_key>();
+		db_x509 *certs = Database.model<db_x509>();
+		pki_key *caKey = keys->newKey(keyjob("RSA:2048"), "CA");
+		/* XCA asks before it makes a key that small */
+		xcaWarningCore::setConfirmations(false, { "key.size" });
+		pki_key *small = keys->newKey(keyjob("RSA:512"), "small");
+		xcaWarningCore::setConfirmations(false, {});
+		pki_key *eeKey = keys->newKey(keyjob("EC:prime256v1"), "EE");
+		QVERIFY(caKey && small && eeKey);
+		x509name n;
+		n.addEntryByNid(NID_commonName, "Renew CA");
+		IssuanceSpec spec;
+		spec.name = "Renew CA";
+		spec.subject = n;
+		spec.key = caKey;
+		spec.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(-1));
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addYears(2));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = certs->newCert(ctx, spec);
+		QVERIFY(ca);
+		x509name en;
+		en.addEntryByNid(NID_commonName, "renew.example");
+		IssuanceSpec ee;
+		ee.name = "renew leaf";
+		ee.subject = en;
+		ee.key = eeKey;
+		ee.signer = ca;
+		ee.notBefore = a1time();
+		ee.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+		ee.hashAlgo = digest(NID_sha512);
+		ee.extensions.basicCA = ExtensionSpec::bc_not_ca;
+		pki_x509 *leaf = certs->newCert(ctx, ee);
+		QVERIFY(leaf);
+		int before = Store.getAll<pki_x509>().size();
+
+		/* the CA now signs with a key too small for SHA-512 */
+		ca->setRefKey(small);
+		renewErrors.clear();
+		xcaWarning::setGui(new renewalErrors());
+		QThread *job = QThread::create(renewAsIs);
+		job->start();
+		mainwin->certView->renewal({ certs->index(leaf) });
+		job->wait();
+		delete job;
+		xcaWarning::setGui(new xcaWarningCore());
+
+		QCOMPARE(renewErrors.size(), 1);
+		QVERIFY2(renewErrors[0].contains("could not be signed"),
+			CCHAR(renewErrors[0]));
+		QCOMPARE(Store.getAll<pki_x509>().size(), before);
+		QCOMPARE(getcerts("renew leaf").size(), 1);
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
 }
 
 void test_main::revoke()

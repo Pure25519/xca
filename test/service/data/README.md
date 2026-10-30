@@ -68,3 +68,19 @@ each object, `stored.xca.json` and `predefined.xca.json` for the templates the t
 `items.json`, `issuers.json`, `index.json`, `hierarchy.json` for the lists. Ids are those of a fresh
 database in the import order of the test; the test checks the creation date against the item and
 compares the rest unchanged. All keys are throwaway test keys.
+
+## `idial-csr/`
+
+The four certificate signing requests IDIAL recorded from S7-1500 lab units (OPC UA server and
+web server, SHA-1 signatures, keyCertSign with CA:FALSE, CA:TRUE, unusual RDN orders), byte for
+byte. `test_service_csr_acceptance` (BTD-65) issues them under the profiles; source repository,
+commit, SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`. Never edit them:
+their value is that the devices made them.
+
+## `profiles/`
+
+The certificate profiles of bxc-pki (`<id>.json`) and their golden expectation files
+(`golden/`, BTD-64), copied unchanged from the commit named in `profiles/PROVENANCE.json`.
+`test_service_profiles` (BTD-54) applies every profile and compares with the golden files,
+`test_service_csr_acceptance` (BTD-65) uses the golden files. Regenerate them in bxc-pki and copy
+them again.

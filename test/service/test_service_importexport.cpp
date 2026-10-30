@@ -26,6 +26,7 @@
 #include "lib/db_x509.h"
 #include "lib/exception.h"
 #include "lib/importexport.h"
+#include "lib/issuance.h"
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_multi.h"
@@ -37,6 +38,10 @@
 
 #include "ServiceTestCase.h"
 
+#include <openssl/core_names.h>
+#include <openssl/pem.h>
+#include <openssl/pkcs12.h>
+
 static const char exportVar[] = "BTD34_EXPORT_PASS";
 static const char exportPass[] = "Export-Secret-34";
 static const char p12Var[] = "BTD34_P12_PASS";
@@ -45,7 +50,9 @@ static const char p12Pass[] = "P12-Secret-34";
 /* Format ids of pki_export::init_elements() */
 enum {
 	certPem = 1, certPkcs7Chain = 12, certDer = 13, certPkcs12Chain = 14,
-	keyPemPrivate = 20, keyDerPrivate = 25, keyPkcs8Encrypted = 28,
+	certPkcs12 = 15,
+	keyPemPublic = 19, keyPemPrivate = 20, keyDerPublic = 24,
+	keyDerPrivate = 25, keyPkcs8Encrypted = 28, keyPkcs8 = 29,
 };
 
 class test_service_importexport : public ServiceTestCase
@@ -86,6 +93,18 @@ class test_service_importexport : public ServiceTestCase
 	pki_crl *importCrl(const QString &name);
 	/* authority.crlNo and crlExpire of the CA in the database */
 	QPair<qint64, QString> authorityCrl(pki_x509 *ca);
+	/* BTD-16: a key of the type through the service, its public key
+	 * as PEM, an RSA CA and a certificate of the CA for a key */
+	pki_key *newKey(const QString &type, const QString &name);
+	static QString publicPem(pki_key *key);
+	pki_x509 *rsaCa();
+	pki_x509 *certFor(pki_key *key, pki_x509 *ca);
+	/* The privateKey content tag of a PKCS#8 file (DER, PEM or
+	 * encrypted PEM with the export password): 0x80 seed, 0x04
+	 * expanded key, 0x30 both (RFC 9881) */
+	static int mlDsaTag(const QString &name, int format);
+	QByteArray exportFormat(db_base *db, pki_base *pki, int format,
+			const QString &name, const QString &keyFormat);
 
   private slots:
 	void initTestCase();
@@ -109,6 +128,17 @@ class test_service_importexport : public ServiceTestCase
 	void exportOverwritesKeyOwnerOnly();
 	void exportNullItem();
 	void importRollbackHandsBack();
+	void fixedKeyRoundTrip_data();
+	void fixedKeyRoundTrip();
+	void fixedKeyPkcs12_data();
+	void fixedKeyPkcs12();
+	void mlDsaPrivateFormat_data();
+	void mlDsaPrivateFormat();
+	void mlDsaPkcs12Expanded();
+	void mlDsaWithoutSeed();
+	void mlDsaFormatRejected();
+	void importOpensslFixed_data();
+	void importOpensslFixed();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -1181,6 +1211,478 @@ void test_service_importexport::importRollbackHandsBack()
 	QCOMPARE(result.existing.size(), 0);
 	QCOMPARE(committedItems(), 2);
 	QVERIFY(AuditLog::verify().ok());
+#endif
+}
+
+/* -- BTD-16: Ed448, ML-DSA and SLH-DSA keys ------------------------------ */
+
+pki_key *test_service_importexport::newKey(const QString &type,
+				const QString &name)
+{
+	return Database.model<db_key>()->newKey(ctx, keyjob(type), name);
+}
+
+QString test_service_importexport::publicPem(pki_key *key)
+{
+	BIO *b = BIO_new(BIO_s_mem());
+	PEM_write_bio_PUBKEY(b, key->getPubKey());
+	char *data;
+	long len = BIO_get_mem_data(b, &data);
+	QString pem = QString::fromLatin1(data, len);
+	BIO_free(b);
+	return pem;
+}
+
+pki_x509 *test_service_importexport::rsaCa()
+{
+	pki_key *key = newKey("RSA:2048", "BTD16 CA key");
+	IssuanceSpec spec;
+	spec.name = "BTD16 CA";
+	spec.subject.addEntryByNid(NID_commonName, "BTD16 CA");
+	spec.key = key;
+	spec.notBefore = a1time();
+	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+	spec.hashAlgo = digest(NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_ca;
+	spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+	return Database.model<db_x509>()->newCert(ctx, spec);
+}
+
+pki_x509 *test_service_importexport::certFor(pki_key *key, pki_x509 *ca)
+{
+	IssuanceSpec spec;
+	spec.name = key->getIntName() + " cert";
+	spec.subject.addEntryByNid(NID_commonName, spec.name);
+	spec.key = key;
+	spec.signer = ca;
+	spec.notBefore = a1time();
+	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(10));
+	spec.hashAlgo = digest(NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_not_ca;
+	spec.extensions.keyUsage << "digitalSignature";
+	return Database.model<db_x509>()->newCert(ctx, spec);
+}
+
+int test_service_importexport::mlDsaTag(const QString &name, int format)
+{
+	QFile f(name);
+	if (!f.open(QIODevice::ReadOnly))
+		return -1;
+	QByteArray data = f.readAll();
+	BIO *b = BIO_new_mem_buf(data.constData(), data.size());
+	PKCS8_PRIV_KEY_INFO *p8 = nullptr;
+	if (format == keyDerPrivate) {
+		p8 = d2i_PKCS8_PRIV_KEY_INFO_bio(b, nullptr);
+	} else if (format == keyPkcs8Encrypted) {
+		X509_SIG *sig = PEM_read_bio_PKCS8(b, nullptr, nullptr, nullptr);
+		if (sig)
+			p8 = PKCS8_decrypt(sig, exportPass, strlen(exportPass));
+		X509_SIG_free(sig);
+	} else {
+		p8 = PEM_read_bio_PKCS8_PRIV_KEY_INFO(b, nullptr, nullptr,
+							nullptr);
+	}
+	BIO_free(b);
+	const unsigned char *pk = nullptr;
+	int len = 0, tag = -1;
+	if (p8 && PKCS8_pkey_get0(nullptr, &pk, &len, nullptr, p8) && len > 0)
+		tag = pk[0];
+	PKCS8_PRIV_KEY_INFO_free(p8);
+	ign_openssl_error();
+	return tag;
+}
+
+QByteArray test_service_importexport::exportFormat(db_base *db, pki_base *pki,
+		int format, const QString &name, const QString &keyFormat)
+{
+	ExportSpec spec;
+	spec.items << pki;
+	spec.format = pki_export::by_id(format);
+	spec.fileName = name;
+	if (spec.format->match_all(F_CRYPT))
+		spec.passwordSource = QString("env:%1").arg(
+			spec.format->match_all(F_PKCS12) ? p12Var : exportVar);
+	spec.privateKeyFormat = keyFormat;
+	return db->exportItems(ctx, spec);
+}
+
+void test_service_importexport::fixedKeyRoundTrip_data()
+{
+	QTest::addColumn<QString>("type");
+	QTest::addColumn<int>("format");
+
+	static const QList<QPair<int, const char *>> formats {
+		{ keyPemPublic, "PEM public" }, { keyDerPublic, "DER public" },
+		{ keyPemPrivate, "PEM private" }, { keyDerPrivate, "DER private" },
+		{ keyPkcs8, "PKCS#8" }, { keyPkcs8Encrypted, "PKCS#8 encrypted" },
+	};
+	for (const char *type : { "ED448", "ML-DSA-44", "ML-DSA-65", "ML-DSA-87",
+			"SLH-DSA-SHA2-128s", "SLH-DSA-SHAKE-256f" }) {
+		for (const auto &f : formats)
+			QTest::newRow(qPrintable(QString("%1 %2").arg(type, f.second)))
+				<< type << f.first;
+	}
+}
+
+/* Every key format of a new type reads back with openssl pkey to the
+ * same public key, and imports again: into the same database as the
+ * stored key, into an empty one as a new key of the same type */
+void test_service_importexport::fixedKeyRoundTrip()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, type);
+	QFETCH(int, format);
+	const pki_export *xport = pki_export::by_id(format);
+	bool priv = xport->match_all(F_PRIVATE);
+	bool encrypted = xport->match_all(F_CRYPT);
+
+	db_key *keys = Database.model<db_key>();
+	pki_key *key = newKey(type, "fixed");
+	QVERIFY(key);
+	QString pub = publicPem(key);
+	QString out = file(QString("fixed-%1").arg(format));
+	exportFormat(keys, key, format, out, QString());
+
+	QStringList extra;
+	if (!priv)
+		extra << "-pubin";
+	if (xport->match_all(F_DER))
+		extra << "-inform" << "DER";
+	if (encrypted)
+		extra << "-passin" << QString("env:%1").arg(exportVar);
+	QCOMPARE(publicKey(out, extra), pub);
+	QCOMPARE(entries("key.export_private").size(), priv ? 1 : 0);
+
+	ImportSpec spec;
+	spec.files << out;
+	if (encrypted)
+		spec.passwordSource = QString("env:%1").arg(exportVar);
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 0);
+	QCOMPARE(r.existing, QList<pki_base *>() << key);
+
+	/* Into a database without the key */
+	keys->deleteItems(ctx, QList<pki_base *>() << key);
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	pki_key *back = dynamic_cast<pki_key *>(r.created[0]);
+	QVERIFY(back);
+	QCOMPARE(back->getKeyTypeString(), type);
+	QCOMPARE(back->isPrivKey(), priv);
+	QCOMPARE(publicPem(back), pub);
+	reopenDatabase();
+	QCOMPARE(Store.getAll<pki_key>().size(), 1);
+	back = Store.getAll<pki_key>()[0];
+	QCOMPARE(back->getKeyTypeString(), type);
+	if (priv) {
+		EVP_PKEY *pkey = back->decryptKey();
+		QVERIFY(pkey);
+		QCOMPARE(EVP_PKEY_eq(pkey, back->getPubKey()), 1);
+		EVP_PKEY_free(pkey);
+	}
+	QVERIFY(AuditLog::verify().ok());
+#endif
+}
+
+void test_service_importexport::fixedKeyPkcs12_data()
+{
+	QTest::addColumn<QString>("type");
+
+	for (const char *type : { "ED448", "ML-DSA-65", "SLH-DSA-SHA2-128s" })
+		QTest::newRow(type) << type;
+}
+
+/* PKCS#12 of a certificate (issued by an RSA CA, BTD-164 brings the
+ * signing with the new keys) with an Ed448, ML-DSA or SLH-DSA key:
+ * openssl pkcs12 reads the key, XCA imports the file again */
+void test_service_importexport::fixedKeyPkcs12()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, type);
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_key *key = newKey(type, "p12-key");
+	QVERIFY(key);
+	pki_x509 *crt = certFor(key, ca);
+	QVERIFY(crt);
+	QString pub = publicPem(key);
+
+	QString out = file("fixed.p12");
+	exportFormat(Database.model<db_x509>(), crt, certPkcs12, out, QString());
+	QString keyPem = file("fixed-from-p12.pem");
+	QVERIFY(opensslRun({ "pkcs12", "-in", out, "-nocerts", "-noenc",
+		"-passin", QString("env:%1").arg(p12Var), "-out", keyPem }));
+	QCOMPARE(publicKey(keyPem, QStringList()), pub);
+	QList<AuditEntry> priv = entries("key.export_private");
+	QCOMPARE(priv.size(), 1);
+	QCOMPARE(priv[0].params.value("pkcs12_algorithm").toString(),
+		QString("AES-256-CBC"));
+
+	ImportSpec spec;
+	spec.files << out;
+	spec.passwordSource = QString("env:%1").arg(p12Var);
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 0);
+	QVERIFY(r.existing.contains(key));
+	QVERIFY(r.existing.contains(crt));
+#endif
+}
+
+void test_service_importexport::mlDsaPrivateFormat_data()
+{
+	QTest::addColumn<QString>("keyFormat");
+	QTest::addColumn<int>("format");
+	QTest::addColumn<int>("tag");
+
+	static const QList<QPair<int, const char *>> formats {
+		{ keyDerPrivate, "DER" }, { keyPkcs8, "PKCS#8" },
+		{ keyPemPrivate, "PEM" }, { keyPkcs8Encrypted, "PKCS#8 encrypted" },
+	};
+	static const QList<QPair<const char *, int>> keyFormats {
+		{ "seed", 0x80 }, { "expanded", 0x04 }, { "both", 0x30 },
+	};
+	for (const auto &k : keyFormats) {
+		for (const auto &f : formats)
+			QTest::newRow(qPrintable(QString("%1 %2").arg(k.first, f.second)))
+				<< k.first << f.first << k.second;
+	}
+	/* Without a choice: OpenSSL's default, both */
+	QTest::newRow("default DER") << "" << int(keyDerPrivate) << 0x30;
+}
+
+/* RFC 9881: the ML-DSA private key as seed, expanded key or both; each
+ * variant reads with openssl pkey to the same public key, the choice is
+ * in the audit entries, and the stored key keeps its seed */
+void test_service_importexport::mlDsaPrivateFormat()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, keyFormat);
+	QFETCH(int, format);
+	QFETCH(int, tag);
+
+	pki_key *key = newKey("ML-DSA-65", "mldsa");
+	QVERIFY(key);
+	QString out = file("mldsa-key");
+	exportFormat(Database.model<db_key>(), key, format, out, keyFormat);
+	QCOMPARE(mlDsaTag(out, format), tag);
+
+	QStringList extra;
+	if (format == keyDerPrivate)
+		extra << "-inform" << "DER";
+	if (format == keyPkcs8Encrypted)
+		extra << "-passin" << QString("env:%1").arg(exportVar);
+	QCOMPARE(publicKey(out, extra), publicPem(key));
+
+	for (const char *action : { "object.export", "key.export_private" }) {
+		QList<AuditEntry> e = entries(action);
+		QCOMPARE(e.size(), 1);
+		QCOMPARE(e[0].params.value("ml_dsa_encoding").toString(),
+			keyFormat);
+		QCOMPARE(e[0].params.contains("ml_dsa_encoding"),
+			!keyFormat.isEmpty());
+	}
+
+	/* The database still holds both, whatever the export wrote */
+	EVP_PKEY *pkey = key->decryptKey();
+	QVERIFY(pkey);
+	size_t len = 0;
+	QVERIFY(EVP_PKEY_get_octet_string_param(pkey,
+		OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len));
+	QCOMPARE(len, size_t(32));
+	EVP_PKEY_free(pkey);
+#endif
+}
+
+/* The case of XiPKI on JDK 25, which reads the expanded key only: a
+ * PKCS#12 file with the expanded ML-DSA key */
+void test_service_importexport::mlDsaPkcs12Expanded()
+{
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_key *key = newKey("ML-DSA-87", "p12-mldsa");
+	QVERIFY(key);
+	pki_x509 *crt = certFor(key, ca);
+	QVERIFY(crt);
+	QString out = file("expanded.p12");
+	exportFormat(Database.model<db_x509>(), crt, certPkcs12, out,
+			"expanded");
+
+	QFile f(out);
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QByteArray data = f.readAll();
+	const unsigned char *p = (const unsigned char *)data.constData();
+	PKCS12 *p12 = d2i_PKCS12(nullptr, &p, data.size());
+	QVERIFY(p12);
+	EVP_PKEY *pkey = nullptr;
+	X509 *x = nullptr;
+	QVERIFY(PKCS12_parse(p12, p12Pass, &pkey, &x, nullptr));
+	size_t len = 0;
+	/* read from the expanded key alone: no seed */
+	QVERIFY(!EVP_PKEY_get_octet_string_param(pkey,
+		OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) || len == 0);
+	QCOMPARE(EVP_PKEY_eq(pkey, key->getPubKey()), 1);
+	ign_openssl_error();
+	EVP_PKEY_free(pkey);
+	X509_free(x);
+	PKCS12_free(p12);
+	QCOMPARE(entries("key.export_private")[0].params.value(
+		"ml_dsa_encoding").toString(), QString("expanded"));
+}
+
+/* A key imported as expanded key only has no seed: the expanded key and
+ * the default export work, "seed" and "both" fail with seed_unavailable
+ * and a failure entry; the database keeps the key without seed */
+void test_service_importexport::mlDsaWithoutSeed()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QString full = file("genpkey-mldsa.pem");
+	QString expanded = file("expanded-only.pem");
+	QVERIFY(opensslRun({ "genpkey", "-algorithm", "ML-DSA-44", "-out", full }));
+	QVERIFY(opensslRun({ "pkey", "-in", full, "-out", expanded,
+		"-provparam", "ml-dsa.output_formats=priv-only" }));
+	ImportSpec spec;
+	spec.files << expanded;
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	pki_key *key = dynamic_cast<pki_key *>(r.created[0]);
+	QVERIFY(key && key->isPrivKey());
+
+	db_key *keys = Database.model<db_key>();
+	for (const char *fmt : { "seed", "both" }) {
+		int before = entries("object.export").size();
+		try {
+			exportFormat(keys, key, keyPkcs8, file("no-seed.pem"), fmt);
+			QFAIL("exported a seed the key does not have");
+		} catch (serviceError &err) {
+			QCOMPARE(err.code, QString("seed_unavailable"));
+		}
+		QList<AuditEntry> e = entries("object.export");
+		QCOMPARE(e.size(), before + 1);
+		QCOMPARE(e.last().result, QString("failure"));
+		QCOMPARE(e.last().errorCode, QString("seed_unavailable"));
+		QCOMPARE(e.last().params.value("ml_dsa_encoding").toString(),
+			QString(fmt));
+	}
+	QVERIFY(!QFile::exists(file("no-seed.pem")));
+	QCOMPARE(entries("key.export_private").size(), 0);
+
+	for (const char *fmt : { "expanded", "" }) {
+		QString out = file(QString("expanded-%1.pem").arg(fmt));
+		exportFormat(keys, key, keyPkcs8, out, fmt);
+		QCOMPARE(mlDsaTag(out, keyPkcs8), 0x04);
+		QCOMPARE(publicKey(out, QStringList()),
+			publicKey(full, QStringList()));
+	}
+	reopenDatabase();
+	key = Store.getAll<pki_key>()[0];
+	EVP_PKEY *pkey = key->decryptKey();
+	QVERIFY(pkey);
+	QCOMPARE(EVP_PKEY_eq(pkey, key->getPubKey()), 1);
+	EVP_PKEY_free(pkey);
+	QVERIFY(AuditLog::verify().ok());
+#endif
+}
+
+/* Unknown encodings, other key types, public formats and the clipboard
+ * have no ML-DSA private key format */
+void test_service_importexport::mlDsaFormatRejected()
+{
+	db_key *keys = Database.model<db_key>();
+	pki_key *mldsa = newKey("ML-DSA-65", "mldsa");
+	pki_key *slh = newKey("SLH-DSA-SHA2-128f", "slh");
+	pki_key *rsa = newKey("RSA:2048", "rsa");
+	QVERIFY(mldsa && slh && rsa);
+
+	struct { pki_key *key; int format; const char *fmt; bool clipboard;
+		const char *code; } cases[] = {
+		{ mldsa, keyPkcs8, "raw", false, "invalid_ml_dsa_encoding" },
+		{ slh, keyPkcs8, "seed", false, "format_not_applicable" },
+		{ rsa, keyPkcs8, "expanded", false, "format_not_applicable" },
+		{ mldsa, keyPemPublic, "seed", false, "format_not_applicable" },
+		{ mldsa, keyPkcs8, "seed", true, "format_not_applicable" },
+	};
+	for (const auto &c : cases) {
+		ExportSpec spec;
+		spec.items << c.key;
+		spec.format = pki_export::by_id(c.format);
+		spec.privateKeyFormat = c.fmt;
+		spec.clipboard = c.clipboard;
+		try {
+			keys->exportItems(ctx, spec);
+			QFAIL(qPrintable(QString("accepted %1 for %2").arg(c.fmt,
+				c.key->getIntName())));
+		} catch (serviceError &err) {
+			QCOMPARE(err.code, QString(c.code));
+		}
+	}
+	QCOMPARE(entries("key.export_private").size(), 0);
+	QVERIFY(AuditLog::verify().ok());
+}
+
+void test_service_importexport::importOpensslFixed_data()
+{
+	QTest::addColumn<QString>("type");
+	QTest::addColumn<QString>("outputFormat");
+	QTest::addColumn<bool>("encrypted");
+
+	for (const char *type : { "ED448", "ML-DSA-44", "ML-DSA-65",
+			"ML-DSA-87", "SLH-DSA-SHA2-128s", "SLH-DSA-SHA2-128f",
+			"SLH-DSA-SHA2-192s", "SLH-DSA-SHA2-192f",
+			"SLH-DSA-SHA2-256s", "SLH-DSA-SHA2-256f",
+			"SLH-DSA-SHAKE-128s", "SLH-DSA-SHAKE-128f",
+			"SLH-DSA-SHAKE-192s", "SLH-DSA-SHAKE-192f",
+			"SLH-DSA-SHAKE-256s", "SLH-DSA-SHAKE-256f" })
+		QTest::newRow(type) << type << "" << false;
+	for (const char *of : { "seed-only", "priv-only", "seed-priv" })
+		QTest::newRow(qPrintable(QString("ML-DSA-65 %1").arg(of)))
+			<< "ML-DSA-65" << of << false;
+	QTest::newRow("ML-DSA-87 encrypted") << "ML-DSA-87" << "" << true;
+	QTest::newRow("SLH-DSA encrypted") << "SLH-DSA-SHAKE-128s" << "" << true;
+}
+
+/* Keys made by the openssl program import with their type, also ML-DSA
+ * in each RFC 9881 encoding and encrypted PKCS#8 */
+void test_service_importexport::importOpensslFixed()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, type);
+	QFETCH(QString, outputFormat);
+	QFETCH(bool, encrypted);
+
+	QString gen = file("gen.pem");
+	QString in = file("in.pem");
+	QVERIFY(opensslRun({ "genpkey", "-algorithm", type, "-out", gen }));
+	QStringList args { "pkey", "-in", gen, "-out", in };
+	if (!outputFormat.isEmpty())
+		args << "-provparam" << "ml-dsa.output_formats=" + outputFormat;
+	if (encrypted)
+		args << "-aes-256-cbc" << "-passout"
+			<< QString("env:%1").arg(exportVar);
+	QVERIFY(opensslRun(args));
+
+	ImportSpec spec;
+	spec.files << in;
+	if (encrypted)
+		spec.passwordSource = QString("env:%1").arg(exportVar);
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	pki_key *key = dynamic_cast<pki_key *>(r.created[0]);
+	QVERIFY(key);
+	QCOMPARE(key->getKeyTypeString(), type);
+	QVERIFY(key->isPrivKey());
+	QCOMPARE(publicPem(key), publicKey(gen, QStringList()));
+	QCOMPARE(entries("object.import").size(), 1);
 #endif
 }
 

@@ -80,6 +80,13 @@ ExtensionSpec NewX509::getExtensionSpec()
 	e.nsCaPolicyUrl = nsCaPolicyUrl->text();
 	e.nsSslServerName = nsSslServerName->text();
 	e.nsComment = nsComment->text();
+
+	/* kept from the template, the dialog has no input for them yet */
+	e.sanMerge = requestMerge.sanMerge;
+	e.kuMerge = requestMerge.kuMerge;
+	e.ekuMerge = requestMerge.ekuMerge;
+	e.ekuAllowed = requestMerge.ekuAllowed;
+	e.ekuDefault = requestMerge.ekuDefault;
 	return e;
 }
 
