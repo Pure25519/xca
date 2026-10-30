@@ -57,11 +57,21 @@ class test_service_audit : public ServiceTestCase
 		return QDateTime::fromString(iso, Qt::ISODate);
 	}
 	void insertRevocation();
+	/* The empty tables of bxc_schema 4 (BTD-167), taken out of rows */
+	static void takeStoreTables(QMap<QString, QStringList> *rows)
+	{
+		for (const char *t : { "profiles", "policies", "assignments",
+				"issued_profiles" }) {
+			QVERIFY2(rows->contains(t), t);
+			QCOMPARE(rows->take(t), QStringList());
+		}
+	}
 	int xcaCli(const QStringList &args);
 
   private slots:
 	void upgradeForkDatabase();
 	void upgradeKeyTypeColumn();
+	void upgradeProfileTables();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
 	void canonicalJson();
@@ -184,7 +194,7 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='schema'")
 			.toString(), QString("8"));
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("3"));
+			.toString(), QString("4"));
 
 	/* Every row is unchanged. settings only gains bxc_schema, the
 	 * option the harness sets on each open and the marker of the
@@ -192,12 +202,13 @@ void test_service_audit::upgradeForkDatabase()
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList audit = after.take("audit_log");
 	QCOMPARE(after.take("audit_keys"), QStringList());
+	takeStoreTables(&after);
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
-			s == "bxc_schema|3" || s == "pkcs12_migrated|yes";
+			s == "bxc_schema|4" || s == "pkcs12_migrated|yes";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 
@@ -270,7 +281,7 @@ void test_service_audit::upgradeKeyTypeColumn()
 
 	openDatabase();
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("3"));
+			.toString(), QString("4"));
 	QVERIFY(sqlValue("SELECT sql FROM sqlite_master WHERE type='table' "
 		"AND name='public_keys'").toString().contains("type VARCHAR(32)"));
 	QCOMPARE(sqlValue("SELECT count(*) FROM sqlite_master WHERE "
@@ -293,13 +304,14 @@ void test_service_audit::upgradeKeyTypeColumn()
 	 * baseline: the upgrade changes no audited object. */
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	QStringList keysAfter = after.take("public_keys");
+	takeStoreTables(&after);
 	keysBefore.replaceInStrings(QRegularExpression("^1\\|ED25\\|"),
 				"1|ED25519|");
 	QCOMPARE(keysAfter, keysBefore);
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
-	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|3");
+	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|4");
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
 			s == "pkcs12_migrated|yes";
@@ -321,12 +333,52 @@ void test_service_audit::upgradeKeyTypeColumn()
 			"name='pqc-key'").toString(), QString("ML-DSA-87"));
 }
 
+/* bxc_schema 4 (BTD-167): the empty tables of the profile store; every
+ * row stays, no audit entry. The dump (data/README.md) is a bxc_schema 3
+ * database with an imported CA and a generated key. */
+void test_service_audit::upgradeProfileTables()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "schema8-bxc3.sql");
+	QVERIFY(!before.contains("profiles"));
+	QCOMPARE(before["items"].size(), 3);
+	int entries = before["audit_log"].size();
+
+	openDatabase();
+	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
+			.toString(), QString("4"));
+	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
+	takeStoreTables(&after);
+	QStringList settingsBefore = before.take("settings");
+	QStringList settingsAfter = after.take("settings");
+	QCOMPARE(after, before);
+	settingsBefore.replaceInStrings("bxc_schema|3", "bxc_schema|4");
+	/* the dump was made by a build that sets both already */
+	auto harness = [](const QString &s) {
+		return s.startsWith("suppress_messages|") ||
+			s == "pkcs12_migrated|yes";
+	};
+	settingsAfter.removeIf(harness);
+	settingsBefore.removeIf(harness);
+	QCOMPARE(settingsAfter, settingsBefore);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.entries, qint64(entries));
+	/* the store works on the upgraded database */
+	QSqlQuery q(QSqlDatabase::database());
+	QVERIFY(q.exec("INSERT INTO profiles (name, version, document, created) "
+			"VALUES ('p', 1, '{}', 'now')"));
+	QVERIFY2(!q.exec("INSERT INTO profiles (name, version, document, created) "
+			"VALUES ('p', 1, '{}', 'now')"), "name and version are unique");
+}
+
 void test_service_audit::upgradeWaitsForPassword_data()
 {
 	QTest::addColumn<QString>("dump");
 
 	QTest::newRow("schema 8") << "schema8-fork.sql";
 	QTest::newRow("bxc_schema 2") << "schema8-bxc2.sql";
+	QTest::newRow("bxc_schema 3") << "schema8-bxc3.sql";
 }
 
 void test_service_audit::upgradeWaitsForPassword()

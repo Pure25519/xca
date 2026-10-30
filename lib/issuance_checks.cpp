@@ -9,8 +9,10 @@
 
 #include <QCoreApplication>
 #include <QMap>
+#include <QPair>
 #include <QRegularExpression>
 #include <QSet>
+#include <QUrl>
 
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
@@ -19,6 +21,7 @@
 #include "exception.h"
 #include "issuance.h"
 #include "pki_key.h"
+#include "policy.h"
 #include "pki_x509.h"
 #include "pki_x509req.h"
 
@@ -331,9 +334,9 @@ static void registrationSan(const IssuanceSpec &spec, const pki_x509 *cert)
 void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 {
 	if (!spec.request) {
-		/* a profile never takes a dNSName from the CN (san.dns_from_cn
-		 * is false in schema v1) */
-		if (spec.csrPolicy.profile &&
+		/* a dNSName from the CN only where a generic profile says so
+		 * (san.dns_from_cn, schema v1.1) */
+		if (spec.csrPolicy.profile && !spec.csrPolicy.dnsFromCn &&
 		    spec.extensions.subjectAltName.contains("copycn",
 						Qt::CaseInsensitive))
 			throw serviceError("registration_san_invalid",
@@ -569,6 +572,30 @@ static void opcChain(const IssuanceSpec &spec, const pki_x509 *cert,
 		throw serviceError("opc_chain_issuer_no_crlsign",
 			tr("The CA '%1' lacks key usage cRLSign").arg(name(cert)));
 	/* AKI on the self-signed root needs BTD-48 first */
+
+	/* the signature hash of the SecurityPolicy of the end entity's key
+	 * (OPC 10000-7 6.6.x, the OPC research of BTD-63): SHA-256 for RSA
+	 * and the 256-bit curves, SHA-384 for the 384-bit curves. An end
+	 * entity has the curve of its issuer (above); a CA of the lab
+	 * hierarchies may sit below a CA of another curve (PLAN.md 14.1)
+	 * and is signed with the hash of that issuer, so CAs are left out. */
+	static const QMap<QString, QPair<QString, int>> policies {
+		{ "prime256v1", { "ECC_nistP256", NID_sha256 } },
+		{ "P-256", { "ECC_nistP256", NID_sha256 } },
+		{ "secp384r1", { "ECC_nistP384", NID_sha384 } },
+		{ "P-384", { "ECC_nistP384", NID_sha384 } },
+		{ "brainpoolP256r1", { "ECC_brainpoolP256r1", NID_sha256 } },
+		{ "brainpoolP384r1", { "ECC_brainpoolP384r1", NID_sha384 } },
+	};
+	QPair<QString, int> policy = keys[0].family == "RSA" ?
+		qMakePair(QString("Basic256Sha256"), (int)NID_sha256) :
+		policies.value(keys[0].group);
+	if (!newCa && !policy.first.isEmpty() && spec.hashAlgo.MD() &&
+	    EVP_MD_get_type(spec.hashAlgo.MD()) != policy.second)
+		throw serviceError("opc_signature_hash",
+			tr("'%1' would be signed with %2; its key belongs to the OPC UA SecurityPolicy %3, which needs %4")
+			.arg(name(cert), spec.hashAlgo.name(), policy.first,
+				OBJ_nid2sn(policy.second)));
 }
 
 QStringList IssuanceChecks::keyUsageAllowed(const EVP_PKEY *key,
@@ -675,10 +702,145 @@ void IssuanceChecks::certificate(const IssuanceSpec &spec,
 		registrationSan(spec, cert);
 }
 
+/* A dNSName as RFC 5280 4.2.1.6 and the preferred name syntax want it:
+ * ASCII labels of letters, digits and hyphens, none empty, no trailing
+ * dot, a wildcard only as the whole leftmost label, an A-label that
+ * decodes and encodes back to itself; never converted (no blind IDNA,
+ * step-ca #2318, #2714). Returns why it is not, or a null string. */
+static QString dnsNameError(const QString &name)
+{
+	static const QRegularExpression ldh(
+		QRegularExpression::anchoredPattern(
+			"[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"));
+	if (name.isEmpty())
+		return tr("it is empty");
+	if (name.endsWith('.'))
+		return tr("it ends with a dot");
+	if (name.size() > 253)
+		return tr("it is longer than 253 characters");
+	QStringList labels = name.split('.');
+	if (labels.first() == "*" && labels.size() < 3)
+		return tr("a wildcard needs at least two labels after it");
+	static const QRegularExpression numeric(
+		QRegularExpression::anchoredPattern("[0-9]+"));
+	if (numeric.match(labels.last()).hasMatch())
+		return tr("its last label is a number; an IP address belongs into iPAddress");
+	for (int i = 0; i < labels.size(); i++) {
+		const QString &l = labels[i];
+		if (l.isEmpty())
+			return tr("it has an empty label");
+		if (l == "*" && i == 0 && labels.size() > 1)
+			continue;
+		for (QChar c : l) {
+			if (c.unicode() > 127)
+				return tr("it is not ASCII; IDNs are written as A-labels (xn--)");
+		}
+		if (!ldh.match(l).hasMatch())
+			return tr("the label '%1' is no host name label").arg(l);
+		if (l.startsWith("xn--", Qt::CaseInsensitive)) {
+			QString u = QUrl::fromAce(l.toLatin1(),
+					QUrl::IgnoreIDNWhitelist);
+			if (u.isEmpty() || u.compare(l, Qt::CaseInsensitive) == 0 ||
+			    QString::fromLatin1(QUrl::toAce(u,
+				QUrl::IgnoreIDNWhitelist)).compare(l,
+					Qt::CaseInsensitive))
+				return tr("'%1' is no valid A-label").arg(l);
+		}
+	}
+	return QString();
+}
+
 void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain)
 {
-	Q_UNUSED(spec);
-	Q_UNUSED(cert);
-	Q_UNUSED(chain);
+	X509 *x = cert->getCert();
+
+	/* the syntax of every dNSName, with or without a policy */
+	GENERAL_NAMES *san = (GENERAL_NAMES *)X509_get_ext_d2i(x,
+			NID_subject_alt_name, nullptr, nullptr);
+	for (int i = 0; i < sk_GENERAL_NAME_num(san); i++) {
+		GENERAL_NAME *gn = sk_GENERAL_NAME_value(san, i);
+		if (gn->type != GEN_DNS)
+			continue;
+		QString dns = QString::fromUtf8((const char *)
+				ASN1_STRING_get0_data(gn->d.dNSName),
+				ASN1_STRING_get_length(gn->d.dNSName));
+		QString why = dnsNameError(dns);
+		if (!why.isNull()) {
+			GENERAL_NAMES_free(san);
+			throw serviceError("invalid_dns_name",
+				tr("The dNSName '%1' is refused: %2").arg(dns, why));
+		}
+	}
+	GENERAL_NAMES_free(san);
+
+	/* name constraints of every CA up to the root (RFC 5280 6.1.3 (b),
+	 * PLAN.md 8.4 rule 12; OpenSSL's own check). OpenSSL reads the names
+	 * from the extension cache, which the certificate under construction
+	 * filled before its SAN was added; a fresh copy of subject and SAN
+	 * has a cache of its own. */
+	X509 *names = X509_new();
+	X509_set_subject_name(names, X509_get_subject_name(x));
+	int at = X509_get_ext_by_NID(x, NID_subject_alt_name, -1);
+	if (at >= 0)
+		X509_add_ext(names, X509_get_ext(x, at), -1);
+	X509_check_purpose(names, -1, 0);
+	for (const pki_x509 *ca : chain) {
+		NAME_CONSTRAINTS *nc = (NAME_CONSTRAINTS *)X509_get_ext_d2i(
+			ca->getCert(), NID_name_constraints, nullptr, nullptr);
+		if (!nc)
+			continue;
+		int rc = NAME_CONSTRAINTS_check(names, nc);
+		/* a host name in the CN counts when no SAN names one */
+		if (rc == X509_V_OK)
+			rc = NAME_CONSTRAINTS_check_CN(names, nc);
+		NAME_CONSTRAINTS_free(nc);
+		if (rc != X509_V_OK) {
+			X509_free(names);
+			ign_openssl_error();
+			throw serviceError("name_constraints_violation",
+				tr("The names of '%1' violate the name constraints of '%2': %3")
+				.arg(name(cert), name(ca),
+					X509_verify_cert_error_string(rc)));
+		}
+	}
+	X509_free(names);
+
+	/* the EKU is a subset of the EKU of every CA that has one
+	 * (step-ca #2536); anyExtendedKeyUsage admits every purpose */
+	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)X509_get_ext_d2i(x,
+			NID_ext_key_usage, nullptr, nullptr);
+	for (const pki_x509 *ca : chain) {
+		EXTENDED_KEY_USAGE *caEku = (EXTENDED_KEY_USAGE *)
+			X509_get_ext_d2i(ca->getCert(), NID_ext_key_usage,
+					nullptr, nullptr);
+		if (!caEku)
+			continue;
+		QSet<int> allowed;
+		for (int i = 0; i < sk_ASN1_OBJECT_num(caEku); i++)
+			allowed << OBJ_obj2nid(sk_ASN1_OBJECT_value(caEku, i));
+		EXTENDED_KEY_USAGE_free(caEku);
+		/* a certificate without EKU is not limited by this rule; that is
+		 * the reading of RFC 5280 4.2.1.12 the chain check uses as well */
+		if (allowed.contains(NID_anyExtendedKeyUsage))
+			continue;
+		for (int i = 0; i < sk_ASN1_OBJECT_num(eku); i++) {
+			const ASN1_OBJECT *o = sk_ASN1_OBJECT_value(eku, i);
+			if (allowed.contains(OBJ_obj2nid(o)))
+				continue;
+			char purpose[80];
+			OBJ_obj2txt(purpose, sizeof purpose, o, 1);
+			int nid = OBJ_obj2nid(o);
+			EXTENDED_KEY_USAGE_free(eku);
+			throw serviceError("eku_not_in_issuer",
+				tr("The extended key usage %1 is not among those of the CA '%2'")
+				.arg(nid == NID_undef ? purpose : OBJ_nid2sn(nid),
+					name(ca)));
+		}
+	}
+	EXTENDED_KEY_USAGE_free(eku);
+
+	/* the name policies assigned to the CA and the profile */
+	for (const Policy &p : spec.policies)
+		p.check(spec, cert, chain);
 }
