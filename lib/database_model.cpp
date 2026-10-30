@@ -232,6 +232,41 @@ static void migratePkcs12Default(bool existing)
 	XCA_INFO(msg);
 }
 
+/* Rows the models left out on loading (BTD-95): one message naming
+ * each, and after the unlock one audit entry, so that rows that vanish
+ * from the views leave a trace in the log (BTD-209). The entry is best
+ * effort: a failure is logged, the open goes on. */
+static void reportSkippedRows(bool unlocked)
+{
+	QList<db_base::SkippedRow> rows = db_base::takeSkippedRows();
+	if (rows.isEmpty())
+		return;
+	QString text = db_base::skippedRowsText(rows);
+	if (unlocked) {
+		QStringList items;
+		for (const db_base::SkippedRow &r : rows)
+			items << r.type + ":" + r.id;
+		try {
+			Transaction;
+			TransThrow();
+			AuditLog::append(ServiceContext::localUser(
+					ServiceContext::processChannel),
+				AuditLog::actionRowsSkipped, "database",
+				QString(), AuditParams()
+					.set("count", (qint64)rows.size())
+					.set("skipped_items", items.join(","))
+					.warn("rows_skipped"));
+			if (!TransCommit())
+				qWarning() << "Audit entry of the skipped rows "
+					"rolled back";
+		} catch (errorEx &err) {
+			qWarning() << "Audit entry of the skipped rows failed:"
+				<< err.getString();
+		}
+	}
+	XCA_WARN(text);
+}
+
 database_model::database_model(const QString &name, const Passwd &pass)
 {
 	enum open_result result;
@@ -322,6 +357,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	if (dbkey)
 		dbkey->updateKeyEncryptionScheme();
+	reportSkippedRows(result == pw_ok);
 
 	foreach(db_base *m, models) {
 		Q_CHECK_PTR(m);

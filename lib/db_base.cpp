@@ -92,6 +92,38 @@ QString db_base::sqlItemSelector()
 	return sl.join(" OR ");
 }
 
+static QList<db_base::SkippedRow> skippedRows;
+
+QList<db_base::SkippedRow> db_base::takeSkippedRows()
+{
+	QList<SkippedRow> rows;
+	rows.swap(skippedRows);
+	return rows;
+}
+
+QString db_base::skippedRowsText(const QList<SkippedRow> &rows)
+{
+	QStringList lines;
+	for (const SkippedRow &r : rows)
+		lines << QString("%1 %2: %3").arg(r.type, r.id,
+				r.reason.simplified());
+	return tr("%n row(s) of the database cannot be read and were left "
+		"out:", "", rows.size()) + "\n" + lines.join("\n");
+}
+
+static QString rowType(enum pki_type t)
+{
+	switch (t) {
+	case asym_key: return "key";
+	case x509_req: return "request";
+	case x509: return "certificate";
+	case revocation: return "crl";
+	case tmpl: return "template";
+	case smartCard: return "token";
+	default: return "item";
+	}
+}
+
 void db_base::loadContainer()
 {
 	XSqlQuery q;
@@ -111,10 +143,13 @@ void db_base::loadContainer()
 		try {
 			pki->restoreSql(rec);
 		} catch (errorEx &ex) {
-			/* a row that does not decode is reported and left
-			 * out, never loaded as an empty object (BTD-95) */
+			/* a row that does not decode is left out, never
+			 * loaded as an empty object (BTD-95); reported once
+			 * per load with the others (BTD-209) */
 			delete pki;
-			XCA_ERROR(ex);
+			skippedRows << SkippedRow{ rowType(t),
+				q.value(VIEW_item_id).toString(),
+				ex.getString() };
 			continue;
 		}
 		rootItem->insert(pki);
@@ -153,6 +188,9 @@ void db_base::reloadContainer(const QList<enum pki_type> &typelist)
 	endResetModel();
 
 	loadContainer();
+	QList<SkippedRow> rows = takeSkippedRows();
+	if (!rows.isEmpty())
+		XCA_WARN(skippedRowsText(rows));
 }
 
 void db_base::updateHeaders()

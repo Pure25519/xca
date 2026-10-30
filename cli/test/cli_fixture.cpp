@@ -16,6 +16,12 @@
  *     adds count revocations of serials without a certificate
  *     (db_x509::setRevocations), e.g. for a CRL above a size budget
  *
+ * cli_fixture <database> <password source> guicrl <ca>
+ *     issues a CRL the way the GUI does (NewCrl::newCrl(), xca --crlgen:
+ *     crljob(ca) with the CA's crlDays, db_crl::newCrl() on the gui
+ *     channel) and prints "<thisUpdate> <nextUpdate> <seconds between>"
+ *     (BTD-211)
+ *
  * Exit code 1 and the message on stderr on any error.
  */
 
@@ -24,10 +30,12 @@
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
+#include "lib/db_crl.h"
 #include "lib/db_temp.h"
 #include "lib/db_x509.h"
 #include "lib/entropy.h"
 #include "lib/oid.h"
+#include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/PwDialogCore.h"
@@ -40,7 +48,7 @@ static int usage(QTextStream &err)
 {
 	err << "usage: cli_fixture <db> <password source> template <name> "
 		"<eku,...> [<ku,...>] | ownpass <key> [<key password source>] "
-		"| revocations <ca> <count>\n";
+		"| revocations <ca> <count> | guicrl <ca>\n";
 	return 1;
 }
 
@@ -56,7 +64,8 @@ int main(int argc, char *argv[])
 	if ((cmd == "template" && args.size() < 5) ||
 	    (cmd == "ownpass" && (args.size() < 4 || args.size() > 5)) ||
 	    (cmd == "revocations" && args.size() != 5) ||
-	    !QStringList({ "template", "ownpass", "revocations" })
+	    (cmd == "guicrl" && args.size() != 4) ||
+	    !QStringList({ "template", "ownpass", "revocations", "guicrl" })
 			.contains(cmd))
 		return usage(err);
 	xcaWarning::setGui(new xcaWarningCore());
@@ -85,6 +94,21 @@ int main(int argc, char *argv[])
 			if (key->getOwnPass() != pki_key::ptPrivate ||
 			    !key->sqlUpdatePrivateKey())
 				throw errorEx("key not updated");
+		} else if (cmd == "guicrl") {
+			pki_x509 *ca = nullptr;
+			for (pki_x509 *c : Store.getAll<pki_x509>())
+				if (c->getIntName() == args[3])
+					ca = c;
+			if (!ca)
+				throw errorEx("no CA " + args[3]);
+			pki_crl *crl = Database.model<db_crl>()->newCrl(
+				ServiceContext::localUser(ServiceContext::gui),
+				crljob(ca));
+			QDateTime t = crl->getLastUpdate(),
+				n = crl->getNextUpdate();
+			QTextStream(stdout) << t.toString(Qt::ISODate) << " "
+				<< n.toString(Qt::ISODate) << " "
+				<< t.secsTo(n) << "\n";
 		} else if (cmd == "revocations") {
 			pki_x509 *ca = nullptr;
 			for (pki_x509 *c : Store.getAll<pki_x509>())

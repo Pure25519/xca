@@ -8,11 +8,14 @@
  * before that), 4096 bytes per CRL (the S7 budget).
  *
  * Storage: the validity also sets the CA's crlDays (authority table,
- * rounded up to whole days, what the GUI shows and uses); the whole
- * setting is one row of the settings table, key "crlpolicy_<CA item id>",
- * value a JSON object {"validity": "P7D", "reissue_fraction": 0.333...,
- * "size_budget": 4096}. A CA without that row has the defaults, its
- * validity from crlDays.
+ * what the GUI shows and uses), so it is a whole number of days (BTD-211:
+ * the GUI and the command line issue CRLs of the same validity); the
+ * whole setting is one row of the settings table, key
+ * "crlpolicy_<CA item id>", value a JSON object {"validity": "P7D",
+ * "reissue_fraction": 0.333..., "size_budget": 4096}. A CA without that
+ * row has the defaults, its validity from crlDays. A row that is no such
+ * object, or with a value the command line would refuse, is an error
+ * (crl_settings_invalid), never the defaults (BTD-211).
  */
 
 #ifndef __CRL_POLICY_H
@@ -35,6 +38,7 @@ class CrlPolicy
 	static const double defaultReissueFraction; // 1/3
 	static const qint64 defaultSizeBudget;      // 4096
 	static const qint64 defaultTrustListBudget; // 65535
+	static const qint64 minSizeBudget;          // 512
 	static const char actionSettings[];         // "ca.crl_settings"
 
 	IsoDuration validity{};
@@ -42,7 +46,9 @@ class CrlPolicy
 	qint64 sizeBudget{ defaultSizeBudget };
 
 	CrlPolicy();
-	/* The stored setting of ca, or the defaults with its crlDays */
+	/* The stored setting of ca, or the defaults with its crlDays;
+	 * throws serviceError crl_settings_invalid naming the CA and the
+	 * member for a stored row that is not a valid setting */
 	static CrlPolicy of(const pki_x509 *ca);
 	/* Stores the setting of ca and its crlDays in the caller's
 	 * transaction (or one of its own) and writes one audit entry
@@ -62,9 +68,12 @@ class CrlPolicy
 	 * invalid_value naming option */
 	static double parseFraction(const QString &text,
 			const QString &option);
-	/* A validity of at least one minute; throws invalid_value */
+	/* A validity of whole days, at least P1D (crlDays, which the GUI
+	 * uses); throws invalid_validity naming option */
 	static IsoDuration checkValidity(const IsoDuration &d,
 			const QString &option);
+	/* Why d is no CRL validity, or an empty string */
+	static QString validityError(const IsoDuration &d);
 	static QString fractionText(double f);
 	QJsonObject toJson() const;
 

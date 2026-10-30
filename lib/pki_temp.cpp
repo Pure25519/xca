@@ -402,7 +402,7 @@ QByteArray pki_temp::toData(bool for_export) const
 	return ba;
 }
 
-void pki_temp::fromData(QByteArray &ba, int version)
+void pki_temp::fromData(QByteArray &ba, int version, bool whole)
 {
 	xname.d2i(ba);
 	QBuffer buf(&ba);
@@ -410,8 +410,9 @@ void pki_temp::fromData(QByteArray &ba, int version)
 	QDataStream in(&buf);
 	in.setVersion(TEMPLATE_DS_VERSION);
 	in >> settings;
-	/* the whole rest is the settings map (BTD-88) */
-	if (in.status() != QDataStream::Ok || !buf.atEnd())
+	/* the whole rest of an export is the settings map (BTD-88); a
+	 * stored row is not checked for more (BTD-209) */
+	if (in.status() != QDataStream::Ok || (whole && !buf.atEnd()))
 		my_error(tr("Template file content error (settings)"));
 	QMap<QString, QString> translate;
 	translate["eKyUseCritical"] = "ekuCritical";
@@ -440,7 +441,8 @@ void pki_temp::fromData(const unsigned char *p, int size, int version)
 		old_fromData(p, size, version);
 	} else {
 		QByteArray ba((const char*)p, size);
-		fromData(ba, version);
+		/* only fromExportData() calls this: untrusted input */
+		fromData(ba, version, true);
 	}
 }
 

@@ -52,7 +52,11 @@ bool hasCrlOptions(const Options &o)
 
 CrlPolicy crlPolicy(const Options &o, const pki_x509 *ca)
 {
-	CrlPolicy p = CrlPolicy::of(ca);
+	/* all three given: the stored setting is not read, so that they
+	 * replace one that is invalid (crl_settings_invalid, BTD-211) */
+	bool all = o.has("crl-validity") && o.has("crl-reissue-fraction") &&
+		o.has("crl-size-budget");
+	CrlPolicy p = all ? CrlPolicy() : CrlPolicy::of(ca);
 	/* wrong values are usage errors (exit code 2) */
 	try {
 		if (o.has("crl-validity"))
@@ -70,9 +74,10 @@ CrlPolicy crlPolicy(const Options &o, const pki_x509 *ca)
 	}
 	if (o.has("crl-size-budget")) {
 		qint64 b = o.value("crl-size-budget").toLongLong();
-		if (b < 512)
+		if (b < CrlPolicy::minSizeBudget)
 			throw usageError("invalid_value", QObject::tr(
-				"--crl-size-budget must be at least 512"));
+				"--crl-size-budget must be at least %1")
+				.arg(CrlPolicy::minSizeBudget));
 		p.sizeBudget = b;
 	}
 	return p;
@@ -190,6 +195,9 @@ pki_crl *reissueIfDue(CommandContext &ctx, pki_x509 *ca,
 	return issueCrl(ctx, ca, policy, "reissue_due");
 }
 
+/* Tolerated clock difference of a given date in the future (BTD-211) */
+static const qint64 clockSkew = 300;
+
 /* --- revoke ------------------------------------------------------------- */
 
 /* The RFC 5280 names in the order of x509rev::crlreasons(), which holds
@@ -273,7 +281,21 @@ static void cmdRevoke(CommandContext &ctx)
 
 	pki_x509 *ca = nullptr, *cert = nullptr, *issuer = nullptr;
 	db_x509 *certs = Database.model<db_x509>();
+	/* the revocation date is now; the key cannot be compromised after
+	 * it (RFC 5280 5.3.2), BTD-211 */
+	QDateTime revDate = nowSeconds();
+	a1time inval;
 	try {
+		if (o.has("invalidity-date")) {
+			inval = parseTimestamp(o.value("invalidity-date"),
+						"invalidity-date");
+			if ((QDateTime)inval > revDate)
+				throw usageError("invalid_invalidity_date",
+					QObject::tr("--invalidity-date %1 is "
+					"after the revocation date %2 (now)")
+					.arg(inval.toPrettyGMT())
+					.arg(a1time(revDate).toPrettyGMT()));
+		}
 		if (o.has("ca"))
 			ca = resolveAs<pki_x509>(o.value("ca"), "certificate",
 						"--ca");
@@ -304,6 +326,8 @@ static void cmdRevoke(CommandContext &ctx)
 				p.set(n, o.value(n));
 		if (!o.args().isEmpty())
 			p.set("name", o.args()[0]);
+		if (o.has("invalidity-date"))
+			p.set("invalidity_date", o.value("invalidity-date"));
 		if (ca)
 			p.set("issuer", ca->getIntName());
 		auditRefusal(ctx, "certificate.revoke", cert, p, err.code);
@@ -312,9 +336,9 @@ static void cmdRevoke(CommandContext &ctx)
 
 	x509rev rev;
 	rev.setReason(reason);
+	rev.setDate(a1time(revDate));
 	if (o.has("invalidity-date"))
-		rev.setInvalDate(parseTimestamp(o.value("invalidity-date"),
-					"invalidity-date"));
+		rev.setInvalDate(inval);
 	ctx.step = QObject::tr("revocation of '%1'").arg(cert->getIntName());
 
 	QJsonObject r;
@@ -357,17 +381,55 @@ static void cmdRevoke(CommandContext &ctx)
 
 /* --- crl ---------------------------------------------------------------- */
 
+/* --this-update: not in the future (beyond the clock skew); not before
+ * the thisUpdate of the CA's latest CRL and no CRL that is expired when
+ * it is issued, unless --allow-stale-crl (BTD-211) */
+static void checkThisUpdate(const Options &o, pki_x509 *ca,
+		const CrlPolicy &policy, const QDateTime &thisUpdate)
+{
+	QDateTime now = nowSeconds();
+	QString given = a1time(thisUpdate).toPrettyGMT();
+	if (thisUpdate > now.addSecs(clockSkew))
+		throw usageError("invalid_this_update", QObject::tr(
+			"--this-update %1 is more than %2 minutes in the "
+			"future").arg(given).arg(clockSkew / 60));
+	if (o.has("allow-stale-crl"))
+		return;
+	QDateTime next = policy.nextUpdate(thisUpdate);
+	if (now >= next)
+		throw usageError("invalid_this_update", QObject::tr(
+			"--this-update %1 gives a CRL that expired on %2 "
+			"(--allow-stale-crl issues it anyway)").arg(given)
+			.arg(a1time(next).toPrettyGMT()));
+	pki_crl *latest = CrlPolicy::latestCrl(ca);
+	if (latest && thisUpdate < (QDateTime)latest->getLastUpdate()) {
+		a1int no(0L);
+		latest->getCrlNumber(&no);
+		throw usageError("invalid_this_update", QObject::tr(
+			"--this-update %1 is before the thisUpdate %2 of the "
+			"latest CRL (number %3) of '%4' (--allow-stale-crl "
+			"issues it anyway)").arg(given)
+			.arg(latest->getLastUpdate().toPrettyGMT())
+			.arg(no.toDec()).arg(ca->getIntName()));
+	}
+}
+
 static void cmdCrl(CommandContext &ctx)
 {
 	const Options &o = ctx.opts;
+	if (o.has("allow-stale-crl") && !o.has("this-update"))
+		throw usageError("conflicting_options", QObject::tr(
+			"--allow-stale-crl needs --this-update"));
 	checkOutOptions(ctx, false);
 	pki_x509 *ca = resolveAs<pki_x509>(o.value("ca"), "certificate",
 					"--ca");
 	CrlPolicy policy = crlPolicy(o, ca);
 	QDateTime thisUpdate;
-	if (o.has("this-update"))
+	if (o.has("this-update")) {
 		thisUpdate = parseTimestamp(o.value("this-update"),
 					"this-update");
+		checkThisUpdate(o, ca, policy, thisUpdate);
+	}
 	/* the given settings become the CA's */
 	if (hasCrlOptions(o) && !ctx.plan) {
 		ctx.step = QObject::tr("CRL settings of '%1'")
@@ -412,7 +474,8 @@ void registerLifecycleCommands(Registry &r)
 			"the issuing CA; the certificate must be one of its")),
 		opt("invalidity-date", OptionSpec::timestamp, "<date-time>",
 			QObject::tr("RFC 3339: since when the key is known or "
-			"suspected to be compromised")),
+			"suspected to be compromised; not after now (the "
+			"revocation date)")),
 	} + outOptions(false);
 	c.maxArgs = 1;
 	c.writes = true;
@@ -430,7 +493,13 @@ void registerLifecycleCommands(Registry &r)
 		opt("ca", OptionSpec::reference, "<ca>",
 			QObject::tr("the CA certificate"), false, true),
 		opt("this-update", OptionSpec::timestamp, "<date-time>",
-			QObject::tr("thisUpdate, RFC 3339 (default: now)")),
+			QObject::tr("thisUpdate, RFC 3339 (default: now); at "
+			"most 5 minutes in the future, not before the CA's "
+			"latest CRL, no CRL expired at issue")),
+		opt("allow-stale-crl", OptionSpec::flag, QString(),
+			QObject::tr("with --this-update: also issue a CRL that "
+			"is expired or older than the CA's latest CRL (lab and "
+			"test CRLs)")),
 		opt("hash", OptionSpec::string, "<digest>", QObject::tr(
 			"signature digest (default: the database default; "
 			"none for EdDSA, ML-DSA and SLH-DSA)")),
