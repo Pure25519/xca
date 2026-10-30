@@ -4,8 +4,10 @@
  * the GUI-free path behind "New key".
  */
 
+#include <QDirIterator>
 #include <QFile>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QTemporaryDir>
@@ -86,6 +88,7 @@ class test_service_key : public ServiceTestCase
 	void newKeyFixedWithSize();
 	void newKeyUnknownType_data();
 	void newKeyUnknownType();
+	void messagesUseQtPlaceholders();
 	void compareFixed();
 	void exportFlagsFixed_data();
 	void exportFlagsFixed();
@@ -536,27 +539,69 @@ void test_service_key::newKeyFixedWithSize()
 void test_service_key::newKeyUnknownType_data()
 {
 	QTest::addColumn<QString>("job");
+	QTest::addColumn<QString>("code");
 
-	QTest::newRow("ML-DSA-99") << "ML-DSA-99";
-	QTest::newRow("ED449") << "ED449";
+	QTest::newRow("ML-DSA-99") << "ML-DSA-99" << "invalid_key_type";
+	QTest::newRow("ED449") << "ED449" << "invalid_key_type";
+	QTest::newRow("FOO:2048") << "FOO:2048" << "invalid_key_type";
+	/* more than one colon: the parser stops early (BTD-184) */
+	QTest::newRow("EC:a:b") << "EC:a:b" << "invalid_key_type";
+	QTest::newRow("RSA:2048:x") << "RSA:2048:x" << "invalid_key_type";
+	QTest::newRow("EC:nocurve") << "EC:nocurve" << "invalid_curve";
 }
 
+/* The failure entry names no key size: none of these jobs requests a
+ * size for a type that takes one (BTD-184) */
 void test_service_key::newKeyUnknownType()
 {
 	QFETCH(QString, job);
+	QFETCH(QString, code);
 
 	try {
 		Database.model<db_key>()->newKey(ctx, keyjob(job), "unknown");
-		QFAIL("newKey accepted an unknown key type");
+		QFAIL("newKey accepted an invalid key description");
 	} catch (serviceError &err) {
-		QCOMPARE(err.code, QString("invalid_key_type"));
+		QCOMPARE(err.code, code);
 	}
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
 	AuditEntry e = lastEntry();
 	QCOMPARE(e.result, QString("failure"));
-	QCOMPARE(e.errorCode, QString("invalid_key_type"));
+	QCOMPARE(e.errorCode, code);
 	QCOMPARE(e.params["name"].toString(), QString("unknown"));
+	QVERIFY2(!e.params.contains("key_size"),
+		CCHAR(e.params["key_size"].toString()));
 	QVERIFY(AuditLog::verify().ok());
+}
+
+/* QString::arg() fills %1..%99 only: a printf conversion such as "%d"
+ * stays in the message as it is (BTD-184) */
+void test_service_key::messagesUseQtPlaceholders()
+{
+	QRegularExpression printf("\"(?:[^\"\\\\\\n]|\\\\.)*"
+		"%l{0,2}[dsiuxf](?![A-Za-z0-9_])(?:[^\"\\\\\\n]|\\\\.)*\""
+		"\\s*\\)?\\s*\\.\\s*arg\\s*\\(");
+	QStringList found;
+	int files = 0;
+	for (const char *dir : { "lib", "widgets" }) {
+		QDirIterator it(QString(XCA_SOURCE_DIR "/") + dir,
+				{ "*.cpp", "*.h" }, QDir::Files,
+				QDirIterator::Subdirectories);
+		while (it.hasNext()) {
+			QFile f(it.next());
+			QVERIFY(f.open(QIODevice::ReadOnly));
+			QString src = QString::fromUtf8(f.readAll());
+			auto m = printf.globalMatch(src);
+			while (m.hasNext()) {
+				int line = src.left(m.peekNext().capturedStart())
+						.count('\n') + 1;
+				found << QString("%1:%2: %3").arg(f.fileName())
+					.arg(line).arg(m.next().captured());
+			}
+			files++;
+		}
+	}
+	QVERIFY(files > 100);
+	QVERIFY2(found.isEmpty(), CCHAR(found.join("\n")));
 }
 
 /* pki_key::compare() checks the type first: keys that OpenSSL knows

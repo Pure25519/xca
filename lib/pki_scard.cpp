@@ -279,6 +279,15 @@ void pki_scard::deleteFromToken()
 	deleteFromToken(slot);
 }
 
+/* A key type the token code cannot store, by its OpenSSL name: ML-DSA
+ * and other provider keys have no EVP_PKEY id (BTD-184) */
+static errorEx unknownKeytype(const EVP_PKEY *pkey)
+{
+	const char *name = EVP_PKEY_get0_type_name(pkey);
+	return errorEx(QString("Unknown Keytype %1").arg(name ? QString(name) :
+			QString::number(EVP_PKEY_get_id(pkey))));
+}
+
 pk11_attlist pki_scard::objectAttributesNoId(EVP_PKEY *pk, bool priv) const
 {
 	QByteArray ba;
@@ -317,8 +326,7 @@ pk11_attlist pki_scard::objectAttributesNoId(EVP_PKEY *pk, bool priv) const
 #endif
 #endif
 	default:
-		throw errorEx(QString("Unknown Keytype %d")
-				.arg(EVP_PKEY_type(EVP_PKEY_id(pk))));
+		throw unknownKeytype(pk);
 
 	}
 	return attrs;
@@ -452,8 +460,7 @@ void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
 	}
 #endif
 	default:
-		throw errorEx(QString("Unknown Keytype %d")
-				.arg(EVP_PKEY_id(pkey)));
+		throw unknownKeytype(pkey);
 
 	}
 

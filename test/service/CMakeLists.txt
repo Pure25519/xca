@@ -36,6 +36,9 @@ ServiceTest(test_service_harness)
 # Key usage by the subject key type, every issuance (BTD-195)
 ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
+# the source scan for printf conversions in .arg() messages (BTD-184)
+target_compile_definitions(test_service_key PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE

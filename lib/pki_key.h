@@ -149,15 +149,14 @@ class keyjob
 {
   public:
 	static keyjob defaultjob;
-	keytype ktype;
-	int size;
-	int ec_nid;
-	slotid slot;
+	/* Set on every path: an invalid description ("EC:a:b") leaves
+	 * the invalid key type and these defaults (BTD-184) */
+	keytype ktype{};
+	int size{ DEFAULT_KEY_LENGTH };
+	int ec_nid{ NID_undef };
+	slotid slot{};
 	keyjob() {
-		size = DEFAULT_KEY_LENGTH;
 		ktype = keytype::byName("RSA");
-		ec_nid = NID_undef;
-		slot = slotid();
 	}
 	keyjob(const QString &desc)
 	{
@@ -167,15 +166,12 @@ class keyjob
 		if (sl.size() != 2)
 			return;
 		ktype = keytype::byName(sl[0]);
-		size = DEFAULT_KEY_LENGTH;
-		ec_nid = NID_undef;
 		if (isEC())
 			ec_nid = OBJ_txt2nid(sl[1].toLatin1());
 		else if (!isFixed())
 			size = sl[1].toInt();
 		else if (!sl[1].isEmpty())
 			size = 0;  /* "ED448:456": the type takes no size */
-		slot = slotid();
 		ign_openssl_error();
 	}
 	QString toString()
