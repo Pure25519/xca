@@ -17,6 +17,17 @@
 #include "asn1int.h"
 #include "pki_base.h"
 
+/* Test hook of the CRL build (BTD-198): the step named in injected is
+ * skipped as if its OpenSSL call had failed. Empty in production, set by
+ * tests only. Steps: version, issuer, serial, revocation_date,
+ * invalidity_date, reason, revoked, aki, ian, crl_number, last_update,
+ * next_update; drop_entry leaves a revocation out without a failure. */
+namespace crlBuild
+{
+	extern QString injected;
+	bool fail(const char *step);
+}
+
 class x509rev
 {
 	private:

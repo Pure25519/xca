@@ -351,11 +351,19 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 
 				expiredEntries expired(cert);
 				foreach(x509rev rev, cert->getRevList()) {
-					if (!expired.drop(rev))
-						crl->addRev(rev, task.withReason);
+					if (expired.drop(rev))
+						continue;
+					/* test hook: one entry left out */
+					if (crlBuild::fail("drop_entry")) {
+						crlBuild::injected.clear();
+						continue;
+					}
+					crl->addRev(rev, task.withReason);
 				}
-				crl->addV3ext(authorityKeyId(cert, &ext_ctx));
-				if (task.subAltName &&
+				if (!crlBuild::fail("aki"))
+					crl->addV3ext(authorityKeyId(cert,
+								&ext_ctx));
+				if (task.subAltName && !crlBuild::fail("ian") &&
 				    cert->hasExtension(NID_subject_alt_name)) {
 					crl->addV3ext(e.create(NID_issuer_alt_name,
 						"issuer:copy", &ext_ctx));

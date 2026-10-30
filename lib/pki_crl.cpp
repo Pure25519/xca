@@ -159,8 +159,11 @@ void pki_crl::createCrl(const QString d, pki_x509 *iss)
 	setIntName(d);
 	if (!iss)
 		my_error(tr("No issuer given"));
-	X509_CRL_set_version(crl, 1); /* version 2 CRL */
-	X509_CRL_set_issuer_name(crl, (X509_NAME*)iss->getSubject().get0());
+	if (!crlBuild::fail("version"))
+		X509_CRL_set_version(crl, 1); /* version 2 CRL */
+	if (!crlBuild::fail("issuer"))
+		X509_CRL_set_issuer_name(crl,
+			(X509_NAME*)iss->getSubject().get0());
 	setIssuer(iss);
 	pki_openssl_error();
 }
@@ -173,14 +176,16 @@ a1int pki_crl::getVersion()
 void pki_crl::setLastUpdate(const a1time &a)
 {
 	a1time t(a);
-	X509_CRL_set_lastUpdate(crl, t.get_utc());
+	if (!crlBuild::fail("last_update"))
+		X509_CRL_set_lastUpdate(crl, t.get_utc());
 	pki_openssl_error();
 }
 
 void pki_crl::setNextUpdate(const a1time &a)
 {
 	a1time t(a);
-	X509_CRL_set_nextUpdate(crl, t.get_utc());
+	if (!crlBuild::fail("next_update"))
+		X509_CRL_set_nextUpdate(crl, t.get_utc());
 	pki_openssl_error();
 }
 
@@ -207,7 +212,11 @@ QByteArray pki_crl::i2d() const
 
 void pki_crl::addRev(const x509rev &xrev, bool withReason)
 {
-	X509_CRL_add0_revoked(crl, xrev.get(withReason));
+	X509_REVOKED *r = xrev.get(withReason);
+	if (crlBuild::fail("revoked"))
+		X509_REVOKED_free(r);
+	else
+		X509_CRL_add0_revoked(crl, r);
 	pki_openssl_error();
 }
 
@@ -343,7 +352,8 @@ void pki_crl::setCrlNumber(a1int num)
 {
 	ASN1_INTEGER *tmpser = num.get();
 	pki_openssl_error();
-	X509_CRL_add1_ext_i2d(crl, NID_crl_number, tmpser, 0, 0);
+	if (!crlBuild::fail("crl_number"))
+		X509_CRL_add1_ext_i2d(crl, NID_crl_number, tmpser, 0, 0);
 	ASN1_INTEGER_free(tmpser);
 	pki_openssl_error();
 }

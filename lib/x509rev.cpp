@@ -102,19 +102,28 @@ void x509rev::fromREVOKED(const X509_REVOKED *rev)
 	qDebug() << *this;
 }
 
+QString crlBuild::injected;
+
+bool crlBuild::fail(const char *step)
+{
+	return !injected.isEmpty() && injected == step;
+}
+
 X509_REVOKED *x509rev::toREVOKED(bool withReason) const
 {
 	X509_REVOKED *rev = X509_REVOKED_new();
 	Q_CHECK_PTR(rev);
-	X509_REVOKED_set_serialNumber(rev, serial.get());
-	X509_REVOKED_set_revocationDate(rev, (ASN1_TIME*)date.get_utc());
+	if (!crlBuild::fail("serial"))
+		X509_REVOKED_set_serialNumber(rev, serial.get());
+	if (!crlBuild::fail("revocation_date"))
+		X509_REVOKED_set_revocationDate(rev, (ASN1_TIME*)date.get_utc());
 	/* RFC 5280 5.3.2: only add the extension if the date is known */
-	if (!ivalDate.isUndefined())
+	if (!ivalDate.isUndefined() && !crlBuild::fail("invalidity_date"))
 		X509_REVOKED_add1_ext_i2d(rev, NID_invalidity_date,
 							 (ASN1_TIME*)ivalDate.get(), 0, 0);
 
 	/* RFC says to not add the extension if it is "unspecified" */
-	if (reason_idx != 0 && withReason) {
+	if (reason_idx != 0 && withReason && !crlBuild::fail("reason")) {
 		ASN1_ENUMERATED *a = ASN1_ENUMERATED_new();
 		ASN1_ENUMERATED_set(a, crl_reasons[reason_idx].bitnum);
 		X509_REVOKED_add1_ext_i2d(rev, NID_crl_reason, a, 0, 0);
