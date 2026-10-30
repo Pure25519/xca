@@ -64,6 +64,11 @@ class test_service_loaders : public ServiceTestCase
 	void templatesImport_data();
 	void templatesImport();
 	void opensslErrorText();
+	void templateRowTrailingBytes();
+	void nameEntryRefused();
+	void requestAttributeRefused();
+	void ignoredErrorText();
+	void skippedRowsAudited();
 };
 
 /* -- valid objects, built with OpenSSL ------------------------------------ */
@@ -578,6 +583,119 @@ void test_service_loaders::staleErrorQueue()
 	c.fromBytes(crlPem, "btd95-stale.crl");
 	QCOMPARE(x.getSubject().getEntryByNid(NID_commonName),
 		QString("BTD-95 stale"));
+}
+
+
+/* -- BTD-209: follow-ups of the review of xca#59 ------------------------- */
+
+/* A stored template row with bytes after the settings map loads: the
+ * end-of-data check of BTD-88 is for imports only (MINOR 7). The export
+ * file with trailing data stays refused (noTemplate). */
+void test_service_loaders::templateRowTrailingBytes()
+{
+	ImportSpec spec;
+	spec.data = templateExport();
+	spec.dataName = "btd209-template";
+	QCOMPARE(Database.importItems(ctx, spec).created.size(), 1);
+
+	QSqlQuery q;
+	QVERIFY(q.exec("SELECT item, template FROM templates") && q.next());
+	qlonglong item = q.value(0).toLongLong();
+	QByteArray data = QByteArray::fromBase64(q.value(1).toByteArray());
+	q.finish();
+	QVERIFY(q.prepare("UPDATE templates SET template=? WHERE item=?"));
+	q.bindValue(0, QString::fromLatin1((data + "BTD-209").toBase64()));
+	q.bindValue(1, item);
+	QVERIFY2(q.exec(), qPrintable(q.lastError().text()));
+
+	reopenDatabase();
+	QList<pki_temp *> temps = Store.getAll<pki_temp>();
+	QCOMPARE(temps.size(), 1);
+	QCOMPARE(temps[0]->getIntName(), QString("BTD-88 template"));
+}
+
+/* An entry OpenSSL refuses to add (an unknown NID) ends in a typed error,
+ * not in a name without it (MINOR 10) */
+void test_service_loaders::nameEntryRefused()
+{
+	x509name n;
+	QString code;
+	try {
+		n.addEntryByNid(99999, "BTD-209");
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QCOMPARE(code, QString("invalid_string"));
+	QCOMPARE(n.entryCount(), 0);
+}
+
+void test_service_loaders::requestAttributeRefused()
+{
+	pki_x509req req("BTD-209 request");
+	QString code;
+	try {
+		req.addAttribute(99999, "BTD-209");
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QCOMPARE(code, QString("invalid_string"));
+}
+
+/* _ign_openssl_error() takes the text of the queue like
+ * take_openssl_errors(), with the data string, and leaves the queue empty;
+ * it no longer writes OpenSSL's static buffer (MINOR 11) */
+void test_service_loaders::ignoredErrorText()
+{
+	ERR_clear_error();
+	QVERIFY(!ign_openssl_error());
+	ERR_raise_data(ERR_LIB_USER, 1, "BTD-209 data %d", 9);
+	QTest::ignoreMessage(QtDebugMsg, QRegularExpression(
+		R"(IGNORED .*test_service_loaders.*\(BTD-209 data 9\))"));
+	QVERIFY(ign_openssl_error());
+	QCOMPARE(ERR_peek_error(), 0UL);
+}
+
+/* Rows left out on open leave a trace in the audit log: one entry
+ * database.rows_skipped naming every skipped item, and one message
+ * naming the same items (implementer reply on xca#59) */
+void test_service_loaders::skippedRowsAudited()
+{
+	EVP_PKEY *key = ecKey();
+	ImportSpec keySpec;
+	keySpec.data = PEM(PEM_write_bio_PUBKEY, key);
+	EVP_PKEY_free(key);
+	keySpec.dataName = "btd209-key";
+	QCOMPARE(Database.importItems(ctx, keySpec).created.size(), 1);
+	ImportSpec tmplSpec;
+	tmplSpec.data = templateExport();
+	tmplSpec.dataName = "btd209-template";
+	QCOMPARE(Database.importItems(ctx, tmplSpec).created.size(), 1);
+	QString keyId = Store.getAll<pki_key>()[0]->getSqlItemId().toString();
+	QString tmplId = Store.getAll<pki_temp>()[0]->getSqlItemId().toString();
+	int audit = AuditLog::entries().size();
+
+	QSqlQuery q;
+	QVERIFY(q.exec("UPDATE public_keys SET \"public\"='/////w=='"));
+	QVERIFY(q.exec("UPDATE templates SET template='/////w=='"));
+	warning->expectMessage(QString("key %1").arg(keyId));
+	reopenDatabase();
+
+	QCOMPARE(storedObjects(), 0);
+	QList<AuditEntry> entries = AuditLog::entries();
+	QList<AuditEntry> skipped;
+	for (int i = audit; i < entries.size(); i++)
+		if (entries[i].action == "database.rows_skipped")
+			skipped << entries[i];
+	QCOMPARE(skipped.size(), 1);
+	QCOMPARE(skipped[0].result, QString("success"));
+	QCOMPARE(skipped[0].params.value("count").toLongLong(), 2LL);
+	QString items = skipped[0].params.value("skipped_items").toString();
+	QVERIFY2(items.split(",").contains("key:" + keyId), qPrintable(items));
+	QVERIFY2(items.split(",").contains("template:" + tmplId),
+		qPrintable(items));
+	QCOMPARE(skipped[0].params.value("warning").toString(),
+		QString("rows_skipped"));
+	QVERIFY(AuditLog::verify().ok());
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_loaders)
