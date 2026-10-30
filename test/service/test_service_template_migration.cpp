@@ -1,9 +1,10 @@
 /* vi: set sw=4 ts=4:
  *
  * XCA templates as profiles (BTD-167): each default template of misc/
- * (CA, TLS_server, TLS_client) migrates to a generic profile, and the
- * same CSR issued with the template and with the migrated profile gives
- * identical extensions, compared in the text of openssl x509 -text.
+ * (CA, TLS_server, TLS_client and their _EC variants) migrates to a
+ * generic profile, and the same CSR issued with the template and with
+ * the migrated profile gives identical extensions, compared in the text
+ * of openssl x509 -text.
  * Netscape extensions are not migrated (profile.h), so the comparison
  * runs with the setting disable_netscape. A template value a profile
  * cannot hold is refused with the field named, never dropped silently.
@@ -123,18 +124,23 @@ void test_service_template_migration::identicalExtensions_data()
 	QTest::addColumn<QString>("id");
 	QTest::addColumn<QString>("type");
 	QTest::addColumn<QString>("refused");
-	/* TLS_server and TLS_client carry keyEncipherment and keyAgreement,
-	 * which fit no key type together (BTD-195): the template and the
-	 * migrated profile refuse every key alike */
+	/* key usage by key type (BTD-195, BTD-203): TLS_server and TLS_client
+	 * carry keyEncipherment and are for RSA keys; with an EC key the
+	 * template and the migrated profile refuse alike. TLS_server_EC and
+	 * TLS_client_EC carry signing bits only and fit both */
+	const QString refused("key_usage_not_for_key_type");
 	for (QString t : { "rsa-2048", "ec-p256" }) {
+		bool rsa = t.startsWith("rsa");
 		QTest::newRow(CCHAR("CA " + t)) << "CA" << "xca-ca" << t
 			<< QString();
 		QTest::newRow(CCHAR("TLS_server " + t)) << "TLS_server"
-			<< "xca-tls-server" << t
-			<< QString("key_usage_not_for_key_type");
+			<< "xca-tls-server" << t << (rsa ? QString() : refused);
 		QTest::newRow(CCHAR("TLS_client " + t)) << "TLS_client"
-			<< "xca-tls-client" << t
-			<< QString("key_usage_not_for_key_type");
+			<< "xca-tls-client" << t << (rsa ? QString() : refused);
+		QTest::newRow(CCHAR("TLS_server_EC " + t)) << "TLS_server_EC"
+			<< "xca-tls-server-ec" << t << QString();
+		QTest::newRow(CCHAR("TLS_client_EC " + t)) << "TLS_client_EC"
+			<< "xca-tls-client-ec" << t << QString();
 	}
 }
 

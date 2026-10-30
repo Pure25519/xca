@@ -56,6 +56,10 @@ bool _ign_openssl_error(const QString &txt, const char *file, int line);
 /* The reasons of the OpenSSL error queue with their data strings, one per
  * line, "unknown OpenSSL error" for an empty queue; empties the queue */
 QString take_openssl_errors();
+/* A boolean setting of an OpenSSL provider (openssl.cnf), read as the
+ * provider reads it: 1, yes, true, on and 0, no, false, off (case does
+ * not matter for the words); anything else or NULL gives dflt */
+bool openssl_bool(const char *value, bool dflt);
 
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char**), const void*);
 void *d2i_bytearray(void *(*d2i)(void*, unsigned char**, long),

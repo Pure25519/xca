@@ -9,7 +9,7 @@ unless `--interactive` is given.
 bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
 bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --password env:PKI_PW
 bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
-bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server --validity P1Y --password env:PKI_PW
+bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server_EC --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
 ```
@@ -106,7 +106,9 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   for templates in `cli/test/cli_sign_checks_pending.cmake`: the service checks key usage by
   the type of the subject key on every issuance (BTD-195), so an EC, EdDSA, ML-DSA or SLH-DSA
   key with a template that names keyEncipherment or dataEncipherment is refused with
-  `key_usage_not_for_key_type`. `--profile` is reserved until Phase 2.
+  `key_usage_not_for_key_type`; the detail names every such bit. The default templates
+  `TLS_server` and `TLS_client` are for RSA keys, `TLS_server_EC` and `TLS_client_EC` (signing
+  bits only) for EC, EdDSA, ML-DSA and SLH-DSA keys (`cli/test/cli_default_templates.cmake`). `--profile` is reserved until Phase 2.
 
 ## Tests
 

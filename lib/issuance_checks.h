@@ -38,8 +38,11 @@ namespace IssuanceChecks
 	 * keyAgreement, encipherOnly, decipherOnly. *keyType receives the
 	 * name of the family. An unknown key type: every bit. */
 	QStringList keyUsageAllowed(const EVP_PKEY *key, QString *keyType);
-	/* Throws key_usage_not_for_key_type for the first of bits a key of
-	 * this type may not carry; source names where the bit comes from */
+	/* The bits of bits a key of this type may not carry, in their order */
+	QStringList keyUsageUnfit(const EVP_PKEY *key, const QStringList &bits,
+			QString *keyType = nullptr);
+	/* Throws key_usage_not_for_key_type naming every bit a key of this
+	 * type may not carry; source names where the bits come from */
 	void keyUsageFits(const EVP_PKEY *key, const QStringList &bits,
 			const QString &source);
 

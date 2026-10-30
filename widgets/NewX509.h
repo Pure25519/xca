@@ -52,6 +52,10 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		 * when it edits or applies a template: the merge modes and the
 		 * EKU limits of BTD-54 */
 		ExtensionSpec requestMerge{};
+		/* key usage bits the user removed because the key cannot use
+		 * them (BTD-195), for the audit of the issuance */
+		QStringList keyUsageRemoved{};
+		bool keyUsageFitsKey();
 		NIDlist attr_nid{};
 		QList<nameEdit> attrEdits{};
 		QList<nameEdit> nameEdits{};
