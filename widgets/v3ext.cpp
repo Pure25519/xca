@@ -168,10 +168,12 @@ bool v3ext::__validate(bool showSuccess)
 	QString str, error;
 	validate->setFocus(Qt::OtherFocusReason);
 	str = prefix + toString();
-	ext.create(nid, str, ext_ctx);
-	while (int i = ERR_get_error() ) {
-		error += ERR_error_string(i ,NULL);
-		error += "\n";
+	/* create() throws on input OpenSSL refuses (BTD-197); the error
+	 * queue it cleared before never reached this check */
+	try {
+		ext.create(nid, str, ext_ctx);
+	} catch (errorEx &err) {
+		error = err.getString();
 	}
 	if (!error.isEmpty()) {
 		XCA_WARN(tr("Validation failed:\n'%1'\n%2").

@@ -168,6 +168,10 @@ target_compile_definitions(test_service_loaders PRIVATE
 # checkpoint signature, refused subject entries (BTD-95)
 ServiceTest(test_service_openssl_checks)
 
+# Extension input OpenSSL cannot encode is an error, not a missing
+# extension (BTD-197)
+ServiceTest(test_service_extension_errors)
+
 # Checks before every signature: path length, issuer, CSR, OPC UA chains
 # (BTD-55)
 ServiceTest(test_service_signing)

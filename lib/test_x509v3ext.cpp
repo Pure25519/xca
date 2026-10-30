@@ -8,6 +8,7 @@
 #include <QTest>
 
 #include "x509v3ext.h"
+#include "exception.h"
 #include "oid.h"
 #include "openssl_compat.h"
 
@@ -272,10 +273,16 @@ void test_x509v3ext::review_sectionPath_quoteBackslash()
 
 void test_x509v3ext::review_sectionPath_newline()
 {
-	/* A line break must not inject another CONF line (entry) */
+	/* A line break must not inject another CONF line (entry); since
+	 * BTD-197 the input is refused instead of dropped silently */
 	x509v3ext ext;
-	ext.create(NID_subject_alt_name,
-		"URI:tag:example.com,2026:a\nDNS.9=evil.example");
+	try {
+		ext.create(NID_subject_alt_name,
+			"URI:tag:example.com,2026:a\nDNS.9=evil.example");
+		QFAIL("a SAN with a line break was accepted");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_extension"));
+	}
 	QVERIFY(!generalNames(ext).contains("DNS:evil.example"));
 }
 

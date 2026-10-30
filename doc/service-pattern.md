@@ -153,6 +153,11 @@ after a failure checks the OpenSSL result itself:
   key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or
   `audit_signing_failed` instead of storing an empty key or signature; a checkpoint signs before
   its first write, so a failure writes nothing.
+- Extension input that OpenSSL cannot encode is `invalid_extension`: `x509v3ext::create()`
+  (every caller, the GUI dialogs included), the advanced block (a CONF error names the line), the
+  request's extensions, the merge and order paths of the issuance; an extension of a request that
+  does not decode is `invalid_request_extension` with its name, not taken for absent (BTD-197).
+  Before, the object was signed without the extension and audited as success.
 - The CRL build checks every step (version, issuer, each revoked entry with serial, date, reason
   and invalidity date, AKI, IAN, CRL number, update times) and compares the built CRL with the
   revocations it was built from before signing; a failure or a difference is `crl_build_failed`

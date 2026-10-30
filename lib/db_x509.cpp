@@ -500,6 +500,19 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 	const QString &uri = spec.csrPolicy.registeredUri;
 	GENERAL_NAMES *names = ext ? (GENERAL_NAMES *)X509V3_EXT_d2i(ext) :
 				GENERAL_NAMES_new();
+	/* every step checked: unchecked, the SAN or the registered URI was
+	 * left out and the certificate issued (BTD-197) */
+	auto fail = [&](const QString &code, const QString &msg) {
+		QString reason = take_openssl_errors();
+		GENERAL_NAMES_free(names);
+		sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+		throw serviceError(code, QString("%1\n%2").arg(msg, reason));
+	};
+	if (!names)
+		fail(ext ? "invalid_request_extension" : "internal_error",
+			QCoreApplication::translate("db_x509",
+			"The request's %1 cannot be decoded")
+			.arg("subjectAltName"));
 	bool hasUri = false, hasCn = false;
 	QString cn;
 	int at = X509_NAME_get_index_by_NID(spec.subject.get0(),
@@ -515,39 +528,60 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 	}
 	bool addUri = !uri.isEmpty() && !hasUri;
 	bool addCn = !cn.isEmpty() && !hasCn;
+	auto add = [&](int type, const QString &value, const char *prefix) {
+		GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr, nullptr,
+				type, value.toUtf8().constData(), 0);
+		if (!gn || !sk_GENERAL_NAME_push(names, gn)) {
+			GENERAL_NAME_free(gn);
+			fail("invalid_extension", QCoreApplication::translate(
+				"db_x509", "The extension %1 cannot be built "
+				"from '%2'.").arg("subjectAltName",
+				QString(prefix) + value));
+		}
+	};
 	if (addUri || addCn) {
-		if (addUri) {
-			GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr,
-				nullptr, GEN_URI, uri.toUtf8().constData(), 0);
-			if (gn)
-				sk_GENERAL_NAME_push(names, gn);
-		}
-		if (addCn) {
-			GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr,
-				nullptr, GEN_DNS, cn.toUtf8().constData(), 0);
-			if (gn)
-				sk_GENERAL_NAME_push(names, gn);
-		}
-		X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name, names,
-			spec.csrPolicy.sanCritical, X509V3_ADD_DEFAULT);
+		if (addUri)
+			add(GEN_URI, uri, "URI:");
+		if (addCn)
+			add(GEN_DNS, cn, "DNS:");
+		if (X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name,
+				names, spec.csrPolicy.sanCritical,
+				X509V3_ADD_DEFAULT) != 1)
+			fail("invalid_extension", QCoreApplication::translate(
+				"db_x509", "The extension %1 cannot be added.")
+				.arg("subjectAltName"));
 	} else if (ext) {
 		/* the device's own bytes, the profile's criticality */
 		X509_EXTENSION *copy = X509_EXTENSION_dup(ext);
-		X509_EXTENSION_set_critical(copy, spec.csrPolicy.sanCritical);
-		X509_add_ext(cert->getCert(), copy, -1);
+		bool ok = copy &&
+			X509_EXTENSION_set_critical(copy,
+				spec.csrPolicy.sanCritical) &&
+			X509_add_ext(cert->getCert(), copy, -1);
 		X509_EXTENSION_free(copy);
+		if (!ok)
+			fail("invalid_extension", QCoreApplication::translate(
+				"db_x509", "The extension %1 cannot be added.")
+				.arg("subjectAltName"));
 	}
 	GENERAL_NAMES_free(names);
 	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
-	openssl_error();
+	ign_openssl_error();
 }
 
-/* An extension of the CSR, decoded; nullptr if it has none */
+/* An extension of the CSR, decoded; nullptr if it has none. One that does
+ * not decode is refused, not taken for absent (BTD-197) */
 static void *requestedExt(X509_REQ *req, int nid, int *critical)
 {
 	STACK_OF(X509_EXTENSION) *exts = X509_REQ_get_extensions(req);
 	void *value = X509V3_get_d2i(exts, nid, critical, nullptr);
 	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	/* *critical: -1 absent, -2 more than once (IssuanceChecks), else
+	 * the flag of the one found */
+	if (!value && *critical >= 0)
+		throw serviceError("invalid_request_extension",
+			QString("%1\n%2").arg(QCoreApplication::translate(
+				"db_x509", "The request's %1 cannot be decoded")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 	return value;
 }
 
@@ -767,10 +801,18 @@ static void orderExtensions(const QList<int> &order, pki_x509 *cert)
 		   const QPair<int, X509_EXTENSION *> &b) {
 			return a.first < b.first;
 		});
+	/* unchecked, an extension could vanish here; the certificate is not
+	 * signed after a failure (BTD-197) */
+	bool ok = true;
 	for (const auto &p : exts) {
-		X509_add_ext(x, p.second, -1);
+		ok = ok && X509_add_ext(x, p.second, -1);
 		X509_EXTENSION_free(p.second);
 	}
+	if (!ok)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extensions cannot be put in order."),
+				take_openssl_errors()));
 }
 
 pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,

@@ -144,11 +144,13 @@ extList ExtensionSpec::advancedExts(X509V3_CTX *ctx) const
 	ret = NCONF_load_bio(conf, BioByteArray(advanced.toLatin1()).ro(),
 				&err_line);
 	if (ret != 1) {
-		/* translation context of the dialog the code came from */
-		openssl_error_msg(QCoreApplication::translate("NewX509",
-				"Configfile error on line %1\n").arg(err_line));
 		NCONF_free(conf);
-		return elist;
+		/* before: printed, and the whole block was dropped (BTD-197);
+		 * translation context of the dialog the code came from */
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("NewX509",
+				"Configfile error on line %1\n").arg(err_line)
+				.trimmed(), take_openssl_errors()));
 	}
 
 	if (ctx->subject_cert) {
@@ -161,16 +163,25 @@ extList ExtensionSpec::advancedExts(X509V3_CTX *ctx) const
 
 	X509V3_set_nconf(ctx, conf);
 
-	if (ctx->subject_cert) {
-		if (X509V3_EXT_add_nconf(conf, ctx,
-				(char *) ext_name, ctx->subject_cert))
-			openssl_error();
-		csk = X509_get0_extensions(ctx->subject_cert);
-	} else {
-		if (X509V3_EXT_add_nconf_sk(conf, ctx, (char *)ext_name, sk))
-			openssl_error();
-		csk = *sk;
+	/* 1 is success: the check was inverted, and a failure passed
+	 * (BTD-197) */
+	ret = ctx->subject_cert ?
+		X509V3_EXT_add_nconf(conf, ctx, (char *)ext_name,
+					ctx->subject_cert) :
+		X509V3_EXT_add_nconf_sk(conf, ctx, (char *)ext_name, sk);
+	if (ret != 1) {
+		QString reason = take_openssl_errors();
+		X509V3_set_nconf(ctx, NULL);
+		NCONF_free(conf);
+		if (!ctx->subject_cert)
+			sk_X509_EXTENSION_pop_free(sk_tmp, X509_EXTENSION_free);
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("NewX509",
+				"The advanced extensions cannot be built."),
+				reason));
 	}
+	csk = ctx->subject_cert ? X509_get0_extensions(ctx->subject_cert) :
+				*sk;
 
 	elist.setStack(csk, start);
 	if (!ctx->subject_cert)

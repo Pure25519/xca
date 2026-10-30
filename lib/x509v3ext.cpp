@@ -246,11 +246,18 @@ x509v3ext &x509v3ext::create(int nid, const QString &et, X509V3_CTX *ctx)
 			ext = X509V3_EXT_conf_nid(NULL, ctx, nid, ba.data());
 		}
 	}
-	if (ext) {
-		if (ctx && ctx->subject_cert) {
-			X509_add_ext(ctx->subject_cert, ext, -1);
-		}
-	}
+	/* OpenSSL cannot build it from the input: an error, not a missing
+	 * extension that the object is signed without (BTD-197) */
+	if (!et.isEmpty() && !ext)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QObject::tr("The extension %1 cannot be built from "
+				"'%2'.").arg(OBJ_nid2sn(nid), et),
+				take_openssl_errors()));
+	if (ext && ctx && ctx->subject_cert &&
+	    !X509_add_ext(ctx->subject_cert, ext, -1))
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QObject::tr("The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 	ign_openssl_error();
 	return *this;
 }
