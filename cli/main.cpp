@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QFile>
 #include <QFileInfo>
 
 #include <openssl/provider.h>
@@ -32,9 +33,12 @@ using namespace bxcpki;
 #include "lib/staged_file.h"
 
 /* Test build only (bxc-pki-faults, BTD-42): BXC_PKI_FAULT=<mode>:<step>:<text>
- * makes the step (create, owner_check, write, sync, publish, recheck) of
- * every staged file whose target contains <text> fail (mode fail) or ends
- * the process there with exit code 137 like a killed run (mode kill) */
+ * makes the step (create, owner_check, write, sync, publish, recheck,
+ * swap) of every staged file or directory whose target contains <text>
+ * fail (mode fail), ends
+ * the process there with exit code 137 like a killed run (mode kill) or,
+ * at the step swap of a directory, adds the file late.txt to it (mode
+ * addfile) */
 static void installFaults()
 {
 	QStringList f = QString::fromLocal8Bit(qgetenv("BXC_PKI_FAULT"))
@@ -47,6 +51,13 @@ static void installFaults()
 			return false;
 		if (f[0] == "kill")
 			_exit(137);
+		if (f[0] == "addfile") {
+			/* a file that appears in the target directory */
+			QFile late(target + "/late.txt");
+			if (late.open(QIODevice::WriteOnly))
+				late.write("late\n");
+			return false;
+		}
 		return true;
 	};
 }

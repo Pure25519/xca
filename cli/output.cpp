@@ -77,16 +77,23 @@ void OutputFiles::add(const QString &path, const QString &kind,
 	files << e;
 }
 
-void OutputFiles::addDirectory(const QString &dir, const QString &marker)
+void OutputFiles::addDirectory(const QString &dir, const QString &marker,
+		const QString &schema)
 {
 	if (plan) {
-		StagedDirectory::checkTarget(dir, marker, force);
+		StagedDirectory::checkTarget(dir, marker, schema, force);
 		plannedDirectory = QDir::cleanPath(QFileInfo(dir)
 					.absoluteFilePath());
 		return;
 	}
-	directory = std::make_shared<StagedDirectory>(dir, force);
-	directory->stage(marker);
+	directory = std::make_shared<StagedDirectory>(dir, marker, schema,
+						force);
+	directory->stage();
+}
+
+QString OutputFiles::leftover() const
+{
+	return directory ? directory->leftover() : QString();
 }
 
 bool OutputFiles::written(const entry &e) const

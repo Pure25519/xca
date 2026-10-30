@@ -293,10 +293,15 @@ class OutputFiles
 			const QString &type, const QString &name, bool secret);
 	/* A directory replaced as a whole (trust lists, review of
 	 * xca#62): checked and staged now (lib/staged_file.h
-	 * StagedDirectory, marker: the file of an earlier export); the
-	 * files added below it go to its sibling and become visible
-	 * together in publish(). --plan: the checks only. */
-	void addDirectory(const QString &dir, const QString &marker);
+	 * StagedDirectory: empty, or exactly an earlier export whose
+	 * marker file is a JSON manifest with this schema); the files
+	 * added below it go to its sibling and become visible together
+	 * in publish(). --plan: the checks only. */
+	void addDirectory(const QString &dir, const QString &marker,
+			const QString &schema);
+	/* After publish(): old content of the directory that could not be
+	 * removed (files that appeared during the run); empty if none */
+	QString leftover() const;
 	/* After the commit; throws the error of the first file that fails,
 	 * the files before it stay published */
 	void publish();

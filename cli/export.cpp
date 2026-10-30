@@ -218,8 +218,11 @@ class TrustListFormat
 		layout{};
 };
 
-/* The file of an earlier trust list in --out (StagedDirectory marker) */
+/* The manifest of a trust list; an earlier one in --out is recognised by
+ * it (StagedDirectory marker and schema) */
 static const QString manifestName("manifest.json");
+static const QString manifestSchema(
+		"urn:bxc-pki:schema:trust-list-manifest:v1");
 
 static QString itemFile(const TrustListItem &i, const QString &ext)
 {
@@ -450,10 +453,10 @@ static void exportTrustList(CommandContext &ctx)
 			throw usageError("invalid_value", QObject::tr(
 				"--trust-list-budget must be at least 1024"));
 	}
-	/* the trust list owns --out: empty, or an earlier trust list
-	 * (replaced with --force) */
+	/* the trust list owns --out: empty, or exactly an earlier trust
+	 * list (replaced with --force); anything else is refused */
 	const QString out = o.value("out");
-	ctx.files->addDirectory(out, manifestName);
+	ctx.files->addDirectory(out, manifestName, manifestSchema);
 
 	/* trusted: the given CAs; issuer: their chains and --issuer-ca */
 	QList<pki_x509 *> trusted, issuers;
@@ -580,8 +583,7 @@ static void exportTrustList(CommandContext &ctx)
 		}
 	}
 	QJsonObject manifest;
-	manifest["schema"] = QString(
-			"urn:bxc-pki:schema:trust-list-manifest:v1");
+	manifest["schema"] = manifestSchema;
 	manifest["target_format"] = format.name;
 	manifest["created"] = JsonReport::timestamp(a1time(nowSeconds()));
 	manifest["order"] = QString("ca_certificate, crl, leaf_certificate");

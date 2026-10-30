@@ -35,12 +35,14 @@
 
 #include <QByteArray>
 #include <QString>
+#include <QStringList>
 
 class StagedFile
 {
   public:
 	/* The steps a test can make fail (faultHook) */
-	enum step { create, write, sync, publish_step, recheck, owner_check };
+	enum step { create, write, sync, publish_step, recheck, owner_check,
+		swap };
 
   private:
 	QString targetPath{};
@@ -106,19 +108,29 @@ class StagedFile
  * files are staged in a hidden sibling ".<name>.bxc-tmp-<random>", and
  * publish() swaps the sibling with the target in one rename (Linux:
  * renameat2() RENAME_EXCHANGE; elsewhere, or on a file system without
- * it, two renames), then removes the old content. A reader of the
- * directory sees the old or the new content, never a mix; files of an
- * earlier export do not stay behind.
+ * it, two renames). A reader of the directory sees the old or the new
+ * content, never a mix; files of an earlier export do not stay behind.
  *
  * The target is an existing directory, not a mount point. It is empty,
- * or it holds an earlier export, recognised by the file marker (e.g.
- * "manifest.json"), which is replaced only with replace (file_exists);
- * any other content is refused (invalid_output) and kept. */
+ * or it holds exactly an earlier export: its manifest (marker, e.g.
+ * "manifest.json") parses as a JSON object whose "schema" is schema, and
+ * every entry below the target is the marker, a file the manifest lists
+ * under entries[].path, or a directory above one of them. An earlier
+ * export is replaced only with replace (file_exists); any other content
+ * is refused (invalid_output) and not touched. A manifest of something
+ * else with the same name (web apps, npm) is no earlier export.
+ *
+ * publish() checks the target again right before the swap, after the
+ * database commit, and removes from the old content only the entries of
+ * that check; anything that appeared later stays in the old content,
+ * which then stays under its temporary name (leftover()). */
 class StagedDirectory
 {
 	QString givenPath{};     // absolute, as given
 	QString targetPath{};    // canonical (symbolic links resolved)
 	QString tempPath{};
+	QString marker{}, schema{};
+	QString leftoverPath{};
 	bool replace{};
 	bool staged{};
 	bool published{};
@@ -126,16 +138,19 @@ class StagedDirectory
 	void removeTemp();
 
   public:
-	StagedDirectory(const QString &target, bool replaceTarget);
+	StagedDirectory(const QString &target, const QString &markerName,
+			const QString &markerSchema, bool replaceTarget);
 	~StagedDirectory();
 	StagedDirectory(const StagedDirectory &) = delete;
 	StagedDirectory &operator=(const StagedDirectory &) = delete;
 
-	/* The checks of stage() without writing (--plan) */
-	static void checkTarget(const QString &target, const QString &marker,
+	/* The checks of stage() without writing (--plan); the entries of
+	 * the earlier export, relative to target (empty: an empty target) */
+	static QStringList checkTarget(const QString &target,
+			const QString &markerName, const QString &markerSchema,
 			bool replaceTarget);
 	/* The checks, then the empty sibling */
-	void stage(const QString &marker);
+	void stage();
 	/* path below the target: the same path in the sibling; else "" */
 	QString stagedPath(const QString &path) const;
 	bool contains(const QString &path) const;
@@ -146,6 +161,12 @@ class StagedDirectory
 	bool isPublished() const
 	{
 		return published;
+	}
+	/* The old content that could not be removed completely after the
+	 * swap (files that appeared after the check); empty if none */
+	QString leftover() const
+	{
+		return leftoverPath;
 	}
 };
 

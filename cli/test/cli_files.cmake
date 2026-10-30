@@ -1,8 +1,9 @@
 # The shared file helper lib/staged_file.h through the command line
 # (BTD-42; rules 7, 10 and 11 of PLAN.md 8.4) with fault injection: the
 # test build bxc-pki-faults makes a step of the file output fail
-# (BXC_PKI_FAULT=fail:<step>:<file>) or ends the process there like a
-# killed run (kill:<step>:<file>).
+# (BXC_PKI_FAULT=fail:<step>:<file>), ends the process there like a
+# killed run (kill:<step>:<file>) or adds a file to a directory before its
+# swap (addfile:swap:<dir>).
 #  - a failed create, write or sync is before the database commit: the
 #    command fails, nothing is stored, no file and no temporary file stay;
 #  - a failed publish is after the commit: the error publish_failed names
@@ -113,6 +114,25 @@ if(NOT detail MATCHES "Not written: [^\n]*k3\\.key")
 endif()
 file(REMOVE_RECURSE "${D}")
 file(MAKE_DIRECTORY "${D}")
+
+# --- a trust-list directory that changes before the swap (review of xca#62) ---------
+# addfile:swap:<dir> writes <dir>/late.txt right before the directory swap,
+# after the commit: the swap is refused, the late file and the old list stay
+file(MAKE_DIRECTORY "${WORK}/tl")
+bxc("trust list" 0 export "F Root" --db "${DB}" ${PW} --format trustlist
+    --out tl)
+file(SHA256 "${WORK}/tl/manifest.json" m1)
+fx("late file" 1 "addfile:swap:/tl" export "F Root" --db "${DB}" ${PW}
+    --format trustlist --out tl --force)
+expect_error("late file" publish_failed)
+file(SHA256 "${WORK}/tl/manifest.json" m2)
+if(NOT EXISTS "${WORK}/tl/late.txt" OR NOT m1 STREQUAL m2)
+  fail("a file added before the swap was removed, or the old list changed")
+endif()
+file(GLOB left "${WORK}/.*bxc-tmp*")
+if(left)
+  fail("staging directories stay: ${left}")
+endif()
 
 # --- a killed run leaves an old file complete ---------------------------------------
 bxc("first file" 0 crl --ca "F Root" --db "${DB}" ${PW} --out f --layout certstrap)

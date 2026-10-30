@@ -67,7 +67,7 @@ Members of part 2 (BTD-42), present only when a command sets them:
 | `crls` | init, revoke, crl, sign (re-issue), export trustlist | one entry per CRL: `ca_id`, `ca_name`, `crl_id`, `crl_name`, `crl_number`, `revoked_count`, `this_update`, `next_update`, `reissue_fraction`, `reissue_at`, `remaining_seconds`, `remaining_validity` (ISO 8601), `reissue_due`, `expired`, `der_size`, `size_budget`, `within_budget`, `trigger` (init, revoke, command, reissue_due, missing); trustlist also `role` (trusted, issuer) and `reissued`. With `--plan` a CRL to be issued has `crl_id` null and only the times and settings |
 | `revocation` | revoke | `certificate_id`, `certificate_name`, `serial`, `reason` (RFC 5280 name), `ca_id`, `ca_name`, `revocation_date` (not with `--plan`) |
 | `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates and CRLs), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
-| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `crl_not_issued` (init of a CA not valid now); also printed on stderr |
+| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `cleanup_incomplete` (trustlist), `crl_not_issued` (init of a CA not valid now); also printed on stderr |
 
 `--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
 that need no signature — key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
@@ -238,11 +238,15 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
   (only for chain building, OPC 10000-12 7.8.2). Every CA comes with its latest CRL. `--leaf`
   adds leaf certificates after them. One export is meant for one hierarchy; CAs of several roots
   share the same `trusted/` and `issuer/` directories.
-- The trust list owns `--out`: it must be empty or hold an earlier trust list (a
-  `manifest.json`; replaced only with `--force`, else `file_exists`); other content is refused
-  (`invalid_output`) and kept, and so is a mount point. The files are staged in a hidden
-  sibling `.<dir>.bxc-tmp-<random>` and, after the database commit, swapped in as a whole
-  (`renameat2` `RENAME_EXCHANGE`; without it two renames), then the old content is removed. A
+- The trust list owns `--out`: it must be empty or hold exactly an earlier trust list, i.e. a
+  `manifest.json` with the schema `urn:bxc-pki:schema:trust-list-manifest:v1` and nothing but
+  the files it lists and their directories (replaced only with `--force`, else `file_exists`).
+  Anything else, e.g. a web app with its own `manifest.json` or an extra file in `trusted/`, is
+  refused (`invalid_output`) and not touched, and so is a mount point. The files are staged in
+  a hidden sibling `.<dir>.bxc-tmp-<random>`; after the database commit the target is checked
+  again and swapped in as a whole (`renameat2` `RENAME_EXCHANGE`; without it two renames). Of
+  the old content only the entries found by that check are removed; files that appeared later
+  stay in the old directory, which keeps its temporary name (warning `cleanup_incomplete`). A
   device sees the old or the new list, never a mix, and no file of an earlier export stays.
 - `opcua-dir`: `trusted/certs/<name>-<id>.der`, `trusted/crl/<CA>-<CA id>.crl` (DER; named after
   the CA, so a new CRL replaces the old one),

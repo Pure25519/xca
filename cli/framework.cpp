@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include <QDebug>
+#include <QDir>
 #include <QJsonDocument>
 #include <QRegularExpression>
 
@@ -276,6 +277,11 @@ static void publishFiles(CommandContext &ctx)
 			stored.isEmpty() ? QObject::tr("nothing") : stored,
 			missing.join(", ")));
 	}
+	if (!ctx.files->leftover().isEmpty())
+		ctx.result->warning("cleanup_incomplete", QObject::tr(
+			"Files appeared in the replaced directory during the "
+			"run; they are kept in '%1': check and remove it")
+			.arg(QDir::toNativeSeparators(ctx.files->leftover())));
 	ctx.result->set("files", ctx.files->json());
 }
 

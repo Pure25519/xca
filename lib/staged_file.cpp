@@ -9,14 +9,20 @@
 
 #include "staged_file.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 
 #include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QObject>
 #include <QRandomGenerator>
+#include <QSet>
 
 #include "exception.h"
 
@@ -44,6 +50,7 @@ QString StagedFile::stepName(enum step s)
 	case publish_step: return "publish";
 	case recheck: return "recheck";
 	case owner_check: return "owner_check";
+	case swap: return "swap";
 	}
 	return "unknown";
 }
@@ -442,9 +449,11 @@ void StagedFile::publish()
 
 /* --- StagedDirectory ----------------------------------------------------- */
 
-StagedDirectory::StagedDirectory(const QString &target, bool replaceTarget)
+StagedDirectory::StagedDirectory(const QString &target,
+			const QString &markerName, const QString &markerSchema,
+			bool replaceTarget)
 	: givenPath(QDir::cleanPath(QFileInfo(target).absoluteFilePath())),
-	  replace(replaceTarget)
+	  marker(markerName), schema(markerSchema), replace(replaceTarget)
 {
 	QString canonical = QFileInfo(target).canonicalFilePath();
 	targetPath = canonical.isEmpty() ? givenPath : canonical;
@@ -467,8 +476,25 @@ void StagedDirectory::discard()
 	removeTemp();
 }
 
-void StagedDirectory::checkTarget(const QString &target,
-			const QString &marker, bool replaceTarget)
+/* The directories above the relative paths, deepest first */
+static QStringList parents(const QStringList &paths)
+{
+	QSet<QString> dirs;
+	for (const QString &p : paths)
+		for (QString d = QFileInfo(p).path(); d != "." && !d.isEmpty();
+		     d = QFileInfo(d).path())
+			dirs << d;
+	QStringList l = dirs.values();
+	std::sort(l.begin(), l.end(), [](const QString &a, const QString &b) {
+		return a.count('/') > b.count('/') ||
+			(a.count('/') == b.count('/') && a < b);
+	});
+	return l;
+}
+
+QStringList StagedDirectory::checkTarget(const QString &target,
+			const QString &markerName, const QString &markerSchema,
+			bool replaceTarget)
 {
 	QString native = QDir::toNativeSeparators(target);
 	QFileInfo t(QFileInfo(target).canonicalFilePath());
@@ -489,27 +515,66 @@ void StagedDirectory::checkTarget(const QString &target,
 			"'%1' is a mount point and cannot be replaced as a "
 			"whole; give a directory below it").arg(native));
 #endif
-	QStringList content = QDir(t.filePath()).entryList(QDir::AllEntries |
-			QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
-	if (content.isEmpty())
-		return;
-	if (!QFileInfo(QDir(t.filePath()).filePath(marker)).isFile())
-		throw serviceError("invalid_output", QObject::tr(
-			"'%1' holds files of something else (no %2); its "
-			"content would be replaced as a whole: give an empty "
-			"directory").arg(native, marker));
+	QDir dir(t.filePath());
+	const QDir::Filters all = QDir::AllEntries | QDir::Hidden |
+				QDir::System | QDir::NoDotAndDotDot;
+	if (dir.entryList(all).isEmpty())
+		return QStringList();
+
+	/* only an earlier export of this kind is replaced: its manifest,
+	 * not just a file of that name, and nothing but its entries */
+	auto foreign = [&](const QString &why) {
+		return serviceError("invalid_output", QObject::tr(
+			"'%1' holds something other than an earlier export "
+			"(%2); its content would be replaced as a whole: give "
+			"an empty directory").arg(native, why));
+	};
+	QFileInfo mi(dir.filePath(markerName));
+	QFile mf(mi.filePath());
+	if (mi.isSymLink() || !mi.isFile() || mi.size() > (16 << 20) ||
+	    !mf.open(QIODevice::ReadOnly))
+		throw foreign(QObject::tr("no %1").arg(markerName));
+	QJsonDocument doc = QJsonDocument::fromJson(mf.readAll());
+	if (!doc.isObject() ||
+	    doc.object().value("schema").toString() != markerSchema)
+		throw foreign(QObject::tr("%1 is no %2").arg(markerName,
+						markerSchema));
+	QStringList known { markerName };
+	for (const QJsonValue &v : doc.object().value("entries").toArray()) {
+		QString p = QDir::cleanPath(v.toObject().value("path")
+						.toString());
+		if (p.isEmpty() || p == "." || p == ".." ||
+		    p.startsWith("../") || QDir::isAbsolutePath(p))
+			throw foreign(QObject::tr("%1 lists the path '%2'")
+				.arg(markerName, p));
+		if (!known.contains(p))
+			known << p;
+	}
+	QStringList dirs = parents(known);
+	QDirIterator it(dir.path(), all, QDirIterator::Subdirectories);
+	while (it.hasNext()) {
+		it.next();
+		QFileInfo i = it.fileInfo();
+		QString rel = dir.relativeFilePath(i.filePath());
+		bool ok = !i.isSymLink() && (i.isDir() ? dirs.contains(rel) :
+				i.isFile() && known.contains(rel));
+		if (!ok)
+			throw foreign(QObject::tr("'%1' is not part of it")
+				.arg(rel));
+	}
 	if (!replaceTarget)
 		throw serviceError("file_exists", QObject::tr(
 			"'%1' holds an earlier export; it is replaced only with "
 			"--force").arg(native));
+	return known;
 }
 
-void StagedDirectory::stage(const QString &marker)
+void StagedDirectory::stage()
 {
 	if (staged || published)
 		throw errorEx(QObject::tr("StagedDirectory: '%1' staged twice")
 			.arg(targetPath));
-	checkTarget(givenPath, marker, replace);
+	checkTarget(givenPath, marker, schema, replace);
 	for (int tries = 0; tries < 8; tries++) {
 		QString t = tempName(targetPath);
 		if (QFileInfo::exists(t))
@@ -552,9 +617,13 @@ void StagedDirectory::publish()
 		throw errorEx(QObject::tr("StagedDirectory: '%1' is not staged")
 			.arg(targetPath));
 	if (StagedFile::faultHook &&
-	    StagedFile::faultHook(StagedFile::publish_step, targetPath))
+	    StagedFile::faultHook(StagedFile::swap, targetPath))
 		throw failed(QObject::tr("Swapping in"), targetPath,
 			QObject::tr("injected fault (test)"));
+	/* again, after the commit: what changed since stage() is refused,
+	 * and only the entries found now are removed later */
+	QStringList known = checkTarget(givenPath, marker, schema, replace);
+
 	QString old;
 #if defined(RENAME_EXCHANGE)
 	/* one step: the sibling becomes the target, the target the sibling */
@@ -573,15 +642,28 @@ void StagedDirectory::publish()
 			throw failed(QObject::tr("Moving aside"), targetPath,
 				QObject::tr("rename failed"));
 		if (!QDir().rename(tempPath, targetPath)) {
-			QDir().rename(old, targetPath);
+			if (QDir().rename(old, targetPath))
+				throw failed(QObject::tr("Swapping in"),
+					targetPath, QObject::tr("rename "
+					"failed; the old content is back"));
 			throw failed(QObject::tr("Swapping in"), targetPath,
-				QObject::tr("rename failed"));
+				QObject::tr("rename failed, and so did moving "
+				"the old content back: it is in '%1', the new "
+				"one in '%2'; move the one you want to '%3'")
+				.arg(QDir::toNativeSeparators(old),
+				QDir::toNativeSeparators(tempPath),
+				QDir::toNativeSeparators(targetPath)));
 		}
 	}
 	published = true;
 	staged = false;
-	/* the old content; best effort, the new one is in place */
-	if (!QDir(old).removeRecursively())
-		qWarning("'%s' could not be removed completely",
-			QFile::encodeName(old).constData());
+
+	/* the old content: the entries of the earlier export only */
+	QDir od(old);
+	for (const QString &f : known)
+		od.remove(f);
+	for (const QString &d : parents(known))
+		od.rmdir(d);
+	if (!QDir().rmdir(old))
+		leftoverPath = old;
 }

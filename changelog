@@ -13,7 +13,9 @@ bxc-main (bxc-pki fork, unreleased)
    (lib/staged_file.h); a key file is refused before the commit on a
    file system that cannot keep it owner-only and removed again if the
    check after writing fails. The trust list replaces its directory as a
-   whole (staged beside it, swapped in), names a CRL after its CA and
+   whole (staged beside it, swapped in; only an empty directory or
+   exactly an earlier trust list, checked again before the swap, and only
+   its files are removed), names a CRL after its CA and
    accepts a missing or stale CRL only with --allow-stale-crl (--force
    only replaces files). A serial of digits only is hex; decimal needs
    dec:. Refusals before a service call are audited; an empty export
