@@ -320,11 +320,13 @@ void NewX509::setupLineEditByNid(int nid, QLineEdit *l)
 
 	info << QString("[%1]").arg(OBJ_nid2sn(nid));
 
+	/* the bounds the service enforces (BTD-202), in characters */
+	auto [min, max] = x509name::valueBounds(nid);
+	if (min > 1)
+		info << tr("minimum size: %1").arg(min);
+	if (max != -1)
+		info << tr("maximum size: %1").arg(max);
 	if (tab) {
-		if (tab->minsize > 1)
-			info << tr("minimum size: %1").arg(tab->minsize);
-		if (tab->maxsize != -1)
-			info << tr("maximum size: %1").arg(tab->maxsize);
 		if (tab->mask == B_ASN1_PRINTABLESTRING) {
 			info << tr("only a-z A-Z 0-9 '()+,-./:=?");
 			QRegularExpression rx("[a-zA-Z0-9'()+,-./:=?]+");
@@ -1228,27 +1230,6 @@ void NewX509::accept()
 			reject();
 		}
 		return;
-	}
-	QString lenErr = xn.checkLength();
-	if (!lenErr.isEmpty()) {
-		gotoTab(1);
-		lenErr = tr("The following length restrictions of RFC3280 are violated:") +
-			"\n" + lenErr;
-		xcaWarningBox msg(this, lenErr);
-		msg.addButton(QMessageBox::Ok, tr("Edit subject"));
-		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
-		msg.addButton(QMessageBox::Apply, tr("Continue rollout"));
-		switch (msg.exec())
-		{
-			case QMessageBox::Ok:
-			case QMessageBox::Cancel:
-				return;
-			case QMessageBox::Close:
-				reject();
-				return;
-			case QMessageBox::Apply:
-				break;
-		}
 	}
 	if (fromReqCB->isChecked() && !getSelectedReq()->verify()) {
 		gotoTab(0);

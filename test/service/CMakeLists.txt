@@ -205,6 +205,15 @@ endforeach()
 target_compile_definitions(test_service_template_migration PRIVATE
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# RFC 5280 upper bounds of DN values (BTD-202)
+ServiceTest(test_service_dn_bounds)
+target_compile_definitions(test_service_dn_bounds PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_dn_bounds PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # the default templates of misc/ against every key type (BTD-203)
 ServiceTest(test_service_default_templates)
 target_compile_definitions(test_service_default_templates PRIVATE

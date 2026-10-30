@@ -58,6 +58,7 @@ class test_main: public QObject
 	void crlRefusedWithoutCrlSign();
 	void keyUsageByKeyType_data();
 	void keyUsageByKeyType();
+	void dnUpperBounds();
 
   public:
 	template <class T> static T *findWindow(const QString &name)
