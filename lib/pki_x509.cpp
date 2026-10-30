@@ -227,11 +227,13 @@ pki_x509 *pki_x509::searchIssuer() const
 	q.exec();
 	while (q.next()) {
 		pki_x509 *an_issuer = Store.lookupPki<pki_x509>(q.value(0));
-		qDebug() << "Possible Issuer of" << *this << *an_issuer << an_issuer->getNotAfter();
+		/* a CA row left out on open (BTD-95) is not in the store:
+		 * check before the debug output reads it */
 		if (!an_issuer) {
 			qDebug("Certificate with id %d not found", q.value(0).toInt());
 			continue;
 		}
+		qDebug() << "Possible Issuer of" << *this << *an_issuer << an_issuer->getNotAfter();
 		if (verify_only(an_issuer)) {
 			if (!issuer || (issuer->getNotAfter() < an_issuer->getNotAfter())) {
 				qDebug() << "New issuer of" << *this << *an_issuer << an_issuer->getNotAfter();
@@ -256,14 +258,16 @@ void pki_x509::fromPEM_BIO(BIO *bio, const QString &fname)
 void pki_x509::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509 *_cert;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	_cert = PEM_read_bio_X509(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_cert) {
 		pki_ign_openssl_error();
 		_cert = d2i_X509_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (pki_ign_openssl_error() || !_cert) {
-		if (_cert)
-			X509_free(_cert);
+	pki_ign_openssl_error();
+	if (!_cert) {
 		throw errorEx(tr("Unable to load the certificate in file %1. Tried PEM and DER certificate.").arg(fname));
 	}
 	X509_free(cert);

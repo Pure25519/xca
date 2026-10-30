@@ -165,7 +165,10 @@ void *d2i_bytearray(void *(*d2i)(void *, unsigned char **, long),
 	p = p1 = (unsigned char *)ba.constData();
 	ret = d2i(NULL, &p1, ba.size());
 	ba = ba.mid(p1-p);
-	openssl_error();
+	/* a failure keeps the queue: the caller names the reason with
+	 * take_openssl_errors() (BTD-95) */
+	if (ret)
+		openssl_error();
 	return ret;
 }
 

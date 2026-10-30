@@ -19,6 +19,7 @@
 #include "XcaPresentation.h"
 #include "openssl_compat.h"
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 pki_x509req::pki_x509req(const QString &name)
 	: pki_x509super(name)
@@ -180,14 +181,16 @@ void pki_x509req::fromPEM_BIO(BIO *bio, const QString &name)
 void pki_x509req::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_REQ *_req;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	_req = PEM_read_bio_X509_REQ(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_req) {
 		pki_ign_openssl_error();
 		_req = d2i_X509_REQ_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (pki_ign_openssl_error() || !_req) {
-		if (_req)
-			X509_REQ_free(_req);
+	pki_ign_openssl_error();
+	if (!_req) {
 		throw errorEx(tr("Unable to load the certificate request in file %1. Tried PEM, DER and SPKAC format.").arg(fname));
 	}
 

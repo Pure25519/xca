@@ -14,6 +14,7 @@
  * Each failure is injected with input OpenSSL refuses.
  */
 
+#include <openssl/core_names.h>
 #include <openssl/evp.h>
 #include <openssl/x509.h>
 
@@ -25,6 +26,15 @@
 #include "lib/x509name.h"
 
 #include "ServiceTestCase.h"
+
+/* The key holds a private part (an EC key: the scalar) */
+static bool hasPrivate(EVP_PKEY *key)
+{
+	BIGNUM *d = nullptr;
+	bool ok = EVP_PKEY_get_bn_param(key, OSSL_PKEY_PARAM_PRIV_KEY, &d);
+	BN_free(d);
+	return ok;
+}
 
 class test_service_openssl_checks : public ServiceTestCase
 {
@@ -44,13 +54,14 @@ class test_service_openssl_checks : public ServiceTestCase
 
   private slots:
 	void keyEncryptionFailureKeepsKey();
+	void keyEncryptionFailureDropsPlaintext();
 	void auditSigningFailureThrows();
 	void refusedSubjectEntry();
 	void refusedRequestAttribute();
 };
 
 /* A key without private part cannot be written as encrypted PKCS#8:
- * encryptKey() throws and leaves the key as it was (G2) */
+ * encryptKey() throws (G2) */
 void test_service_openssl_checks::keyEncryptionFailureKeepsKey()
 {
 	EVP_PKEY *full = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
@@ -64,11 +75,29 @@ void test_service_openssl_checks::keyEncryptionFailureKeepsKey()
 	QVERIFY(pub);
 
 	pki_evp key(pub);
-	EVP_PKEY *before = key.getPubKey();
 	QCOMPARE(errorCode([&]() { key.encryptKey("btd95"); }),
 		QString("key_encryption_failed"));
-	/* not replaced by a public key derived from it */
-	QCOMPARE(key.getPubKey(), before);
+	QVERIFY(!hasPrivate(key.getPubKey()));
+}
+
+/* A private key that does not encrypt (no cipher can be fetched under
+ * "fips=yes" without a FIPS provider) is not kept as plain text in the
+ * key object: before, a failed password change left it there (review
+ * of xca#59, MINOR 8) */
+void test_service_openssl_checks::keyEncryptionFailureDropsPlaintext()
+{
+	EVP_PKEY *full = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
+	QVERIFY(full);
+	/* as changeDatabasePassword() does it: the decrypted key set,
+	 * then encrypted again */
+	pki_evp key(full);
+	key.set_evp_key(key.decryptKey());
+	QVERIFY(hasPrivate(key.getPubKey()));
+	QVERIFY(EVP_set_default_properties(nullptr, "fips=yes"));
+	QString code = errorCode([&]() { key.encryptKey("btd95"); });
+	EVP_set_default_properties(nullptr, "");
+	QCOMPARE(code, QString("key_encryption_failed"));
+	QVERIFY(!hasPrivate(key.getPubKey()));
 }
 
 /* An X25519 key cannot sign: the checkpoint signature fails, and

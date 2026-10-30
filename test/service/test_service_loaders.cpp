@@ -26,9 +26,11 @@
 #include <openssl/pkcs12.h>
 #include <openssl/pkcs7.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
+#include "lib/db_key.h"
 #include "lib/exception.h"
 #include "lib/importexport.h"
 #include "lib/pki_crl.h"
@@ -54,6 +56,9 @@ class test_service_loaders : public ServiceTestCase
 	void brokenInput();
 	void brokenDatabaseRow_data();
 	void brokenDatabaseRow();
+	void brokenCaRowThenLeaf();
+	void passwordChangeWithBrokenKeyRow();
+	void staleErrorQueue();
 	void noTemplate_data();
 	void noTemplate();
 	void templatesImport_data();
@@ -327,7 +332,9 @@ void test_service_loaders::brokenDatabaseRow()
 	QSqlQuery q;
 	QVERIFY(q.exec(QString("UPDATE %1 SET %2='/////w=='")
 		.arg(table, column)));
-	warning->expectMessage("cannot be decoded");
+	/* with the OpenSSL reason: d2i_bytearray() cleared the queue
+	 * before (review of xca#59, MINOR 3) */
+	warning->expectMessage("encoding routines");
 	reopenDatabase();
 
 	QCOMPARE(storedObjects(), 3);
@@ -452,6 +459,125 @@ void test_service_loaders::opensslErrorText()
 	QVERIFY2(lines[0].endsWith("(BTD-95 data 7)"), qPrintable(lines[0]));
 	QVERIFY2(!lines[1].contains("BTD-95"), qPrintable(lines[1]));
 	QCOMPARE(ERR_peek_error(), 0UL);
+}
+
+/* A CA that signs a leaf */
+static X509 *caCert(EVP_PKEY *key)
+{
+	X509 *x = selfSigned(key, "BTD-95 row CA");
+	X509V3_CTX v3;
+	X509V3_set_ctx_nodb(&v3);
+	X509V3_set_ctx(&v3, x, x, nullptr, nullptr, 0);
+	X509_EXTENSION *bc = X509V3_EXT_conf_nid(nullptr, &v3,
+		NID_basic_constraints, "critical,CA:TRUE");
+	X509_add_ext(x, bc, -1);
+	X509_EXTENSION_free(bc);
+	X509_sign(x, key, EVP_sha256());
+	return x;
+}
+
+static X509 *leafOf(X509 *ca, EVP_PKEY *caKey, EVP_PKEY *key)
+{
+	X509 *x = X509_new();
+	X509_set_version(x, X509_VERSION_3);
+	ASN1_INTEGER_set(X509_get_serialNumber(x), 0x9501);
+	X509_gmtime_adj(X509_getm_notBefore(x), 0);
+	X509_gmtime_adj(X509_getm_notAfter(x), 86400);
+	X509_set_pubkey(x, key);
+	X509_NAME *n = cn("BTD-95 row leaf");
+	X509_set_subject_name(x, n);
+	X509_NAME_free(n);
+	X509_set_issuer_name(x, X509_get_subject_name(ca));
+	X509_sign(x, caKey, EVP_sha256());
+	return x;
+}
+
+/* A CA row left out on open keeps its x509super row: the import of a
+ * certificate with that issuer hash crashed in searchIssuer(), which
+ * read the missing issuer before its NULL check (review of xca#59,
+ * blocker 1) */
+void test_service_loaders::brokenCaRowThenLeaf()
+{
+	EVP_PKEY *caKey = ecKey(), *leafKey = ecKey();
+	X509 *ca = caCert(caKey);
+	X509 *leaf = leafOf(ca, caKey, leafKey);
+	ImportSpec spec;
+	spec.data = PEM(PEM_write_bio_X509, ca);
+	spec.dataName = "btd95-ca";
+	QByteArray leafPem = PEM(PEM_write_bio_X509, leaf);
+	X509_free(leaf);
+	X509_free(ca);
+	EVP_PKEY_free(leafKey);
+	EVP_PKEY_free(caKey);
+	QCOMPARE(Database.importItems(ctx, spec).created.size(), 1);
+
+	QSqlQuery q;
+	QVERIFY(q.exec("UPDATE certs SET cert='/////w=='"));
+	warning->expectMessage("cannot be decoded");
+	reopenDatabase();
+	QCOMPARE(storedObjects(), 0);
+
+	ImportSpec in;
+	in.data = leafPem;
+	in.dataName = "btd95-leaf";
+	ImportResult r = Database.importItems(ctx, in);
+	QCOMPARE(r.created.size(), 1);
+	pki_x509 *imported = dynamic_cast<pki_x509 *>(r.created[0]);
+	QVERIFY(imported);
+	QVERIFY(!imported->getSigner());
+}
+
+/* A key whose row was left out on open would keep the old password while
+ * the password changes: the change is refused (review of xca#59,
+ * MINOR 2) */
+void test_service_loaders::passwordChangeWithBrokenKeyRow()
+{
+	pki_key *key = Database.model<db_key>()->newKey(ctx,
+		keyjob("EC:prime256v1"), "BTD-95 key");
+	QVERIFY(key);
+	QString hash = Settings["pwhash"];
+	QSqlQuery q;
+	QVERIFY(q.exec("UPDATE public_keys SET \"public\"='/////w=='"));
+	warning->expectMessage("cannot be decoded");
+	reopenDatabase();
+	Passwd pass;
+	pass = "BTD-95-new-password";
+	try {
+		Database.model<db_key>()->changeDatabasePassword(pass);
+		QFAIL("the password changed with a key left out");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("database_incomplete"));
+	}
+	QCOMPARE(QString(Settings["pwhash"]), hash);
+}
+
+/* An old entry of the OpenSSL error queue does not reject a valid object
+ * (review of xca#59, MINOR 5): fromBytes() took any entry for a failure */
+void test_service_loaders::staleErrorQueue()
+{
+	EVP_PKEY *key = ecKey();
+	X509 *cert = selfSigned(key, "BTD-95 stale");
+	X509_REQ *req = request(key, "BTD-95 stale");
+	X509_CRL *revocations = crl(key, cert);
+	QByteArray certPem = PEM(PEM_write_bio_X509, cert);
+	QByteArray reqPem = PEM(PEM_write_bio_X509_REQ, req);
+	QByteArray crlPem = PEM(PEM_write_bio_X509_CRL, revocations);
+	X509_CRL_free(revocations);
+	X509_REQ_free(req);
+	X509_free(cert);
+	EVP_PKEY_free(key);
+
+	pki_x509 x;
+	ERR_raise(ERR_LIB_USER, 95);
+	x.fromBytes(certPem, "btd95-stale.pem");
+	pki_x509req r;
+	ERR_raise(ERR_LIB_USER, 95);
+	r.fromBytes(reqPem, "btd95-stale.csr");
+	pki_crl c;
+	ERR_raise(ERR_LIB_USER, 95);
+	c.fromBytes(crlPem, "btd95-stale.crl");
+	QCOMPARE(x.getSubject().getEntryByNid(NID_commonName),
+		QString("BTD-95 stale"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_loaders)

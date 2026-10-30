@@ -13,6 +13,7 @@
 #include "audit_key.h"
 #include "XcaPresentation.h"
 #include <QDir>
+#include <openssl/err.h>
 
 pki_crl::pki_crl(const QString &name)
 	:pki_x509name(name)
@@ -132,14 +133,16 @@ QSqlError pki_crl::deleteSqlData()
 void pki_crl::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_CRL *_crl;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	_crl = PEM_read_bio_X509_CRL(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_crl) {
 		pki_ign_openssl_error();
 		_crl = d2i_X509_CRL_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (pki_ign_openssl_error() || !_crl) {
-		if (_crl)
-			X509_CRL_free(_crl);
+	pki_ign_openssl_error();
+	if (!_crl) {
 		throw errorEx(tr("Unable to load the revocation list in file %1. Tried PEM and DER formatted CRL.").arg(fname));
 	}
 	X509_CRL_free(crl);
