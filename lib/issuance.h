@@ -236,6 +236,9 @@ class IssuanceSpec
 
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
+	/* key usage bits the user removed in the dialog because the key
+	 * cannot use them (BTD-195), for the audit */
+	QStringList keyUsageRemoved{};
 	QString profile{};          // profile id the spec came from (BTD-54)
 	int profileVersion{};       // stored version (BTD-167); 0: a file
 	/* a validity above the profile's validity.max, capped to it */
