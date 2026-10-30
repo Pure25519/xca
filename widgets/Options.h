@@ -22,6 +22,10 @@ class Options: public QDialog, public Ui::Options
 		QStringList string_opts{};
 		QString getDnString(QListWidget *w);
 		void setDnString(QString dn, QListWidget *w);
+		/* The options as the settings store them, from the controls;
+		 * loaded holds them as the dialog showed them (BTD-187) */
+		QMap<QString, QString> shown();
+		QMap<QString, QString> loaded{};
 
 	public:
 		Options(QWidget *parent);

@@ -10,6 +10,8 @@
 #include <functional>
 #include <QSqlQuery>
 
+#include "lib/digest.h"
+#include "lib/settings.h"
 #include "widgets/MainWindow.h"
 #include "ui_Options.h"
 #include "ui_SearchPkcs11.h"
@@ -79,6 +81,15 @@ void test_main::optionsStoreChangedOnly()
 		diff.sort();
 		QCOMPARE(diff, QStringList({ "serial_len", "suppress_messages" }));
 		QCOMPARE(back["suppress_messages"], QString("no"));
+
+		/* back to the default hash after another one was chosen: the
+		 * old check against the default did not store it (BTD-52) */
+		Settings["default_hash"] = digest(NID_sha384).name();
+		QCOMPARE(runOptions([](Options *o) {
+			o->hashAlgo->setCurrent(digest(NID_sha256));
+		}), (int)QDialog::Accepted);
+		QCOMPARE(settingsRows()["default_hash"],
+			digest(NID_sha256).name());
 	} catch (errorEx &err) {
 		QVERIFY2(false, CCHAR(err.getString()));
 	}
