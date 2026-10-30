@@ -290,8 +290,10 @@ void pki_x509::init()
 
 void pki_x509::setSerial(const a1int &serial)
 {
-	X509_set_serialNumber(cert, serial.get());
-	pki_openssl_error();
+	/* get0(): get() is a copy that was never freed (BTD-200). The
+	 * setter copies; only its prototype lacks the const */
+	certBuild::check(X509_set_serialNumber(cert,
+			const_cast<ASN1_INTEGER *>(serial.get0())), "serial");
 }
 
 a1int pki_x509::getSerial() const
@@ -606,15 +608,13 @@ int pki_x509::renameOnToken(const slotid &slot, const QString &name)
 void pki_x509::setNotBefore(const a1time &a)
 {
 	a1time t(a);
-	X509_set_notBefore(cert, t.get_utc());
-	pki_openssl_error();
+	certBuild::check(X509_set1_notBefore(cert, t.get_utc()), "not_before");
 }
 
 void pki_x509::setNotAfter(const a1time &a)
 {
 	a1time t(a);
-	X509_set_notAfter(cert, t.get_utc());
-	pki_openssl_error();
+	certBuild::check(X509_set1_notAfter(cert, t.get_utc()), "not_after");
 }
 
 a1time pki_x509::getNotBefore() const
@@ -645,14 +645,12 @@ x509name pki_x509::getIssuerName() const
 
 void pki_x509::setSubject(const x509name &n)
 {
-	X509_set_subject_name(cert, n.get());
-	pki_openssl_error();
+	certBuild::check(X509_set_subject_name(cert, n.get0()), "subject");
 }
 
 void pki_x509::setIssuer(const x509name &n)
 {
-	X509_set_issuer_name(cert, n.get());
-	pki_openssl_error();
+	certBuild::check(X509_set_issuer_name(cert, n.get0()), "issuer");
 }
 
 bool pki_x509::addV3ext(const x509v3ext &e, bool skip_existing)
@@ -902,7 +900,7 @@ bool pki_x509::compareNameAndKey(pki_x509 *other)
 {
 	int r;
 	const X509_NAME *s1, *s2;
-	EVP_PKEY *pub1, *pub2;
+	const EVP_PKEY *pub1, *pub2;
 
 	if (!cert || !other->cert)
 		return false;
@@ -916,8 +914,10 @@ bool pki_x509::compareNameAndKey(pki_x509 *other)
 	pki_openssl_error();
 	if (r)
 		return false;
-	pub1 = X509_get_pubkey(cert);
-	pub2 = X509_get_pubkey(other->cert);
+	/* get0: the references of X509_get_pubkey() were never freed,
+	 * a leak on every renewed CA (BTD-200) */
+	pub1 = X509_get0_pubkey(cert);
+	pub2 = X509_get0_pubkey(other->cert);
 	pki_ign_openssl_error();
 	if (!pub1 || !pub2)
 		return false;
@@ -928,8 +928,8 @@ bool pki_x509::compareNameAndKey(pki_x509 *other)
 
 void pki_x509::setPubKey(pki_key *key)
 {
-	X509_set_pubkey(cert, key->getPubKey());
-	pki_openssl_error();
+	certBuild::check(X509_set_pubkey(cert, key->getPubKey()),
+			"public_key");
 }
 
 QString pki_x509::fingerprint(const EVP_MD *digest) const

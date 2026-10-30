@@ -78,16 +78,23 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 		if (maciter)
 			algorithm += QString(", iteration %1").arg(a1int(maciter).toDec());
 	}
-	while (!PKCS12_verify_mac(pkcs12, pass.constData(), pass.size())) {
-		if (pass.size() > 0)
-			XCA_PASSWD_ERROR();
-		enum open_result result = PwDialogCore::execute(&p, &pass);
-		if (result != pw_ok) {
-			/* cancel pressed */
-			PKCS12_free(pkcs12);
-			failed_files << fname;
-			throw result;
+	try {
+		while (!PKCS12_verify_mac(pkcs12, pass.constData(),
+						pass.size())) {
+			if (pass.size() > 0)
+				XCA_PASSWD_ERROR();
+			enum open_result result =
+				PwDialogCore::execute(&p, &pass);
+			if (result != pw_ok) {
+				/* cancel pressed */
+				failed_files << fname;
+				throw result;
+			}
 		}
+	} catch (...) {
+		/* also when the password source throws (wrong_password) */
+		PKCS12_free(pkcs12);
+		throw;
 	}
 	STACK_OF(X509) *certstack = sk_X509_new_null();
 	int parsed = PKCS12_parse(pkcs12, pass.constData(), &mykey, &mycert,
