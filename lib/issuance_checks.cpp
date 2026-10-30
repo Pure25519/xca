@@ -61,7 +61,9 @@ void IssuanceChecks::pathLength(const ExtensionSpec &ext)
 void IssuanceChecks::spec(const IssuanceSpec &spec)
 {
 	pathLength(spec.extensions);
-	if (spec.hashAlgo.isInsecure())
+	/* a digest-less signer ignores the digest (BTD-164) */
+	pki_key *signkey = spec.signer ? spec.signer->getRefKey() : spec.key;
+	if (!(signkey && signkey->digestLess()) && spec.hashAlgo.isInsecure())
 		throw serviceError("signature_hash_not_allowed",
 			tr("A certificate is never signed with %1")
 			.arg(spec.hashAlgo.name()));
@@ -143,7 +145,8 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 void IssuanceChecks::crlIssuer(const pki_x509 *ca, pki_key *signkey,
 			const digest &hashAlgo, AuditParams &params)
 {
-	if (hashAlgo.isInsecure())
+	/* a digest-less issuer ignores the digest (BTD-164) */
+	if (!(signkey && signkey->digestLess()) && hashAlgo.isInsecure())
 		throw serviceError("signature_hash_not_allowed",
 			tr("A CRL is never signed with %1").arg(hashAlgo.name()));
 	X509 *x = ca->getCert();

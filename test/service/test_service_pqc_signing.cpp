@@ -96,6 +96,7 @@ class test_service_pqc_signing : public ServiceTestCase
 	void signAll_data();
 	void signAll();
 	void classicTypesKeepTheirDigest();
+	void insecureTemplateDigestIgnored();
 };
 
 QString test_service_pqc_signing::openssl(const QStringList &args, int *rc)
@@ -296,6 +297,45 @@ void test_service_pqc_signing::classicTypesKeepTheirDigest()
 		QCOMPARE(entries("certificate.issue").last().params.value(
 			"signature_algorithm").toString(),
 			QString(OBJ_nid2ln(expected)));
+	}
+}
+
+/* A template with SHA-1, which XCA refuses for every signature, does not
+ * stop a digest-less issuer: the digest is ignored, not used */
+void test_service_pqc_signing::insecureTemplateDigestIgnored()
+{
+	pki_key *key = Database.model<db_key>()->newKey(ctx,
+				keyjob("ML-DSA-44"), "ca-key");
+	QVERIFY(key);
+	IssuanceSpec ca;
+	ca.name = "ca";
+	ca.subject = dn("BTD-164 SHA-1 template");
+	ca.key = key;
+	ca.notBefore = a1time();
+	ca.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+	ca.hashAlgo = digest(NID_sha1);
+	ca.extensions.basicCA = ExtensionSpec::bc_ca;
+	ca.extensions.keyUsage << "keyCertSign" << "cRLSign";
+	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, ca);
+	QVERIFY(cert);
+	QCOMPARE(X509_get_signature_nid(cert->getCert()), NID_ML_DSA_44);
+	crljob job(cert);
+	job.hashAlgo = digest(NID_sha1);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+	QCOMPARE(entries("crl.generate").last().params.value(
+		"signature_algorithm").toString(), QString("ML-DSA-44"));
+
+	/* an EC CA still refuses SHA-1 */
+	pki_key *ec = Database.model<db_key>()->newKey(ctx,
+				keyjob("EC:prime256v1"), "ec-key");
+	ca.key = ec;
+	ca.name = "ec ca";
+	try {
+		Database.model<db_x509>()->newCert(ctx, ca);
+		QFAIL("SHA-1 accepted for an EC CA");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("signature_hash_not_allowed"));
 	}
 }
 
