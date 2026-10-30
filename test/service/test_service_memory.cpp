@@ -19,6 +19,7 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 
+#include <openssl/asn1.h>
 #include <openssl/x509.h>
 
 #include "lib/audit.h"
@@ -456,26 +457,33 @@ void test_service_memory::importRollbackWritesNoSql()
 }
 
 /* A setting the database did not hold before, written in a transaction
- * that rolls back: memory goes back to the default, including the static
- * that setAction() changed (BTD-186). The undo removed the value but left
- * digest::getDefault() at the rolled-back hash. */
+ * that rolls back: memory goes back to the default, including what
+ * setAction() set outside the settings map (BTD-186). The undo removed
+ * the value and left the OpenSSL string mask of string_opt in place. */
 void test_service_memory::settingWithoutStoredValueRollback()
 {
 	QSqlQuery q;
-	QVERIFY(q.exec("DELETE FROM settings WHERE key_='default_hash'"));
+	QVERIFY(q.exec("DELETE FROM settings WHERE key_ IN "
+		"('default_hash', 'string_opt')"));
+	q.finish();
 	Settings.clear();
 	QString builtin = digest::getBuiltinDefault().name();
 	QCOMPARE(digest::getDefault().name(), builtin);
 	QString other = builtin == "SHA512" ? "SHA384" : "SHA512";
+	unsigned long mask = ASN1_STRING_get_default_mask();
 	{
 		Transaction;
 		QVERIFY(TransBegin());
 		Settings["default_hash"] = other;
+		Settings["string_opt"] = QString("utf8only");
 		QCOMPARE(digest::getDefault().name(), other);
+		QVERIFY(ASN1_STRING_get_default_mask() != mask);
 		TransRollback();
 	}
 	QCOMPARE(digest::getDefault().name(), builtin);
 	QCOMPARE(QString(Settings["default_hash"]), builtin);
+	QCOMPARE(QString(Settings["string_opt"]), QString("MASK:0x2002"));
+	QCOMPARE(ASN1_STRING_get_default_mask(), mask);
 }
 
 /* The PKCS#12 default migration of BTD-52 when its outer COMMIT fails
@@ -498,6 +506,8 @@ void test_service_memory::pkcs12MigrationCommitFails()
 	openDatabase();
 	QVERIFY(!DbTransaction::injectionPending());
 
+	/* a query of the new connection */
+	q = QSqlQuery();
 	QVERIFY(q.exec("SELECT value FROM settings WHERE key_='pkcs12_enc_algo'")
 		&& q.next());
 	QCOMPARE(q.value(0).toString(), QString("PBE-SHA1-3DES"));
