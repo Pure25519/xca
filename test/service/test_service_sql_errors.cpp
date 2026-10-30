@@ -61,6 +61,20 @@ class test_service_sql_errors : public ServiceTestCase
 			"ON %2 BEGIN SELECT RAISE(ABORT, '" INJECTED "'); END")
 			.arg(stmt, table));
 	}
+	/* no success entry without its object: the entries after count are
+	 * failures only, the code of the last one is code (none if the
+	 * database could not take one either) */
+	static void noOrphanEntry(int count, const QString &code)
+	{
+		QList<AuditEntry> e = AuditLog::entries();
+		for (int i = count; i < e.size(); i++)
+			QVERIFY2(e[i].result != "success", CCHAR(e[i].action));
+		if (!code.isEmpty()) {
+			QVERIFY(e.size() > count);
+			QCOMPARE(e.last().errorCode, code);
+		}
+		QVERIFY(AuditLog::verify().ok());
+	}
 	static void clearFault()
 	{
 		sql("DROP TRIGGER IF EXISTS temp.btd50_fault");
@@ -153,9 +167,13 @@ pki_x509req *test_service_sql_errors::request(const QString &cn)
 void test_service_sql_errors::readOnlyDatabase()
 {
 	int keys = rows("items");
+	int entries = AuditLog::entries().size();
 	QCOMPARE(sql("PRAGMA query_only = ON"), QString());
 	auto r = codeOf([&]() { key("read-only key"); });
 	QCOMPARE(sql("PRAGMA query_only = OFF"), QString());
+	/* the failure entry could not be written either (BTD-138) */
+	QCOMPARE(AuditLog::entries().size(), entries);
+	noOrphanEntry(entries, QString());
 	QCOMPARE(r.first, QString("read_only_database"));
 	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
 	QCOMPARE(rows("items"), keys);
@@ -260,12 +278,14 @@ void test_service_sql_errors::revokeStops()
 	pki_x509 *ee = issue("BTD-50 EE", ca);
 	QVERIFY(ee);
 	QCOMPARE(fault("INSERT", "revocations"), QString());
+	int entries = AuditLog::entries().size();
 	auto r = codeOf([&]() {
 		x509rev rev;
 		rev.setReason("Key Compromise");
 		Database.model<db_x509>()->revoke(ctx, ee, rev);
 	});
 	clearFault();
+	noOrphanEntry(entries, "database_error");
 	QCOMPARE(r.first, QString("database_error"));
 	QVERIFY2(r.second.contains(INJECTED), CCHAR(r.second));
 	QVERIFY(!ee->isRevoked());
@@ -296,9 +316,11 @@ void test_service_sql_errors::issueFromRequestStops()
 	pki_x509req *req = request("BTD-50 device");
 	QVERIFY(req);
 	int certs = rows("certs");
+	int entries = AuditLog::entries().size();
 	QCOMPARE(fault("UPDATE", "requests"), QString());
 	auto r = codeOf([&]() { issue("BTD-50 device", ca, req); });
 	clearFault();
+	noOrphanEntry(entries, "database_error");
 	QCOMPARE(r.first, QString("database_error"));
 	QVERIFY2(r.second.contains(INJECTED), CCHAR(r.second));
 	QCOMPARE(rows("certs"), certs);
