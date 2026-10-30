@@ -15,7 +15,6 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
-#include "lib/headerlist.h"
 #include "lib/BioByteArray.h"
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -28,6 +27,7 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
+#include "lib/headerlist.h"
 #include "lib/request.h"
 
 #include "ServiceTestCase.h"
