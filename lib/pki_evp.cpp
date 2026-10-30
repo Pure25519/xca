@@ -26,12 +26,32 @@
 #include <openssl/proverr.h>
 #include <openssl/core_names.h>
 #include <openssl/provider.h>
+#include <openssl/decoder.h>
 #include <QMap>
 #include <QMutex>
 
 static OSSL_LIB_CTX *mlDsaContext(const QString &format);
 static bool mlDsaHasSeed(const EVP_PKEY *pkey);
 static bool opensslDropsSeed();
+static bool mlDsaInputWithoutSeed(const QByteArray &input, const Passwd &pass);
+
+/* The password callback of the key loaders: asks like
+ * PwDialogCore::pwCallback and keeps the password, so the input can be
+ * decoded once more for the seed check (BTD-204) */
+struct RecordedPass
+{
+	pass_info *info;
+	Passwd pass{};
+};
+
+static int recordingCallback(char *buf, int size, int rwflag, void *userdata)
+{
+	RecordedPass *r = static_cast<RecordedPass *>(userdata);
+	int len = PwDialogCore::pwCallback(buf, size, rwflag, r->info);
+	if (len > 0)
+		r->pass = QByteArray(buf, len);
+	return len;
+}
 
 Passwd pki_evp::passwd;
 
@@ -253,9 +273,10 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 
 	/* why OpenSSL refused the private key, for the error below */
 	QString reason;
+	RecordedPass rec{ &p };
 	while (!pkey) {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(), NULL,
-						PwDialogCore::pwCallback, &p);
+						recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
@@ -285,29 +306,41 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	pki_openssl_error();
 	/* the password callback ran: the file was encrypted (BTD-41) */
 	encryptedFile = p.getAttempts() > 0;
-	set_EVP_PKEY(pkey, name);
+	set_EVP_PKEY(pkey, name, &ba, &rec.pass);
 }
 
-void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name)
+void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name,
+		const QByteArray *input, const Passwd *pass)
 {
 	if (!pkey)
 		return;
+	/* unnamed data (pki_multi) gets no empty quotes (BTD-204) */
 	if (!verify(pkey)) {
 		pki_ign_openssl_error();
 		EVP_PKEY_free(pkey);
-		throw errorEx(tr("The key from file '%1' is incomplete or inconsistent.").arg(name));
+		throw errorEx(name.isEmpty() ?
+			tr("The key is incomplete or inconsistent.") :
+			tr("The key from file '%1' is incomplete or inconsistent.")
+				.arg(name));
 	}
 	/* A seed that openssl.cnf made the default provider drop on
 	 * reading is an error here, on import, not on every later
-	 * encryption of a key without seed (BTD-16) */
+	 * encryption of a key without seed (BTD-16). With the input at
+	 * hand the decision is on the input: a key whose input has no
+	 * seed lost nothing (BTD-204); without it, as before */
 	if (EVP_PKEY_isPrivKey(pkey) && isMlDsa(keytype::nid(pkey)) &&
-	    !mlDsaHasSeed(pkey) && opensslDropsSeed()) {
+	    !mlDsaHasSeed(pkey) && opensslDropsSeed() &&
+	    !(input && mlDsaInputWithoutSeed(*input,
+					pass ? *pass : Passwd()))) {
 		EVP_PKEY_free(pkey);
-		throw serviceError("openssl_config",
-			tr("The OpenSSL configuration switches off "
-			   "ml-dsa.retain_seed or ml-dsa.prefer_seed: the seed of "
-			   "the ML-DSA key in '%1' may be lost. Remove the setting "
-			   "to import ML-DSA keys").arg(name));
+		QString config = tr("The OpenSSL configuration switches off "
+			"ml-dsa.retain_seed or ml-dsa.prefer_seed");
+		QString fix = tr("Remove the setting to import ML-DSA keys");
+		throw serviceError("openssl_config", name.isEmpty() ?
+			tr("%1: the seed of the ML-DSA key may be lost. %2")
+				.arg(config, fix) :
+			tr("%1: the seed of the ML-DSA key in '%2' may be lost. %3")
+				.arg(config, name, fix));
 	}
 	if (key)
 		EVP_PKEY_free(key);
@@ -398,13 +431,14 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 		arg(compressFilename(fname)));
 	p.setPurpose(pass_info::ImportPassword);
 	pem_password_cb *cb = PwDialogCore::pwCallback;
+	RecordedPass rec{ &p };
 
 	pki_ign_openssl_error();
 	EVP_PKEY *pkey;
 
 	do {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(),
-						NULL, cb, &p);
+						NULL, recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
@@ -421,7 +455,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = d2i_PKCS8PrivateKey_bio(BioByteArray(ba).ro(),
-						NULL, cb, &p);
+						NULL, recordingCallback, &rec);
 		p.throwError();
 	}
 	if (!pkey) {
@@ -466,7 +500,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 		throw errorEx(tr("Unable to load the private key in file %1. Tried PEM and DER private, public, PKCS#8 key types and SSH2 format.").arg(fname));
 	}
 	encryptedFile = p.getAttempts() > 0;
-	set_EVP_PKEY(pkey, fname);
+	set_EVP_PKEY(pkey, fname, &ba, &rec.pass);
 }
 
 bool pki_evp::validateDatabasePassword(const Passwd &passwd)
@@ -705,6 +739,32 @@ static bool mlDsaHasSeed(const EVP_PKEY *pkey)
 			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len > 0;
 	ign_openssl_error();
 	return seed;
+}
+
+/* Whether the input of an ML-DSA key surely holds no seed: decoded once
+ * more, with the password the loader used, in XCA's own context, which
+ * openssl.cnf does not configure, it gives an ML-DSA key without seed.
+ * An input that does not decode there (e.g. a seed that does not belong
+ * to its expanded key) is no proof: the caller refuses (BTD-204) */
+static bool mlDsaInputWithoutSeed(const QByteArray &input, const Passwd &pass)
+{
+	EVP_PKEY *pkey = nullptr;
+	OSSL_DECODER_CTX *dctx = OSSL_DECODER_CTX_new_for_pkey(&pkey,
+			nullptr, nullptr, nullptr, OSSL_KEYMGMT_SELECT_KEYPAIR,
+			mlDsaContext("both"), nullptr);
+	if (dctx && !pass.isEmpty())
+		OSSL_DECODER_CTX_set_passphrase(dctx, pass.constUchar(),
+						pass.size());
+	const unsigned char *data = (const unsigned char *)input.constData();
+	size_t len = input.size();
+	if (dctx)
+		OSSL_DECODER_from_data(dctx, &data, &len);
+	OSSL_DECODER_CTX_free(dctx);
+	/* the same input as the caller's ML-DSA key: the same type */
+	bool without = pkey && !mlDsaHasSeed(pkey);
+	EVP_PKEY_free(pkey);
+	ign_openssl_error();
+	return without;
 }
 
 /* A copy of the key in the context of the encoding. The key material

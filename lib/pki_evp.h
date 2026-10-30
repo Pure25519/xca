@@ -30,7 +30,11 @@ class pki_evp: public pki_key
 		}
 		static QString _sha512passwd(QByteArray pass, QString salt,
 						int size, int repeat);
-		void set_EVP_PKEY(EVP_PKEY *pkey, QString name = QString());
+		/* input and pass: the bytes the key was read from and the
+		 * password used, for the seed check of ML-DSA (BTD-204) */
+		void set_EVP_PKEY(EVP_PKEY *pkey, QString name = QString(),
+				const QByteArray *input = nullptr,
+				const Passwd *pass = nullptr);
 
 	protected:
 		bool openssl_pw_error() const;

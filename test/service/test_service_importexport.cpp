@@ -2014,6 +2014,32 @@ void test_service_importexport::mlDsaUnderOpensslConf()
 		EVP_PKEY_free(pkey);
 	}
 
+	/* Encrypted PKCS#8: the second decode for the seed check takes the
+	 * password the loader was given. Expanded-only is accepted, a
+	 * seed-priv key is refused under prefer_seed off (BTD-204) */
+	for (const char *format : { "priv-only", "seed-priv" }) {
+		QString plain = file(QString("%1.plain.pem").arg(format));
+		QString enc = file(QString("%1.p8").arg(format));
+		QVERIFY(opensslRun({ "genpkey", "-algorithm", "ML-DSA-44", "-out",
+			plain, "-provparam",
+			QString("ml-dsa.output_formats=%1").arg(format) }));
+		QVERIFY(opensslRun({ "pkcs8", "-topk8", "-in", plain, "-out", enc,
+			"-v2", "aes-256-cbc", "-passout", "pass:BTD204-p8" }));
+		bool refuse = refused && QString(format) == "seed-priv";
+		if (refuse)
+			warning->expectMessage(
+				"ml-dsa.retain_seed or ml-dsa.prefer_seed");
+		ImportSpec spec;
+		spec.files << enc;
+		spec.passwordSource = "pass:BTD204-p8";
+		int keys = Store.getAll<pki_key>().size();
+		try {
+			Database.importItems(ctx, spec);
+		} catch (errorEx &) {
+		}
+		QCOMPARE(Store.getAll<pki_key>().size(), keys + (refuse ? 0 : 1));
+	}
+
 	/* The seed-priv key once more as unnamed data: the refusal under
 	 * prefer_seed off names no empty source (BTD-204) */
 	if (refused) {
