@@ -152,6 +152,13 @@ endif()
 # A failed signature is an error, never a stored object (BTD-171)
 ServiceTest(test_service_signing_failure)
 
+# Every loader checks its OpenSSL result: broken input is an import error,
+# never an empty object (BTD-95)
+ServiceTest(test_service_loaders)
+# old binary template exports in data/templates (BTD-88)
+target_compile_definitions(test_service_loaders PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
+
 # Checks before every signature: path length, issuer, CSR, OPC UA chains
 # (BTD-55)
 ServiceTest(test_service_signing)

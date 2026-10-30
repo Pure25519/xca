@@ -984,8 +984,8 @@ void test_service_importexport::rejections()
 	QCOMPARE(e.errorCode, QString("wrong_password"));
 	QCOMPARE(Store.getAll<pki_x509>().size(), 0);
 
-	/* No PKI data. Short: the template loader takes any 8 bytes or
-	 * more as an XCA template (upstream behaviour) */
+	/* No PKI data; longer junk: test_service_loaders::noTemplate
+	 * (BTD-88) */
 	ImportSpec junk;
 	junk.data = "abc";
 	junk.dataName = "junk.txt";
@@ -1797,8 +1797,7 @@ QString test_service_importexport::importError(const QString &name,
 			if (dynamic_cast<pki_key *>(pki))
 				*created << pki;
 		}
-		/* The probe of the import then takes the file for an XCA
-		 * template: a side finding of BTD-16, not a key */
+		/* imported, but no key */
 		return created->isEmpty() ? QString("no_key") : QString();
 	} catch (errorEx &err) {
 		created->clear();
@@ -1847,6 +1846,8 @@ void test_service_importexport::mlDsaMismatchRejected()
 	QVERIFY2(!err.isEmpty(), "the mismatched key was imported");
 	QCOMPARE(created.size(), 0);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	/* and no XCA template of the same file (BTD-88) */
+	QCOMPARE(Store.getAll<pki_temp>().size(), 0);
 }
 
 /* With and without an openssl.cnf that changes the ML-DSA handling of
@@ -1892,8 +1893,10 @@ void test_service_importexport::mlDsaUnderOpensslConf()
 		warning->expectMessage("ml-dsa.prefer_seed to no");
 	QString err = importError(both, &created);
 	if (mode == "prefer") {
-		QCOMPARE(err, QString("no_key"));
+		/* refused, and not taken for a template either (BTD-88) */
+		QCOMPARE(err, QString("no_pki_data"));
 		QCOMPARE(created.size(), 0);
+		QCOMPARE(Store.getAll<pki_temp>().size(), 0);
 	} else {
 		QCOMPARE(err, QString());
 		QCOMPARE(created.size(), 1);

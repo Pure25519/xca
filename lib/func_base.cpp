@@ -188,8 +188,21 @@ void _openssl_error(const QString &txt, const char *file, int line)
 QString take_openssl_errors()
 {
 	QStringList reasons;
-	while (unsigned long e = ERR_get_error())
-		reasons << ERR_error_string(e, NULL);
+	const char *data;
+	int flags;
+	/* a buffer of our own: ERR_error_string(e, NULL) writes a static
+	 * one, which threads would share (BTD-95) */
+	char buf[256];
+	while (unsigned long e = ERR_get_error_all(NULL, NULL, NULL,
+						&data, &flags)) {
+		ERR_error_string_n(e, buf, sizeof buf);
+		QString reason = QString::fromLatin1(buf);
+		if ((flags & ERR_TXT_STRING) && data && *data)
+			reason += QString(" (%1)").arg(QString::fromUtf8(data));
+		reasons << reason;
+	}
+	if (reasons.isEmpty())
+		return QObject::tr("unknown OpenSSL error");
 	return reasons.join("\n");
 }
 

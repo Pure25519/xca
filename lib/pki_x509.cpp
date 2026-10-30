@@ -238,9 +238,9 @@ void pki_x509::fromPEM_BIO(BIO *bio, const QString &fname)
 {
 	X509 *_cert;
 	_cert = PEM_read_bio_X509(bio, NULL, NULL, NULL);
-	openssl_error_msg(fname);
 	if (!_cert)
-		throw errorEx();
+		throw_unreadable(tr("Unable to load the certificate in file %1.")
+			.arg(fname));
 	X509_free(cert);
 	cert = _cert;
 }
@@ -458,11 +458,11 @@ void pki_x509::load_token(pkcs11 &p11, CK_OBJECT_HANDLE object)
 void pki_x509::d2i(QByteArray &ba)
 {
 	X509 *c = (X509*)d2i_bytearray(D2I_VOID(d2i_X509), ba);
-	if (c) {
-		X509_free(cert);
-		cert = c;
-	}
-	pki_openssl_error();
+	if (!c)
+		throw_unreadable(tr("The certificate '%1' cannot be decoded.")
+			.arg(getIntName()));
+	X509_free(cert);
+	cert = c;
 }
 
 QByteArray pki_x509::i2d() const

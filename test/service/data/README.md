@@ -103,3 +103,11 @@ The certificate profiles of bxc-pki (`<id>.json`) and their golden expectation f
 `test_service_profiles` (BTD-54) applies every profile and compares with the golden files,
 `test_service_csr_acceptance` (BTD-65) uses the golden files. Regenerate them in bxc-pki and copy
 them again.
+
+## `templates/CA-v2.xca`, `templates/CA-v6.xca`
+
+Binary XCA template exports from the fork's git history: `misc/CA.xca` at upstream commits
+`aa4df24a` (2007-02-07, template version 2) and `e293eb1f` (2009-12-06, version 6), written with
+`git show <commit>:misc/CA.xca`. `test_service_loaders::templatesImport` checks that old exports
+still import once the template loader accepts only well-formed exports (BTD-88): both have a size
+field equal to the remaining length, like every export since.

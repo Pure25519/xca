@@ -120,10 +120,9 @@ void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)
 {
 	STACK_OF(X509) *certstack = NULL;
 
-	pki_openssl_error();
-
 	if (myp7 == NULL)
-		return;
+		throw_unreadable(tr("Unable to load the PKCS#7 file %1.")
+			.arg(name));
 
 	setFilename(name);
 	autoIntName(name);
@@ -138,8 +137,10 @@ void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)
 			myp7->d.signed_and_enveloped->cert = NULL;
 			break;
 	}
-	if (!certstack)
+	if (!certstack) {
+		PKCS7_free(myp7);
 		return;
+	}
 
 	for (int x = 0; x < sk_X509_num(certstack); x++) {
 		X509 *c = X509_dup(sk_X509_value(certstack, x));
@@ -175,7 +176,7 @@ void pki_pkcs7::fromBytes(const QByteArray &ba, const QString &name)
 		ign_openssl_error();
 		myp7 = d2i_PKCS7_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (ign_openssl_error()) {
+	if (ign_openssl_error() || !myp7) {
 		if (myp7)
 			PKCS7_free(myp7);
 		throw errorEx(tr("Unable to load the PKCS#7 file %1. Tried PEM and DER format.").arg(name));

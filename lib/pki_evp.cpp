@@ -269,11 +269,9 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	/* pki_openssl_error() only prints: without this, a key OpenSSL
 	 * refuses (e.g. an ML-DSA seed that does not match its expanded
 	 * key, BTD-16) left an empty key object that crashed the import */
-	if (!pkey) {
-		pki_ign_openssl_error();
-		throw errorEx(tr("The key in '%1' cannot be read").arg(name));
-	}
-	pki_openssl_error();
+	if (!pkey)
+		throw_unreadable(tr("The key in '%1' cannot be read")
+			.arg(name));
 	set_EVP_PKEY(pkey, name);
 }
 

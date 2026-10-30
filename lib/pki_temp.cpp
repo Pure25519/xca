@@ -410,6 +410,9 @@ void pki_temp::fromData(QByteArray &ba, int version)
 	QDataStream in(&buf);
 	in.setVersion(TEMPLATE_DS_VERSION);
 	in >> settings;
+	/* the whole rest is the settings map (BTD-88) */
+	if (in.status() != QDataStream::Ok || !buf.atEnd())
+		my_error(tr("Template file content error (settings)"));
 	QMap<QString, QString> translate;
 	translate["eKyUseCritical"] = "ekuCritical";
 	translate["keyUseCritical"] ="kuCritical";
@@ -475,13 +478,17 @@ bool pki_temp::pem(BioByteArray &b)
 
 void pki_temp::fromExportData(QByteArray data)
 {
-	int version;
-
-	if (data.size() < (int)sizeof(uint32_t))
+	/* A well-formed export only, or the import probe, which tries the
+	 * template loader last, takes any data for a template (BTD-88):
+	 * every export since 2007 announces exactly the size that follows */
+	if (data.size() < 2 * (int)sizeof(uint32_t))
 		my_error(tr("Template file content error (too small)"));
 
-	db::intFromData(data);
-	version = db::intFromData(data);
+	uint32_t size = db::intFromData(data);
+	uint32_t version = db::intFromData(data);
+	if (size != (uint32_t)data.size() || version < 1 ||
+	    version > TMPL_VERSION)
+		my_error(tr("Template file content error (no XCA template)"));
 	fromData((const unsigned char*)data.constData(),
 		data.size(), version);
 }

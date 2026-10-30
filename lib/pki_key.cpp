@@ -65,12 +65,12 @@ void pki_key::autoIntName(const QString &file)
 void pki_key::d2i(QByteArray &ba)
 {
 	EVP_PKEY *k = (EVP_PKEY*)d2i_bytearray(D2I_VOID(d2i_PUBKEY), ba);
-	pki_openssl_error();
-	if (k) {
-		if (key)
-			EVP_PKEY_free(key);
-		key = k;
-	}
+	if (!k)
+		throw_unreadable(tr("The key '%1' cannot be decoded.")
+			.arg(getIntName()));
+	if (key)
+		EVP_PKEY_free(key);
+	key = k;
 }
 
 void pki_key::d2i_old(QByteArray &ba, int type)

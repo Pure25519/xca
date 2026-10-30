@@ -164,9 +164,9 @@ void pki_x509req::fromPEM_BIO(BIO *bio, const QString &name)
 {
 	X509_REQ *req;
 	req = PEM_read_bio_X509_REQ(bio, NULL, NULL, NULL);
-	openssl_error_msg(name);
 	if (!req)
-		throw errorEx();
+		throw_unreadable(tr("Unable to load the certificate request in "
+			"file %1.").arg(name));
 	X509_REQ_free(request);
 	request = req;
 }
@@ -192,10 +192,11 @@ void pki_x509req::fromBytes(const QByteArray &ba, const QString &fname)
 void pki_x509req::d2i(QByteArray &ba)
 {
 	X509_REQ *r= (X509_REQ*)d2i_bytearray(D2I_VOID(d2i_X509_REQ), ba);
-	if (r) {
-		X509_REQ_free(request);
-		request = r;
-	}
+	if (!r)
+		throw_unreadable(tr("The certificate request '%1' cannot be "
+			"decoded.").arg(getIntName()));
+	X509_REQ_free(request);
+	request = r;
 }
 
 QByteArray pki_x509req::i2d() const

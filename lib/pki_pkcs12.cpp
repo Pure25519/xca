@@ -58,7 +58,7 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 	BioByteArray b(ba);
 
 	PKCS12 *pkcs12 = d2i_PKCS12_bio(b.ro(), NULL);
-	if (pki_ign_openssl_error()) {
+	if (pki_ign_openssl_error() || !pkcs12) {
 		if (pkcs12)
 			PKCS12_free(pkcs12);
 		throw errorEx(tr("Unable to load the PKCS#12 (pfx) file %1.")
