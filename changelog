@@ -12,14 +12,24 @@ bxc-main (bxc-pki fork, unreleased)
    atomically (keys owner-only) and published after the database commit
    (lib/staged_file.h). New audit actions ca.crl_settings and
    trustlist.export, parameter trigger of crl.generate.
+ * BTD-203: the default templates fit the key usage by key type of
+   BTD-195, which refused the old TLS_server and TLS_client
+   (keyEncipherment and keyAgreement together) for every key type.
+   TLS_server and TLS_client lose keyAgreement and issue for RSA keys;
+   the new TLS_server_EC and TLS_client_EC carry the signing bits only
+   (digitalSignature, for the server also nonRepudiation) and issue for
+   EC, EdDSA, ML-DSA and SLH-DSA keys. The New Certificate dialog shows
+   key_usage_not_for_key_type with the action "Remove unfitting key usage
+   bits"; the issuance audit entry names the removed bits (ku_removed).
+   The error names every unfitting bit and the template. A database
+   keeps templates it copied from the defaults: apply the new default
+   templates instead, or remove the bits in the copy.
  * BTD-195: key usage by the type of the subject key on every issuance
    (template, profile, CSR merge, GUI, CLI): EC keys get no
    keyEncipherment or dataEncipherment, Ed25519, Ed448, ML-DSA and
    SLH-DSA keys only digitalSignature, nonRepudiation, keyCertSign and
    cRLSign, RSA keys no keyAgreement. A forbidden bit is refused with
-   key_usage_not_for_key_type, naming the bit. XCA's default TLS_server
-   and TLS_client templates carry keyEncipherment and therefore refuse EC
-   and EdDSA keys: remove the bit from the template for them.
+   key_usage_not_for_key_type, naming the bits.
  * BTD-188: CRL generation runs the issuer checks of certificate issuance
    before anything is written. A CA whose key usage lacks cRLSign no
    longer issues CRLs (new error code issuer_no_crlsign; without any key

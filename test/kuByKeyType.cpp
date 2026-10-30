@@ -1,18 +1,26 @@
 /* vi: set sw=4 ts=4:
  *
- * Key usage by key type in the GUI (BTD-195): a template with
- * keyEncipherment issues for an RSA key, but refuses an EC key with an
- * error that names the bit; no certificate is stored.
+ * Key usage by key type in the GUI (BTD-195, BTD-203): the default
+ * templates of misc/ issue TLS server certificates for RSA (TLS_server)
+ * and EC keys (TLS_server_EC) without a question. An EC key with the RSA
+ * template is never issued with keyEncipherment: the dialog shows the
+ * error with the action "Remove unfitting key usage bits"; with "Edit" it
+ * stays open and nothing is stored, after the action the certificate
+ * lacks the bit and the audit entry names it (ku_removed).
  */
 
+#include <QAbstractButton>
+#include <QMessageBox>
 #include <QThread>
 
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
 #include "widgets/CertTreeView.h"
+#include "widgets/XcaWarning.h"
 #include "lib/XcaWarningCore.h"
 #include "lib/audit.h"
 #include "lib/db_key.h"
+#include "lib/db_temp.h"
 #include "lib/db_x509.h"
 #include "lib/issuance.h"
 #include "lib/pki_temp.h"
@@ -21,42 +29,52 @@
 
 #include "main.h"
 
-static QStringList kuErrors;
-static pki_x509 *kuCa;
-static pki_key *kuKey;
-static pki_temp *kuTemplate;
+static QString kuBoxText;
+static bool kuHadAction;
 
-class kuWarnings : public xcaWarningCore
+/* Answers the warning box of the dialog: Apply ("Remove unfitting key
+ * usage bits") or Ok ("Edit") */
+static void answerBox(QMessageBox::StandardButton answer)
 {
-  public:
-	void error(const QString &msg) override
-	{
-		kuErrors << msg;
-	}
-};
-
-static void issueFromTemplate()
-{
-	NewX509 *dlg = test_main::findWindow<NewX509>("NewX509");
-	if (!dlg)
+	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
+	if (!box)
 		return;
-	QMetaObject::invokeMethod(dlg, [dlg]() {
-		dlg->defineTemplate(kuTemplate);
-		dlg->defineSigner(kuCa, false);
-		dlg->keyList->setCurrentPkiItem(kuKey);
-		x509name n;
-		n.addEntryByNid(NID_commonName, "web.example");
-		dlg->setX509name(n);
-		dlg->description->setText("from template");
-		dlg->notBefore->setDate(a1time());
-		dlg->notAfter->setDate(a1time(
-			QDateTime::currentDateTimeUtc().addYears(1)));
-		dlg->accept();
-	}, Qt::BlockingQueuedConnection);
+	kuBoxText = box->text() + "\n" + box->informativeText();
+	QAbstractButton *remove = box->button(QMessageBox::Apply);
+	kuHadAction = remove &&
+		remove->text() == "Remove unfitting key usage bits";
+	box->button(answer)->click();
+}
+
+static bool hasKeyEncipherment(pki_x509 *cert)
+{
+	ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)X509_get_ext_d2i(
+			cert->getCert(), NID_key_usage, nullptr, nullptr);
+	bool set = ku && ASN1_BIT_STRING_get_bit(ku, 2);
+	ASN1_BIT_STRING_free(ku);
+	return set;
+}
+
+void test_main::keyUsageByKeyType_data()
+{
+	QTest::addColumn<QString>("file");
+	QTest::addColumn<QString>("job");
+	/* 0: no question, Ok: "Edit", Apply: "Remove unfitting ..." */
+	QTest::addColumn<int>("answer");
+	QTest::newRow("TLS_server RSA") << "TLS_server" << "RSA:2048" << 0;
+	QTest::newRow("TLS_server_EC EC") << "TLS_server_EC" << "EC:prime256v1"
+		<< 0;
+	QTest::newRow("TLS_server EC, edit") << "TLS_server" << "EC:prime256v1"
+		<< (int)QMessageBox::Ok;
+	QTest::newRow("TLS_server EC, remove") << "TLS_server" << "EC:prime256v1"
+		<< (int)QMessageBox::Apply;
 }
 
 void test_main::keyUsageByKeyType()
 {
+	QFETCH(QString, file);
+	QFETCH(QString, job);
+	QFETCH(int, answer);
 	try {
 		openDB();
 		ServiceContext ctx(ServiceContext::cli, "os:test");
@@ -70,38 +88,69 @@ void test_main::keyUsageByKeyType()
 		spec.hashAlgo = digest(NID_sha256);
 		spec.extensions.basicCA = ExtensionSpec::bc_ca;
 		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
-		kuCa = Database.model<db_x509>()->newCert(ctx, spec);
-		QVERIFY(kuCa);
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY(ca);
 
-		kuTemplate = new pki_temp("web server");
-		TemplateSpec t = TemplateSpec::fromTemplate(kuTemplate);
-		t.extensions.basicCA = ExtensionSpec::bc_not_ca;
-		t.extensions.keyUsage << "digitalSignature" << "keyEncipherment";
-		t.extensions.extKeyUsage << "serverAuth";
-		t.toTemplate(kuTemplate);
+		/* the template as shipped, imported as a user would, so the
+		 * dialog's template list holds it */
+		pki_temp *shipped = new pki_temp("shipped");
+		shipped->fload(QString(XCA_SOURCE_DIR "/misc/%1.xca").arg(file));
+		QCOMPARE(shipped->getIntName(), file);
+		pki_temp *temp = dynamic_cast<pki_temp *>(
+			Database.model<db_temp>()->insert(shipped));
+		QVERIFY(temp);
+		pki_key *key = keys->newKey(keyjob(job), QString("key ") + job);
+		int certs = Store.getAll<pki_x509>().size();
 
-		for (const char *job : { "EC:prime256v1", "RSA:2048" }) {
-			kuKey = keys->newKey(keyjob(job), QString("key ") + job);
-			int certs = Store.getAll<pki_x509>().size();
-			kuErrors.clear();
-			xcaWarning::setGui(new kuWarnings());
-			QThread *thread = QThread::create(issueFromTemplate);
-			thread->start();
-			mainwin->certView->newItem();
-			thread->wait();
-			delete thread;
-			xcaWarning::setGui(new xcaWarningCore());
-			if (QString(job).startsWith("EC")) {
-				QCOMPARE(kuErrors.size(), 1);
-				QVERIFY2(kuErrors[0].contains("keyEncipherment"),
-					CCHAR(kuErrors[0]));
-				QCOMPARE(Store.getAll<pki_x509>().size(), certs);
-			} else {
-				QVERIFY2(kuErrors.isEmpty(), CCHAR(kuErrors.join("; ")));
-				QCOMPARE(Store.getAll<pki_x509>().size(), certs + 1);
-			}
+		NewX509 *dlg = new NewX509(mainwin);
+		dlg->setCert();
+		dlg->defineTemplate(temp);
+		dlg->defineSigner(ca, false);
+		dlg->keyList->setCurrentPkiItem(key);
+		x509name n;
+		n.addEntryByNid(NID_commonName, "web.example");
+		dlg->setX509name(n);
+		dlg->description->setText("from template");
+		dlg->notBefore->setDate(a1time());
+		dlg->notAfter->setDate(a1time(
+			QDateTime::currentDateTimeUtc().addYears(1)));
+
+		/* an unexpected box is answered with "Edit", so the test
+		 * fails instead of waiting for it */
+		kuBoxText.clear();
+		kuHadAction = false;
+		QThread *job2 = QThread::create(answerBox, answer ?
+			(QMessageBox::StandardButton)answer : QMessageBox::Ok);
+		job2->start();
+		dlg->accept();
+		job2->wait();
+		delete job2;
+		if (answer) {
+			QVERIFY2(kuBoxText.contains("keyEncipherment") &&
+				kuBoxText.contains("template 'TLS_server'"),
+				CCHAR(kuBoxText));
+			QVERIFY(kuHadAction);
+		} else {
+			QVERIFY2(kuBoxText.isEmpty(), CCHAR(kuBoxText));
 		}
-		delete kuTemplate;
+		bool accepted = dlg->result() == QDialog::Accepted;
+		QCOMPARE(accepted, answer != QMessageBox::Ok);
+		if (accepted) {
+			pki_x509 *cert = Database.model<db_x509>()->newCert(
+				ServiceContext::localUser(ServiceContext::gui),
+				dlg->getIssuanceSpec());
+			QVERIFY(cert);
+			QVERIFY(!hasKeyEncipherment(cert) || job.startsWith("RSA"));
+			AuditEntry e = AuditLog::entries().last();
+			QCOMPARE(e.action, QString("certificate.issue"));
+			QCOMPARE(e.result, QString("success"));
+			QCOMPARE(e.params.value("template").toString(), file);
+			QCOMPARE(e.params.value("ku_removed").toString(),
+				answer == QMessageBox::Apply ? QString("keyEncipherment")
+							     : QString());
+		}
+		QCOMPARE(Store.getAll<pki_x509>().size(), certs + (accepted ? 1 : 0));
+		delete dlg;
 	} catch (errorEx &err) {
 		QVERIFY2(false, CCHAR(err.getString()));
 	}

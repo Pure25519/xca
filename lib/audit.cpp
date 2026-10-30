@@ -106,6 +106,9 @@ const QStringList &AuditParams::allowList()
 		/* the effective algorithm of a signature (BTD-164) */
 		"signature_algorithm", "subject",
 		"template", "this_update", "validity_capped",
+		/* key usage bits the user removed in the New Certificate
+		 * dialog because the key cannot use them (BTD-195) */
+		"ku_removed",
 		/* accepted with a note: issuer without key usage (BTD-55),
 		 * SHA-1 CSR (BTD-65) */
 		"warning",

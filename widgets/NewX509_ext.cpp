@@ -119,6 +119,11 @@ IssuanceSpec NewX509::getIssuanceSpec()
 	pki_temp *temp = currentTemplate();
 	if (temp)
 		spec.templateName = temp->getIntName();
+	/* removed by the user and not selected again (BTD-195) */
+	for (const QString &bit : keyUsageRemoved) {
+		if (!spec.extensions.keyUsage.contains(bit))
+			spec.keyUsageRemoved << bit;
+	}
 	spec.source = getPkiSource();
 	return spec;
 }
