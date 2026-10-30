@@ -2269,15 +2269,19 @@ void test_service_importexport::keyReadErrorNamesSource()
  * build (ADDRESS_SANITIZER=ON) reports a leak otherwise (BTD-194) */
 void test_service_importexport::pkcs12CreateFailureFrees()
 {
-	pki_x509 *ca = rsaCa();
-	QVERIFY(ca);
-	pki_key *other = newKey("ML-DSA-44", "not the CA key");
-	QVERIFY(other);
-	pki_x509 *leaf = certFor(other, ca);
-	QVERIFY(leaf);
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	/* imported, not issued: the ASan run sees only this path */
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA"), *leaf = cert("BTD34 Leaf");
+	QVERIFY(ca && leaf);
+	pki_key *caKey = ca->getRefKey();
+	QVERIFY(caKey);
 
-	pki_pkcs12 p12(ca->getIntName(), ca, other);
-	p12.append_item(leaf);
+	/* the end-entity certificate with the key of the CA */
+	pki_pkcs12 p12(leaf->getIntName(), leaf, caKey);
+	p12.append_item(ca);
 	encAlgo enc = encAlgo::forExport();
 	Passwd pass;
 	pass = "BTD194-p12";
@@ -2286,10 +2290,13 @@ void test_service_importexport::pkcs12CreateFailureFrees()
 	try {
 		p12.writePKCS12(buf, enc, pass);
 		QFAIL("PKCS#12 written for a key of another certificate");
-	} catch (errorEx &) {
+	} catch (errorEx &err) {
+		QVERIFY2(err.getString().contains("cannot be created: error:"),
+			qPrintable(err.getString()));
 	}
 	QCOMPARE(buf.size(), qint64(0));
 	ign_openssl_error();
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

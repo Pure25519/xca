@@ -251,6 +251,8 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	pkey = load_ssh_ed25519_privatekey(ba, p);
 	pki_ign_openssl_error();
 
+	/* why OpenSSL refused the private key, for the error below */
+	QString reason;
 	while (!pkey) {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(), NULL,
 						PwDialogCore::pwCallback, &p);
@@ -259,19 +261,23 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 			throw p.getResult();
 		if (openssl_pw_error())
 			XCA_PASSWD_ERROR();
-		if (pki_ign_openssl_error())
+		reason = take_openssl_errors();
+		if (!reason.isEmpty())
 			break;
 	}
-	if (!pkey) {
-		pki_ign_openssl_error();
+	if (!pkey)
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, NULL,0);
-	}
 	/* pki_openssl_error() only prints: without this, a key OpenSSL
 	 * refuses (e.g. an ML-DSA seed that does not match its expanded
-	 * key, BTD-16) left an empty key object that crashed the import */
+	 * key, BTD-16) left an empty key object that crashed the import.
+	 * Data without a name (pki_multi::probeData()) gets no empty
+	 * quotes (BTD-194) */
 	if (!pkey) {
 		pki_ign_openssl_error();
-		throw errorEx(tr("The key in '%1' cannot be read").arg(name));
+		throw errorEx(name.isEmpty() ?
+			tr("The key cannot be read: %1").arg(reason) :
+			tr("The key in '%1' cannot be read: %2")
+				.arg(name, reason));
 	}
 	pki_openssl_error();
 	/* the password callback ran: the file was encrypted (BTD-41) */
@@ -295,10 +301,10 @@ void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name)
 	    !mlDsaHasSeed(pkey) && opensslDropsSeed()) {
 		EVP_PKEY_free(pkey);
 		throw serviceError("openssl_config",
-			tr("The OpenSSL configuration sets ml-dsa.retain_seed or "
-			   "ml-dsa.prefer_seed to no: the seed of the ML-DSA key "
-			   "in '%1' may be lost. Remove the setting to import "
-			   "ML-DSA keys").arg(name));
+			tr("The OpenSSL configuration switches off "
+			   "ml-dsa.retain_seed or ml-dsa.prefer_seed: the seed of "
+			   "the ML-DSA key in '%1' may be lost. Remove the setting "
+			   "to import ML-DSA keys").arg(name));
 	}
 	if (key)
 		EVP_PKEY_free(key);
@@ -739,9 +745,9 @@ static bool opensslDropsSeed()
 		OSSL_PARAM_END
 	};
 	bool read = prov && OSSL_PROVIDER_get_conf_parameters(prov, params);
+	/* no, false, 0 and off alike, as the provider reads them (BTD-194) */
 	auto no = [](const OSSL_PARAM *p, const char *v) {
-		return OSSL_PARAM_modified(p) && v &&
-			QString(v).compare("no", Qt::CaseInsensitive) == 0;
+		return OSSL_PARAM_modified(p) && !openssl_bool(v, true);
 	};
 	bool drops = read && (no(&params[0], retain) || no(&params[1], prefer));
 	OSSL_PROVIDER_unload(prov);
