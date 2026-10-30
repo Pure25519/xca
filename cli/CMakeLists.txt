@@ -81,6 +81,12 @@ if(BUILD_TESTING)
   CliTest(cli_out)
   CliTest(cli_trustlist)
   CliTest(cli_files)
+  # hardening of lib/staged_file (BTD-210): publish without hard links,
+  # temporary files left behind, directory swaps, long names
+  CliTest(cli_files_noreplace)
+  CliTest(cli_files_tempfiles)
+  CliTest(cli_files_dirswap)
+  CliTest(cli_files_longname)
   # the default templates of misc/ by key type (BTD-195)
   CliTest(cli_default_templates)
 endif()

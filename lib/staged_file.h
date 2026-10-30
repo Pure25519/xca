@@ -4,28 +4,44 @@
  * and 11 of bxc-pki PLAN.md 8.4). One helper for every file the command
  * line writes: keys, requests, certificates, CRLs, exports, trust lists.
  *
- *  stage():   the target directory is checked, a temporary file is
- *             created beside the target with O_EXCL (mode 0600 for a
- *             secret from its creation on; on Windows a protected DACL
- *             that grants OWNER RIGHTS only), checked to be owner-only
- *             (a file system that ignores the mode is refused here,
- *             before the database commit), written completely and
- *             fsync()ed. An existing target is refused (file_exists)
- *             unless replace is set. Nothing is visible under the
- *             target name yet.
- *  publish(): the temporary file becomes the target: without replace by
- *             link() (an existing target, also one that appeared since
- *             stage(), is never overwritten), with replace by rename();
- *             the directory is fsync()ed and the permissions of a secret
- *             are checked again (owner only, owned by this user); a
- *             file that fails the check is removed again.
+ *  stage():   the target directory is checked and opened once (POSIX:
+ *             its canonical path from "/" component by component with
+ *             O_NOFOLLOW; every later step is relative to that
+ *             descriptor, BTD-210), temporary files of earlier killed
+ *             runs older than 10 minutes are removed from it (warning
+ *             stale_temp_removed), a temporary file is created beside
+ *             the target with O_EXCL (mode 0600 for a secret from its
+ *             creation on; on Windows a protected DACL that grants
+ *             OWNER RIGHTS only), checked to be owner-only (a file
+ *             system that ignores the mode is refused here, before the
+ *             database commit), without replace the publish without
+ *             replacing is tried with it (a file system where it cannot
+ *             work is refused here: target_filesystem_unsupported),
+ *             written completely and fsync()ed. An existing target is
+ *             refused (file_exists) unless replace is set. Nothing is
+ *             visible under the target name yet.
+ *  publish(): the path must still lead to the directory of stage()
+ *             (target_directory_changed); the temporary file becomes the
+ *             target: without replace by renameat2(RENAME_NOREPLACE), or
+ *             link() and unlink() where the file system rejects that
+ *             flag (an existing target, also one that appeared since
+ *             stage(), is never overwritten; a temporary file that
+ *             cannot be removed is the warning temp_file_left), with
+ *             replace by rename(); the directory is fsync()ed and the
+ *             permissions of a secret are checked again (owner only,
+ *             owned by this user); a file that fails the check is
+ *             removed again.
  *  discard() and the destructor remove an unpublished temporary file.
  *
  * A run killed at any point leaves the target either absent or complete
  * (and an old target unchanged); at most a hidden temporary file
- * ".<name>.bxc-tmp-<random>" stays behind. Errors are serviceError
- * file_exists, invalid_output (no directory, not a regular file) and
- * write_failed, permission_check_failed with the system's reason.
+ * ".<name>.bxc-tmp-<16 hex>" stays behind, which a later stage() in the
+ * same directory removes after 10 minutes. A name too long for that form
+ * gets ".<prefix of name>-<16 hex of its SHA-256>.bxc-tmp-<16 hex>".
+ * Errors are serviceError file_exists, invalid_output (no directory, not
+ * a regular file), target_filesystem_unsupported,
+ * target_directory_changed and write_failed, permission_check_failed with
+ * the system's reason.
  */
 
 #ifndef __STAGED_FILE_H
@@ -34,6 +50,8 @@
 #include <functional>
 
 #include <QByteArray>
+#include <QList>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -42,20 +60,34 @@ class StagedFile
   public:
 	/* The steps a test can make fail (faultHook) */
 	enum step { create, write, sync, publish_step, recheck, owner_check,
-		swap };
+		swap, probe, noreplace, unlink_temp };
+	/* A warning for the result: code and detail */
+	typedef QPair<QString, QString> warning;
 
   private:
 	QString targetPath{};
 	QString tempPath{};
+	QString targetName{};    // the file name of the target
+	QString dirPath{};       // its directory, canonical (stage())
+	QString tempName{};      // the temporary file in it
+	int dirFd{ -1 };         // POSIX: the directory, opened once
+	bool useLink{};          // POSIX: publish with link() (probed)
 	bool secret{};
 	bool replace{};
 	bool staged{};
 	bool published{};
 	qint64 bytes{};
+	QList<warning> warns{};
 
 	bool injected(enum step s) const;
 	void fault(enum step s) const;
 	void removeTemp();
+	void openDirectory();
+	void closeDirectory();
+	bool sameDirectory() const;
+	void removeStale();
+	void probePublish();
+	void tempLeft(const QString &path);
 
   public:
 	StagedFile(const QString &target, bool secretFile, bool replaceTarget);
@@ -87,6 +119,12 @@ class StagedFile
 	{
 		return bytes;
 	}
+	/* The warnings of stage() and publish(): stale_temp_removed,
+	 * temp_file_left */
+	QList<warning> warnings() const
+	{
+		return warns;
+	}
 
 	/* The checks of stage() without writing (--plan): the directory
 	 * exists and is one, the target is absent (or replace and a
@@ -98,8 +136,10 @@ class StagedFile
 
 	/* Tests only (BTD-42 fault injection): called before each step
 	 * with the target; a hook that returns true makes the step fail
-	 * as if the system call had failed (EIO). A hook may also end the
-	 * process to simulate a killed run. Never set in bxc-pki. */
+	 * as if the system call had failed (EIO; probe: as on vfat,
+	 * noreplace: as on a file system without RENAME_NOREPLACE). A hook
+	 * may also end the process to simulate a killed run. Never set in
+	 * bxc-pki. */
 	static std::function<bool(enum step, const QString &)> faultHook;
 	static QString stepName(enum step s);
 };
@@ -120,10 +160,15 @@ class StagedFile
  * is refused (invalid_output) and not touched. A manifest of something
  * else with the same name (web apps, npm) is no earlier export.
  *
- * publish() checks the target again right before the swap, after the
- * database commit, and removes from the old content only the entries of
- * that check; anything that appeared later stays in the old content,
- * which then stays under its temporary name (leftover()). */
+ * POSIX (BTD-210): the directory above the target is opened once in
+ * stage(); the check, the swap and every removal are relative to it and
+ * never follow a symbolic link. publish() checks the target again right
+ * before the swap, after the database commit: the path must still lead
+ * to the same directory above, and the target must still be the
+ * directory of stage() (target_directory_changed); only the entries of
+ * that check are removed from the old content; anything that appeared
+ * later stays in the old content, which then stays under its temporary
+ * name (leftover()). */
 class StagedDirectory
 {
 	QString givenPath{};     // absolute, as given
@@ -131,6 +176,10 @@ class StagedDirectory
 	QString tempPath{};
 	QString marker{}, schema{};
 	QString leftoverPath{};
+	QString parentPath{};    // canonical, the directory above (stage())
+	QString targetName{}, tempName{};
+	int parentFd{ -1 };      // POSIX: the directory above, opened once
+	quint64 targetDev{}, targetIno{};
 	bool replace{};
 	bool staged{};
 	bool published{};

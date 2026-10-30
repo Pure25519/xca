@@ -277,6 +277,8 @@ static void publishFiles(CommandContext &ctx)
 			stored.isEmpty() ? QObject::tr("nothing") : stored,
 			missing.join(", ")));
 	}
+	for (const auto &w : ctx.files->warnings())
+		ctx.result->warning(w.first, w.second);
 	if (!ctx.files->leftover().isEmpty())
 		ctx.result->warning("cleanup_incomplete", QObject::tr(
 			"Files appeared in the replaced directory during the "
