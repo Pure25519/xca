@@ -6,10 +6,12 @@
  * and value, and no certificate is stored.
  */
 
+#include <QPointer>
 #include <QThread>
 
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
+#include "widgets/XcaWarning.h"
 #include "widgets/CertTreeView.h"
 #include "lib/XcaWarningCore.h"
 #include "lib/audit.h"
@@ -21,27 +23,19 @@
 
 #include "main.h"
 
-static QStringList policyErrors;
+static QString policyBoxText;
+static bool policyStillOpen;
 static pki_x509 *policyCa;
 static pki_key *policyKey;
 
-/* testxca answers like the command line; this one keeps the errors */
-class policyWarnings : public xcaWarningCore
-{
-  public:
-	void error(const QString &msg) override
-	{
-		policyErrors << msg;
-	}
-};
-
-/* Fills the dialog on the GUI thread and presses OK */
+/* Fills the dialog on the GUI thread, presses OK and reads the refusal,
+ * which since BTD-212 shows in the open dialog; then aborts */
 static void issueOtherOrganisation()
 {
-	NewX509 *dlg = test_main::findWindow<NewX509>("NewX509");
+	QPointer<NewX509> dlg = test_main::findWindow<NewX509>("NewX509");
 	if (!dlg)
 		return;
-	QMetaObject::invokeMethod(dlg, [dlg]() {
+	QMetaObject::invokeMethod(qApp, [dlg]() {
 		dlg->defineSigner(policyCa, false);
 		dlg->keyList->setCurrentPkiItem(policyKey);
 		x509name n;
@@ -53,7 +47,20 @@ static void issueOtherOrganisation()
 		dlg->notBefore->setDate(a1time());
 		dlg->notAfter->setDate(a1time(
 			QDateTime::currentDateTimeUtc().addYears(1)));
-		dlg->accept();
+	}, Qt::BlockingQueuedConnection);
+	QMetaObject::invokeMethod(qApp, [dlg]() {
+		if (dlg)
+			dlg->accept();
+	}, Qt::QueuedConnection);
+	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
+	if (box) {
+		policyBoxText = box->text();
+		box->button(QMessageBox::Ok)->click();
+	}
+	QMetaObject::invokeMethod(qApp, [dlg]() {
+		policyStillOpen = dlg && dlg->isVisible();
+		if (policyStillOpen)
+			dlg->reject();
 	}, Qt::BlockingQueuedConnection);
 }
 
@@ -83,18 +90,18 @@ void test_main::issueRefusedByPolicy()
 		ProfileStore::assign(ctx, policyCa, "policy", "ot-lab-names");
 		int certs = Store.getAll<pki_x509>().size();
 
-		policyErrors.clear();
-		xcaWarning::setGui(new policyWarnings());
+		policyBoxText.clear();
+		policyStillOpen = false;
 		QThread *job = QThread::create(issueOtherOrganisation);
 		job->start();
 		mainwin->certView->newItem();
-		job->wait();
+		while (!job->isFinished())
+			QTest::qWait(20);
 		delete job;
-		xcaWarning::setGui(new xcaWarningCore());
 
-		QCOMPARE(policyErrors.size(), 1);
-		QVERIFY2(policyErrors[0].contains("ot-lab-names") &&
-			 policyErrors[0].contains("Other"), CCHAR(policyErrors[0]));
+		QVERIFY2(policyBoxText.contains("ot-lab-names") &&
+			 policyBoxText.contains("Other"), CCHAR(policyBoxText));
+		QVERIFY(policyStillOpen);
 		QCOMPARE(Store.getAll<pki_x509>().size(), certs);
 	} catch (errorEx &err) {
 		QVERIFY2(false, CCHAR(err.getString()));

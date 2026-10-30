@@ -1505,7 +1505,26 @@ void NewX509::accept()
 	/* the checks the issuance runs, while the input is still here */
 	if (pt == x509 && !keyUsageFitsKey())
 		return;
-	if (pt == x509) {
+	/* BTD-212: issue here and close only on success, so a refusal of
+	 * the service (key usage, extensions, policies, names) keeps every
+	 * input; without a selection nothing is issued, as before */
+	IssuanceSpec spec = pt == x509 && certModel ? getIssuanceSpec() :
+				IssuanceSpec();
+	if (pt == x509 && certModel && (spec.request || spec.key) &&
+	    (!foreignSignRB->isChecked() || spec.signer)) {
+		try {
+			issuedCert = certModel->newCert(ServiceContext::localUser(
+					ServiceContext::gui), spec);
+		} catch (errorEx &err) {
+			xcaWarningBox msg(this, tr("The certificate cannot be issued: %1")
+				.arg(err.getString()));
+			msg.addButton(QMessageBox::Ok, tr("Edit"));
+			msg.addButton(QMessageBox::Close, tr("Abort rollout"));
+			if (msg.exec() == QMessageBox::Close)
+				reject();
+			return;
+		}
+	} else if (pt == x509) {
 		try {
 			AuditParams params;
 			IssuanceChecks::preflight(getIssuanceSpec(), params);
