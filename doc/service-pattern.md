@@ -158,6 +158,11 @@ after a failure checks the OpenSSL result itself:
   request's extensions, the merge and order paths of the issuance; an extension of a request that
   does not decode is `invalid_request_extension` with its name, not taken for absent (BTD-197).
   Before, the object was signed without the extension and audited as success.
+- The CRL build checks every step (version, issuer, each revoked entry with serial, date, reason
+  and invalidity date, AKI, IAN, CRL number, update times) and compares the built CRL with the
+  revocations it was built from before signing; a failure or a difference is `crl_build_failed`
+  naming the step, nothing is stored and the CRL number is not consumed (BTD-198). Tests inject
+  a failed step with `crlBuild::fail()` (`lib/x509rev.h`).
 - A value that a subject entry or request attribute cannot hold is `invalid_string`
   (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
 - `take_openssl_errors()` builds the message text: the reasons with their data strings, one per

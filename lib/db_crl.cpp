@@ -212,9 +212,13 @@ static x509v3ext authorityKeyId(pki_x509 *ca, X509V3_CTX *ctx)
 	}
 	ASN1_OCTET_STRING_free(akid->keyid);
 	akid->keyid = ASN1_OCTET_STRING_new();
-	ASN1_OCTET_STRING_set(akid->keyid, md, len);
-	X509_EXTENSION *ext = X509V3_EXT_i2d(NID_authority_key_identifier, 0, akid);
+	X509_EXTENSION *ext = akid->keyid &&
+		ASN1_OCTET_STRING_set(akid->keyid, md, len) ?
+		X509V3_EXT_i2d(NID_authority_key_identifier, 0, akid) : nullptr;
 	AUTHORITY_KEYID_free(akid);
+	/* unchecked, the CRL went out without its AKI (BTD-198) */
+	if (!ext)
+		crlBuild::failed("aki");
 	e.set(ext);
 	X509_EXTENSION_free(ext);
 	openssl_error();
@@ -350,20 +354,30 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				crl->pkiSource = generated;
 
 				expiredEntries expired(cert);
+				QStringList listed;
 				foreach(x509rev rev, cert->getRevList()) {
-					if (!expired.drop(rev))
-						crl->addRev(rev, task.withReason);
+					if (expired.drop(rev))
+						continue;
+					listed << rev.getSerial().toHex();
+					/* test hook: one entry left out */
+					if (crlBuild::fail("drop_entry")) {
+						crlBuild::injected.clear();
+						continue;
+					}
+					crl->addRev(rev, task.withReason);
 				}
-				crl->addV3ext(authorityKeyId(cert, &ext_ctx));
+				crl->addV3ext(authorityKeyId(cert, &ext_ctx),
+						"aki");
 				if (task.subAltName &&
 				    cert->hasExtension(NID_subject_alt_name)) {
 					crl->addV3ext(e.create(NID_issuer_alt_name,
-						"issuer:copy", &ext_ctx));
+						"issuer:copy", &ext_ctx), "ian");
 				}
 				crl->setCrlNumber(task.crlNumber);
 				crl->setIssuer(cert);
 				crl->setLastUpdate(task.lastUpdate);
 				crl->setNextUpdate(task.nextUpdate);
+				crl->checkContent(listed, task.crlNumber, true);
 				crl->sign(signkey, task.hashAlgo);
 				params.set("signature_algorithm", OBJ_nid2ln(
 					X509_CRL_get_signature_nid(crl->getCrl())));

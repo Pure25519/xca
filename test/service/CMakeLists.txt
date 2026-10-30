@@ -154,6 +154,9 @@ endif()
 # A failed signature is an error, never a stored object (BTD-171)
 ServiceTest(test_service_signing_failure)
 
+# The content of a CRL matches the database, or it is not signed (BTD-198)
+ServiceTest(test_service_crl_build)
+
 # Every loader checks its OpenSSL result: broken input is an import error,
 # never an empty object (BTD-95)
 ServiceTest(test_service_loaders)

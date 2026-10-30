@@ -73,7 +73,12 @@ class pki_crl: public pki_x509name
 		void createCrl(const QString d, pki_x509 *iss);
 		void addRev(const x509rev &rev, bool withReason=true);
 		void addExt(int nid, QString value);
-		void addV3ext(const x509v3ext &e);
+		/* step names the extension in the error (BTD-198) */
+		void addV3ext(const x509v3ext &e, const char *step = "extension");
+		/* crl_build_failed if the CRL does not list exactly serials
+		 * (hex), number, and the AKI when expected (BTD-198) */
+		void checkContent(const QStringList &serials,
+				const a1int &number, bool akiExpected) const;
 		void sign(pki_key *key, const digest &digest);
 		void writeCrl(QIODevice &file, bool pem = true) const;
 		pki_x509 *getIssuer() const;
