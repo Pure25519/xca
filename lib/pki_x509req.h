@@ -56,6 +56,10 @@ class pki_x509req : public pki_x509super
 		}
 		void addAttribute(int nid, QString content);
 		QString getAttribute(int nid) const;
+		/* The challengePassword is an enrolment or revocation secret:
+		 * every display shows this marker instead (BTD-168) */
+		static QString challengePasswordMarker();
+		QString challengePasswordShown() const;
 		int issuedCerts() const;
 
 		bool verify() const;

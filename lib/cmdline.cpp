@@ -93,6 +93,19 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		else
 			XCA_ERROR(err);
 	};
+	/* With --json stdout carries only JSON: the options that write
+	 * plain text are refused before anything runs (BTD-168) */
+	if (json) {
+		for (const char *opt : { "text", "pem", "list-curves", "help",
+					"version" }) {
+			if (cmd_opts.has(opt)) {
+				report(serviceError("usage", QObject::tr(
+					"--%1 writes plain text and cannot be combined with --json")
+					.arg(opt)));
+				return EXIT_FAILURE;
+			}
+		}
+	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
