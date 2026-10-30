@@ -43,6 +43,8 @@ class nameEdit
 	}
 };
 
+class db_x509;
+
 class NewX509: public XcaDetail, public Ui::NewX509
 {
 		Q_OBJECT
@@ -56,6 +58,9 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		 * them (BTD-195), for the audit of the issuance */
 		QStringList keyUsageRemoved{};
 		bool keyUsageFitsKey();
+		/* BTD-212: the model accept() issues into, and the result */
+		db_x509 *certModel{};
+		pki_x509 *issuedCert{};
 		NIDlist attr_nid{};
 		QList<nameEdit> attrEdits{};
 		QList<nameEdit> nameEdits{};
@@ -85,6 +90,16 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		void updateNameComment();
 
 	public:
+		/* Issue the certificate in accept() and close only on
+		 * success; a refusal keeps the dialog open (BTD-212) */
+		void issueOnAccept(db_x509 *certs)
+		{
+			certModel = certs;
+		}
+		pki_x509 *issued() const
+		{
+			return issuedCert;
+		}
 		NewX509(QWidget *w = nullptr);
 		virtual ~NewX509();
 		void initCtx();

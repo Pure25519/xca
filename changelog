@@ -17,6 +17,12 @@ bxc-main (bxc-pki fork, unreleased)
    otherwise), so the GUI, which uses crlDays, and the command line issue
    CRLs of the same validity. export --plan runs the option checks of the
    export service and reports the error of the real run.
+ * BTD-212: the New Certificate dialog issues the certificate itself when
+   OK is pressed and closes only on success, on all four entry points
+   (new, from a request, from a template, from a certificate). A refusal
+   of the service (key usage, extensions, policies, names) shows the
+   typed error with "Edit" or "Abort rollout"; the dialog keeps every
+   input. Before, the dialog closed first and the input was lost.
  * BTD-210: harder file output (lib/staged_file). A new file is
    published with renameat2(RENAME_NOREPLACE), link() only where the
    file system rejects the flag; both are tried before the database
