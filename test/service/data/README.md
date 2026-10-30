@@ -137,3 +137,11 @@ The name policies of bxc-pki (`schemas/policy.schema.json`, BTD-167), copied unc
 schema examples at the commit named in `policies/PROVENANCE.json`. `test_service_names` checks
 issued names against them (allow and deny rules per name form, minimum content, strict issuer
 key usage, uniqueness with a status filter).
+
+## `templates/CA-v2.xca`, `templates/CA-v6.xca`
+
+Binary XCA template exports from the fork's git history: `misc/CA.xca` at upstream commits
+`aa4df24a` (2007-02-07, template version 2) and `e293eb1f` (2009-12-06, version 6), written with
+`git show <commit>:misc/CA.xca`. `test_service_loaders::templatesImport` checks that old exports
+still import once the template loader accepts only well-formed exports (BTD-88): both have a size
+field equal to the remaining length, like every export since.

@@ -13,6 +13,7 @@
 #include "audit_key.h"
 #include "XcaPresentation.h"
 #include <QDir>
+#include <openssl/err.h>
 
 pki_crl::pki_crl(const QString &name)
 	:pki_x509name(name)
@@ -42,9 +43,9 @@ void pki_crl::fromPEM_BIO(BIO *bio, const QString &name)
 {
 	X509_CRL *_crl;
 	_crl = PEM_read_bio_X509_CRL(bio, NULL, NULL, NULL);
-	openssl_error_msg(name);
 	if (!_crl)
-		throw errorEx();
+		throw_unreadable(tr("Unable to load the revocation list in file "
+			"%1.").arg(name));
 	X509_CRL_free(crl);
 	crl = _crl;
 }
@@ -132,14 +133,16 @@ QSqlError pki_crl::deleteSqlData()
 void pki_crl::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_CRL *_crl;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	_crl = PEM_read_bio_X509_CRL(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_crl) {
 		pki_ign_openssl_error();
 		_crl = d2i_X509_CRL_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (pki_ign_openssl_error() || !_crl) {
-		if (_crl)
-			X509_CRL_free(_crl);
+	pki_ign_openssl_error();
+	if (!_crl) {
 		throw errorEx(tr("Unable to load the revocation list in file %1. Tried PEM and DER formatted CRL.").arg(fname));
 	}
 	X509_CRL_free(crl);
@@ -190,12 +193,11 @@ pki_crl::~pki_crl()
 void pki_crl::d2i(QByteArray &ba)
 {
 	X509_CRL *c = (X509_CRL*)d2i_bytearray(D2I_VOID(d2i_X509_CRL), ba);
-	pki_openssl_error();
-	if (c) {
-		X509_CRL_free(crl);
-		crl = c;
-	}
-	pki_openssl_error();
+	if (!c)
+		throw_unreadable(tr("The revocation list '%1' cannot be decoded.")
+			.arg(getIntName()));
+	X509_CRL_free(crl);
+	crl = c;
 }
 
 QByteArray pki_crl::i2d() const

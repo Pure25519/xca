@@ -24,6 +24,11 @@
 
 #define pki_openssl_error() _openssl_error(*this, __FILE__, __LINE__)
 #define pki_ign_openssl_error() _ign_openssl_error(*this, __FILE__, __LINE__)
+/* An OpenSSL decoder returned nothing: _openssl_error() only prints
+ * (BTD-95), so the loader throws the reason itself instead of keeping an
+ * object without content */
+#define throw_unreadable(what) throw errorEx(QString("%1\n%2") \
+	.arg(what, take_openssl_errors()))
 
 enum pki_source {
 	unknown,

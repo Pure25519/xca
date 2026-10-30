@@ -59,8 +59,12 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 	setFilename(fname);
 	BioByteArray b(ba);
 
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	PKCS12 *pkcs12 = d2i_PKCS12_bio(b.ro(), NULL);
-	if (pki_ign_openssl_error()) {
+	pki_ign_openssl_error();
+	if (!pkcs12) {
 		if (pkcs12)
 			PKCS12_free(pkcs12);
 		throw errorEx(tr("Unable to load the PKCS#12 (pfx) file %1.")
@@ -86,7 +90,8 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 		}
 	}
 	STACK_OF(X509) *certstack = sk_X509_new_null();
-	PKCS12_parse(pkcs12, pass.constData(), &mykey, &mycert, &certstack);
+	int parsed = PKCS12_parse(pkcs12, pass.constData(), &mykey, &mycert,
+				&certstack);
 	int error = ERR_peek_error();
 	if (ERR_GET_REASON(error) == PKCS12_R_MAC_VERIFY_FAILURE) {
 		pki_ign_openssl_error();
@@ -97,6 +102,16 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 		throw errorEx(getClassName(),
 			 tr("The supplied password was wrong (%1)")
 				.arg(ERR_reason_error_string(error)));
+	}
+	/* unchecked, a PFX OpenSSL could not decrypt (e.g. RC2 without the
+	 * legacy provider) ended in no items without a reason (BTD-95) */
+	if (!parsed) {
+		QString reason = take_openssl_errors();
+		PKCS12_free(pkcs12);
+		sk_X509_pop_free(certstack, X509_free);
+		failed_files << fname;
+		throw errorEx(QString("%1\n%2").arg(tr("Unable to load the "
+			"PKCS#12 (pfx) file %1.").arg(fname), reason));
 	}
 	pki_ign_openssl_error();
 	if (mycert) {

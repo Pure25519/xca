@@ -103,17 +103,23 @@ void db_base::loadContainer()
 	e = q.lastError();
 	XCA_SQLERROR(e);
 
-	while (q.next()) try {
+	while (q.next()) {
 		enum pki_type t;
 		QSqlRecord rec = q.record();
 		t = (enum pki_type)q.value(VIEW_item_type).toInt();
 		pki_base *pki = newPKI(t);
-		pki->restoreSql(rec);
+		try {
+			pki->restoreSql(rec);
+		} catch (errorEx &ex) {
+			/* a row that does not decode is reported and left
+			 * out, never loaded as an empty object (BTD-95) */
+			delete pki;
+			XCA_ERROR(ex);
+			continue;
+		}
 		rootItem->insert(pki);
 		treeItem->insert(pki);
 		Store.add(q.value(VIEW_item_id), pki);
-	} catch (errorEx &ex) {
-		XCA_ERROR(ex);
 	}
 
 	QString view = Settings[class_name + "_hdView"];

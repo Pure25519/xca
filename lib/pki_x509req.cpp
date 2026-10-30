@@ -19,6 +19,7 @@
 #include "XcaPresentation.h"
 #include "openssl_compat.h"
 #include <openssl/bio.h>
+#include <openssl/err.h>
 
 pki_x509req::pki_x509req(const QString &name)
 	: pki_x509super(name)
@@ -165,9 +166,9 @@ void pki_x509req::fromPEM_BIO(BIO *bio, const QString &name)
 {
 	X509_REQ *req;
 	req = PEM_read_bio_X509_REQ(bio, NULL, NULL, NULL);
-	openssl_error_msg(name);
 	if (!req)
-		throw errorEx();
+		throw_unreadable(tr("Unable to load the certificate request in "
+			"file %1.").arg(name));
 	X509_REQ_free(request);
 	request = req;
 }
@@ -175,14 +176,16 @@ void pki_x509req::fromPEM_BIO(BIO *bio, const QString &name)
 void pki_x509req::fromBytes(const QByteArray &ba, const QString &fname)
 {
 	X509_REQ *_req;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	_req = PEM_read_bio_X509_REQ(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!_req) {
 		pki_ign_openssl_error();
 		_req = d2i_X509_REQ_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (pki_ign_openssl_error() || !_req) {
-		if (_req)
-			X509_REQ_free(_req);
+	pki_ign_openssl_error();
+	if (!_req) {
 		throw errorEx(tr("Unable to load the certificate request in file %1. Tried PEM, DER and SPKAC format.").arg(fname));
 	}
 
@@ -193,10 +196,11 @@ void pki_x509req::fromBytes(const QByteArray &ba, const QString &fname)
 void pki_x509req::d2i(QByteArray &ba)
 {
 	X509_REQ *r= (X509_REQ*)d2i_bytearray(D2I_VOID(d2i_X509_REQ), ba);
-	if (r) {
-		X509_REQ_free(request);
-		request = r;
-	}
+	if (!r)
+		throw_unreadable(tr("The certificate request '%1' cannot be "
+			"decoded.").arg(getIntName()));
+	X509_REQ_free(request);
+	request = r;
 }
 
 QByteArray pki_x509req::i2d() const
@@ -210,11 +214,14 @@ void pki_x509req::addAttribute(int nid, QString content)
 		return;
 
 	ASN1_STRING *a = QStringToAsn1(content, nid);
-	X509_REQ_add1_attr_by_NID(request, nid, ASN1_STRING_type(a),
+	/* unchecked, a refused attribute was left out of the request
+	 * (BTD-95) */
+	int ok = X509_REQ_add1_attr_by_NID(request, nid, ASN1_STRING_type(a),
 							  ASN1_STRING_get0_data(a),
 							  (int)ASN1_STRING_get_length(a));
 	ASN1_STRING_free(a);
-	openssl_error_msg(QString("'%1' (%2)").arg(content).arg(OBJ_nid2ln(nid)));
+	if (!ok)
+		throwInvalidString(content, nid);
 }
 
 x509name pki_x509req::getSubject() const

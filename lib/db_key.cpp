@@ -415,6 +415,14 @@ void db_key::changeDatabasePassword(const Passwd &pass)
 	QString passhash = pki_evp::sha512passwT(pass, salt);
 	QList<pki_evp*> key_list = Store.sqlSELECTpki<pki_evp>(
 		"SELECT item FROM private_keys WHERE ownPass=0");
+	/* a key whose row was left out on open (BTD-95) is not in the
+	 * store and would keep the old password under the new hash */
+	XSqlQuery q("SELECT COUNT(*) FROM private_keys WHERE ownPass=0");
+	if (q.first() && q.value(0).toInt() != key_list.size())
+		throw serviceError("database_incomplete", tr("%1 private "
+			"key(s) of the database could not be loaded; the "
+			"password is not changed").arg(q.value(0).toInt() -
+				key_list.size()));
 
 	try {
 		Transaction;
@@ -423,7 +431,12 @@ void db_key::changeDatabasePassword(const Passwd &pass)
 			EVP_PKEY *evp = key->decryptKey();
 			key->set_evp_key(evp);
 			key->encryptKey(pass.constData());
-			key->sqlUpdatePrivateKey();
+			/* not stored: the key would stay encrypted with the
+			 * old password under the new hash (BTD-95) */
+			if (!key->sqlUpdatePrivateKey())
+				throw errorEx(tr("The private key '%1' was not "
+					"stored with the new password")
+					.arg(key->getIntName()));
 		}
 		AuditKey::reencrypt(pass);
 		Settings["pwhash"] = passhash;

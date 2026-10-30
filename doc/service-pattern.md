@@ -127,6 +127,42 @@ is recorded in the `ServiceContext`, and `AuditLog::append()` writes it as param
 changed. Service functions themselves still never ask; a caller without a GUI (REST, EST, CMP)
 passes its confirmations in the `ServiceContext`.
 
+OpenSSL errors are checked where they happen (BTD-95, decision of 2026-10-28). `_openssl_error()`
+in `lib/func_base.cpp` and the macros `openssl_error()`, `openssl_error_msg()` and
+`pki_openssl_error()` only print the OpenSSL error queue to stderr and never throw: upstream
+`a8ebef92` (2024-09-29, "Extend Error messages by line and function") replaced the loop that filled
+the error text by `ERR_print_errors_cb()` and kept `if (!error.isEmpty()) throw`, which can no
+longer run. The fork keeps that behaviour for the GUI and upstream merges; code that must not go on
+after a failure checks the OpenSSL result itself:
+
+- A service function checks the return value of every OpenSSL call that can fail (sign, encode,
+  set, add, keygen) and throws a `serviceError` with a stable code, e.g. `signing_failed`
+  (BTD-171); never one of the macros above.
+- A loader (`fromPEM_BIO()`, `fromBytes()`, `fromPEMbyteArray()`, `d2i()`, `parse()`) checks the
+  object it decoded and throws an `errorEx` that names the file or item and the OpenSSL reasons
+  (`throw_unreadable()` in `lib/pki_base.h`); it never keeps an object without content. The
+  import then fails with `no_pki_data` or `unreadable_input` and a `failure` entry, and a database
+  row that does not decode is reported and left out on open (`db_base::loadContainer()`). An
+  `errorEx` without text is shown nowhere (`xcaWarning::error()` drops it), so a loader never
+  throws one.
+- The template loader, which the import probe tries last, accepts only a well-formed template
+  export (size field equal to the rest, known version, the settings consumed completely), so it
+  does not hide the errors of the loaders before it (BTD-88).
+- Key material and the audit log: `pki_evp::encryptKey()` throws `key_encryption_failed`
+  before it replaces the private key by the public one, `changeDatabasePassword()` fails when a
+  key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or
+  `audit_signing_failed` instead of storing an empty key or signature; a checkpoint signs before
+  its first write, so a failure writes nothing.
+- A value that a subject entry or request attribute cannot hold is `invalid_string`
+  (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
+- `take_openssl_errors()` builds the message text: the reasons with their data strings, one per
+  line, from a buffer of its own (`ERR_error_string(e, NULL)` writes a static one), and
+  "unknown OpenSSL error" for an empty queue.
+
+The loaders and their tests: `test/service/test_service_loaders.cpp` (broken certificate,
+request, CRL, PKCS#7, PKCS#12 and key input; broken database rows; junk that is no template; old
+template versions that still import).
+
 A request's extensions are built in the context of a temporary self-signed certificate with the
 spec's subject and key (`RequestSpec::buildExtensions()`), as the dialog did when its temporary
 context was current. "hash" (subject key identifier) and `DNS:copycn` therefore always refer to

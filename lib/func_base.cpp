@@ -104,8 +104,18 @@ ASN1_STRING *QStringToAsn1(const QString s, int nid)
 			mask &= global_mask;
 	}
 	ASN1_mbstring_copy(&out, utf8, -1, MBSTRING_UTF8, mask);
-	openssl_error_msg(QString("'%1' (%2)").arg(s).arg(OBJ_nid2ln(nid)));
+	/* a character the attribute's string types cannot hold: both
+	 * callers passed NULL on and the entry went missing (BTD-95) */
+	if (!out)
+		throwInvalidString(s, nid);
 	return out;
+}
+
+void throwInvalidString(const QString &s, int nid)
+{
+	throw serviceError("invalid_string", QString("%1\n%2")
+		.arg(QObject::tr("The value '%1' is not valid for %2.")
+			.arg(s, OBJ_nid2ln(nid)), take_openssl_errors()));
 }
 
 const char *OBJ_ln2sn(const char *ln)
@@ -155,7 +165,10 @@ void *d2i_bytearray(void *(*d2i)(void *, unsigned char **, long),
 	p = p1 = (unsigned char *)ba.constData();
 	ret = d2i(NULL, &p1, ba.size());
 	ba = ba.mid(p1-p);
-	openssl_error();
+	/* a failure keeps the queue: the caller names the reason with
+	 * take_openssl_errors() (BTD-95) */
+	if (ret)
+		openssl_error();
 	return ret;
 }
 
@@ -188,8 +201,21 @@ void _openssl_error(const QString &txt, const char *file, int line)
 QString take_openssl_errors()
 {
 	QStringList reasons;
-	while (unsigned long e = ERR_get_error())
-		reasons << ERR_error_string(e, NULL);
+	const char *data;
+	int flags;
+	/* a buffer of our own: ERR_error_string(e, NULL) writes a static
+	 * one, which threads would share (BTD-95) */
+	char buf[256];
+	while (unsigned long e = ERR_get_error_all(NULL, NULL, NULL,
+						&data, &flags)) {
+		ERR_error_string_n(e, buf, sizeof buf);
+		QString reason = QString::fromLatin1(buf);
+		if ((flags & ERR_TXT_STRING) && data && *data)
+			reason += QString(" (%1)").arg(QString::fromUtf8(data));
+		reasons << reason;
+	}
+	if (reasons.isEmpty())
+		return QObject::tr("unknown OpenSSL error");
 	return reasons.join("\n");
 }
 

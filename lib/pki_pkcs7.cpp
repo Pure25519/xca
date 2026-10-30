@@ -13,6 +13,7 @@
 #include "exception.h"
 
 #include <openssl/x509.h>
+#include <openssl/err.h>
 
 pki_pkcs7::pki_pkcs7(const QString &name)
 	:pki_multi(name)
@@ -120,10 +121,9 @@ void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)
 {
 	STACK_OF(X509) *certstack = NULL;
 
-	pki_openssl_error();
-
 	if (myp7 == NULL)
-		return;
+		throw_unreadable(tr("Unable to load the PKCS#7 file %1.")
+			.arg(name));
 
 	setFilename(name);
 	autoIntName(name);
@@ -138,8 +138,10 @@ void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)
 			myp7->d.signed_and_enveloped->cert = NULL;
 			break;
 	}
-	if (!certstack)
+	if (!certstack) {
+		PKCS7_free(myp7);
 		return;
+	}
 
 	for (int x = 0; x < sk_X509_num(certstack); x++) {
 		X509 *c = X509_dup(sk_X509_value(certstack, x));
@@ -170,14 +172,16 @@ void pki_pkcs7::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 void pki_pkcs7::fromBytes(const QByteArray &ba, const QString &name)
 {
 	PKCS7 *myp7;
+	/* the decoded object decides, not an older entry of the error
+	 * queue (BTD-95) */
+	ERR_clear_error();
 	myp7 = PEM_read_bio_PKCS7(BioByteArray(ba).ro(), NULL, NULL, NULL);
 	if (!myp7) {
 		ign_openssl_error();
 		myp7 = d2i_PKCS7_bio(BioByteArray(ba).ro(), NULL);
 	}
-	if (ign_openssl_error()) {
-		if (myp7)
-			PKCS7_free(myp7);
+	ign_openssl_error();
+	if (!myp7) {
 		throw errorEx(tr("Unable to load the PKCS#7 file %1. Tried PEM and DER format.").arg(name));
 	}
 	append_certs(myp7, name);

@@ -261,9 +261,12 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 			throw p.getResult();
 		if (openssl_pw_error())
 			XCA_PASSWD_ERROR();
-		reason = take_openssl_errors();
-		if (!reason.isEmpty())
+		/* an empty queue asks again; take_openssl_errors() names an
+		 * empty queue too (BTD-95), so look first */
+		if (ERR_peek_error()) {
+			reason = take_openssl_errors();
 			break;
+		}
 	}
 	if (!pkey)
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, NULL,0);
@@ -868,13 +871,24 @@ void pki_evp::encryptKey(const char *password)
 
 	/* Convert private key to DER(PKCS8-aes) */
 	BioByteArray bba;
-	try {
-		i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
+	int ok = i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
 			ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
-		pki_openssl_error();
-	} catch (...) {
+	/* before the private key is replaced by the public one: a failure
+	 * left an empty encKey, and the key was lost (BTD-95) */
+	if (ok <= 0 || bba.size() == 0) {
+		QString reason = take_openssl_errors();
+		/* and not kept as plain text in memory: the key object keeps
+		 * its public key, the database its old encrypted one */
+		EVP_PKEY *pub = priv2pub(write);
 		EVP_PKEY_free(moved);
-		throw;
+		if (pub) {
+			EVP_PKEY_free(key);
+			key = pub;
+		}
+		ign_openssl_error();
+		throw serviceError("key_encryption_failed", QString("%1\n%2")
+			.arg(tr("The private key '%1' could not be encrypted.")
+				.arg(getIntName()), reason));
 	}
 	encKey = bba;
 
