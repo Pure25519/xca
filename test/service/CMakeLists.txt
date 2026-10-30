@@ -171,8 +171,10 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
-# What a CSR adds per extension, and the profile engine (BTD-54)
-foreach(t test_service_merge test_service_profiles)
+# What a CSR adds per extension, the profile engine (BTD-54), the name
+# checks and policies (BTD-167)
+foreach(t test_service_merge test_service_profiles test_service_names
+	test_service_profile_store test_service_template_migration)
   ServiceTest(${t})
   target_compile_definitions(${t} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
@@ -182,6 +184,9 @@ foreach(t test_service_merge test_service_profiles)
   endif()
 endforeach()
 
+target_compile_definitions(test_service_template_migration PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -189,6 +194,14 @@ add_test(NAME test_cli_exit_codes
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_exit_codes
 		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
 set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
+
+# xca --migrate-template turns a template into a profile (BTD-167)
+add_test(NAME test_cli_migrate_template
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSOURCE=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_migrate_template
+		-P ${SERVICE_TEST_DIR}/cli_migrate_template.cmake)
+set_tests_properties(test_cli_migrate_template PROPERTIES LABELS service)
 
 # Key generation and request creation (BTD-32); openssl req -verify
 ServiceTest(test_service_request)
@@ -235,8 +248,10 @@ if(OPENSSL_PROGRAM)
 endif()
 
 # ML-DSA keys under an openssl.cnf that changes the default provider
-# (BTD-16): the same test function with data/mldsa-<mode>.cnf
-foreach(mode output retain prefer)
+# (BTD-16): the same test functions with data/mldsa-<mode>.cnf; prefer_seed
+# also in the other spellings OpenSSL reads as false (BTD-194). Each run
+# checks first that OpenSSL loaded the cnf (checkOpensslConf)
+foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
   add_test(NAME test_service_importexport_cnf_${mode}
 	COMMAND test_service_importexport mlDsaUnderOpensslConf
 		mlDsaSeedlessPasswordChange)

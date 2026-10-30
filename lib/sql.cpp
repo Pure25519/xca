@@ -207,6 +207,7 @@ QString XSqlQuery::rewriteQuery(QString _q)
 		"tokens" , "token_mechanism" , "templates" , "certs" ,
 		"authority" , "revocations" , "requests" , "x509super" ,
 		"settings" , "takeys", "audit_log", "audit_keys",
+		"profiles", "policies", "assignments", "issued_profiles",
 
 		"view_public_keys" , "view_certs" , "view_requests" ,
 		"view_crls" , "view_templates" , "view_private",

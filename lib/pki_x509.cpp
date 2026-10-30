@@ -149,6 +149,7 @@ QSqlError pki_x509::deleteSqlData()
 		<< "UPDATE certs SET issuer=NULL WHERE issuer=?"
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
+		<< "DELETE FROM issued_profiles WHERE item=?"
 		;
 	foreach(QString task, tasks) {
 		SQL_PREPARE(q, task);
@@ -158,6 +159,13 @@ QSqlError pki_x509::deleteSqlData()
 		if (e.isValid())
 			return e;
 	}
+	/* the profiles and policies assigned to it as a CA (BTD-167) */
+	SQL_PREPARE(q, "DELETE FROM assignments WHERE owner_type='ca' AND owner=?");
+	q.bindValue(0, sqlItemId.toString());
+	q.exec();
+	e = q.lastError();
+	if (e.isValid())
+		return e;
 	/* Another certificate with this name and key takes over the
 	 * childs, as db_x509::remFromCont() shows it after the commit
 	 * (BTD-130: memory changes only then) */

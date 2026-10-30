@@ -101,9 +101,11 @@ namespace IssuanceChecks
 	void certificate(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 
-	/* Hook for the name rules over the whole chain: name constraints
-	 * of every CA up to the root, the name policy and the EKU subset
-	 * rule (BTD-167). Nothing is checked yet. */
+	/* The names over the whole chain (BTD-167): the syntax of every
+	 * dNSName (invalid_dns_name), the name constraints of every CA up to
+	 * the root (name_constraints_violation), the EKU as a subset of the
+	 * EKU of every CA that has one (eku_not_in_issuer), then the name
+	 * policies of the spec (lib/policy.h). */
 	void names(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 }

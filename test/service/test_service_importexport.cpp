@@ -10,6 +10,7 @@
  * file as it was, a null item is a service error (BTD-114).
  */
 
+#include <QBuffer>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -30,6 +31,7 @@
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_multi.h"
+#include "lib/pki_pkcs12.h"
 #include "lib/pki_export.h"
 #include "lib/pki_temp.h"
 #include "lib/db_temp.h"
@@ -41,6 +43,7 @@
 #include <openssl/core_names.h>
 #include <openssl/pem.h>
 #include <openssl/pkcs12.h>
+#include <openssl/provider.h>
 
 static const char exportVar[] = "BTD34_EXPORT_PASS";
 static const char exportPass[] = "Export-Secret-34";
@@ -115,6 +118,9 @@ class test_service_importexport : public ServiceTestCase
 	 * no key without an error (the PEM reader refused the key, with its
 	 * message), or "" if it stored a key; *created the new keys */
 	QString importError(const QString &name, QList<pki_base *> *created);
+	/* The ML-DSA settings of the default provider match the openssl.cnf
+	 * of the cnf run XCA_TEST_MLDSA_CNF (none without it) */
+	void checkOpensslConf();
 
   private slots:
 	void initTestCase();
@@ -156,6 +162,13 @@ class test_service_importexport : public ServiceTestCase
 	void fixedKeyFormatsRefused();
 	void mlDsaSeedlessPasswordChange();
 	void mlDsaUndecodableStoredKey();
+	void opensslBoolSetting_data();
+	void opensslBoolSetting();
+	void mlDsaStoredBy51_data();
+	void mlDsaStoredBy51();
+	void mlDsaOwnPass();
+	void keyReadErrorNamesSource();
+	void pkcs12CreateFailureFrees();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -1785,6 +1798,53 @@ void test_service_importexport::loadDump(const QString &name)
 	openDatabase();
 }
 
+void test_service_importexport::checkOpensslConf()
+{
+	/* mode of test/service/CMakeLists.txt: setting and value */
+	static const QMap<QString, QPair<QString, QString> > cnf {
+		{ "output", { "ml-dsa.output_formats", "priv-only" } },
+		{ "retain", { "ml-dsa.retain_seed", "no" } },
+		{ "prefer", { "ml-dsa.prefer_seed", "no" } },
+		{ "prefer-false", { "ml-dsa.prefer_seed", "false" } },
+		{ "prefer-0", { "ml-dsa.prefer_seed", "0" } },
+		{ "prefer-off", { "ml-dsa.prefer_seed", "off" } },
+	};
+	QString mode = qEnvironmentVariable("XCA_TEST_MLDSA_CNF");
+	QVERIFY2(mode.isEmpty() || cnf.contains(mode),
+		qPrintable("unknown cnf mode " + mode));
+
+	QMap<QString, QString> found;
+	OSSL_PROVIDER *prov = OSSL_PROVIDER_load(nullptr, "default");
+	QVERIFY(prov);
+	for (const char *name : { "ml-dsa.output_formats",
+				"ml-dsa.retain_seed", "ml-dsa.prefer_seed" }) {
+		const char *value = nullptr;
+		OSSL_PARAM params[] = {
+			OSSL_PARAM_construct_utf8_ptr(name, (char **)&value, 0),
+			OSSL_PARAM_END
+		};
+		if (OSSL_PROVIDER_get_conf_parameters(prov, params) &&
+		    OSSL_PARAM_modified(params) && value)
+			found[name] = value;
+	}
+	OSSL_PROVIDER_unload(prov);
+	ign_openssl_error();
+
+	QMap<QString, QString> expected;
+	if (!mode.isEmpty())
+		expected[cnf[mode].first] = cnf[mode].second;
+	auto text = [](const QMap<QString, QString> &m) {
+		QStringList l;
+		for (auto i = m.cbegin(); i != m.cend(); ++i)
+			l << i.key() + "=" + i.value();
+		return l.isEmpty() ? QString("nothing") : l.join(", ");
+	};
+	QVERIFY2(found == expected, qPrintable(QString("OPENSSL_CONF=%1: the "
+		"default provider has %2, the cnf of mode '%3' sets %4")
+		.arg(qEnvironmentVariable("OPENSSL_CONF"), text(found), mode,
+			text(expected))));
+}
+
 QString test_service_importexport::importError(const QString &name,
 				QList<pki_base *> *created)
 {
@@ -1857,15 +1917,21 @@ void test_service_importexport::mlDsaMismatchRejected()
  *   writes in its own context)
  * - retain_seed = no: the default provider still hands the seed over
  *   (EVP_PKEY_todata), stored keys keep it
- * - prefer_seed = no: the default provider reads a key without its seed;
- *   the import is refused with a message instead of losing the seed
- * A seed that does not belong to the expanded key never gets in. */
+ * - prefer_seed = no (also false, 0, off: prefer-false, prefer-0,
+ *   prefer-off, BTD-194): the default provider reads a key without its
+ *   seed; the import is refused with a message instead of losing the seed
+ * A seed that does not belong to the expanded key never gets in.
+ * Each run first checks that OpenSSL loaded its cnf (checkOpensslConf). */
 void test_service_importexport::mlDsaUnderOpensslConf()
 {
 #ifndef OPENSSL_PROGRAM
 	QSKIP("openssl program not found");
 #else
-	QString mode = qEnvironmentVariable("XCA_TEST_MLDSA_CNF");
+	checkOpensslConf();
+	if (QTest::currentTestFailed())
+		return;
+	bool refused = qEnvironmentVariable("XCA_TEST_MLDSA_CNF")
+			.startsWith("prefer");
 
 	/* Generated, stored, read back: seed and expanded key */
 	pki_key *key = newKey("ML-DSA-65", "generated");
@@ -1888,10 +1954,10 @@ void test_service_importexport::mlDsaUnderOpensslConf()
 	QVERIFY(opensslRun({ "genpkey", "-algorithm", "ML-DSA-44", "-out",
 		both, "-provparam", "ml-dsa.output_formats=seed-priv" }));
 	QList<pki_base *> created;
-	if (mode == "prefer")
-		warning->expectMessage("ml-dsa.prefer_seed to no");
+	if (refused)
+		warning->expectMessage("ml-dsa.retain_seed or ml-dsa.prefer_seed");
 	QString err = importError(both, &created);
-	if (mode == "prefer") {
+	if (refused) {
 		QCOMPARE(err, QString("no_key"));
 		QCOMPARE(created.size(), 0);
 	} else {
@@ -1919,8 +1985,8 @@ void test_service_importexport::mlDsaUnderOpensslConf()
 	created.clear();
 	/* refused on reading: by the default provider, or with prefer_seed
 	 * = no because the seed would be lost */
-	warning->expectMessage(mode == "prefer" ? "ml-dsa.prefer_seed to no" :
-				"cannot be read");
+	warning->expectMessage(refused ?
+		"ml-dsa.retain_seed or ml-dsa.prefer_seed" : "cannot be read");
 	err = importError(mismatch, &created);
 	QVERIFY2(!err.isEmpty(), "the mismatched key was imported");
 	QCOMPARE(created.size(), 0);
@@ -1966,6 +2032,9 @@ void test_service_importexport::fixedKeyFormatsRefused()
  * call this function too. */
 void test_service_importexport::mlDsaSeedlessPasswordChange()
 {
+	checkOpensslConf();
+	if (QTest::currentTestFailed())
+		return;
 	loadDump("schema8-bxc3-mldsa.sql");
 	QList<pki_key *> keys = Store.getAll<pki_key>();
 	QCOMPARE(keys.size(), 2);
@@ -2028,6 +2097,206 @@ void test_service_importexport::mlDsaUndecodableStoredKey()
 			"database cannot be read"), CCHAR(err.getString()));
 	}
 	ign_openssl_error();
+}
+
+void test_service_importexport::opensslBoolSetting_data()
+{
+	QTest::addColumn<QString>("value");
+	QTest::addColumn<bool>("on");
+
+	for (const char *off : { "no", "No", "NO", "0", "false", "False",
+				"off", "OFF" })
+		QTest::newRow(off) << off << false;
+	for (const char *on : { "yes", "Yes", "1", "true", "TRUE", "on",
+				"On" })
+		QTest::newRow(on) << on << true;
+	/* anything else keeps the default, like the provider */
+	QTest::newRow("unset") << QString() << true;
+	QTest::newRow("empty") << "" << true;
+	QTest::newRow("other") << "nein" << true;
+	QTest::newRow("00") << "00" << true;
+}
+
+/* An OpenSSL boolean setting as the provider reads it: 1, yes, true, on
+ * and 0, no, false, off (BTD-194); the default for anything else */
+void test_service_importexport::opensslBoolSetting()
+{
+	QFETCH(QString, value);
+	QFETCH(bool, on);
+	QByteArray v = value.toLatin1();
+	const char *setting = value.isNull() ? nullptr : v.constData();
+	QCOMPARE(openssl_bool(setting, true), on);
+	/* the default only for values OpenSSL does not know */
+	bool known = QStringList({ "no", "0", "false", "off", "yes", "1",
+		"true", "on" }).contains(value, Qt::CaseInsensitive);
+	QCOMPARE(openssl_bool(setting, false), known ? on : false);
+}
+
+void test_service_importexport::mlDsaStoredBy51_data()
+{
+	QTest::addColumn<QString>("name");
+	QTest::addColumn<bool>("seed");
+	QTest::addColumn<QString>("keyFormat");
+	QTest::addColumn<int>("tag");
+
+	QTest::newRow("seed-priv") << "seed-priv" << true << "" << 0x30;
+	QTest::newRow("seed-only") << "seed-only" << true << "" << 0x30;
+	QTest::newRow("priv-only") << "priv-only" << false << "expanded"
+				<< 0x04;
+}
+
+/* ML-DSA keys as xca#51 stored them, in the encoding of the default
+ * OpenSSL context (data/schema8-bxc3-mldsa51.sql): each decrypts with
+ * the seed it had, and its export is read by openssl pkey (BTD-194) */
+void test_service_importexport::mlDsaStoredBy51()
+{
+	QFETCH(QString, name);
+	QFETCH(bool, seed);
+	QFETCH(QString, keyFormat);
+	QFETCH(int, tag);
+
+	loadDump("schema8-bxc3-mldsa51.sql");
+	pki_key *key = nullptr;
+	for (pki_key *k : Store.getAll<pki_key>()) {
+		if (k->getIntName() == "fixture51-" + name)
+			key = k;
+	}
+	QVERIFY(key);
+	EVP_PKEY *pkey = key->decryptKey();
+	QVERIFY(pkey);
+	size_t len = 0;
+	bool hasSeed = EVP_PKEY_get_octet_string_param(pkey,
+		OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len;
+	ign_openssl_error();
+	QCOMPARE(hasSeed, seed);
+	QCOMPARE(EVP_PKEY_eq(pkey, key->getPubKey()), 1);
+	EVP_PKEY_free(pkey);
+#ifdef OPENSSL_PROGRAM
+	QString out = file(name + ".der");
+	exportFormat(Database.model<db_key>(), key, keyDerPrivate, out,
+			keyFormat);
+	QCOMPARE(mlDsaTag(out, keyDerPrivate), tag);
+	QCOMPARE(publicKey(out, { "-inform", "DER" }), publicPem(key));
+#endif
+}
+
+/* An individual password on an ML-DSA key (db_key::setOwnPass(), the
+ * path of the key context menu), set and removed: after each step, in a
+ * reopened database, the key decrypts with its seed (BTD-194) */
+void test_service_importexport::mlDsaOwnPass()
+{
+	QVERIFY(newKey("ML-DSA-65", "own password"));
+	/* the model of the database open now: check() reopens it */
+	auto setOwnPass = [this](enum pki_key::passType own) {
+		db_key *keys = Database.model<db_key>();
+		keys->setOwnPass(keys->index(Store.getAll<pki_key>()[0]), own);
+	};
+	auto check = [this](enum pki_key::passType own) {
+		reopenDatabase();
+		QList<pki_key *> keys = Store.getAll<pki_key>();
+		QCOMPARE(keys.size(), 1);
+		QCOMPARE(keys[0]->getOwnPass(), own);
+		if (own == pki_key::ptPrivate)
+			pwdialog->expect("BTD194-own-pass");
+		EVP_PKEY *pkey = keys[0]->decryptKey();
+		QVERIFY(pkey);
+		size_t len = 0;
+		QVERIFY(EVP_PKEY_get_octet_string_param(pkey,
+			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len));
+		QCOMPARE(len, size_t(32));
+		QCOMPARE(EVP_PKEY_eq(pkey, keys[0]->getPubKey()), 1);
+		EVP_PKEY_free(pkey);
+	};
+
+	/* the new password, asked once when the key is encrypted */
+	pwdialog->expect("BTD194-own-pass");
+	setOwnPass(pki_key::ptPrivate);
+	check(pki_key::ptPrivate);
+	if (QTest::currentTestFailed())
+		return;
+
+	/* removed: the old password once to decrypt */
+	pwdialog->expect("BTD194-own-pass");
+	setOwnPass(pki_key::ptCommon);
+	check(pki_key::ptCommon);
+}
+
+/* A key OpenSSL refuses (its seed belongs to another key): the error
+ * names the source, never as empty quotes, and gives the reason of
+ * OpenSSL, from a file and from unnamed data (BTD-194) */
+void test_service_importexport::keyReadErrorNamesSource()
+{
+	QString name = file("mismatch.pem");
+	QVERIFY(writeMismatchedMlDsa(name));
+
+	QFile f(name);
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QByteArray pem = f.readAll();
+
+	/* the import of data without a name, through pki_multi */
+	ImportSpec spec;
+	spec.data = pem;
+	warning->expectMessage("The key cannot be read: error:");
+	try {
+		Database.importItems(ctx, spec);
+	} catch (errorEx &) {
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+
+	/* the import of the file, through pki_multi */
+	QList<pki_base *> created;
+	warning->expectMessage(QString("The key in '%1' cannot be read: "
+				"error:").arg(name));
+	QVERIFY(!importError(name, &created).isEmpty());
+	QCOMPARE(created.size(), 0);
+
+	/* the PEM reader of pki_evp alone */
+	pki_evp key;
+	try {
+		key.fromPEMbyteArray(pem, name);
+		QFAIL("the key was read");
+	} catch (errorEx &err) {
+		QString msg = err.getString();
+		QVERIFY2(msg.startsWith(QString("The key in '%1' cannot be "
+			"read: error:").arg(name)), qPrintable(msg));
+	}
+	ign_openssl_error();
+}
+
+/* PKCS12_create() fails for a certificate and a key that do not belong
+ * together. writePKCS12() throws and frees the decrypted key, the
+ * certificate stack and the PKCS#12 structure on that path; the ASan
+ * build (ADDRESS_SANITIZER=ON) reports a leak otherwise (BTD-194) */
+void test_service_importexport::pkcs12CreateFailureFrees()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	/* imported, not issued: the ASan run sees only this path */
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA"), *leaf = cert("BTD34 Leaf");
+	QVERIFY(ca && leaf);
+	pki_key *caKey = ca->getRefKey();
+	QVERIFY(caKey);
+
+	/* the end-entity certificate with the key of the CA */
+	pki_pkcs12 p12(leaf->getIntName(), leaf, caKey);
+	p12.append_item(ca);
+	encAlgo enc = encAlgo::forExport();
+	Passwd pass;
+	pass = "BTD194-p12";
+	QBuffer buf;
+	QVERIFY(buf.open(QIODevice::WriteOnly));
+	try {
+		p12.writePKCS12(buf, enc, pass);
+		QFAIL("PKCS#12 written for a key of another certificate");
+	} catch (errorEx &err) {
+		QVERIFY2(err.getString().contains("cannot be created: error:"),
+			qPrintable(err.getString()));
+	}
+	QCOMPARE(buf.size(), qint64(0));
+	ign_openssl_error();
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

@@ -45,6 +45,7 @@ class test_main: public QObject
 	void exportFormat();
 	void revoke();
 	void renewalSigningFails();
+	void issueRefusedByPolicy();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();

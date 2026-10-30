@@ -29,6 +29,7 @@
 #include "asn1time.h"
 #include "digest.h"
 #include "pki_base.h"
+#include "policy.h"
 #include "x509name.h"
 #include "x509v3ext.h"
 
@@ -171,7 +172,7 @@ class CsrPolicy
 
 	/* A profile decides: the CSR's KU, EKU, basicConstraints, AKI, SKI
 	 * and Netscape extensions never reach the certificate, its SAN is
-	 * taken as it is (order kept), the URI rule below applies */
+	 * taken as it is (order kept), the URI and CN rules below apply */
 	bool profile{};
 	enum sha1 csrSha1{ sha1_accept_with_warning };
 	enum keyCertSign keyCertSignRequest{ keycertsign_reject };
@@ -184,6 +185,9 @@ class CsrPolicy
 	QString missingO{};
 	/* subject.forbidden_characters, e.g. "/=" for S7-1500 V02.09.08 */
 	QString forbiddenCharacters{};
+	/* san.dns_from_cn of a generic profile (XCA DNS:copycn): the CN is
+	 * appended as dNSName unless the SAN has it already */
+	bool dnsFromCn{};
 	/* san.* (mr-processor review of xca#44): the name types a CSR SAN
 	 * may carry besides the URI, with their counts (GEN_DNS, GEN_IPADD,
 	 * GEN_EMAIL; any other type is refused), the minimum of dNSName plus
@@ -233,6 +237,14 @@ class IssuanceSpec
 	QString comment{};
 	QString templateName{};     // template the input came from, for the audit
 	QString profile{};          // profile id the spec came from (BTD-54)
+	int profileVersion{};       // stored version (BTD-167); 0: a file
+	/* a validity above the profile's validity.max, capped to it */
+	QDateTime profileCappedFrom{};
+	/* the ids of the profile's device warnings, for the audit entry */
+	QStringList profileWarnings{};
+	/* The name policies of the CA and the profile (BTD-167), checked
+	 * by IssuanceChecks::names() before the serial and the signature */
+	QList<Policy> policies{};
 	enum pki_source source{ generated };
 
 	bool selfSigned() const
