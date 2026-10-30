@@ -98,11 +98,9 @@ class db_x509: public db_x509super
 		void setRevocations(const ServiceContext &ctx, pki_x509 *ca,
 				const x509revList &list);
 		/* The certificate of issuer with this serial (certstrap rule
-		 * 8): hex as XCA shows it, with or without "0x" and colons,
-		 * or decimal. Digits only fit both readings; the one that
-		 * names a certificate of issuer wins, both: ambiguous_serial.
-		 * Throws serviceError invalid_serial, unknown_serial,
-		 * ambiguous_serial. */
+		 * 8): hex as XCA shows it, with or without "0x" and colons
+		 * (digits only too), or decimal with the prefix "dec:".
+		 * Throws serviceError invalid_serial, unknown_serial. */
 		pki_x509 *certBySerial(pki_x509 *issuer,
 				const QString &serial) const;
 		int exportFlags(pki_base *pki) const;

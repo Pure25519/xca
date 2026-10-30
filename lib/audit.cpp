@@ -124,6 +124,12 @@ const QStringList &AuditParams::allowList()
 		/* a --plan run of the bxc-pki command line (BTD-41): the
 		 * command and the planned objects as "type:name,..." */
 		"command", "planned",
+		/* CRL lifecycle and trust-list export (BTD-42): the
+		 * CRL settings of a CA (ca.crl_settings), why a CRL was
+		 * issued (crl.generate), the budgets of a trust list
+		 * (trustlist.export) */
+		"crl_validity", "reissue_fraction", "size_budget",
+		"trigger", "trust_list_budget",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

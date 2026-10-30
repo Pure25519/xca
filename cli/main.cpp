@@ -6,6 +6,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QFile>
 #include <QFileInfo>
 
 #include <openssl/provider.h>
@@ -26,6 +27,41 @@
 #include "cli.h"
 
 using namespace bxcpki;
+
+#ifdef BXC_PKI_FAULTS
+#include <unistd.h>
+#include "lib/staged_file.h"
+
+/* Test build only (bxc-pki-faults, BTD-42): BXC_PKI_FAULT=<mode>:<step>:<text>
+ * makes the step (create, owner_check, write, sync, publish, recheck,
+ * swap) of every staged file or directory whose target contains <text>
+ * fail (mode fail), ends
+ * the process there with exit code 137 like a killed run (mode kill) or,
+ * at the step swap of a directory, adds the file late.txt to it (mode
+ * addfile) */
+static void installFaults()
+{
+	QStringList f = QString::fromLocal8Bit(qgetenv("BXC_PKI_FAULT"))
+				.split(':');
+	if (f.size() != 3)
+		return;
+	StagedFile::faultHook = [f](enum StagedFile::step s,
+				const QString &target) {
+		if (StagedFile::stepName(s) != f[1] || !target.contains(f[2]))
+			return false;
+		if (f[0] == "kill")
+			_exit(137);
+		if (f[0] == "addfile") {
+			/* a file that appears in the target directory */
+			QFile late(target + "/late.txt");
+			if (late.open(QIODevice::WriteOnly))
+				late.write("late\n");
+			return false;
+		}
+		return true;
+	};
+}
+#endif
 
 /* Messages to stderr as text (stdout carries only results); remembers
  * the last SQL error for the cause of a write error (rule 11) and the
@@ -233,6 +269,8 @@ static int run(const QStringList &argv)
 		}
 		ResultCollector result(cmd->name, ctx.plan);
 		ctx.result = &result;
+		OutputFiles files(ctx.opts.has("force"), ctx.plan);
+		ctx.files = &files;
 		runInTransaction(ctx, { cmd->handler });
 		if (ctx.text)
 			console_write(stdout, result.text().toUtf8());
@@ -270,6 +308,9 @@ int main(int argc, char *argv[])
 	xcaWarning::setGui(new CliWarning());
 	XcaProgress::setGui(new SilentProgress());
 	registerCommands(Registry::instance());
+#ifdef BXC_PKI_FAULTS
+	installFaults();
+#endif
 	Settings.clear();
 
 	int ret;

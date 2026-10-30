@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include <QDebug>
+#include <QDir>
 #include <QJsonDocument>
 #include <QRegularExpression>
 
@@ -17,7 +18,9 @@
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
+#include "lib/func.h"
 #include "lib/sql.h"
+#include "lib/staged_file.h"
 #include "cli.h"
 
 namespace bxcpki {
@@ -92,7 +95,46 @@ QJsonObject ResultCollector::document() const
 	o["command"] = command;
 	o["plan"] = plan;
 	o["objects"] = objects;
+	for (auto i = extra.constBegin(); i != extra.constEnd(); ++i)
+		o[i.key()] = i.value();
 	return o;
+}
+
+void ResultCollector::set(const QString &member, const QJsonValue &v)
+{
+	extra[member] = v;
+}
+
+void ResultCollector::append(const QString &member, const QJsonValue &v)
+{
+	QJsonArray a = extra[member].toArray();
+	a.append(v);
+	extra[member] = a;
+}
+
+void ResultCollector::warning(const QString &code, const QString &detail)
+{
+	QJsonObject w;
+	w["code"] = code;
+	w["detail"] = detail;
+	append("warnings", w);
+	textWarnings << QString("%1 [%2]").arg(detail, code);
+	console_write(stderr, QObject::tr("Warning: %1 [%2]\n")
+			.arg(detail, code).toUtf8());
+}
+
+QString ResultCollector::storedText() const
+{
+	QStringList l;
+	for (const QJsonValue &v : objects) {
+		QJsonObject o = v.toObject();
+		if (o["id"].isNull())
+			continue;
+		l << QString("%1 %2 '%3'").arg(o["type"].toString())
+			.arg(o["id"].toVariant().toString())
+			.arg(o["name"].toString());
+	}
+	return l.join(", ");
 }
 
 QString ResultCollector::text() const
@@ -118,8 +160,35 @@ QString ResultCollector::text() const
 				.arg(o["requested_not_after"].toString());
 		s += "\n";
 	}
-	if (objects.isEmpty())
+	if (objects.isEmpty() && extra["files"].toArray().isEmpty())
 		s += QObject::tr("nothing written") + "\n";
+	for (const QJsonValue &v : extra["files"].toArray()) {
+		QJsonObject f = v.toObject();
+		s += QString("%1 file %2 (%3, %4 bytes)\n").arg(plan ?
+			QObject::tr("would write") : QObject::tr("written"))
+			.arg(f["path"].toString()).arg(f["kind"].toString())
+			.arg(f["size"].toVariant().toString());
+	}
+	for (const QJsonValue &v : extra["crls"].toArray()) {
+		QJsonObject c = v.toObject();
+		if (c["crl_id"].isNull())
+			continue;
+		s += QObject::tr("CRL %1 of '%2': number %3, %4 bytes, "
+			"next update %5, re-issue at %6, remaining %7\n")
+			.arg(c["crl_id"].toVariant().toString())
+			.arg(c["ca_name"].toString())
+			.arg(c["crl_number"].toVariant().toString())
+			.arg(c["der_size"].toVariant().toString())
+			.arg(c["next_update"].toString())
+			.arg(c["reissue_at"].toString())
+			.arg(c["remaining_validity"].toString());
+	}
+	QJsonObject tl = extra["trust_list"].toObject();
+	if (!tl.isEmpty())
+		s += QObject::tr("trust list %1: %2 of %3 bytes\n")
+			.arg(tl["target_format"].toString())
+			.arg(tl["size"].toVariant().toString())
+			.arg(tl["budget"].toVariant().toString());
 	return s;
 }
 
@@ -166,6 +235,54 @@ static void runPlan(CommandContext &ctx,
 	}
 	capture.discard();
 	AuditLog::append(ctx.svc, "cli.plan", "object", QString(), params());
+	if (ctx.files && !ctx.files->isEmpty())
+		ctx.result->set("files", ctx.files->json());
+}
+
+/* After the commit (BTD-42, rule 11): the staged files become visible.
+ * A failure leaves the stored objects stored; the error names them, so
+ * the caller exports them again instead of issuing twice, and a failure
+ * entry of object.export follows the success entries an export wrote
+ * before the commit ("handed to the file layer"). */
+static void publishFiles(CommandContext &ctx)
+{
+	if (!ctx.files || ctx.files->isEmpty())
+		return;
+	ctx.step.clear();
+	try {
+		ctx.files->publish();
+	} catch (serviceError &err) {
+		QStringList missing;
+		for (const OutputFiles::entry &f : ctx.files->all()) {
+			if (ctx.files->written(f))
+				continue;
+			missing << f.path;
+			AuditParams p;
+			p.set("file", f.path);
+			if (!f.objectName.isEmpty())
+				p.set("name", f.objectName);
+			AuditLog::appendFailure(ctx.svc, "object.export",
+				f.objectType.isEmpty() ? QString("object") :
+					f.objectType,
+				f.objectId ? QString::number(f.objectId) :
+					QString(), p, err.code);
+		}
+		ctx.files->discard();
+		QString stored = ctx.result->storedText();
+		throw serviceError("publish_failed", QObject::tr(
+			"The database is committed, but not every file was "
+			"written (%1: %2). Stored: %3. Not written: %4. Export "
+			"the stored objects again with 'bxc-pki export' instead "
+			"of issuing them twice.").arg(err.code, err.getString(),
+			stored.isEmpty() ? QObject::tr("nothing") : stored,
+			missing.join(", ")));
+	}
+	if (!ctx.files->leftover().isEmpty())
+		ctx.result->warning("cleanup_incomplete", QObject::tr(
+			"Files appeared in the replaced directory during the "
+			"run; they are kept in '%1': check and remove it")
+			.arg(QDir::toNativeSeparators(ctx.files->leftover())));
+	ctx.result->set("files", ctx.files->json());
 }
 
 void runInTransaction(CommandContext &ctx,
@@ -187,6 +304,8 @@ void runInTransaction(CommandContext &ctx,
 		/* committed with the objects */
 		capture.discard();
 	} catch (...) {
+		if (ctx.files)
+			ctx.files->discard();
 		/* The transaction was rolled back when it went out of
 		 * scope; the failure entries of the service calls went
 		 * with it and are written again, outside of it */
@@ -198,9 +317,21 @@ void runInTransaction(CommandContext &ctx,
 		}
 		throw;
 	}
+	publishFiles(ctx);
 }
 
 /* --- References ------------------------------------------------------- */
+
+void auditRefusal(const CommandContext &ctx, const QString &action,
+		const pki_base *pki, const AuditParams &params,
+		const QString &code)
+{
+	if (ctx.plan)
+		return;
+	AuditLog::appendFailure(ctx.svc, action, pki ?
+		JsonReport::objectType(pki) : QString("object"), pki ?
+		pki->getSqlItemId().toString() : QString(), params, code);
+}
 
 static QString describe(const pki_base *pki)
 {

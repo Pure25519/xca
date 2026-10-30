@@ -3,14 +3,18 @@
 
 set(CLI_DIR ${PROJECT_SOURCE_DIR}/cli)
 
-add_executable(bxc-pki
+set(CLI_SOURCES
 	${CLI_DIR}/main.cpp
 	${CLI_DIR}/cli.h
 	${CLI_DIR}/options.cpp
 	${CLI_DIR}/framework.cpp
 	${CLI_DIR}/input.cpp
 	${CLI_DIR}/commands.cpp
+	${CLI_DIR}/lifecycle.cpp
+	${CLI_DIR}/export.cpp
+	${CLI_DIR}/output.cpp
 	${PROJECT_BINARY_DIR}/local.h)
+add_executable(bxc-pki ${CLI_SOURCES})
 target_link_libraries(bxc-pki xcacore ${ASAN_LIB})
 set_target_properties(bxc-pki PROPERTIES MACOSX_BUNDLE FALSE)
 install(TARGETS bxc-pki RUNTIME DESTINATION ${RUNTIME_DEST})
@@ -21,7 +25,13 @@ if(BUILD_TESTING)
 	${PROJECT_BINARY_DIR}/local.h)
   target_link_libraries(cli_fixture xcacore ${ASAN_LIB})
   set_target_properties(cli_fixture PROPERTIES MACOSX_BUNDLE FALSE)
-  add_dependencies(tests bxc-pki cli_fixture)
+  # The same command line with file fault injection (BXC_PKI_FAULT,
+  # cli/main.cpp); never installed
+  add_executable(bxc-pki-faults ${CLI_SOURCES})
+  target_compile_definitions(bxc-pki-faults PRIVATE BXC_PKI_FAULTS)
+  target_link_libraries(bxc-pki-faults xcacore ${ASAN_LIB})
+  set_target_properties(bxc-pki-faults PROPERTIES MACOSX_BUNDLE FALSE)
+  add_dependencies(tests bxc-pki cli_fixture bxc-pki-faults)
 
   find_program(CLI_OPENSSL openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
   find_program(CLI_SCRIPT script)
@@ -33,6 +43,7 @@ if(BUILD_TESTING)
     add_test(NAME test_${name}
 	COMMAND ${CMAKE_COMMAND}
 		-DBXC_PKI=$<TARGET_FILE:bxc-pki>
+		-DBXC_PKI_FAULTS=$<TARGET_FILE:bxc-pki-faults>
 		-DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
 		-DFIXTURE=$<TARGET_FILE:cli_fixture>
 		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
@@ -63,6 +74,13 @@ if(BUILD_TESTING)
   CliTest(cli_sign_checks)
   # rule 3, key usage by key type for templates (BTD-195)
   CliTest(cli_sign_checks_pending)
+  # part 2 (BTD-42): revoke, crl, export, --out, trust lists, files
+  CliTest(cli_revoke)
+  CliTest(cli_crl)
+  CliTest(cli_export)
+  CliTest(cli_out)
+  CliTest(cli_trustlist)
+  CliTest(cli_files)
   # the default templates of misc/ by key type (BTD-195)
   CliTest(cli_default_templates)
 endif()
