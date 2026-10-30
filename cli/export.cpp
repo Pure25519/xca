@@ -131,6 +131,19 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 		throw usageError("conflicting_options", QObject::tr(
 			"--key-unencrypted and --legacy-key-pem need --format "
 			"pkcs8"));
+
+	ExportSpec spec;
+	spec.items << c.item;
+	spec.format = xport;
+	spec.publishedFile = path;
+	spec.pkcs12Algorithm = o.value("pkcs12-algorithm");
+	spec.privateKeyFormat = o.value("mldsa-key-format");
+	db_base *model = Database.modelForPki(c.item);
+	/* --plan: the option checks of the export service, so that it
+	 * reports the error of the real run, where exportItems() runs and
+	 * audits them (BTD-211) */
+	if (ctx.plan)
+		model->checkExportSpec(spec);
 	/* encrypted output only with --export-pass: no prompt (unless
 	 * --interactive) and never an unencrypted file instead. A real run
 	 * leaves it to the export service, which audits the refusal */
@@ -146,18 +159,12 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 		return;
 	}
 
-	ExportSpec spec;
-	spec.items << c.item;
-	spec.format = xport;
-	spec.publishedFile = path;
-	spec.pkcs12Algorithm = o.value("pkcs12-algorithm");
-	spec.privateKeyFormat = o.value("mldsa-key-format");
 	QMap<QString, QString> mlDsa;
 	spec.mlDsaWritten = &mlDsa;
 	ctx.step = QObject::tr("file '%1'").arg(path);
 	QByteArray data;
 	try {
-		data = Database.modelForPki(c.item)->exportItems(ctx.svc, spec);
+		data = model->exportItems(ctx.svc, spec);
 	} catch (serviceError &err) {
 		if (err.code == "missing_password" ||
 		    err.code == "wrong_password")
@@ -184,7 +191,7 @@ class TrustListItem
 {
   public:
 	QString kind{};          // ca_certificate, crl, leaf_certificate
-	QString role{};          // trusted, issuer, own
+	QString role{};          // trusted (also leaves), issuer
 	pki_base *object{};      // nullptr: a CRL --plan would issue
 	QString name{};
 	qint64 id{};
@@ -243,20 +250,19 @@ static TrustListFile single(const QString &path, const QString &kind,
 
 /* OPC 10000-12 7.8.2: trusted/certs, trusted/crl for the CAs whose
  * certificates are trusted, issuer/certs, issuer/crl for the CAs that
- * only build chains; DER files. Leaves (--leaf) in own/certs. */
+ * only build chains; DER files. Leaves (--leaf) are trusted peers in
+ * trusted/certs; own/ holds the application's own certificate, which a
+ * trust list does not write (BTD-211). */
 static QList<TrustListFile> opcuaDir(const QList<TrustListItem> &items)
 {
 	QList<TrustListFile> l;
 	for (const TrustListItem &i : items) {
-		if (i.kind == "ca_certificate")
-			l << single(QString("%1/certs/%2").arg(i.role)
-				.arg(itemFile(i, "der")), "der", i, false);
-		else if (i.kind == "crl")
+		if (i.kind == "crl")
 			l << single(QString("%1/crl/%2").arg(i.role)
 				.arg(itemFile(i, "crl")), "crl", i, false);
 		else
-			l << single(QString("own/certs/%1").arg(
-				itemFile(i, "der")), "der", i, false);
+			l << single(QString("%1/certs/%2").arg(i.role)
+				.arg(itemFile(i, "der")), "der", i, false);
 	}
 	return l;
 }
@@ -526,8 +532,11 @@ static void exportTrustList(CommandContext &ctx)
 				.arg(policy.sizeBudget);
 		ctx.result->append("crls", r);
 	}
-	for (pki_x509 *leaf : leaves)
-		items << certItem(leaf, "leaf_certificate", "own");
+	/* leaves are trusted peers and part of the list's size (BTD-211) */
+	for (pki_x509 *leaf : leaves) {
+		items << certItem(leaf, "leaf_certificate", "trusted");
+		size += items.last().der.size();
+	}
 	if (size > listBudget)
 		over << QObject::tr("the trust list has %1 bytes, budget %2")
 			.arg(size).arg(listBudget);
@@ -756,8 +765,9 @@ void registerExportCommands(Registry &r)
 			"trustlist: one more CA only for chain building "
 			"(issuer/)"), true),
 		opt("leaf", OptionSpec::reference, "<certificate>",
-			QObject::tr("trustlist: a leaf certificate, after the "
-			"CAs and CRLs (own/)"), true),
+			QObject::tr("trustlist: a trusted leaf certificate, "
+			"after the CAs and CRLs (opcua-dir: trusted/certs)"),
+			true),
 		opt("no-reissue", OptionSpec::flag, QString(), QObject::tr(
 			"trustlist: issue no CRL; export the stored ones (an "
 			"expired one or one past its re-issue point only with "

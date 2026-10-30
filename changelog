@@ -1,6 +1,22 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-211: CRL and trust-list follow-ups to BTD-42. Trust-list leaves
+   (--leaf) are trusted peers: opcua-dir writes them to trusted/certs
+   (no longer own/certs, which belongs to the application's own
+   certificate), the manifest gives them the role trusted, and they count
+   into the reported size and the whole-list budget in every target
+   format. revoke refuses an --invalidity-date after the revocation date
+   (now) with invalid_invalidity_date; crl refuses a --this-update more
+   than 5 minutes ahead, before the latest CRL of the CA, or giving an
+   expired CRL with invalid_this_update (--allow-stale-crl issues the
+   last two for lab and test CRLs). The stored CRL settings of a CA are
+   read fail-closed: a broken or out-of-range crlpolicy_<id> row is
+   crl_settings_invalid naming the CA and the member, never the
+   defaults. The CRL validity is a whole number of days (invalid_validity
+   otherwise), so the GUI, which uses crlDays, and the command line issue
+   CRLs of the same validity. export --plan runs the option checks of the
+   export service and reports the error of the real run.
  * BTD-210: harder file output (lib/staged_file). A new file is
    published with renameat2(RENAME_NOREPLACE), link() only where the
    file system rejects the flag; both are tried before the database

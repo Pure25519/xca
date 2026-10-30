@@ -5,9 +5,12 @@
 
 #include "crl_policy.h"
 
+#include <climits>
 #include <cmath>
 
 #include <QJsonDocument>
+#include <QJsonValue>
+#include <QStringList>
 #include <QRegularExpression>
 
 #include "audit.h"
@@ -20,6 +23,7 @@ const char CrlPolicy::defaultValidity[] = "P7D";
 const double CrlPolicy::defaultReissueFraction = 1.0 / 3.0;
 const qint64 CrlPolicy::defaultSizeBudget = 4096;
 const qint64 CrlPolicy::defaultTrustListBudget = 65535;
+const qint64 CrlPolicy::minSizeBudget = 512;
 const char CrlPolicy::actionSettings[] = "ca.crl_settings";
 
 static QString settingsKey(const pki_x509 *ca)
@@ -33,8 +37,22 @@ CrlPolicy::CrlPolicy()
 {
 }
 
+/* A stored row that is not a valid setting: an error naming the CA and
+ * the member, never the defaults (BTD-211) */
+static serviceError settingsInvalid(const pki_x509 *ca,
+			const QString &member, const QString &why)
+{
+	return serviceError("crl_settings_invalid", QObject::tr(
+		"The stored CRL settings of the CA '%1' (settings row %2) are "
+		"invalid: %3 %4; give all of --crl-validity, "
+		"--crl-reissue-fraction and --crl-size-budget to replace them")
+		.arg(ca->getIntName(), settingsKey(ca), member, why));
+}
+
 CrlPolicy CrlPolicy::of(const pki_x509 *ca)
 {
+	static const QStringList members { "validity", "reissue_fraction",
+		"size_budget" };
 	CrlPolicy p;
 	if (!ca)
 		return p;
@@ -50,17 +68,53 @@ CrlPolicy CrlPolicy::of(const pki_x509 *ca)
 	q.exec();
 	if (!q.first())
 		return p;
-	QJsonObject o = QJsonDocument::fromJson(
-			q.value(0).toString().toUtf8()).object();
-	IsoDuration v = IsoDuration::parse(o["validity"].toString());
-	if (v.isValid() && !v.isZero())
-		p.validity = v;
-	double f = o["reissue_fraction"].toDouble();
-	if (f > 0 && f < 0.5)
-		p.reissueFraction = f;
-	qint64 b = o["size_budget"].toVariant().toLongLong();
-	if (b > 0)
-		p.sizeBudget = b;
+	QJsonParseError pe;
+	QJsonDocument doc = QJsonDocument::fromJson(
+			q.value(0).toString().toUtf8(), &pe);
+	if (pe.error != QJsonParseError::NoError)
+		throw settingsInvalid(ca, "value", QObject::tr(
+			"is no JSON (%1 at offset %2)").arg(pe.errorString())
+			.arg(pe.offset));
+	if (!doc.isObject())
+		throw settingsInvalid(ca, "value",
+			QObject::tr("is no JSON object"));
+	QJsonObject o = doc.object();
+	for (const QString &k : o.keys())
+		if (!members.contains(k))
+			throw settingsInvalid(ca, k,
+				QObject::tr("is no member of the setting"));
+	for (const QString &k : members)
+		if (!o.contains(k))
+			throw settingsInvalid(ca, k, QObject::tr("is missing"));
+
+	/* the checks of the command line options (cli/lifecycle.cpp) */
+	QString why;
+	IsoDuration v;
+	if (!o["validity"].isString())
+		why = QObject::tr("is no string");
+	else
+		v = IsoDuration::parse(o["validity"].toString(), &why);
+	if (why.isEmpty())
+		why = validityError(v);
+	if (!why.isEmpty())
+		throw settingsInvalid(ca, "validity", why);
+	p.validity = v;
+
+	QJsonValue f = o["reissue_fraction"];
+	if (!f.isDouble() || !(f.toDouble() > 0 && f.toDouble() < 0.5))
+		throw settingsInvalid(ca, "reissue_fraction", QObject::tr(
+			"must be a number greater than 0 and below 1/2"));
+	p.reissueFraction = f.toDouble();
+
+	/* an integer that a double holds exactly */
+	QJsonValue b = o["size_budget"];
+	double bd = b.toDouble();
+	if (!b.isDouble() || bd != std::floor(bd) || bd < minSizeBudget ||
+	    bd > 9007199254740992.0)
+		throw settingsInvalid(ca, "size_budget", QObject::tr(
+			"must be a whole number of bytes, at least %1")
+			.arg(minSizeBudget));
+	p.sizeBudget = (qint64)bd;
 	return p;
 }
 
@@ -85,10 +139,10 @@ void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
 	params.set("reissue_fraction", fractionText(reissueFraction));
 	params.set("size_budget", sizeBudget);
 
-	/* crlDays: whole days, rounded up, at least one */
+	/* crlDays: the validity is whole days (checkValidity()) */
 	QDateTime t0(QDate(2000, 1, 1), QTime(0, 0), Qt::UTC);
 	qint64 secs = t0.secsTo(validity.addTo(t0));
-	int days = (int)qMax<qint64>(1, (secs + 86399) / 86400);
+	int days = (int)qMax<qint64>(1, secs / 86400);
 
 	auditedTransaction(ctx, actionSettings, "certificate", id, params,
 				[&]() {
@@ -170,13 +224,31 @@ double CrlPolicy::parseFraction(const QString &text, const QString &option)
 	return f;
 }
 
+QString CrlPolicy::validityError(const IsoDuration &d)
+{
+	if (!d.isValid())
+		return QObject::tr("is no ISO 8601 duration");
+	/* years and months have no fixed number of days */
+	qint64 secs = (d.weeks * 7 + d.days) * 86400 + d.hours * 3600 +
+		d.minutes * 60 + d.seconds;
+	if (d.years || d.months || secs < 86400 || secs % 86400)
+		return QObject::tr("must be a whole number of days, at least "
+			"P1D, e.g. P7D or P1W: the GUI issues the CRLs of the "
+			"CA for its CRL days (no years, months or parts of a "
+			"day)");
+	if (secs / 86400 > INT_MAX)
+		return QObject::tr("is too long");
+	return QString();
+}
+
 IsoDuration CrlPolicy::checkValidity(const IsoDuration &d,
 			const QString &option)
 {
-	QDateTime t0(QDate(2000, 1, 1), QTime(0, 0), Qt::UTC);
-	if (!d.isValid() || t0.secsTo(d.addTo(t0)) < 60)
-		throw serviceError("invalid_value", QObject::tr(
-			"--%1 must be at least one minute").arg(option));
+	QString why = validityError(d);
+	if (!why.isEmpty())
+		throw serviceError("invalid_validity",
+			QString("--%1 '%2' %3").arg(option)
+			.arg(d.isValid() ? d.toString() : QString(), why));
 	return d;
 }
 

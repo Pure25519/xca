@@ -212,6 +212,34 @@ xport("ml-dsa bad value" 2 mld --type key --format pkcs8 ${EP}
     --mldsa-key-format compact)
 expect_error("ml-dsa bad value" invalid_value)
 
+# --- --plan reports the error of the real run (BTD-211) -------------------------
+# real run and --plan: <label>|<exit code>|<error code>|<args, comma
+# separated>
+foreach(case
+    "ml-dsa option on RSA|1|format_not_applicable|dev,--type,key,--format,pkcs8,--mldsa-key-format,seed,--export-pass,env:EXP_PW"
+    "ml-dsa option on a public key|1|format_not_applicable|mld,--type,key,--format,pem,--mldsa-key-format,seed"
+    "pkcs12 algorithm on pem|2|conflicting_options|dev,--type,certificate,--format,pem,--pkcs12-algorithm,PBE-SHA1-3DES"
+    "unknown pkcs12 algorithm|1|invalid_pkcs12_algorithm|dev,--type,certificate,--format,p12,--pkcs12-algorithm,NO-SUCH-ALGO,--export-pass,env:EXP_PW")
+  string(REPLACE "|" ";" p "${case}")
+  list(GET p 0 label)
+  list(GET p 1 code)
+  list(GET p 2 ecode)
+  list(GET p 3 args)
+  string(REPLACE "," ";" args "${args}")
+  foreach(mode real plan)
+    set(extra --force)
+    if(mode STREQUAL "plan")
+      list(APPEND extra --plan)
+    endif()
+    bxc("${label} (${mode})" any export --db "${DB}" ${PW} --out x ${args}
+        ${extra})
+    if(NOT rc EQUAL code)
+      fail("${label} (${mode}): exit code ${rc}, expected ${code} (${ecode}) as the real run")
+    endif()
+    expect_error("${label} (${mode})" ${ecode})
+  endforeach()
+endforeach()
+
 # --- --plan writes nothing -------------------------------------------------------
 file(GLOB before "${WORK}/x/*")
 xport("plan" 0 "Exp Root" --type certificate --format der --layout certstrap

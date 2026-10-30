@@ -256,6 +256,20 @@ function(fixture label)
   if(NOT r EQUAL 0)
     fail("${label}: cli_fixture failed (${r}): ${o}${e}")
   endif()
+  set(out "${o}" PARENT_SCOPE)
+endfunction()
+
+# sql(<label> <statement>): one statement through sql_exec on ${DB}; the
+# rows in ${out}
+function(sql label statement)
+  execute_process(COMMAND "${SQL_EXEC}" "${DB}" -c "${statement}"
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+  file(APPEND "${TRANSCRIPT}"
+    "### ${label}\n$ sql_exec ${statement}\nexit ${r}\n${o}${e}\n")
+  if(NOT r EQUAL 0)
+    fail("${label}: sql_exec failed (${r}): ${e}")
+  endif()
+  set(out "${o}" PARENT_SCOPE)
 endfunction()
 
 # jget(<var> <doc> <path>...): string(JSON GET), NOTFOUND if absent
@@ -352,12 +366,23 @@ function(openssl_fails var)
   set(${var} "${o}${e}" PARENT_SCOPE)
 endfunction()
 
+# time_ahead(<var> <seconds>): RFC 3339 UTC time that many seconds after now
+function(time_ahead var secs)
+  time_ago(v ${secs} +)
+  set(${var} "${v}" PARENT_SCOPE)
+endfunction()
+
 # time_ago(<var> <seconds>): RFC 3339 UTC time that many seconds before now
+# (after now with a third argument +)
 function(time_ago var secs)
+  set(op -)
+  if(ARGV2 STREQUAL "+")
+    set(op +)
+  endif()
   set(old "$ENV{SOURCE_DATE_EPOCH}")
   unset(ENV{SOURCE_DATE_EPOCH})
   string(TIMESTAMP now "%s" UTC)
-  math(EXPR t "${now} - ${secs}")
+  math(EXPR t "${now} ${op} ${secs}")
   set(ENV{SOURCE_DATE_EPOCH} "${t}")
   string(TIMESTAMP v "%Y-%m-%dT%H:%M:%SZ" UTC)
   if(old STREQUAL "")
