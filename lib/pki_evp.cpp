@@ -999,17 +999,19 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport)
 
 	if (xport->match_all(F_PEM | F_PRIVATE)) {
 		pkey = decryptKeyForExport();
-		PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
+		int ok = PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
 						nullptr, 0, nullptr, nullptr);
 		EVP_PKEY_free(pkey);
+		export_check(ok, "PEM_write_bio_PrivateKey_traditional", what());
 	} else if (xport->match_all(F_PKCS8 | F_PRIVATE)) {
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
 		pkey = decryptKeyForExport();
-        PEM_write_bio_PrivateKey(b, pkey, algo,
+		int ok = PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
 		EVP_PKEY_free(pkey);
+		export_check(ok, "PEM_write_bio_PrivateKey", what());
 	} else
 		return pki_key::pem(b, xport);
 
@@ -1047,46 +1049,40 @@ void pki_evp::writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
 		const Passwd &pass, bool pem) const
 {
 	EVP_PKEY *pkey = decryptKeyForExport();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	/* With a cipher, kstr is never NULL: OpenSSL must not fall back
 	 * to its own terminal prompt */
 	char *kstr = enc ? (char *)pass.constData() : NULL;
 	int klen = enc ? pass.size() : 0;
 	BioByteArray b;
+	int ok;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, kstr, klen,
+		ok = PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, kstr, klen,
 						NULL, NULL);
 	} else {
-		i2d_PKCS8PrivateKey_bio(b, pkey, enc, kstr, klen, NULL, NULL);
+		ok = i2d_PKCS8PrivateKey_bio(b, pkey, enc, kstr, klen,
+						NULL, NULL);
 	}
 	EVP_PKEY_free(pkey);
+	export_check(ok, pem ? "PEM_write_bio_PKCS8PrivateKey" :
+				"i2d_PKCS8PrivateKey_bio", what());
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_evp::writePVKprivate(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
-	/* In case of success! the error
-	 *   PEMerr(PEM_F_I2B_PVK_BIO, PEM_R_BIO_WRITE_FAILURE)
-	 * is set. Workaround this behavior */
+	export_check(pkey != nullptr, "decryptKey", what());
+	/* i2b_PVK_bio() returns the length written, -1 on failure; in
+	 * case of success it may leave PEM_R_BIO_WRITE_FAILURE queued */
 	BioByteArray b;
-	if (i2b_PVK_bio(b, pkey, 0, nullptr, nullptr) == -1) {
-		pki_openssl_error();
-		PEMerr(PEM_F_I2B_PVK_BIO, PEM_R_BIO_WRITE_FAILURE);
-		pki_openssl_error();
-	}
-	ign_openssl_error();
+	int len = i2b_PVK_bio(b, pkey, 0, nullptr, nullptr);
 	EVP_PKEY_free(pkey);
-	file.write(b);
+	export_check(len, "i2b_PVK_bio", what());
+	ign_openssl_error();
+	export_write(file, b, what());
 }
 
 void pki_evp::writeDefault(const QString &dirname) const
@@ -1110,22 +1106,22 @@ void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,
 		return;
 	}
 	EVP_PKEY *pkey = key ? decryptKeyForExport() : NULL;
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	BioByteArray b;
+	int ok;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PrivateKey_traditional(b, pkey, enc,
+		ok = PEM_write_bio_PrivateKey_traditional(b, pkey, enc,
 			enc ? pass.constUchar() : NULL, enc ? pass.size() : 0,
 			NULL, NULL);
 	} else {
-		i2d_PrivateKey_bio(b, pkey);
+		ok = i2d_PrivateKey_bio(b, pkey);
 	}
 	EVP_PKEY_free(pkey);
+	export_check(ok, pem ? "PEM_write_bio_PrivateKey_traditional" :
+				"i2d_PrivateKey_bio", what());
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
@@ -1139,7 +1135,8 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 	QByteArray data, priv, pubfull;
 
 	pubfull = SSH2publicQByteArray(true);
-	RAND_bytes((unsigned char*)buf_nonce, sizeof buf_nonce);
+	export_check(RAND_bytes((unsigned char*)buf_nonce, sizeof buf_nonce),
+			"RAND_bytes", what());
 	priv.append(buf_nonce, sizeof buf_nonce);
 	priv.append(buf_nonce, sizeof buf_nonce);
 	priv += pubfull;
@@ -1156,8 +1153,9 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 	ssh_key_QBA2data(pubfull, &data);
 	ssh_key_QBA2data(priv, &data);
 
-	PEM_write_bio(b, PEM_STRING_OPENSSH_KEY, (char*)"",
-		(unsigned char*)(data.data()), data.size());
+	export_check(PEM_write_bio(b, PEM_STRING_OPENSSH_KEY, (char*)"",
+		(unsigned char*)(data.data()), data.size()), "PEM_write_bio",
+		what());
 	pki_openssl_error();
 #else
 	(void)b;
@@ -1167,15 +1165,19 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 void pki_evp::writeSSH2private(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKey", what());
 #ifdef EVP_PKEY_ED25519
 	if (getKeyType() == EVP_PKEY_ED25519) {
 		BioByteArray b;
-		write_SSH2_ed25519_private(b, pkey);
-		file.write(b);
+		try {
+			write_SSH2_ed25519_private(b, pkey);
+		} catch (...) {
+			EVP_PKEY_free(pkey);
+			throw;
+		}
+		EVP_PKEY_free(pkey);
+		export_write(file, b, what());
+		return;
 	} else
 #endif
 		writeKey(file, nullptr, Passwd(), true);

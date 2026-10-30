@@ -294,6 +294,10 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
 endforeach()
 
 # Secure export defaults (BTD-52); every export read back with openssl
+# Export integrity (BTD-199): a failing encoder is an error, never an
+# empty export; i2d_bytearray() never returns empty DER
+ServiceTest(test_service_export_integrity)
+
 ServiceTest(test_service_export_defaults)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_export_defaults PRIVATE

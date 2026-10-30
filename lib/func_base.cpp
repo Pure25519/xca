@@ -145,16 +145,55 @@ QString OBJ_obj2QString(const ASN1_OBJECT *a, int no_name)
 	return QString::fromLatin1(buf, len);
 }
 
+namespace encodeFault
+{
+	bool bioWrites = false;
+	bool i2d = false;
+}
+
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char **),
 		const void *data)
 {
 	QByteArray ba;
+	auto encode = [&](unsigned char **p) {
+		return encodeFault::i2d ? -1 : i2d(data, p);
+	};
 
-	ba.resize(i2d(data, NULL));
+	/* -1 (or 0) is an encoding error: never empty DER, whose hash
+	 * would stand as a fingerprint (BTD-199) */
+	int len = encode(NULL);
+	if (len <= 0)
+		throw serviceError("encoding_failed",
+			QObject::tr("The DER encoding failed: %1")
+			.arg(take_openssl_errors()));
+	ba.resize(len);
 	unsigned char *p = (unsigned char*)ba.data();
-	i2d(data, &p);
+	int written = encode(&p);
+	if (written != len)
+		throw serviceError("encoding_failed",
+			QObject::tr("The DER encoding wrote %1 of %2 bytes: %3")
+			.arg(written).arg(len).arg(take_openssl_errors()));
 	openssl_error();
 	return ba;
+}
+
+void export_check(int ok, const char *encoder, const QString &what)
+{
+	if (ok > 0)
+		return;
+	throw serviceError("export_failed",
+		QObject::tr("The export of %1 failed: %2: %3")
+		.arg(what, encoder, take_openssl_errors()));
+}
+
+void export_write(QIODevice &file, const QByteArray &data,
+		const QString &what)
+{
+	qint64 written = data.isEmpty() ? 0 : file.write(data);
+	if (data.isEmpty() || written != data.size())
+		throw serviceError("export_failed",
+			QObject::tr("The export of %1 wrote %2 of %3 bytes")
+			.arg(what).arg(written).arg(data.size()));
 }
 
 void *d2i_bytearray(void *(*d2i)(void *, unsigned char **, long),

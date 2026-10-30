@@ -58,7 +58,7 @@ whose insert was rolled back (`!isStored()`).
 | BTD-32 | `db_key::newKey(ctx, keyjob, name)` | `keyjob` (`lib/pki_key.h`, already a value) | `key.generate` | `invalid_key_type`, `invalid_key_size`, `invalid_curve`, `duplicate_key`, `database_error` |
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
-| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `write_failed`, `database_error` |
+| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
 | BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
 | BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
 | BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
@@ -163,6 +163,16 @@ after a failure checks the OpenSSL result itself:
   revocations it was built from before signing; a failure or a difference is `crl_build_failed`
   naming the step, nothing is stored and the CRL number is not consumed (BTD-198). Tests inject
   a failed step with `crlBuild::fail()` (`lib/x509rev.h`).
+- Every export writer checks its encoder with `export_check()` and its output with
+  `export_write()` (`lib/func_base.h`): a failed `PEM_write_bio_*`, `i2d_*_bio`,
+  `PKCS12_set_mac`, `PKCS7_add_certificate` or `RAND_bytes`, and empty or short output of a
+  writer, is `export_failed` naming the encoder and the object. It comes before the success
+  entries of `exportItems()`, so the export writes its `failure` entry and no file. Formats that
+  may be empty by design (all unusable certificates, the index file, a vCalendar without entries)
+  are no writer failure and still succeed with an empty file. `i2d_bytearray()` throws
+  `encoding_failed` instead of returning empty or short DER, so no fingerprint of empty bytes
+  and no empty DER row is stored (BTD-199). Tests make the encoders fail with
+  `encodeFault::bioWrites` (a read-only BIO from `BioByteArray::bio()`) and `encodeFault::i2d`.
 - A value that a subject entry or request attribute cannot hold is `invalid_string`
   (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
 - `take_openssl_errors()` builds the message text: the reasons with their data strings, one per

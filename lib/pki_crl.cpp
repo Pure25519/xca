@@ -300,17 +300,21 @@ void pki_crl::writeCrl(QIODevice &file, bool pem) const
 	BioByteArray b;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_X509_CRL(b, crl);
+		export_check(PEM_write_bio_X509_CRL(b, crl),
+				"PEM_write_bio_X509_CRL", what());
 	} else {
-		i2d_X509_CRL_bio(b, crl);
+		export_check(i2d_X509_CRL_bio(b, crl), "i2d_X509_CRL_bio",
+				what());
 	}
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 bool pki_crl::pem(BioByteArray &b)
 {
-	return PEM_write_bio_X509_CRL(b, crl);
+	export_check(PEM_write_bio_X509_CRL(b, crl), "PEM_write_bio_X509_CRL",
+			what());
+	return true;
 }
 
 a1time pki_crl::getLastUpdate() const
