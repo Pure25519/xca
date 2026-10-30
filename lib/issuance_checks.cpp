@@ -783,6 +783,11 @@ void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 	}
 	GENERAL_NAMES_free(san);
 
+	/* the RFC 5280 upper bounds of the subject on every path, also for
+	 * a subject copied byte-faithfully from a device CSR (BTD-202):
+	 * refused, a strict peer would reject the certificate anyway */
+	x509name(X509_get_subject_name(x)).checkUpperBounds();
+
 	/* name constraints of every CA up to the root (RFC 5280 6.1.3 (b),
 	 * PLAN.md 8.4 rule 12; OpenSSL's own check). OpenSSL reads the names
 	 * from the extension cache, which the certificate under construction
