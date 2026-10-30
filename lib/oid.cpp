@@ -20,6 +20,7 @@
 int first_additional_oid = 0;
 
 NIDlist extkeyuse_nid;
+bool extkeyuse_builtin = false;
 NIDlist distname_nid;
 
 QMap<QString,const char*> oid_name_clash;
@@ -209,6 +210,14 @@ void initOIDs()
 		readOIDs(d + "/oids.txt");
 
 	extkeyuse_nid = read_nidlist("eku.txt");
+	/* without eku.txt the dialog had no EKU rows and dropped the EKUs
+	 * of every template (BTD-215): the common ones built in; the GUI
+	 * says so (the command lines keep stderr for errors) */
+	extkeyuse_builtin = extkeyuse_nid.isEmpty();
+	if (extkeyuse_builtin)
+		extkeyuse_nid << NID_server_auth << NID_client_auth
+			<< NID_code_sign << NID_email_protect
+			<< NID_time_stamp << NID_OCSP_sign;
 	distname_nid = read_nidlist("dn.txt");
 
 	openssl_error();

@@ -20,6 +20,7 @@
 #include "lib/pki_evp.h"
 
 #include "main.h"
+#include "lib/oid.h"
 #include "TestEnv.h"
 
 static TestEnv *testEnv;
@@ -42,6 +43,8 @@ void test_main::initTestCase()
 
 	Settings.clear();
 	initOIDs();
+	/* testxca has no eku.txt (BTD-215) */
+	ekuListAtStart = extkeyuse_nid;
 
 	AutomationId::install();
 	mainwin = new MainWindow();
@@ -66,6 +69,7 @@ void test_main::cleanupTestCase()
 }
 
 int dialogDriverRun;
+NIDlist ekuListAtStart;
 
 void test_main::cleanup()
 {
