@@ -365,6 +365,9 @@ class AuditLog
 	static QByteArray checkpointPayload(const QVariantMap &params);
 
 	static QList<AuditEntry> entries();
+	/* The parameters of the newest entry of action, empty without one
+	 * (BTD-221) */
+	static QVariantMap lastParams(const QString &action);
 	/* Checks the chain from the first entry and the signed checkpoints
 	 * of its intact part, then replays the revocation and CRL entries of
 	 * the intact part and compares the result with the revocations
