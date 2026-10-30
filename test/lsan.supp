@@ -1,0 +1,10 @@
+# LeakSanitizer suppressions of the sanitizer run (bxc-pki
+# `python deploy/build/linux/dev.py asan`, BTD-205).
+#
+# Third-party leaks only: Qt, OpenSSL provider and library init,
+# fontconfig and the like. One entry per line, "leak:<function or
+# library>", with a comment above it that names the reason. A leak in
+# fork code is never suppressed; it is fixed (BTD-200 and later tickets).
+#
+# The first run (2026-10-30, service and CLI tests on bxc-main c6ed3d13)
+# found no third-party leak, so there is no entry yet.
