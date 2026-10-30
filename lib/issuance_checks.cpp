@@ -598,10 +598,92 @@ static void opcChain(const IssuanceSpec &spec, const pki_x509 *cert,
 				OBJ_nid2sn(policy.second)));
 }
 
+QStringList IssuanceChecks::keyUsageAllowed(const EVP_PKEY *key,
+			QString *keyType)
+{
+	static const QStringList all { "digitalSignature", "nonRepudiation",
+		"keyEncipherment", "dataEncipherment", "keyAgreement",
+		"keyCertSign", "cRLSign", "encipherOnly", "decipherOnly" };
+	static const QStringList signing { "digitalSignature",
+		"nonRepudiation", "keyCertSign", "cRLSign" };
+	struct Family {
+		const char *name;
+		QStringList allowed;
+	};
+	static const QList<std::pair<QStringList, Family>> families {
+		{ { "RSA", "RSA-PSS" }, { "RSA", { "digitalSignature",
+			"nonRepudiation", "keyEncipherment", "dataEncipherment",
+			"keyCertSign", "cRLSign" } } },
+		{ { "EC", "SM2" }, { "EC", { "digitalSignature",
+			"nonRepudiation", "keyAgreement", "keyCertSign", "cRLSign",
+			"encipherOnly", "decipherOnly" } } },
+		{ { "ED25519" }, { "Ed25519", signing } },
+		{ { "ED448" }, { "Ed448", signing } },
+		{ { "DSA" }, { "DSA", signing } },
+		{ { "X25519", "X448" }, { "X25519/X448", { "keyAgreement",
+			"encipherOnly", "decipherOnly" } } },
+	};
+	for (const auto &f : families) {
+		for (const QString &n : f.first) {
+			if (key && EVP_PKEY_is_a(key, CCHAR(n))) {
+				if (keyType)
+					*keyType = f.second.name;
+				return f.second.allowed;
+			}
+		}
+	}
+	/* the post-quantum signature keys by their name prefix */
+	const char *name = key ? EVP_PKEY_get0_type_name(key) : nullptr;
+	QString type = name ? QString(name).toUpper() : QString();
+	if (type.startsWith("ML-DSA") || type.startsWith("SLH-DSA")) {
+		if (keyType)
+			*keyType = name;
+		return signing;
+	}
+	if (keyType)
+		*keyType = name ? QString(name) : QString("unknown");
+	return all;
+}
+
+void IssuanceChecks::keyUsageFits(const EVP_PKEY *key,
+			const QStringList &bits, const QString &source)
+{
+	QString type;
+	QStringList allowed = keyUsageAllowed(key, &type);
+	for (const QString &bit : bits) {
+		if (!allowed.contains(bit))
+			throw serviceError("key_usage_not_for_key_type",
+				tr("A %1 key cannot use the key usage %2 (%3); remove %2 there or choose another key type")
+				.arg(type, bit, source));
+	}
+}
+
 void IssuanceChecks::certificate(const IssuanceSpec &spec,
 			const pki_x509 *cert, const QList<const pki_x509 *> &chain)
 {
 	X509 *x = cert->getCert();
+
+	/* key usage by the type of the subject key, whatever path built it
+	 * (BTD-195) */
+	ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)X509_get_ext_d2i(x,
+			NID_key_usage, nullptr, nullptr);
+	if (ku) {
+		static const char *names[] = { "digitalSignature",
+			"nonRepudiation", "keyEncipherment", "dataEncipherment",
+			"keyAgreement", "keyCertSign", "cRLSign", "encipherOnly",
+			"decipherOnly" };
+		QStringList bits;
+		for (int b = 0; b < 9; b++) {
+			if (ASN1_BIT_STRING_get_bit(ku, b))
+				bits << names[b];
+		}
+		ASN1_BIT_STRING_free(ku);
+		keyUsageFits(X509_get0_pubkey(x), bits,
+			spec.profile.isEmpty() ? (spec.templateName.isEmpty() ?
+				tr("key usage of the certificate") :
+				tr("template '%1'").arg(spec.templateName)) :
+			tr("profile '%1'").arg(spec.profile));
+	}
 	QSet<QString> seen;
 	for (int i = 0; i < X509_get_ext_count(x); i++) {
 		const ASN1_OBJECT *obj =

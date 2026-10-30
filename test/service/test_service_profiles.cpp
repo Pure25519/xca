@@ -77,6 +77,7 @@ class test_service_profiles : public ServiceTestCase
 	void validityMax();
 	void opcCertificateType();
 	void profileWarningsAudited();
+	void profileKeyUsageTable();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -524,12 +525,12 @@ void test_service_profiles::genericProfiles_data()
 	QTest::newRow("TLS server, CN as dNSName") << "xca-tls-server" << "ec-p256"
 		<< "/CN=server.example" << ""
 		<< QStringList{ "bc! EE",
-			"ku digitalSignature,nonRepudiation,keyEncipherment,keyAgreement",
+			"ku digitalSignature,nonRepudiation,keyAgreement",
 			"eku serverAuth", "san DNS:server.example" };
 	QTest::newRow("TLS client") << "xca-tls-client" << "rsa-2048"
 		<< "/CN=client" << ""
 		<< QStringList{ "bc! EE",
-			"ku digitalSignature,keyEncipherment,dataEncipherment,keyAgreement",
+			"ku digitalSignature,keyEncipherment,dataEncipherment",
 			"eku clientAuth", "san -" };
 	QTest::newRow("code signing") << "code-signing" << "rsa-2048"
 		<< "/CN=Build" << ""
@@ -1119,6 +1120,50 @@ void test_service_profiles::profileWarningsAudited()
 		ids += (ids.isEmpty() ? "" : ",") + w.toObject()["id"].toString();
 	QCOMPARE(AuditLog::entries().last().params.value("profile_warnings")
 		.toString(), ids);
+}
+
+/* BTD-195: a profile bit the key cannot use is refused with the code of
+ * the issuance check, from the same table. An opcua or tls profile cannot
+ * even name such a bit (BTD-167 AC 12, invalid_profile at load); a generic
+ * profile can, and is refused when it issues */
+void test_service_profiles::profileKeyUsageTable()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject ku = doc["ku_by_key_type"].toObject();
+	QJsonObject ec = ku["ec"].toObject();
+	ec["bits"] = QJsonArray{ "digitalSignature", "keyEncipherment" };
+	ku["ec"] = ec;
+	doc["ku_by_key_type"] = ku;
+	QString loaded;
+	try {
+		Profile::fromJson(doc);
+	} catch (serviceError &e) {
+		loaded = e.code;
+	}
+	QCOMPARE(loaded, QString("invalid_profile"));
+
+	QFile g(SERVICE_TEST_DATA "/profiles/generic/xca-tls-server.json");
+	QVERIFY(g.open(QIODevice::ReadOnly));
+	doc = QJsonDocument::fromJson(g.readAll()).object();
+	ku = doc["ku_by_key_type"].toObject();
+	ec = ku["ec"].toObject();
+	ec["bits"] = QJsonArray{ "digitalSignature", "keyEncipherment" };
+	ku["ec"] = ec;
+	doc["ku_by_key_type"] = ku;
+	Profile p = Profile::fromJson(doc);
+	pki_x509req *req = newCsr("ec-p256", "/CN=server.example", "");
+	QVERIFY(req);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, req, nullptr, Registration(), ca, &cert),
+		QString("key_usage_not_for_key_type"));
+	QVERIFY(!cert);
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_profiles)
