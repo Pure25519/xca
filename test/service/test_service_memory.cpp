@@ -521,6 +521,28 @@ void test_service_memory::pkcs12MigrationCommitFails()
 		QString("PBE-SHA1-3DES"));
 	QVERIFY(!Settings["pkcs12_migrated"]);
 	QCOMPARE(AuditLog::entries().size(), entries);
+
+	/* positive control: the next open without the fault migrates,
+	 * so the checks above saw a rolled-back migration, not a skipped
+	 * one (review of xca#77) */
+	q = QSqlQuery();
+	Database.close();
+	warning->expectMessage("PBE-SHA1-3DES");
+	openDatabase();
+	q = QSqlQuery();
+	QVERIFY(q.exec("SELECT value FROM settings WHERE key_='pkcs12_enc_algo'")
+		&& q.next());
+	QCOMPARE(q.value(0).toString(), QString("AES-256-CBC"));
+	q.finish();
+	QVERIFY(q.exec("SELECT value FROM settings "
+		"WHERE key_='pkcs12_migrated'") && q.next());
+	QCOMPARE(q.value(0).toString(), QString("yes"));
+	q.finish();
+	QCOMPARE(encAlgo::getDefault().getEncAlgoNid(), NID_aes_256_cbc);
+	QList<AuditEntry> after = AuditLog::entries();
+	QCOMPARE(after.size(), entries + 1);
+	QCOMPARE(after.last().action, QString(AuditLog::actionSettingsMigrate));
+	QCOMPARE(after.last().result, QString("success"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_memory)
