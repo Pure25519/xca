@@ -58,6 +58,9 @@ class test_service_profiles : public ServiceTestCase
 	void keygenSanRules();
 	void sanRulesBothPaths_data();
 	void sanRulesBothPaths();
+	void keygenBuiltSan_data();
+	void keygenBuiltSan();
+	void keygenSanCritical();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -622,6 +625,80 @@ void test_service_profiles::sanRulesBothPaths()
 	QCOMPARE(issue(Profile::fromFile(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json"),
 			nullptr, key, reg, ca, &cert), code);
 #endif
+}
+
+/* mr-processor review of xca#53: the rules apply to the SAN as it is
+ * built into the certificate, after DNS:copycn, email:copy and the UPN
+ * alias are expanded; copycn is refused where the profile takes no
+ * dNSName from the CN */
+void test_service_profiles::keygenBuiltSan_data()
+{
+	QTest::addColumn<QStringList>("cns");
+	QTest::addColumn<QString>("email");
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("copycn with a wildcard CN") << QStringList{ "*.plc.example" }
+		<< "" << "DNS:copycn" << "registration_san_invalid";
+	QTest::newRow("copycn with two CNs") << QStringList{ "a.example", "b.example" }
+		<< "" << "DNS:copycn, IP:10.0.0.9" << "registration_san_invalid";
+	QTest::newRow("email:copy") << QStringList{ "plc" } << "op@plc.example"
+		<< "email:copy, DNS:plc.example" << "csr_san_type_not_allowed";
+	QTest::newRow("UPN alias") << QStringList{ "plc" } << ""
+		<< "UPN:op@plc.example, DNS:plc.example" << "csr_san_type_not_allowed";
+}
+
+void test_service_profiles::keygenBuiltSan()
+{
+	QFETCH(QStringList, cns);
+	QFETCH(QString, email);
+	QFETCH(QString, san);
+	QFETCH(QString, code);
+	Profile p = Profile::fromFile(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"device key");
+	Registration reg;
+	x509name n;
+	for (const QString &cn : cns)
+		n.addEntryByNid(NID_commonName, cn);
+	if (!email.isEmpty())
+		n.addEntryByNid(NID_pkcs9_emailAddress, email);
+	reg.subject = n;
+	reg.subjectAltName = san;
+	reg.applicationUri = "urn:bxc:plc";
+	int certs = Store.getAll<pki_x509>().size();
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), code);
+	QCOMPARE(Store.getAll<pki_x509>().size(), certs);
+	QCOMPARE(AuditLog::entries().last().errorCode, code);
+}
+
+/* MINOR 3: san.critical of the profile marks the SAN of a server key */
+void test_service_profiles::keygenSanCritical()
+{
+	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject san = doc["san"].toObject();
+	for (bool critical : { false, true }) {
+		san["critical"] = critical;
+		doc["san"] = san;
+		Profile p = Profile::fromJson(doc);
+		pki_x509 *ca = issuingCa("EC:prime256v1");
+		pki_key *key = Database.model<db_key>()->newKey(
+				keyjob("EC:prime256v1"), "device key");
+		Registration reg;
+		x509name n;
+		n.addEntryByNid(NID_commonName, "plc");
+		reg.subject = n;
+		reg.subjectAltName = "DNS:plc.example";
+		reg.applicationUri = "urn:bxc:plc";
+		pki_x509 *cert = nullptr;
+		QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString());
+		X509 *x = cert->getCert();
+		QCOMPARE((bool)X509_EXTENSION_get_critical(X509_get_ext(x,
+			X509_get_ext_by_NID(x, NID_subject_alt_name, -1))), critical);
+	}
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_profiles)

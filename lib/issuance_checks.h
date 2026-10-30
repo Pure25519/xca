@@ -58,13 +58,14 @@ namespace IssuanceChecks
 	 * cA=TRUE in a leaf request, forbidden subject characters and the
 	 * SAN rules of the profile. Writes csr_signature_algorithm and, for
 	 * an accepted SHA-1 signature, warning=csr_sha1_accepted. Without a
-	 * CSR, under a profile: the same SAN rules on the SAN the profile
-	 * built from the registration of a server-side key (BTD-191); a SAN
-	 * that does not parse is registration_san_invalid. */
+	 * CSR, under a profile: DNS:copycn in the registration is refused
+	 * unless the profile takes the dNSName from the CN (BTD-191). */
 	void request(const IssuanceSpec &spec, AuditParams &params);
 
-	/* The certificate to be signed: one instance per extension, and the
-	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them */
+	/* The certificate to be signed: one instance per extension, the
+	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them, and
+	 * for a server-side key under a profile the SAN rules of the CSR
+	 * path on the SAN as built into the certificate (BTD-191) */
 	void certificate(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 

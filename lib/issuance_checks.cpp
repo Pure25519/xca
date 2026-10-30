@@ -262,26 +262,23 @@ static void sanRules(const GENERAL_NAMES *san, const CsrPolicy &policy,
 }
 
 /* The SAN a profile built from the registration of a server-side key,
- * parsed as it goes into the certificate; without a CONF, so that
- * section references (dirName, otherName sequences) cannot be used */
-static void registrationSan(const IssuanceSpec &spec)
+ * as it is in the certificate: after DNS:copycn, email:copy and the UPN
+ * alias were expanded with the certificate's subject (mr-processor review
+ * of xca#53) */
+static void registrationSan(const IssuanceSpec &spec, const pki_x509 *cert)
 {
-	const QString &value = spec.extensions.subjectAltName;
+	X509 *x = cert->getCert();
 	QString label = tr("the registration of '%1'").arg(spec.name);
-	if (value.trimmed().isEmpty()) {
-		sanRules(nullptr, spec.csrPolicy, label);
-		return;
-	}
-	X509_EXTENSION *ext = X509V3_EXT_conf_nid(nullptr, nullptr,
-			NID_subject_alt_name, value.toUtf8().constData());
-	GENERAL_NAMES *names = ext ? (GENERAL_NAMES *)X509V3_EXT_d2i(ext) :
-				     nullptr;
-	X509_EXTENSION_free(ext);
+	int crit = 0;
+	GENERAL_NAMES *names = (GENERAL_NAMES *)X509_get_ext_d2i(x,
+			NID_subject_alt_name, &crit, nullptr);
 	ign_openssl_error();
-	if (!names)
+	/* absent although the registration names one: OpenSSL built none */
+	if (!names && (crit != -1 ||
+		       !spec.extensions.subjectAltName.trimmed().isEmpty()))
 		throw serviceError("registration_san_invalid",
-			tr("The subject alternative name of %1 cannot be read: %2")
-			.arg(label, value));
+			tr("The subject alternative name of %1 cannot be built: %2")
+			.arg(label, spec.extensions.subjectAltName));
 	try {
 		sanRules(names, spec.csrPolicy, label);
 	} catch (...) {
@@ -294,8 +291,14 @@ static void registrationSan(const IssuanceSpec &spec)
 void IssuanceChecks::request(const IssuanceSpec &spec, AuditParams &params)
 {
 	if (!spec.request) {
-		if (spec.csrPolicy.profile)
-			registrationSan(spec);
+		/* a profile never takes a dNSName from the CN (san.dns_from_cn
+		 * is false in schema v1) */
+		if (spec.csrPolicy.profile &&
+		    spec.extensions.subjectAltName.contains("copycn",
+						Qt::CaseInsensitive))
+			throw serviceError("registration_san_invalid",
+				tr("The profile takes no dNSName from the CN, the registration of '%1' asks for DNS:copycn")
+				.arg(spec.name));
 		return;
 	}
 	const CsrPolicy &policy = spec.csrPolicy;
@@ -545,6 +548,9 @@ void IssuanceChecks::certificate(const IssuanceSpec &spec,
 	}
 	if (spec.chainRules == IssuanceSpec::chain_opcua)
 		opcChain(spec, cert, chain);
+	/* the SAN of a server-side key under a profile (BTD-191) */
+	if (spec.csrPolicy.profile && !spec.request)
+		registrationSan(spec, cert);
 }
 
 void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
