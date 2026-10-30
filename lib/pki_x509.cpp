@@ -701,7 +701,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 	pki_openssl_error();
 	/* X509_sign() returns the signature size or 0: a failure leaves
 	 * the certificate unsigned and its DER empty (BTD-171) */
-	int size = X509_sign(cert, tkey, digest.MD());
+	int size = X509_sign(cert, tkey, signkey->signatureDigest(digest));
 	EVP_PKEY_free(tkey);
 	if (size <= 0)
 		throw serviceError("signing_failed",

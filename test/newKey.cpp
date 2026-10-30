@@ -14,8 +14,15 @@
 #include "ui_NewKey.h"
 #include "widgets/KeyDetail.h"
 #include "ui_KeyDetail.h"
+#include "widgets/NewCrl.h"
+#include "ui_NewCrl.h"
+#include "widgets/hashBox.h"
 #include "lib/audit.h"
 #include "lib/db_key.h"
+#include "lib/db_x509.h"
+#include "lib/issuance.h"
+#include "lib/pki_crl.h"
+#include "lib/pki_x509.h"
 #include "main.h"
 
 #include <openssl/core_names.h>
@@ -141,6 +148,42 @@ void test_main::keyDetailFixed()
 					.toHex();
 		QVERIFY(!pub.isEmpty());
 		QCOMPARE(shown.toLower(), pub);
+		delete dlg;
+	}
+}
+
+/* A signer without a digest (Ed25519, Ed448, ML-DSA, SLH-DSA) gets no
+ * digest choice: the hash box of NewX509 (switchHashAlgo) and of the
+ * CRL dialog is disabled and yields no digest (BTD-164) */
+void test_main::digestLessSigner()
+{
+	openDB();
+	ServiceContext ctx(ServiceContext::gui, "os:gui-test");
+	for (const char *type : { "ED448", "ML-DSA-65", "SLH-DSA-SHA2-128f" }) {
+		pki_key *key = Database.model<db_key>()->newKey(ctx,
+						keyjob(type), type);
+		QVERIFY(key);
+
+		hashBox box(nullptr);
+		box.setupHashes(key->possibleHashNids());
+		QVERIFY2(!box.isEnabled(), type);
+		QCOMPARE(box.current().MD(), (const EVP_MD *)nullptr);
+
+		IssuanceSpec spec;
+		spec.name = QString("ca ") + type;
+		spec.subject.addEntryByNid(NID_commonName, spec.name);
+		spec.key = key;
+		spec.notBefore = a1time();
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY2(ca, type);
+
+		NewCrl *dlg = new NewCrl(crljob(ca));
+		QVERIFY2(!dlg->hashAlgo->isEnabled(), type);
+		QCOMPARE(dlg->getCrlJob().hashAlgo.MD(), (const EVP_MD *)nullptr);
 		delete dlg;
 	}
 }

@@ -571,7 +571,7 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			.arg(reg.validity));
 	QDateTime max = shifted(now, validity["max"].toString(), 1);
 	if (notAfter > max) {
-		spec.requestedNotAfter = notAfter;
+		spec.profileCappedFrom = notAfter;
 		notAfter = max;
 	}
 	spec.notAfter = a1time(notAfter);

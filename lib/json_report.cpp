@@ -85,6 +85,15 @@ QJsonValue JsonReport::revocationReason(int code)
 	return QString(names[code]);
 }
 
+QString JsonReport::serial(const a1int &serial)
+{
+	QString hex = serial.toHex();
+	/* BN_bn2hex: "0" for zero; an empty INTEGER gives "" */
+	if (hex.isEmpty() || hex == "0")
+		return QString("00");
+	return hex;
+}
+
 QString JsonReport::objectType(const pki_base *pki)
 {
 	switch (pki->getType()) {
@@ -255,7 +264,7 @@ QJsonObject JsonReport::certificate(const pki_x509 *cert)
 	bool ca = false;
 
 	o["version"] = (int)X509_get_version(x) + 1;
-	o["serial"] = cert->getSerial().toHex();
+	o["serial"] = JsonReport::serial(cert->getSerial());
 	o["subject"] = dn(cert->getSubject());
 	o["issuer"] = dn(cert->getIssuerName());
 	o["issuer_item"] = itemRef(cert->getSigner());
@@ -395,7 +404,7 @@ QJsonObject JsonReport::crl(const pki_crl *crl)
 		QJsonObject r;
 		int crit = -1;
 
-		r["serial"] = a1int(X509_REVOKED_get0_serialNumber(rev)).toHex();
+		r["serial"] = serial(a1int(X509_REVOKED_get0_serialNumber(rev)));
 		r["date"] = timestamp(a1time(
 				X509_REVOKED_get0_revocationDate(rev)));
 		ASN1_ENUMERATED *reason = static_cast<ASN1_ENUMERATED *>(
@@ -430,10 +439,16 @@ QJsonObject JsonReport::key(const pki_key *key)
 	 * write the private part, nothing here decrypts the key */
 	o["public_key"] = publicKey(key->getEvpKey());
 	o["kind"] = key->isPubKey() ? "public_only" : "key_pair";
-	o["storage"] = token ? "token" : "database";
+	/* A key read from a file and not stored (BTD-41): its own
+	 * protection, never the database's */
+	bool file = !token && !key->getSqlItemId().isValid();
+	o["storage"] = token ? "token" : file ? "file" : "database";
 
 	QJsonValue protection;
-	if (!key->isPubKey()) {
+	if (file) {
+		if (!key->isPubKey())
+			protection = key->fileEncrypted() ? "own" : "none";
+	} else if (!key->isPubKey()) {
 		switch (key->getOwnPass()) {
 		case pki_key::ptCommon:  protection = "database"; break;
 		case pki_key::ptPrivate: protection = "own"; break;
@@ -536,7 +551,7 @@ static QJsonObject indexEntry(pki_x509 *cert)
 	o["reason"] = revoked ?
 			JsonReport::revocationReason(rev.getReasonBit()) :
 			QJsonValue();
-	o["serial"] = cert->getSerial().toHex();
+	o["serial"] = JsonReport::serial(cert->getSerial());
 	o["subject"] = JsonReport::dn(cert->getSubject()).value("rfc4514");
 	return o;
 }
@@ -594,8 +609,15 @@ QJsonObject JsonReport::error(const errorEx &err)
 {
 	static const QRegularExpression valid("^[a-z][a-z0-9_]*$");
 	const serviceError *s = dynamic_cast<const serviceError *>(&err);
+	const secretError *pw = dynamic_cast<const secretError *>(&err);
 	QString code = s && valid.match(s->code).hasMatch() ?
 			s->code : QString("internal_error");
+	/* BTD-41: a missing or unreadable source is missing_password */
+	if (pw)
+		code = pw->why == secretError::rejected ?
+			"password_rejected" : "missing_password";
+	if (dynamic_cast<const confirmationError *>(&err))
+		code = "not_confirmed";
 	return error(code, err.getString());
 }
 

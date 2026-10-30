@@ -415,7 +415,8 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	p.set("not_after", (QDateTime)spec.effectiveNotAfter(&capped));
 	p.set("validity_capped", capped);
 	if (capped)
-		p.set("requested_not_after", (QDateTime)spec.notAfter);
+		p.set("requested_not_after",
+			(QDateTime)spec.requestedNotAfter());
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
@@ -424,9 +425,9 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	if (spec.profileVersion)
 		p.set("profile_version", spec.profileVersion);
 	/* a validity capped by the profile's validity.max (BTD-167) */
-	if (spec.requestedNotAfter.isValid()) {
+	if (spec.profileCappedFrom.isValid()) {
 		p.set("validity_capped", true);
-		p.set("requested_not_after", spec.requestedNotAfter);
+		p.set("requested_not_after", spec.profileCappedFrom);
 	}
 	if (!spec.profileWarnings.isEmpty())
 		p.set("profile_warnings", spec.profileWarnings.join(","));
@@ -907,6 +908,10 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	params.set("subject", cert->getSubject().oneLine());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
+	/* what was signed with: hash_algo is what the spec asked for, a
+	 * digest-less issuer ignores it (BTD-164) */
+	params.set("signature_algorithm",
+		OBJ_nid2ln(X509_get_signature_nid(cert->getCert())));
 
 	if (getByReference(cert))
 		throw serviceError("duplicate_certificate",
@@ -1419,7 +1424,7 @@ void db_x509::setRevocations(const ServiceContext &ctx, pki_x509 *ca,
 	auditedTransaction(ctx, "ca.set_revocations", "certificate",
 				itemId(ca), params, [&]() {
 		if (!ca || !ca->isCA())
-			throw serviceError("not_a_ca",
+			throw serviceError("issuer_not_ca",
 				tr("Revocations need a CA certificate"));
 		QVariant caId = ca->getSqlItemId();
 		QList<x509rev> wanted;

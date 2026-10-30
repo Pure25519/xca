@@ -64,7 +64,9 @@ void IssuanceChecks::pathLength(const ExtensionSpec &ext)
 void IssuanceChecks::spec(const IssuanceSpec &spec)
 {
 	pathLength(spec.extensions);
-	if (spec.hashAlgo.isInsecure())
+	/* a digest-less signer ignores the digest (BTD-164) */
+	pki_key *signkey = spec.signer ? spec.signer->getRefKey() : spec.key;
+	if (!(signkey && signkey->digestLess()) && spec.hashAlgo.isInsecure())
 		throw serviceError("signature_hash_not_allowed",
 			tr("A certificate is never signed with %1")
 			.arg(spec.hashAlgo.name()));
@@ -141,6 +143,44 @@ void IssuanceChecks::issuers(const IssuanceSpec &spec,
 				X509_get_issuer_name(cx)))
 			below++;
 	}
+}
+
+void IssuanceChecks::crlIssuer(const pki_x509 *ca, pki_key *signkey,
+			const digest &hashAlgo, AuditParams &params)
+{
+	/* a digest-less issuer ignores the digest (BTD-164) */
+	if (!(signkey && signkey->digestLess()) && hashAlgo.isInsecure())
+		throw serviceError("signature_hash_not_allowed",
+			tr("A CRL is never signed with %1").arg(hashAlgo.name()));
+	X509 *x = ca->getCert();
+	if (X509_get_version(x) < X509_VERSION_3)
+		throw serviceError("issuer_v1",
+			tr("'%1' is a version %2 certificate and cannot act as a CA")
+			.arg(name(ca)).arg(X509_get_version(x) + 1));
+	bool isCa = false;
+	if (!ca->caAndPathLen(&isCa, nullptr, nullptr) || !isCa)
+		throw serviceError("issuer_not_ca",
+			tr("'%1' is not a CA certificate (basicConstraints cA)")
+			.arg(name(ca)));
+	if (!(X509_get_extension_flags(x) & EXFLAG_KUSAGE))
+		params.warn("issuer_without_key_usage");
+	else if (!(X509_get_key_usage(x) & KU_CRL_SIGN))
+		throw serviceError("issuer_no_crlsign",
+			tr("The key usage of '%1' does not allow cRLSign")
+			.arg(name(ca)));
+	a1time now, notAfter = ca->getNotAfter();
+	if (!notAfter.isUndefined() && now > notAfter)
+		throw serviceError("issuer_expired",
+			tr("'%1' expired on %2").arg(name(ca))
+			.arg(notAfter.toPrettyGMT()));
+	if (now < ca->getNotBefore())
+		throw serviceError("issuer_not_yet_valid",
+			tr("'%1' is valid from %2").arg(name(ca))
+			.arg(ca->getNotBefore().toPrettyGMT()));
+	if (EVP_PKEY_eq(X509_get0_pubkey(x), signkey->getPubKey()) != 1)
+		throw serviceError("issuer_key_mismatch",
+			tr("The private key '%1' does not belong to '%2'")
+			.arg(signkey->getIntName(), name(ca)));
 }
 
 void IssuanceChecks::preflight(const IssuanceSpec &spec, AuditParams &params)

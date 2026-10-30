@@ -17,6 +17,8 @@
 #ifndef __ISSUANCE_H
 #define __ISSUANCE_H
 
+#include <QDateTime>
+#include <QList>
 #include <QMap>
 #include <QPair>
 #include <QString>
@@ -122,6 +124,39 @@ class ExtensionSpec
 	extList build(X509V3_CTX *ctx, bool selfSigned, bool forRequest) const;
 };
 
+/* An ISO 8601 duration (BTD-41, rule 6 of the certstrap triage):
+ * PnYnMnWnDTnHnMnS with non-negative integers, at least one component,
+ * e.g. P20Y, P1Y6M, P90D, PT12H. Years and months are calendar units:
+ * addTo() adds them first (QDateTime::addYears/addMonths, the end of a
+ * shorter month is clamped), then weeks and days, then the time. The
+ * same duration is used for --validity and --backdate of bxc-pki and
+ * later by the bootstrap file and the REST API. */
+class IsoDuration
+{
+  public:
+	qint64 years{}, months{}, weeks{}, days{};
+	qint64 hours{}, minutes{}, seconds{};
+	bool valid{};
+
+	/* Strict parser; *error receives the reason for an invalid text */
+	static IsoDuration parse(const QString &text, QString *error = nullptr);
+	bool isValid() const
+	{
+		return valid;
+	}
+	bool isZero() const
+	{
+		return !years && !months && !weeks && !days && !hours &&
+			!minutes && !seconds;
+	}
+	/* The end may be invalid for a huge duration; no certificate ends
+	 * after lastEnd(), 9999-12-31T23:59:59Z (RFC 5280 4.1.2.5) */
+	QDateTime addTo(const QDateTime &t) const;
+	static QDateTime lastEnd();
+	QDateTime subtractFrom(const QDateTime &t) const;
+	QString toString() const;
+};
+
 /* How a device CSR is accepted (BTD-65). The members are the CSR fields
  * of a profile (profiles/<id>.json of bxc-pki, BTD-64); the profile engine
  * (BTD-54) fills them, the GUI keeps the defaults. */
@@ -179,6 +214,9 @@ class IssuanceSpec
 
 	a1time notBefore{};
 	a1time notAfter{};          // may be undefined (99991231235959Z)
+	/* BTD-41: when valid, the requested end is notBefore + validity
+	 * and notAfter is ignored */
+	IsoDuration validity{};
 	digest hashAlgo{};
 
 	ExtensionSpec extensions{};
@@ -201,7 +239,7 @@ class IssuanceSpec
 	QString profile{};          // profile id the spec came from (BTD-54)
 	int profileVersion{};       // stored version (BTD-167); 0: a file
 	/* a validity above the profile's validity.max, capped to it */
-	QDateTime requestedNotAfter{};
+	QDateTime profileCappedFrom{};
 	/* the ids of the profile's device warnings, for the audit entry */
 	QStringList profileWarnings{};
 	/* The name policies of the CA and the profile (BTD-167), checked
@@ -225,9 +263,11 @@ class IssuanceSpec
 	 * newCert() rejects it with invalid_validity. */
 	static a1time cappedNotAfter(const a1time &requested,
 				const pki_x509 *signer, bool *capped = nullptr);
+	/* notAfter, or notBefore + validity */
+	a1time requestedNotAfter() const;
 	a1time effectiveNotAfter(bool *capped = nullptr) const
 	{
-		return cappedNotAfter(notAfter, signer, capped);
+		return cappedNotAfter(requestedNotAfter(), signer, capped);
 	}
 };
 
