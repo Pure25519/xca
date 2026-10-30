@@ -42,6 +42,7 @@ class test_main: public QObject
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
+	void tokenDialogClosedDatabase();
 	void exportFormat();
 	void revoke();
 	void renewalSigningFails();

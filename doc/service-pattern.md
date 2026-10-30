@@ -11,7 +11,7 @@ Certificate issuance is the reference implementation.
 | Location | a member of the existing model class in `lib/db_*.cpp`, named as `service_function` in the parity matrix | `db_x509::newCert` in `lib/db_x509.cpp` |
 | Signature | `ServiceContext` first (BTD-29, `lib/audit.h`), then one value object; returns the new or changed object | `pki_x509 *newCert(const ServiceContext &, const IssuanceSpec &)` |
 | Value object | `<Action>Spec` in its own file `lib/<area>.h/.cpp`; plain public members, defaults that match the dialog's defaults; references to database objects are non-owning pointers; created per call, nothing static or shared | `IssuanceSpec`, `ExtensionSpec` in `lib/issuance.h` |
-| Errors | a rejected spec throws `serviceError(code, message)` (`lib/exception.h`); `code` is stable snake_case and becomes the audit `error_code`; any other `errorEx` is an internal error | `missing_key`, `invalid_public_key`, `no_private_signing_key`, `duplicate_certificate`, `serial_exhausted`, `random_failure`, `database_error`; every other exception is audited as `internal_error` and rethrown |
+| Errors | a rejected spec throws `serviceError(code, message)` (`lib/exception.h`); `code` is stable snake_case and becomes the audit `error_code`; any other `errorEx` is an internal error | `missing_key`, `invalid_public_key`, `no_private_signing_key`, `duplicate_certificate`, `serial_exhausted`, `random_failure`, `database_error`, `read_only_database`, `disk_full`; every other exception is audited as `internal_error` and rethrown |
 | No interaction | no dialog, message box, question or password prompt in the service path; secrets come from `PasswordSource` (BTD-30); success messages (`createSuccess`) and follow-up questions belong to the GUI caller | the token question "Store the certificate to the key on the token?" moved to the GUI caller |
 | Audit | exactly one `AuditLog::append()` per call: `success` inside the operation's transaction, `failure` (or `denied`) after the rollback, with the parameters known at that point (allow-list of `AuditParams`, no secrets) | action `certificate.issue`, object type `certificate`, object id = item id (empty on failure); params `name`, `subject`, `issuer`, `ca_id`, `serial`, `not_before`, `not_after` (the certificate's end date after the cap at the issuer chain; null for the undefined date 99991231235959Z), `validity_capped`, `requested_not_after` (only when capped, BTD-51; a cap that leaves no window, end at or before `not_before`, fails with `invalid_validity`), `hash_algo`, `template`, `fingerprint` |
 | GUI caller | the dialog only fills the value object (`NewX509::getIssuanceSpec()`), calls the service function with `ServiceContext::localUser(ServiceContext::gui)` and shows the `serviceError` with `XCA_ERROR` | `widgets/NewX509_issue.cpp` |
@@ -34,6 +34,23 @@ transaction then rolls everything back (BTD-142; before, it returned the result 
 true, and the caller reported success with nothing stored). Every outermost commit is checked; a
 service function turns false into `database_error` with a `failure` entry. The log names the first
 inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
+
+A failed SQL write is a typed error, never a message box in a service path (BTD-50).
+
+- **The helper.** `throwSqlError(QSqlError, what)` in `lib/sql.h` picks the code from SQLite's result code:
+  - `read_only_database`: read-only file or mount, `PRAGMA query_only`, or the database file removed while open;
+  - `disk_full`;
+  - `database_error` for everything else.
+- **Where it is used.** These functions throw it:
+  - `execOrThrow(q, what)`;
+  - `TransThrow()`;
+  - `TransCommitThrow()`, which carries the error of the failed COMMIT.
+- **The text.** It is `what` and SQLite's reason, never the statement and its values (they may hold key material). The full statement goes to the debug log.
+- **Helpers throw instead of returning false.** This covers `x509revList::sqlUpdate()`, `pki_x509req::markSigned()`, `pki_evp::sqlUpdatePrivateKey()` and the UPDATEs of `db_x509::markRequestSigned()`, `pki_x509::getTaKey()` and `pki_scard::updateLabel()`. Their callers therefore stop at the first failure instead of running on in a transaction that can only roll back.
+- **`db_base::insertPKI()` and the `insert()` overrides** throw without deleting:
+  - the object stays with the caller, unstored and without id;
+  - `importItems()` hands it back through `ImportSpec::unstored`, with the other objects;
+  - `insert()` returns NULL only for a duplicate, which it deleted.
 
 An operation that changes several revocation rows (`db_x509::setRevocations`, the Manage
 revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` entry per changed
@@ -58,7 +75,7 @@ whose insert was rolled back (`!isStored()`).
 | BTD-32 | `db_key::newKey(ctx, keyjob, name)` | `keyjob` (`lib/pki_key.h`, already a value) | `key.generate` | `invalid_key_type`, `invalid_key_size`, `invalid_curve`, `duplicate_key`, `database_error` |
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
-| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `write_failed`, `database_error` |
+| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
 | BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
 | BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
 | BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
@@ -163,6 +180,16 @@ after a failure checks the OpenSSL result itself:
   revocations it was built from before signing; a failure or a difference is `crl_build_failed`
   naming the step, nothing is stored and the CRL number is not consumed (BTD-198). Tests inject
   a failed step with `crlBuild::fail()` (`lib/x509rev.h`).
+- Every export writer checks its encoder with `export_check()` and its output with
+  `export_write()` (`lib/func_base.h`): a failed `PEM_write_bio_*`, `i2d_*_bio`,
+  `PKCS12_set_mac`, `PKCS7_add_certificate` or `RAND_bytes`, and empty or short output of a
+  writer, is `export_failed` naming the encoder and the object. It comes before the success
+  entries of `exportItems()`, so the export writes its `failure` entry and no file. Formats that
+  may be empty by design (all unusable certificates, the index file, a vCalendar without entries)
+  are no writer failure and still succeed with an empty file. `i2d_bytearray()` throws
+  `encoding_failed` instead of returning empty or short DER, so no fingerprint of empty bytes
+  and no empty DER row is stored (BTD-199). Tests make the encoders fail with
+  `encodeFault::bioWrites` (a read-only BIO from `BioByteArray::bio()`) and `encodeFault::i2d`.
 - A value that a subject entry or request attribute cannot hold is `invalid_string`
   (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
 - `take_openssl_errors()` builds the message text: the reasons with their data strings, one per

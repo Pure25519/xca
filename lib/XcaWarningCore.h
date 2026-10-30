@@ -113,8 +113,10 @@ class xcaWarning
 				const QString &msg);
 	static void sqlerror(QSqlError err)
 	{
-		if (!err.isValid())
-			err = QSqlDatabase::database().lastError();
+		/* The callers pass the result of their own query, invalid on
+		 * success. The fallback to the connection's last error showed
+		 * a stale failed COMMIT on every later successful query
+		 * (BTD-50, review of xca#68). */
 		if (err.isValid())
 			gui->sqlerror(err);
 	}

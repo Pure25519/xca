@@ -106,7 +106,8 @@ bool pki_key::pem(BioByteArray &b, const pki_export *xport)
 	if (xport->match_all(F_SSH2))
 		b += SSH2publicQByteArray();
 	else if (xport->match_all(F_PEM))
-		PEM_write_bio_PUBKEY(b, key);
+		export_check(PEM_write_bio_PUBKEY(b, key),
+				"PEM_write_bio_PUBKEY", what());
 
 	return true;
 }
@@ -354,12 +355,13 @@ void pki_key::writePublic(QIODevice &file, bool pem) const
 	BioByteArray b;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PUBKEY(b, key);
+		export_check(PEM_write_bio_PUBKEY(b, key),
+				"PEM_write_bio_PUBKEY", what());
 	} else {
-		i2d_PUBKEY_bio(b, key);
+		export_check(i2d_PUBKEY_bio(b, key), "i2d_PUBKEY_bio", what());
 	}
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 QString pki_key::BignumParamQString(const char *param_name) const

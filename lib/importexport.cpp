@@ -309,13 +309,21 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			revocationTable before = readRevocations();
 			items.removeFirst();
 			pki_base *stored;
-			if (completes) {
-				stored = model<db_key>()->insertKey(
-					static_cast<pki_key *>(pki), completes);
-			} else {
-				stored = db->insert(pki);
+			try {
+				if (completes) {
+					stored = model<db_key>()->insertKey(
+						static_cast<pki_key *>(pki),
+						completes);
+				} else {
+					stored = db->insert(pki);
+				}
+			} catch (...) {
+				/* a write error leaves the object with us: back
+				 * to the caller with the others (BTD-50) */
+				items.prepend(pki);
+				throw;
 			}
-			/* insert() keeps the object in the store or deletes it */
+			/* NULL: a duplicate, deleted by insert() */
 			if (!stored)
 				throw serviceError("database_error",
 					tr("The item could not be stored"));
@@ -331,9 +339,7 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			AuditLog::append(ctx, "object.import",
 				auditObjectType(stored), itemId(stored), p);
 		}
-		if (!TransCommit())
-			throw serviceError("database_error",
-				tr("Failed to commit the database transaction"));
+		TransCommitThrow();
 		/* in order: a later, higher CRL of the same CA wins */
 		foreach(pki_crl *crl, raised) {
 			crl->getIssuer()->setCrlNumber(crl->getCrlNumber());
@@ -566,9 +572,7 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw serviceError("write_failed",
 					tr("Failed writing to %1").arg(spec.fileName));
 		}
-		if (!TransCommit())
-			throw serviceError("database_error",
-				tr("Failed to commit the database transaction"));
+		TransCommitThrow();
 		/* The success entries say "handed to the file layer": if the
 		 * rename fails now, a write_failed entry follows them. The
 		 * temporary file carries the permissions set above (POSIX);

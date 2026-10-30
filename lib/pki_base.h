@@ -101,6 +101,11 @@ class pki_base : public QObject
 		{
 			lastPattern = QRegularExpression();
 		}
+		/* The object in an error text: its internal name, quoted */
+		QString what() const
+		{
+			return QString("'%1'").arg(getIntName());
+		}
 		QString getIntName() const
 		{
 			return desc;

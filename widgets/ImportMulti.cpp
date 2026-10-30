@@ -110,8 +110,19 @@ void ImportMulti::addItem(pki_base *pki)
 		delete pki;
 		return;
 	}
+	/* Best effort, and before the card is in the dialog: a write error
+	 * (since BTD-50 a typed error) must not leave the dialog holding a
+	 * card that its caller frees (review of xca#68) */
+	pki_scard *card = dynamic_cast<pki_scard*>(pki);
+	if (card && Database.isOpen()) {
+		try {
+			mcont->rename_token_in_database(card);
+		} catch (errorEx &err) {
+			qWarning() << "Token label not stored:"
+				<< err.getString();
+		}
+	}
 	mcont->inToCont(pki);
-	mcont->rename_token_in_database(dynamic_cast<pki_scard*>(pki));
 }
 
 bool ImportMulti::openDB() const

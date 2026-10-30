@@ -110,21 +110,13 @@ pki_base *db_crl::insert(pki_base *item)
 		delete(crl);
 		return NULL;
 	}
+	/* a failed write throws and leaves the CRL with the caller, like
+	 * insertPKI() (BTD-50); a failed commit unstored it (BTD-130) */
 	Transaction;
-	if (!TransBegin()) {
-		/* keeps or deletes, like insertPKI() (BTD-149) */
-		delete crl;
-		return NULL;
-	}
-	crl = dynamic_cast<pki_crl *>(insertPKI(crl));
-	if (!crl)
-		return NULL;
+	TransThrow();
+	insertPKI(crl);
 	revokeCerts(crl);
-	if (!TransCommit()) {
-		/* rolled back and unstored (BTD-130) */
-		delete crl;
-		return NULL;
-	}
+	TransCommitThrow();
 	return crl;
 }
 
@@ -223,15 +215,6 @@ static x509v3ext authorityKeyId(pki_x509 *ca, X509V3_CTX *ctx)
 	X509_EXTENSION_free(ext);
 	openssl_error();
 	return e;
-}
-
-static void execOrThrow(XSqlQuery &q)
-{
-	q.exec();
-	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QObject::tr("Database error: %1")
-				.arg(q.lastError().text()));
 }
 
 /* The last CRL number of the CA as the database has it */
@@ -398,11 +381,11 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				delete crl;
 				throw;
 			}
-			/* insertPKI() keeps the CRL in the store or deletes it */
-			stored = dynamic_cast<pki_crl *>(insertPKI(crl));
-			if (!stored)
-				throw serviceError("database_error",
-					tr("The revocation list could not be stored"));
+			/* a write error may come after the CRL is in the
+			 * store: the outer catch frees it once the rollback
+			 * took it out again (BTD-50, review of xca#68) */
+			stored = crl;
+			insertPKI(crl);
 			params.set("name", stored->getIntName());
 			AuditLog::append(ctx, AuditLog::actionCrlGenerate, "crl",
 					stored->getSqlItemId().toString(), params);

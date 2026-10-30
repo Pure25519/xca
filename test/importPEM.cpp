@@ -10,6 +10,7 @@
 #include "widgets/MainWindow.h"
 #include "ui_MainWindow.h"
 #include "widgets/ImportMulti.h"
+#include "lib/pki_scard.h"
 #include "ui_ImportMulti.h"
 
 #include "lib/pki_multi.h"
@@ -215,4 +216,24 @@ void test_main::importAuditFailureKeepsItem()
 		QVERIFY2(false, "Exception thrown");
 	}
 	dbstatus();
+}
+
+/* Token > Manage after the database was closed: rename_token_in_database()
+ * threw (since BTD-50) after addItem() had put the card into the dialog,
+ * the caller freed the card and the dialog kept a dangling pointer. The
+ * stale DbTransaction::hasTransaction made BEGIN fail on the removed
+ * connection (review of xca#68, blocker 1). */
+void test_main::tokenDialogClosedDatabase()
+{
+	try {
+		openDB();
+		mainwin->close_database();
+		ImportMulti *dlg = new ImportMulti(mainwin);
+		pki_scard *card = new pki_scard("BTD-50 card");
+		dlg->addItem(card);
+		QCOMPARE(dlg->entries(), 1);
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
 }

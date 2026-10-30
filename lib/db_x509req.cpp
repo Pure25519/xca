@@ -118,9 +118,7 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 			tr("The certificate signing request could not be stored"));
 	AuditLog::append(ctx, "request.create", "request",
 			stored->getSqlItemId().toString(), params);
-	if (!TransCommit())
-		throw serviceError("database_error",
-			tr("Failed to commit the database transaction"));
+	TransCommitThrow();
     }
     catch (...) {
 	delete req;

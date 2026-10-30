@@ -30,7 +30,11 @@ class pki_evp: public pki_key
 		}
 		static QString _sha512passwd(QByteArray pass, QString salt,
 						int size, int repeat);
-		void set_EVP_PKEY(EVP_PKEY *pkey, QString name = QString());
+		/* input and pass: the bytes the key was read from and the
+		 * password used, for the seed check of ML-DSA (BTD-204) */
+		void set_EVP_PKEY(EVP_PKEY *pkey, QString name = QString(),
+				const QByteArray *input = nullptr,
+				const Passwd *pass = nullptr);
 
 	protected:
 		bool openssl_pw_error() const;
@@ -98,6 +102,8 @@ class pki_evp: public pki_key
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool verify(EVP_PKEY *pkey) const;
 		QVariant getIcon(const dbheader *hd) const;
+		/* false: no encrypted key to store; a failed write throws
+		 * (BTD-50) */
 		bool sqlUpdatePrivateKey();
 		QSqlError insertSqlData();
 		QSqlError deleteSqlData();
