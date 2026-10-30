@@ -322,7 +322,9 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				throw serviceError("no_private_signing_key",
 					tr("There is no private key for '%1'")
 						.arg(cert->getIntName()));
-			if (task.hashAlgo.isInsecure())
+			/* a digest-less issuer ignores the digest (BTD-164) */
+			if (!signkey->digestLess() &&
+			    task.hashAlgo.isInsecure())
 				throw serviceError("insecure_hash",
 					tr("A CRL is never signed with %1")
 						.arg(task.hashAlgo.name()));
@@ -363,6 +365,8 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				crl->setLastUpdate(task.lastUpdate);
 				crl->setNextUpdate(task.nextUpdate);
 				crl->sign(signkey, task.hashAlgo);
+				params.set("signature_algorithm", OBJ_nid2ln(
+					X509_CRL_get_signature_nid(crl->getCrl())));
 
 				storeCrlNumber(cert, (uint)number, task.nextUpdate);
 				SQL_PREPARE(q, "UPDATE revocations set crlNo=? "

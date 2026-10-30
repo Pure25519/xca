@@ -215,6 +215,14 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Signing with Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-164); every
+# object checked with the openssl program
+ServiceTest(test_service_pqc_signing)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_pqc_signing PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Import and export (BTD-34); files made and checked with the openssl program
 ServiceTest(test_service_importexport)
 target_compile_definitions(test_service_importexport PRIVATE
