@@ -426,6 +426,14 @@ QStringList supportedKeyTypes()
 	return l;
 }
 
+QStringList keyTypeNames()
+{
+	QStringList l;
+	for (const auto &t : keyTypeTable)
+		l << t.name;
+	return l;
+}
+
 QString keyJobText(const QString &keyType)
 {
 	for (const auto &t : keyTypeTable) {

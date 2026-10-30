@@ -215,15 +215,20 @@ static void setupSecrets(const Options &o)
 static void openDatabase(const Command &cmd, CommandContext &ctx)
 {
 	const Options &o = ctx.opts;
-	ctx.database = o.value("db", defaultDatabase());
+	PwDialogHeadless *h = PwDialogCore::headless();
+	/* bootstrap sets the database (and its password sources) from its
+	 * file before it opens it (BTD-166) */
+	if (ctx.database.isEmpty())
+		ctx.database = o.value("db", defaultDatabase());
 	/* user@host/db#QPSQL7 and the like: the server knows (review of
 	 * xca#54) */
 	bool remote = database_model::isRemoteDB(ctx.database);
 	bool exists = remote || QFileInfo::exists(ctx.database);
-	bool pw = o.has("password") || o.has("interactive");
+	bool pw = h->hasSource(pass_info::DatabasePassword) ||
+			o.has("interactive");
 
-	/* Only init (not --plan) creates a database */
-	if (!exists && (cmd.name != "init" || ctx.plan))
+	/* Only init and bootstrap (not --plan) create a database */
+	if (!exists && (!cmd.createsDatabase || ctx.plan))
 		throw serviceError("no_database", QObject::tr(
 			"The database '%1' does not exist; init creates it")
 			.arg(ctx.database));
@@ -233,11 +238,10 @@ static void openDatabase(const Command &cmd, CommandContext &ctx)
 			.arg(ctx.database), pass_info::DatabasePassword);
 
 	Passwd sqlpw;
-	if (o.has("sqlpass"))
-		sqlpw = PwDialogCore::headless()->secret(pass_info::SqlPassword);
+	if (h->hasSource(pass_info::SqlPassword))
+		sqlpw = h->secret(pass_info::SqlPassword);
 	/* Without --password only public objects can be read (BTD-78) */
-	database_model::open_without_password = !o.has("password") &&
-						!o.has("interactive");
+	database_model::open_without_password = !pw;
 	ServiceContext::processChannel = ServiceContext::cli;
 	try {
 		Database.open(ctx.database, sqlpw);
@@ -303,7 +307,10 @@ static int run(const QStringList &argv)
 		ctx.result = &result;
 		OutputFiles files(ctx.opts.has("force"), ctx.plan);
 		ctx.files = &files;
-		runInTransaction(ctx, { cmd->handler });
+		if (cmd->ownTransaction)
+			cmd->handler(ctx);
+		else
+			runInTransaction(ctx, { cmd->handler });
 		if (ctx.text)
 			console_write(stdout, result.text().toUtf8());
 		else

@@ -130,6 +130,11 @@ const QStringList &AuditParams::allowList()
 		 * (trustlist.export) */
 		"crl_validity", "reissue_fraction", "size_budget",
 		"trigger", "trust_list_budget",
+		/* bxc-pki bootstrap (BTD-166), action bootstrap.apply: the
+		 * SHA-256 of the file, its schema id and the number of
+		 * objects created, kept, updated and elements skipped */
+		"file_sha256", "schema", "created", "kept", "updated",
+		"skipped",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

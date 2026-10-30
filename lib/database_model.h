@@ -56,6 +56,10 @@ class database_model: public QObject
 
 	public:
 		static bool open_without_password;
+		/* false: close() leaves the file as it is, without the
+		 * VACUUM of XCA (bxc-pki bootstrap --plan, BTD-166: the
+		 * database file stays byte-identical) */
+		static bool vacuum_on_close;
 		database_model(const QString &dbName,
 				const Passwd &pass = Passwd());
 		~database_model();

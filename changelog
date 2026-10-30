@@ -1,6 +1,23 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-166: bxc-pki bootstrap --file <file> [--db <db>] [--plan] sets up
+   the database, CAs, profiles and policies of a bootstrap file
+   (urn:bxc-pki:schema:bootstrap:v1) in one transaction. A strict reader
+   checks the members of this phase as the bxc-pki schema does and names
+   the JSON pointer of every error (invalid_bootstrap_file); server,
+   roles, enrollment, ocsp, publishers, rollover and offline roots are
+   reported as skipped. CAs are made by init's code path with their empty
+   CRL and CRL settings (CrlPolicy::store), profiles and policies through
+   the profile store of BTD-167. A settings row per bootstrap id makes the
+   run idempotent: a second run keeps everything, changed CRL settings and
+   documents are updates, a change that needs a new CA certificate is
+   bootstrap_conflict. Secrets only as env:/file: references; op:// is
+   unresolved_secret_reference (resolve it with op run or op inject).
+   The audit entry bootstrap.apply (file SHA-256, schema, counts) comes
+   first, on a new database as seq 1. --plan reads no secret, opens the
+   database without its password, writes nothing and lists what it could
+   not check.
  * BTD-211: CRL and trust-list follow-ups to BTD-42. Trust-list leaves
    (--leaf) are trusted peers: opcua-dir writes them to trusted/certs
    (no longer own/certs, which belongs to the application's own

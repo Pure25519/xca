@@ -37,6 +37,7 @@
 xca_db Database;
 
 bool database_model::open_without_password = false;
+bool database_model::vacuum_on_close = true;
 
 const QString &database_model::detect_provider()
 {
@@ -471,7 +472,8 @@ database_model::~database_model()
 	models.clear();
 	Store.flush();
 
-	XSqlQuery q("VACUUM");
+	if (vacuum_on_close)
+		XSqlQuery q("VACUUM");
 
 	QSqlDatabase::database().close();
 	pki_evp::passwd.cleanse();
