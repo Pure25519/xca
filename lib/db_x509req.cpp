@@ -101,6 +101,8 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 
 	params.set("subject", req->getSubject().oneLine());
 	params.set("fingerprint", fingerprint(req->i2d(), EVP_sha256()));
+	params.set("signature_algorithm",
+		OBJ_nid2ln(X509_REQ_get_signature_nid(req->getReq())));
 
 	pki_x509req *oldreq = dynamic_cast<pki_x509req*>(getByReference(req));
 	if (oldreq)

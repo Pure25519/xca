@@ -832,6 +832,10 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	params.set("subject", cert->getSubject().oneLine());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
+	/* what was signed with: hash_algo is what the spec asked for, a
+	 * digest-less issuer ignores it (BTD-164) */
+	params.set("signature_algorithm",
+		OBJ_nid2ln(X509_get_signature_nid(cert->getCert())));
 
 	if (getByReference(cert))
 		throw serviceError("duplicate_certificate",

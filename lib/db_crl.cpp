@@ -365,6 +365,8 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				crl->setLastUpdate(task.lastUpdate);
 				crl->setNextUpdate(task.nextUpdate);
 				crl->sign(signkey, task.hashAlgo);
+				params.set("signature_algorithm", OBJ_nid2ln(
+					X509_CRL_get_signature_nid(crl->getCrl())));
 
 				storeCrlNumber(cert, (uint)number, task.nextUpdate);
 				SQL_PREPARE(q, "UPDATE revocations set crlNo=? "

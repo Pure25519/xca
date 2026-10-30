@@ -16,6 +16,7 @@
 #include <openssl/evp.h>
 #include "pki_base.h"
 #include "builtin_curves.h"
+#include "digest.h"
 
 #define PEM_STRING_OPENSSH_KEY "OPENSSH PRIVATE KEY"
 #define DEFAULT_KEY_LENGTH 2048
@@ -267,6 +268,18 @@ class pki_key: public pki_base
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool compare(const pki_base *ref) const;
 		int getKeyType() const;
+		/* Signs the message itself, no digest: Ed25519, Ed448,
+		 * ML-DSA, SLH-DSA (keytype::fixed(), BTD-164) */
+		bool digestLess() const
+		{
+			return keytype::byType(getKeyType()).fixed();
+		}
+		/* The digest a signature with this key uses: none for a
+		 * digest-less key, whatever a template or profile asks */
+		const EVP_MD *signatureDigest(const digest &asked) const
+		{
+			return digestLess() ? nullptr : asked.MD();
+		}
 		bool isPrivKey() const;
 		virtual bool verify(EVP_PKEY *pkey) const;
 		int getUcount() const;

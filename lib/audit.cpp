@@ -102,7 +102,9 @@ const QStringList &AuditParams::allowList()
 		"outcome",
 		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
-		"revocation_date", "revocations", "serial", "subject",
+		"revocation_date", "revocations", "serial",
+		/* the effective algorithm of a signature (BTD-164) */
+		"signature_algorithm", "subject",
 		"template", "this_update", "validity_capped",
 		/* accepted with a note: issuer without key usage (BTD-55),
 		 * SHA-1 CSR (BTD-65) */
