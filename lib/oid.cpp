@@ -114,11 +114,16 @@ static void insert_new_oid(const QStringList &sl, QString fname, int line)
 		qDebug() << "Creating OID:" << fname << line <<
 						nid << oid << sn << ln;
 		try {
+			/* openssl_error() only prints: a failed OBJ_create()
+			 * must still reach the caller (BTD-41) */
+			if (nid == NID_undef)
+				throw errorEx(QObject::tr("The OID could not "
+					"be created: ") + take_openssl_errors());
 			openssl_error();
 			addToLowerMap(nid);
 		} catch (errorEx &e) {
 			errorEx err(errorEx(e.getString() +
-				QString("%1:%2 OID: %3")
+				QString(" %1:%2 OID: %3")
 				.arg(fname).arg(line).arg(oid.constData())));
 			XCA_ERROR(err);
 		}

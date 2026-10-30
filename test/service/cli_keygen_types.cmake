@@ -57,13 +57,19 @@ foreach(t IN LISTS types ITEMS lower)
   endif()
 endforeach()
 
-# A size for a type without size ends the command with an error
-foreach(job ML-DSA-65:2048 ED448:456 ML-DSA-99)
+# A size for a type without size ends the command with an error. The
+# command line checks only the type; the size is rejected by the key
+# generation service, which audits it (BTD-41)
+foreach(job ML-DSA-65:2048 ED448:456)
   xca(${db} --keygen ${job} --name rejected)
-  if(rc EQUAL 0 OR NOT out MATCHES "Unknown key type ${job}")
+  if(rc EQUAL 0 OR NOT out MATCHES "takes no size or curve")
     fail("--keygen ${job} was not rejected (${rc}):\n${out}")
   endif()
 endforeach()
+xca(${db} --keygen ML-DSA-99 --name rejected)
+if(rc EQUAL 0 OR NOT out MATCHES "Unknown key type ML-DSA-99")
+  fail("--keygen ML-DSA-99 was not rejected (${rc}):\n${out}")
+endif()
 xca(${db} --list-items)
 if(out MATCHES "rejected")
   fail("a rejected --keygen stored a key:\n${out}")

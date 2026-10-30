@@ -53,6 +53,7 @@ class test_main: public QObject
 	void automationIds();
 	void issuanceExtensions();
 	void templateMergeRoundTrip();
+	void crlRefusedWithoutCrlSign();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

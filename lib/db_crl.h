@@ -37,8 +37,8 @@ class db_crl: public db_x509name
 		 * issued after its notAfter listed it. Writes exactly one
 		 * audit entry crl.generate (CA, CRL number, this and next
 		 * update, count, der_size); throws serviceError
-		 * (missing_issuer, not_a_ca, no_private_signing_key,
-		 * insecure_hash, crl_number_not_increasing,
+		 * (missing_issuer, no_private_signing_key, the issuer codes
+		 * of IssuanceChecks::crlIssuer(), crl_number_not_increasing,
 		 * invalid_crl_number, database_error) or errorEx (audited
 		 * as internal_error). The DER size for size budgets is
 		 * the result's i2d().size(). Call it outside a transaction. */
