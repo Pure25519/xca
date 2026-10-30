@@ -1,6 +1,23 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-210: harder file output (lib/staged_file). A new file is
+   published with renameat2(RENAME_NOREPLACE), link() only where the
+   file system rejects the flag; both are tried before the database
+   commit, and a directory where neither works (vfat, SMB, FUSE) is
+   refused with target_filesystem_unsupported instead of storing the
+   object without its file. The target directory is opened once,
+   component by component without following links, and every later
+   step works relative to it; a directory moved or replaced by a link
+   before the publish gets nothing (target_directory_changed). The
+   trust-list directory is checked, swapped and cleaned up the same way
+   and no longer removes files through a link. Temporary files of
+   killed runs older than 10 minutes are removed by the next run in the
+   directory (warning stale_temp_removed); a temporary file that cannot
+   be removed is the warning temp_file_left. Long file names get a
+   shortened temporary name. The Windows ACL check (BTD-13, not
+   compiled) requires exactly one full-control entry for OWNER RIGHTS
+   or the owner, and the owner to be the user of the process.
  * BTD-202: DN values are checked against the RFC 5280 upper bounds, in
    characters: C exactly 2; CN, O, OU, title and serialNumber at most 64;
    L, ST and pseudonym at most 128; emailAddress at most 255; other

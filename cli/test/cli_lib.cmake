@@ -46,6 +46,33 @@ function(bxc label code)
   set(rc "${r}" PARENT_SCOPE)
 endfunction()
 
+# fx(<label> <code> <fault> <args>...): the test build bxc-pki-faults with
+# BXC_PKI_FAULT=<fault> (cli/main.cpp: <mode>:<step>:<text>, several
+# separated by ","); otherwise like bxc()
+function(fx label code fault)
+  set(ENV{BXC_PKI_FAULT} "${fault}")
+  execute_process(COMMAND "${BXC_PKI_FAULTS}" ${ARGN}
+    WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+  unset(ENV{BXC_PKI_FAULT})
+  string(REPLACE ";" " " cmd "${ARGN}")
+  file(APPEND "${TRANSCRIPT}"
+    "### ${label}\n$ BXC_PKI_FAULT=${fault} bxc-pki-faults ${cmd}\nexit ${r}\n--- stdout\n${o}--- stderr\n${e}\n")
+  if(NOT r STREQUAL "${code}")
+    fail("${label}: expected exit code ${code}, got '${r}':\nstdout: ${o}\nstderr: ${e}")
+  endif()
+  set(out "${o}" PARENT_SCOPE)
+  set(err "${e}" PARENT_SCOPE)
+endfunction()
+
+# listing(<dir> <var>): the files directly in dir, hidden ones included,
+# sorted (no directories)
+function(listing dir var)
+  file(GLOB l LIST_DIRECTORIES false "${dir}/*" "${dir}/.*")
+  list(SORT l)
+  set(${var} "${l}" PARENT_SCOPE)
+endfunction()
+
 # xca_run(<label> <expected exit code> <args>...): xca --no-gui
 function(xca_run label code)
   execute_process(COMMAND "${XCA}" --no-gui ${ARGN}
@@ -275,6 +302,23 @@ function(warning_codes doc var)
     endforeach()
   endif()
   set(${var} "${l}" PARENT_SCOPE)
+endfunction()
+
+# warning_detail(<doc> <code> <var>): the detail of the first warning with
+# this code; empty if there is none
+function(warning_detail doc code var)
+  jlen(n "${doc}" warnings)
+  set(d "")
+  if(n GREATER 0)
+    math(EXPR last "${n} - 1")
+    foreach(i RANGE ${last})
+      string(JSON c GET "${doc}" warnings ${i} code)
+      if(c STREQUAL "${code}" AND d STREQUAL "")
+        string(JSON d GET "${doc}" warnings ${i} detail)
+      endif()
+    endforeach()
+  endif()
+  set(${var} "${d}" PARENT_SCOPE)
 endfunction()
 
 # crl_entry(<doc> <index> <var>): one entry of the crls member

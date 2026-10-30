@@ -29,36 +29,68 @@
 using namespace bxcpki;
 
 #ifdef BXC_PKI_FAULTS
+#include <cstdio>
 #include <unistd.h>
+#include <QDir>
 #include "lib/staged_file.h"
 
-/* Test build only (bxc-pki-faults, BTD-42): BXC_PKI_FAULT=<mode>:<step>:<text>
- * makes the step (create, owner_check, write, sync, publish, recheck,
- * swap) of every staged file or directory whose target contains <text>
- * fail (mode fail), ends
- * the process there with exit code 137 like a killed run (mode kill) or,
- * at the step swap of a directory, adds the file late.txt to it (mode
- * addfile) */
+/* The directory of a target (a directory target itself, else the one it
+ * is in) is renamed to <dir>.moved and replaced by a symbolic link to
+ * <dir>.other (created if missing): a swap between stage and publish */
+static void swapDirectory(const QString &target)
+{
+	QFileInfo t(target);
+	QString dir = t.isDir() && !t.isSymLink() ? t.absoluteFilePath() :
+			t.absolutePath();
+	QByteArray d = QFile::encodeName(dir);
+	QDir().mkpath(dir + ".other");
+	if (::rename(d.constData(), (d + ".moved").constData()) == 0)
+		(void)::symlink((d + ".other").constData(), d.constData());
+}
+
+/* Test build only (bxc-pki-faults, BTD-42, BTD-210):
+ * BXC_PKI_FAULT=<mode>:<step>:<text>, several separated by ",", acts at
+ * the step (create, owner_check, probe, write, sync, publish, noreplace,
+ * unlink, recheck, swap) of every staged file or directory whose target
+ * contains <text>: the step fails (mode fail), the process ends there with
+ * exit code 137 like a killed run (mode kill), at the step swap of a
+ * directory the file late.txt is added to it (mode addfile), the target
+ * file appears with the content "late" (mode addtarget), or the directory
+ * of the target is swapped for a symbolic link (mode swapdir) */
 static void installFaults()
 {
-	QStringList f = QString::fromLocal8Bit(qgetenv("BXC_PKI_FAULT"))
-				.split(':');
-	if (f.size() != 3)
+	QList<QStringList> faults;
+	for (const QString &spec : QString::fromLocal8Bit(
+			qgetenv("BXC_PKI_FAULT")).split(',', Qt::SkipEmptyParts)) {
+		QStringList f = spec.split(':');
+		if (f.size() == 3)
+			faults << f;
+	}
+	if (faults.isEmpty())
 		return;
-	StagedFile::faultHook = [f](enum StagedFile::step s,
+	StagedFile::faultHook = [faults](enum StagedFile::step s,
 				const QString &target) {
-		if (StagedFile::stepName(s) != f[1] || !target.contains(f[2]))
-			return false;
-		if (f[0] == "kill")
-			_exit(137);
-		if (f[0] == "addfile") {
-			/* a file that appears in the target directory */
-			QFile late(target + "/late.txt");
-			if (late.open(QIODevice::WriteOnly))
-				late.write("late\n");
-			return false;
+		bool failStep = false;
+		for (const QStringList &f : faults) {
+			if (StagedFile::stepName(s) != f[1] ||
+			    !target.contains(f[2]))
+				continue;
+			if (f[0] == "kill")
+				_exit(137);
+			if (f[0] == "addfile" || f[0] == "addtarget") {
+				/* a file that appears in the target directory,
+				 * or the target itself */
+				QFile late(f[0] == "addfile" ?
+					target + "/late.txt" : target);
+				if (late.open(QIODevice::WriteOnly))
+					late.write("late\n");
+			} else if (f[0] == "swapdir") {
+				swapDirectory(target);
+			} else {
+				failStep = true;
+			}
 		}
-		return true;
+		return failStep;
 	};
 }
 #endif

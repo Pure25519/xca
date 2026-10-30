@@ -302,6 +302,9 @@ class OutputFiles
 	/* After publish(): old content of the directory that could not be
 	 * removed (files that appeared during the run); empty if none */
 	QString leftover() const;
+	/* The warnings of the files (stale_temp_removed, temp_file_left,
+	 * BTD-210): code and detail */
+	QList<QPair<QString, QString> > warnings() const;
 	/* After the commit; throws the error of the first file that fails,
 	 * the files before it stay published */
 	void publish();

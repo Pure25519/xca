@@ -96,6 +96,15 @@ QString OutputFiles::leftover() const
 	return directory ? directory->leftover() : QString();
 }
 
+QList<QPair<QString, QString> > OutputFiles::warnings() const
+{
+	QList<QPair<QString, QString> > l;
+	for (const entry &e : files)
+		if (e.file)
+			l += e.file->warnings();
+	return l;
+}
+
 bool OutputFiles::written(const entry &e) const
 {
 	if (plan || !e.file || !e.file->isPublished())

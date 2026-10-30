@@ -18,27 +18,9 @@ include("${LIB}")
 set(D "${WORK}/f")
 file(MAKE_DIRECTORY "${D}")
 
-# fx(<label> <code> <fault> <args>...): bxc-pki-faults with a fault
-function(fx label code fault)
-  set(ENV{BXC_PKI_FAULT} "${fault}")
-  execute_process(COMMAND "${BXC_PKI_FAULTS}" ${ARGN}
-    WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
-  unset(ENV{BXC_PKI_FAULT})
-  string(REPLACE ";" " " cmd "${ARGN}")
-  file(APPEND "${TRANSCRIPT}"
-    "### ${label}\n$ BXC_PKI_FAULT=${fault} bxc-pki-faults ${cmd}\nexit ${r}\n--- stdout\n${o}--- stderr\n${e}\n")
-  if(NOT r STREQUAL "${code}")
-    fail("${label}: expected exit code ${code}, got '${r}':\nstdout: ${o}\nstderr: ${e}")
-  endif()
-  set(out "${o}" PARENT_SCOPE)
-  set(err "${e}" PARENT_SCOPE)
-endfunction()
-
 # no file of the directory, hidden temporary files included
 function(dir_listing var)
-  file(GLOB l LIST_DIRECTORIES false "${D}/*" "${D}/.*")
-  list(SORT l)
+  listing("${D}" l)
   set(${var} "${l}" PARENT_SCOPE)
 endfunction()
 

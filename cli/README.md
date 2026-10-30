@@ -177,8 +177,9 @@ creation for private keys (Windows: a protected DACL with OWNER RIGHTS only; wri
 BTD-13, not yet compiled or tested), checked to be owner-only (a file system that ignores the
 mode, such as WSL drvfs or vfat, is refused here with `permission_check_failed`, before
 anything is stored), written, `fsync`ed; only after the database commit it is
-published: without `--force` with `link()` (an existing file, also one that appeared meanwhile,
-is never replaced: `file_exists`), with `--force` with `rename()`; then the directory is
+published: without `--force` with `renameat2(RENAME_NOREPLACE)`, or with `link()` and `unlink()`
+where the file system rejects that flag (an existing file, also one that appeared meanwhile, is
+never replaced: `file_exists`), with `--force` with `rename()`; then the directory is
 `fsync`ed and the mode of a key file is checked again: a key file that fails is removed again
 and listed as not written (`permission_check_failed` in `publish_failed`). Everything
 that can fail before (key unlock, encoding, export password, directory and collision checks,
@@ -188,6 +189,31 @@ are stored (id and name) and the files that are missing, and a failure entry `ob
 follows; export the objects again instead of issuing them twice. A run killed at any point
 leaves the target absent or complete (an old file unchanged); at most the hidden temporary file
 stays. Public files are not refused for their mode.
+
+Hardening (BTD-210; POSIX, the Windows branch is BTD-13):
+
+- Publish without `--force` on any file system: before the commit the temporary file is
+  renamed to a second temporary name with `RENAME_NOREPLACE` (or, where the flag is rejected,
+  linked to one that is removed again). A directory where neither works (vfat or exFAT without
+  `RENAME_NOREPLACE`, SMB, FUSE) is refused with `target_filesystem_unsupported`, naming the
+  directory, before anything is stored, instead of a stored object without its file.
+- The target directory is resolved once (`realpath`) and opened from `/` one component at a
+  time with `O_NOFOLLOW`; every later step (create, check, publish, removal, `fsync`) is
+  relative to that descriptor. Right before the publish the path must still lead to the same
+  directory; one that was renamed or replaced by another directory or a symbolic link meanwhile
+  gets nothing: `target_directory_changed` (inside `publish_failed` after the commit). A
+  symbolic link in the given path (e.g. a home directory that is a link) is resolved once and is
+  fine. The trust-list directory (`StagedDirectory`) likewise works relative to the directory
+  above it: the check of the old content, the swap and every removal never follow a link, and the
+  target must still be the directory of the check.
+- Temporary files are named `.<name>.bxc-tmp-<16 hex>`; a name for which that would exceed 255
+  bytes gets `.<prefix of name>-<16 hex of the SHA-256 of name>.bxc-tmp-<16 hex>`. A later run
+  removes temporary files of killed runs from its directory: names matching
+  `^\..+\.bxc-tmp-[0-9a-f]{16}$`, regular files only, owned by the user of the run and older
+  than 10 minutes (a younger one may belong to a run that is still going); the result names
+  them in the warning `stale_temp_removed`. A temporary file that cannot be removed after the
+  `link()` publish is the warning `temp_file_left` with its path (it holds the file's content,
+  for a key file the private key).
 
 Names under `--out`:
 
@@ -301,8 +327,14 @@ scripts in `cli/test/` run the binary against fresh databases; each keeps a `tra
 of every call in its work directory under the build tree. `cli_fixture` is a test helper that
 creates what the command line cannot (templates with a custom EKU, a key with a password of
 its own, many revocations for a large CRL). Part 2: `cli_revoke`, `cli_crl`, `cli_export`,
-`cli_out` (certstrap layout and script), `cli_trustlist`, `cli_files`. `cli_files` runs
-`bxc-pki-faults`, the same command line built with `BXC_PKI_FAULTS`: `BXC_PKI_FAULT=<fail|kill>:
-<create|write|sync|publish|recheck>:<text>` makes that step of every file whose path contains
-the text fail, or ends the process there (exit code 137) like a killed run. The shipped
-`bxc-pki` has no such hook.
+`cli_out` (certstrap layout and script), `cli_trustlist`, `cli_files`; the hardening of
+BTD-210: `cli_files_noreplace`, `cli_files_tempfiles`, `cli_files_dirswap`,
+`cli_files_longname`. `cli_files*` run `bxc-pki-faults`, the same command line built with
+`BXC_PKI_FAULTS`: `BXC_PKI_FAULT=<mode>:<step>:<text>` (several separated by `,`), step one
+of `create`, `owner_check`, `probe`, `write`, `sync`, `publish`, `noreplace`, `unlink`,
+`recheck`, `swap`, acts on every file or directory whose path contains the text: `fail` makes
+the step fail (`probe`: as on vfat; `noreplace`: as on a file system without
+`RENAME_NOREPLACE`), `kill` ends the process there (exit code 137) like a killed run, `addfile`
+adds `late.txt` to a directory, `addtarget` creates the target file, `swapdir` renames the
+directory away and puts a symbolic link to `<dir>.other` in its place. The shipped `bxc-pki`
+has no such hook.
