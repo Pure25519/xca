@@ -22,6 +22,8 @@
 #include <openssl/x509.h>
 #include <openssl/stack.h>
 
+#include <memory>
+
 pki_pkcs12::pki_pkcs12(const QString &d, pki_x509 *acert, pki_key *akey)
 	:pki_multi(d), cert(acert), key(akey)
 {
@@ -161,20 +163,26 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 			const Passwd &pass) const
 {
-	PKCS12 *pkcs12;
-
 	if (cert == NULL || key == NULL)
 		my_error(tr("No key or no Cert and no pkcs12"));
 
-	/* First the key: decryptKeyForExport() may throw (BTD-16) */
+	/* Freed on every path, also when a step throws: the decrypted key
+	 * must not stay in memory (BTD-194). First the key:
+	 * decryptKeyForExport() may throw (BTD-16) */
 	pki_evp *evp = dynamic_cast<pki_evp *>(key);
-	EVP_PKEY *pkey = evp ? evp->decryptKeyForExport() : key->decryptKey();
+	std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(
+		evp ? evp->decryptKeyForExport() : key->decryptKey(),
+		&EVP_PKEY_free);
 
-	STACK_OF(X509) *certstack = sk_X509_new_null();
+	/* sk_X509_free(): the certificates belong to the pki_x509 items */
+	std::unique_ptr<STACK_OF(X509), void (*)(STACK_OF(X509) *)>
+		certstack(sk_X509_new_null(),
+			[](STACK_OF(X509) *sk) { sk_X509_free(sk); });
+	Q_CHECK_PTR(certstack.get());
 	foreach(pki_base *pki, multi) {
 		pki_x509 *x = dynamic_cast<pki_x509*>(pki);
 		if (x && x != cert)
-			sk_X509_push(certstack, x->getCert());
+			sk_X509_push(certstack.get(), x->getCert());
 	}
 	int certAlgoNid, keyAlgoNid;
 	certAlgoNid = keyAlgoNid = encAlgo.getEncAlgoNid();
@@ -190,31 +198,36 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 		if (kv.size() != 2 || kv[0] != "CSP")
 			continue;
 		QByteArray csp = kv[1].trimmed().toLatin1();
-		EVP_PKEY_add1_attr_by_NID(pkey, NID_ms_csp_name,
+		EVP_PKEY_add1_attr_by_NID(pkey.get(), NID_ms_csp_name,
 			MBSTRING_ASC, (const unsigned char*)csp.constData(), csp.size());
 	}
 
-	pkcs12 = PKCS12_create(pass.constData(), getIntName().toUtf8().data(),
-				pkey, cert->getCert(), certstack,
-				keyAlgoNid, certAlgoNid, 0, 0, 0);
+	std::unique_ptr<PKCS12, decltype(&PKCS12_free)> pkcs12(
+		PKCS12_create(pass.constData(), getIntName().toUtf8().data(),
+				pkey.get(), cert->getCert(), certstack.get(),
+				keyAlgoNid, certAlgoNid, 0, 0, 0),
+		&PKCS12_free);
+	pkey.reset();
+	/* e.g. a key that does not belong to the certificate; before,
+	 * Q_CHECK_PTR() reported it as std::bad_alloc (BTD-194) */
+	if (!pkcs12)
+		throw errorEx(tr("The PKCS#12 file '%1' cannot be created: %2")
+				.arg(getIntName(), take_openssl_errors()));
 	pki_openssl_error();
-	EVP_PKEY_free(pkey);
-	Q_CHECK_PTR(pkcs12);
 
 	/* The MAC set explicitly, not left to OpenSSL's default: SHA-1 for
 	 * legacy readers only, else HMAC-SHA256 (BTD-52). Not PBMAC1
 	 * (RFC 9579): Windows, Java and OpenSSL before 3.4 cannot check it */
 	if (encAlgo.legacy())
-		PKCS12_set_mac(pkcs12, pass.constData(), -1, NULL, 0, 1, EVP_sha1());
+		PKCS12_set_mac(pkcs12.get(), pass.constData(), -1, NULL, 0, 1,
+				EVP_sha1());
 	else
-		PKCS12_set_mac(pkcs12, pass.constData(), -1, NULL, 0,
+		PKCS12_set_mac(pkcs12.get(), pass.constData(), -1, NULL, 0,
 				PKCS12_DEFAULT_ITER, EVP_sha256());
 
 	BioByteArray b;
-	i2d_PKCS12_bio(b, pkcs12);
-	sk_X509_free(certstack);
+	i2d_PKCS12_bio(b, pkcs12.get());
 	pki_openssl_error();
-	PKCS12_free(pkcs12);
 	file.write(b);
 }
 

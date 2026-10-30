@@ -420,6 +420,8 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
+	if (!spec.keyUsageRemoved.isEmpty())
+		p.set("ku_removed", spec.keyUsageRemoved.join(","));
 	if (!spec.profile.isEmpty())
 		p.set("profile", spec.profile);
 	if (spec.profileVersion)

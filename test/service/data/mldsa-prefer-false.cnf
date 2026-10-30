@@ -1,0 +1,14 @@
+# OpenSSL configuration for test_service_importexport_cnf_prefer-false
+# (BTD-194): the default provider with ml-dsa.prefer_seed = false, a spelling
+# of false that OpenSSL reads like no
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+
+[default_sect]
+activate = 1
+ml-dsa.prefer_seed = false

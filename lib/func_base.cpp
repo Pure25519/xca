@@ -219,6 +219,26 @@ QString take_openssl_errors()
 	return reasons.join("\n");
 }
 
+bool openssl_bool(const char *value, bool dflt)
+{
+	if (!value)
+		return dflt;
+	QString v(value);
+	for (const char *on : { "yes", "true", "on" }) {
+		if (v.compare(on, Qt::CaseInsensitive) == 0)
+			return true;
+	}
+	for (const char *off : { "no", "false", "off" }) {
+		if (v.compare(off, Qt::CaseInsensitive) == 0)
+			return false;
+	}
+	if (v == "1")
+		return true;
+	if (v == "0")
+		return false;
+	return dflt;
+}
+
 #undef PRINT_IGNORED_ANYWAY
 bool _ign_openssl_error(const QString &txt, const char *file, int line)
 {

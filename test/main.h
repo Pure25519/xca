@@ -55,6 +55,7 @@ class test_main: public QObject
 	void issuanceExtensions();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
+	void keyUsageByKeyType_data();
 	void keyUsageByKeyType();
 
   public:
