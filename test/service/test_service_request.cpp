@@ -15,6 +15,7 @@
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
+#include "lib/BioByteArray.h"
 #include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
@@ -26,6 +27,7 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
+#include "lib/headerlist.h"
 #include "lib/request.h"
 
 #include "ServiceTestCase.h"
@@ -63,6 +65,7 @@ class test_service_request : public ServiceTestCase
 	void requestRejected_data();
 	void requestRejected();
 	void requestFromCertificate();
+	void challengePasswordNotShown();
 };
 
 RequestSpec test_service_request::tlsSpec(pki_key *key)
@@ -362,6 +365,40 @@ void test_service_request::requestRejected()
 	QVERIFY(e.objectId.isEmpty());
 	QVERIFY(!e.canonical().contains("challenge-pw-2468"));
 	QVERIFY(AuditLog::verify().ok());
+}
+
+/* The challengePassword is an enrolment or revocation secret: the
+ * properties (--print), the column and the search filter show or match
+ * only a marker, the unstructuredName stays as it is (BTD-168) */
+void test_service_request::challengePasswordNotShown()
+{
+	RequestSpec spec = tlsSpec(generate("EC:prime256v1", "ec-key"));
+	QVERIFY(spec.key);
+	pki_x509req *req = Database.model<db_x509req>()->newRequest(ctx, spec);
+	QVERIFY(req);
+	QCOMPARE(req->getAttribute(NID_pkcs9_challengePassword),
+		QString("challenge-pw-2468"));
+
+	dbheader chall(HD_req_chall_pass), unstr(HD_req_unstr_name);
+	QCOMPARE(req->column_data(&chall).toString(),
+		pki_x509req::challengePasswordMarker());
+	QCOMPARE(req->column_data(&unstr).toString(), QString("line 7"));
+
+	BioByteArray bba;
+	req->print(bba, pki_base::print_coloured);
+	req->print(bba, pki_base::print_openssl_txt);
+	QString text = QString::fromUtf8(bba.byteArray());
+	QVERIFY2(!text.contains("challenge-pw-2468"), qPrintable(text));
+	QVERIFY(text.contains(pki_x509req::challengePasswordMarker()));
+	QVERIFY(text.contains("line 7"));
+
+	pki_base::limitPattern = QRegularExpression("challenge-pw");
+	bool bySecret = req->visible();
+	pki_base::limitPattern = QRegularExpression("line 7");
+	bool byName = req->visible();
+	pki_base::limitPattern = QRegularExpression();
+	QVERIFY(!bySecret);
+	QVERIFY(byName);
 }
 
 /* request.from_certificate: the certificate's extensions are copied */

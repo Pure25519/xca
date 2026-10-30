@@ -379,6 +379,14 @@ add_test(NAME test_cli_json_output
 		-P ${SERVICE_TEST_DIR}/cli_json_output.cmake)
 set_tests_properties(test_cli_json_output PROPERTIES LABELS service)
 
+# The challengePassword of a request is never shown in clear text (BTD-168)
+add_test(NAME test_cli_challenge_password
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DDATA=${SERVICE_TEST_DIR}/data/json
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_challenge_password
+		-P ${SERVICE_TEST_DIR}/cli_challenge_password.cmake)
+set_tests_properties(test_cli_challenge_password PROPERTIES LABELS service)
+
 # A database with an unreadable row that the reader may not write: open,
 # read and verify work, no audit entry is left (BTD-209)
 find_program(SKIPPED_ROWS_SETPRIV setpriv)
