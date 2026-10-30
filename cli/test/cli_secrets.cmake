@@ -129,6 +129,21 @@ endif()
 bxc("import wrong" 1 show --file enc.pem --import-pass pass:nope)
 expect_error("import wrong" password_rejected)
 
+# --- --interactive without a terminal: a typed password error (BTD-145) --
+# stdin is /dev/null (bxc()), the existing database needs its password
+bxc("interactive without tty" 1 list --db "${DB}" --interactive)
+expect_error("interactive without tty" missing_password)
+if(NOT detail MATCHES "option --password")
+  fail("--interactive without terminal must name --password: ${detail}")
+endif()
+# a new database needs a new password, also a key operation
+bxc("interactive without tty, new db" 1 init --db "${WORK}/tty-new.xdb"
+    --interactive --cn "No Tty")
+expect_error("interactive without tty, new db" missing_password)
+bxc("interactive without tty, key" 1 request-cert --db "${DB}"
+    --interactive --cn no-tty)
+expect_error("interactive without tty, key" missing_password)
+
 # --- --interactive: prompt on stderr (the terminal), stdout JSON -----------
 if(SCRIPT AND EXISTS "${SCRIPT}")
   file(WRITE "${WORK}/answer.txt" "${DB_PW}\n")

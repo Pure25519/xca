@@ -14,6 +14,9 @@
 #include <QFile>
 #include <QTextStream>
 #include <QThread>
+#if !defined(Q_OS_WIN32)
+#include <unistd.h>
+#endif
 
 PwDialogUI_i *PwDialogCore::pwdialog;
 PwDialogHeadless PwDialogCore::headlessUI;
@@ -268,10 +271,31 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 #if !defined(Q_OS_WIN32)
 	/* Prompts go to stderr, stdout carries only results (BTD-41) */
 	if (interactive) {
+		/* Without a terminal readPass() refuses (BTD-145): no
+		 * prompt then, and the error names the request */
+		if (!isatty(0)) {
+			bool db = p->getPurpose() == pass_info::DatabasePassword ||
+				p->getPurpose() == pass_info::KeyPassword;
+			throw secretError(secretError::missing,
+				QObject::tr("%1 required, but --interactive has "
+					"no terminal on standard input: %2. Give "
+					"it from a source (pass:, env:, file:, fd: "
+					"or stdin)%3")
+					.arg(p->getType())
+					.arg(p->getDescription())
+					.arg(db ? QObject::tr(", e.g. --password "
+						"env:<variable>") : QString()),
+				p->getPurpose());
+		}
 		console_write(stderr, QString(COL_CYAN "%1\n" COL_LRED "%2:" COL_RESET)
 				.arg(p->getDescription())
 				.arg(p->getType()).toUtf8());
-		*passwd = readPass();
+		try {
+			*passwd = readPass();
+		} catch (secretError &err) {
+			err.purpose = p->getPurpose();
+			throw;
+		}
 		return pw_ok;
 	}
 #endif

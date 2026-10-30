@@ -28,9 +28,10 @@ if(BUILD_TESTING)
   find_program(CLI_SETPRIV setpriv)
   find_program(CLI_LDD ldd)
 
-  # Sign checks that wait for a service ticket (rule 3, BTD-54): the
-  # test exists and is switched on once the ticket is merged
-  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the pending sign checks (BTD-54)" OFF)
+  # Sign checks that wait for the service: rule 3 (key usage by key
+  # type) for templates; bxc-main has it only in the profile engine
+  # (cli/test/cli_sign_checks_pending.cmake says why)
+  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the pending sign checks (rule 3 for templates)" OFF)
 
   # CliTest(<name>): cli/test/<name>.cmake as ctest test_<name>, label cli
   macro(CliTest name)

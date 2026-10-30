@@ -78,9 +78,10 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 
 - Rule 1: `--path-len` only when given; absent means no constraint, never 0.
 - Rule 2: serials come from `db_x509::getUniqueSerial()` (CSPRNG, positive, 9..20 octets).
-- Rule 3: `sign` takes keyUsage and extended key usage only from `--template`; without one:
-  CA:FALSE, keyUsage digitalSignature (plus keyEncipherment for RSA), no EKU. From the request
-  only the subjectAltName is copied (`IssuanceSpec::requestExtensionNids`).
+- Rule 3: `sign` takes keyUsage and extended key usage only from `--template` (with the
+  template's merge settings of BTD-54); without one: CA:FALSE, keyUsage digitalSignature (plus
+  keyEncipherment for RSA), no EKU. From the request only the subjectAltName is taken
+  (`ExtensionSpec::sanMerge` request, `copyRequestExtensions` off).
 - Rule 4: `--dns`, `--ip`, `--uri`, `--email`, strictly checked; a request with a URI only is
   allowed (then the SAN is critical); the CN never comes from an IP address or URI.
 - Rule 6: `--validity <ISO 8601 duration>` (`IssuanceSpec::validity`), `--not-before`,
@@ -91,8 +92,9 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 - Rule 12: see input checks; no template object is shared between calls.
 - Rules 1 and 5: the checks of the service layer before every signature (BTD-55,
   `lib/issuance_checks.h`) end to end in `cli/test/cli_sign_checks.cmake`. Rule 3 by key type
-  (BTD-54) waits in `cli/test/cli_sign_checks_pending.cmake`, switched on with
-  `-DBXC_PKI_SIGN_CHECKS=ON` once BTD-54 is merged.
+  for templates waits in `cli/test/cli_sign_checks_pending.cmake` (`-DBXC_PKI_SIGN_CHECKS=ON`):
+  bxc-main applies key usage by key type only in the profile engine (BTD-54), and `--profile`
+  is reserved until Phase 2.
 
 ## Tests
 
