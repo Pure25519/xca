@@ -941,6 +941,28 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 
 	// the serial only once every check passed
 	cert->setSerial(getUniqueSerial(spec.signer));
+	/* the AKI of a self-signed certificate in the issuer form names its
+	 * own serial, which exists only now: built again in its place, or
+	 * verifiers do not take the root for self-issued (BTD-48) */
+	if (spec.selfSigned() && spec.extensions.authorityKeyId &&
+	    spec.extensions.authorityKeyIdIssuer) {
+		X509 *x = cert->getCert();
+		int at = X509_get_ext_by_NID(x, NID_authority_key_identifier, -1);
+		if (at >= 0) {
+			X509_EXTENSION_free(X509_delete_ext(x, at));
+			/* create() appends the new AKI to the certificate */
+			spec.extensions.authorityKeyIdExt(&ext_ctx, true);
+			X509_EXTENSION *aki = X509_delete_ext(x,
+					X509_get_ext_count(x) - 1);
+			int ok = aki && OBJ_obj2nid(X509_EXTENSION_get_object(
+					aki)) == NID_authority_key_identifier &&
+				X509_add_ext(x, aki, at);
+			X509_EXTENSION_free(aki);
+			if (!ok)
+				throw errorEx(tr("The authority key identifier of '%1' cannot be built")
+						.arg(spec.name));
+		}
+	}
 
 	// and finally sign the request
 	cert->sign(signkey, spec.hashAlgo);
