@@ -65,7 +65,9 @@ class pki_temp: public pki_x509name
 		void writeDefault(const QString &dirname) const ;
 		void fromData(const unsigned char *p, int size, int version);
 		void old_fromData(const unsigned char *p, int size, int version);
-		void fromData(QByteArray &ba, int version);
+		/* whole: ba is an export and must end with the settings;
+		 * a database row keeps the old tolerance (BTD-209) */
+		void fromData(QByteArray &ba, int version, bool whole = false);
 		void setAsPreDefined()
 		{
 			pre_defined = true;

@@ -304,6 +304,9 @@ class AuditLog
 	/* A stored setting changed by an upgrade, not by the user: the
 	 * PKCS#12 default of BTD-52 (old_pkcs12_algorithm, pkcs12_algorithm) */
 	static const char actionSettingsMigrate[];
+	/* Rows of the database left out on open because they did not
+	 * decode (BTD-209): count, skipped_items, warning rows_skipped */
+	static const char actionRowsSkipped[];
 	static const int defaultCheckpointInterval;
 	static const int maxCheckpointInterval;   // bound of the setting
 
