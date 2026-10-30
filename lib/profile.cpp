@@ -58,8 +58,42 @@ static bool kuBitsAllowed(const QJsonObject &ku, bool generic)
 	return true;
 }
 
+static QDateTime shifted(const QDateTime &now, const QString &iso, int sign);
+
+/* The keys of profile.schema.json v1/v1.1 */
+static const QStringList &profileKeys()
+{
+	static const QStringList keys {
+		"schema", "id", "description", "family", "opc_certificate_type",
+		"key_source", "base_profile", "key_types", "ku_by_key_type",
+		"eku", "eku_default", "csr_eku", "csr_basic_constraints",
+		"csr_aki_ski", "basic_constraints", "san", "subject", "aki",
+		"signature", "validity", "csr_sha1", "keycertsign_request",
+		"crl_size_budget", "warnings",
+	};
+	return keys;
+}
+
 Profile Profile::fromJson(const QJsonObject &doc)
 {
+	/* every key known, the constants as the schema has them (BTD-167) */
+	for (auto k = doc.begin(); k != doc.end(); ++k) {
+		if (!profileKeys().contains(k.key()))
+			throw serviceError("invalid_profile",
+				tr("The profile has the unknown key '%1'").arg(k.key()));
+	}
+	for (const char *ignored : { "csr_basic_constraints", "csr_aki_ski" }) {
+		if (doc[ignored].toString() != "ignore")
+			throw invalid(ignored);
+	}
+	/* "allowed": a CSR EKU within eku.purposes, else eku_default */
+	if (doc["csr_eku"].toString() != "ignore" &&
+	    (doc["csr_eku"].toString() != "allowed" || !doc.contains("eku_default")))
+		throw invalid("csr_eku");
+	if (doc.contains("crl_size_budget") &&
+	    (!doc["crl_size_budget"].isDouble() ||
+	     doc["crl_size_budget"].toInt() < 512))
+		throw invalid("crl_size_budget");
 	Profile p;
 	p.doc = doc;
 	QString schema = doc["schema"].toString();
@@ -119,6 +153,15 @@ Profile Profile::fromJson(const QJsonObject &doc)
 	if (doc["keycertsign_request"].toString() != "reject" &&
 	    doc["keycertsign_request"].toString() != "override")
 		throw invalid("keycertsign_request");
+	if (!san["keep_csr_order"].toBool())
+		throw invalid("keep_csr_order");
+	/* the durations parse, the default is not above the maximum */
+	QDateTime now = QDateTime::currentDateTimeUtc();
+	QJsonObject validity = doc["validity"].toObject();
+	shifted(now, validity["backdate"].toString("PT0S"), -1);
+	if (shifted(now, validity["default"].toString(), 1) >
+	    shifted(now, validity["max"].toString(), 1))
+		throw invalid("validity");
 	return p;
 }
 
@@ -339,6 +382,12 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 		throw serviceError("profile_key_type",
 			tr("The profile '%1' does not allow a %2 key").arg(id, type));
 	QString keyFamily = type.section('-', 0, 0);
+	/* OPC UA: a CertificateType for the key (OPC 10000-12 7.8.4) */
+	if (family == "opcua" && !doc["opc_certificate_type"].toObject()
+			.contains(keyFamily == "rsa" ? QString("rsa") : type))
+		throw serviceError("profile_key_type",
+			tr("The profile '%1' has no OPC UA CertificateType for a %2 key")
+			.arg(id, type));
 
 	/* subject: the device's own, byte for byte, or normalized */
 	QJsonObject subj = doc["subject"].toObject();
@@ -497,7 +546,26 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 	 * start of the issuer, which IssuanceChecks::issuers() requires */
 	if (signer && spec.notBefore < signer->getNotBefore())
 		spec.notBefore = signer->getNotBefore();
-	spec.notAfter = a1time(shifted(now, validity["default"].toString(), 1));
+	/* the requested validity, at most validity.max; a cap is reported */
+	QDateTime notAfter;
+	try {
+		notAfter = shifted(now, reg.validity.isEmpty() ?
+			validity["default"].toString() : reg.validity, 1);
+	} catch (serviceError &) {
+		throw serviceError("invalid_validity",
+			tr("The requested validity '%1' is no ISO 8601 duration")
+			.arg(reg.validity));
+	}
+	QDateTime max = shifted(now, validity["max"].toString(), 1);
+	if (notAfter > max) {
+		spec.requestedNotAfter = notAfter;
+		notAfter = max;
+	}
+	spec.notAfter = a1time(notAfter);
+
+	/* the device warnings of the profile, named in the audit entry */
+	for (const QJsonValue &w : doc["warnings"].toArray())
+		spec.profileWarnings << w.toObject()["id"].toString();
 
 	/* the order of the golden files of BTD-64; a generic profile keeps
 	 * the order XCA builds, as the template it came from did */

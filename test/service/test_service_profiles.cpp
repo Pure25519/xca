@@ -72,6 +72,11 @@ class test_service_profiles : public ServiceTestCase
 	void keygenBuiltSan_data();
 	void keygenBuiltSan();
 	void keygenSanCritical();
+	void unknownKeyAndConstant_data();
+	void unknownKeyAndConstant();
+	void validityMax();
+	void opcCertificateType();
+	void profileWarningsAudited();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -964,6 +969,150 @@ void test_service_profiles::keygenSanCritical()
 		QCOMPARE((bool)X509_EXTENSION_get_critical(X509_get_ext(x,
 			X509_get_ext_by_NID(x, NID_subject_alt_name, -1))), critical);
 	}
+}
+
+/* BTD-167 AC 12: an unknown key and a wrong constant are refused,
+ * naming the key, for every profile family */
+void test_service_profiles::unknownKeyAndConstant_data()
+{
+	QTest::addColumn<QString>("file");
+	QTest::newRow("opcua") << "opcua-server.json";
+	QTest::newRow("tls") << "tls-server-web.json";
+	QTest::newRow("generic") << "generic/xca-ca.json";
+}
+
+void test_service_profiles::unknownKeyAndConstant()
+{
+	QFETCH(QString, file);
+	QFile f(QString(SERVICE_TEST_DATA "/profiles/") + file);
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	Profile::fromJson(doc);
+
+	QList<std::pair<QString, QJsonObject>> broken;
+	QJsonObject unknown = doc;
+	unknown["max_path"] = 3;
+	broken << std::make_pair(QString("max_path"), unknown);
+	QJsonObject aki = doc;
+	aki["csr_aki_ski"] = "copy";
+	broken << std::make_pair(QString("csr_aki_ski"), aki);
+	QJsonObject bc = doc;
+	bc["csr_basic_constraints"] = "merge";
+	broken << std::make_pair(QString("csr_basic_constraints"), bc);
+	QJsonObject order = doc;
+	QJsonObject san = order["san"].toObject();
+	san["keep_csr_order"] = false;
+	order["san"] = san;
+	broken << std::make_pair(QString("keep_csr_order"), order);
+	QJsonObject budget = doc;
+	budget["crl_size_budget"] = 100;
+	broken << std::make_pair(QString("crl_size_budget"), budget);
+	QJsonObject longer = doc;
+	QJsonObject v = longer["validity"].toObject();
+	v["default"] = "P20Y";
+	v["max"] = "P1Y";
+	longer["validity"] = v;
+	broken << std::make_pair(QString("validity"), longer);
+
+	for (const auto &b : broken) {
+		try {
+			Profile::fromJson(b.second);
+			QFAIL(CCHAR(b.first));
+		} catch (serviceError &err) {
+			QCOMPARE(err.code, QString("invalid_profile"));
+			QVERIFY2(err.getString().contains(b.first),
+				CCHAR(err.getString()));
+		}
+	}
+}
+
+/* validity.max caps a requested validity; the cap is reported */
+void test_service_profiles::validityMax()
+{
+	Profile p = Profile::fromFile(SERVICE_TEST_DATA "/profiles/tls-server-web-keygen.json");
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"web key");
+	Registration reg;
+	x509name n;
+	n.addEntryByNid(NID_commonName, "web.example");
+	reg.subject = n;
+	reg.subjectAltName = "DNS:web.example";
+	reg.validity = "P5Y";
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString());
+	QVERIFY(cert);
+	QDateTime notAfter = cert->getNotAfter();
+	QDateTime now = QDateTime::currentDateTimeUtc();
+	QVERIFY2(notAfter <= now.addYears(2).addSecs(60) &&
+		 notAfter >= now.addYears(2).addSecs(-120),
+		CCHAR(notAfter.toString(Qt::ISODate)));
+	AuditEntry e = AuditLog::entries().last();
+	QVERIFY(e.params.value("validity_capped").toBool());
+	QVERIFY(e.params.contains("requested_not_after"));
+
+	/* within max: as requested, not capped */
+	reg.validity = "P90D";
+	key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"), "web key 2");
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString());
+	QVERIFY(!AuditLog::entries().last().params.value("validity_capped").toBool());
+	reg.validity = "forever";
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString("invalid_validity"));
+}
+
+/* opc_certificate_type: the key family of the leaf must have one */
+void test_service_profiles::opcCertificateType()
+{
+	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject types = doc["opc_certificate_type"].toObject();
+	types.remove("ec-p256");
+	doc["opc_certificate_type"] = types;
+	Profile p = Profile::fromJson(doc);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"device key");
+	Registration reg;
+	x509name n;
+	n.addEntryByNid(NID_commonName, "plc");
+	reg.subject = n;
+	reg.subjectAltName = "DNS:plc.example";
+	reg.applicationUri = "urn:bxc:plc";
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString("profile_key_type"));
+}
+
+/* warnings: the ids of the profile's device warnings in the audit entry
+ * of every certificate it issues */
+void test_service_profiles::profileWarningsAudited()
+{
+	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject only = QJsonDocument::fromJson([] {
+		QFile g(SERVICE_TEST_DATA "/profiles/opcua-server-only.json");
+		g.open(QIODevice::ReadOnly);
+		return g.readAll();
+	}()).object();
+	doc["warnings"] = only["warnings"];
+	Profile p = Profile::fromJson(doc);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"device key");
+	Registration reg;
+	x509name n;
+	n.addEntryByNid(NID_commonName, "plc");
+	reg.subject = n;
+	reg.subjectAltName = "DNS:plc.example";
+	reg.applicationUri = "urn:bxc:plc";
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString());
+	QString ids;
+	for (const QJsonValue &w : only["warnings"].toArray())
+		ids += (ids.isEmpty() ? "" : ",") + w.toObject()["id"].toString();
+	QCOMPARE(AuditLog::entries().last().params.value("profile_warnings")
+		.toString(), ids);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_profiles)

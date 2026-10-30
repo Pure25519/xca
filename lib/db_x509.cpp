@@ -423,6 +423,13 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 		p.set("profile", spec.profile);
 	if (spec.profileVersion)
 		p.set("profile_version", spec.profileVersion);
+	/* a validity capped by the profile's validity.max (BTD-167) */
+	if (spec.requestedNotAfter.isValid()) {
+		p.set("validity_capped", true);
+		p.set("requested_not_after", spec.requestedNotAfter);
+	}
+	if (!spec.profileWarnings.isEmpty())
+		p.set("profile_warnings", spec.profileWarnings.join(","));
 	QStringList policies;
 	for (const Policy &policy : spec.policies)
 		policies << policy.id;

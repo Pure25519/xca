@@ -16,6 +16,13 @@
  * hour ago issues from its own start, never refused as
  * issuer_not_yet_valid (BTD-55; boss decision 2026-10-29).
  *
+ * Every key of the schema is read or checked (BTD-167): unknown keys and
+ * wrong constants are refused; validity.max caps a requested validity
+ * (Registration::validity, the cap is reported); opc_certificate_type
+ * must name the key of an OPC UA certificate; the ids of warnings go
+ * into the audit entry of each issued certificate; crl_size_budget is
+ * checked here and read by the export size check of BTD-42.
+ *
  * Profile::fromJson() takes the document from anywhere: a file
  * (fromFile()), or the profile store of BTD-167. apply() neither writes
  * to the database nor draws a serial.
@@ -68,6 +75,10 @@ class Registration
 	 * an OpenSSL configuration value, e.g. "DNS:plc10, IP:10.0.0.10") */
 	x509name subject{};
 	QString subjectAltName{};
+	/* the requested validity, an ISO 8601 duration such as P90D; empty:
+	 * the profile's validity.default. Capped at validity.max, which is
+	 * reported (validity_capped, requested_not_after). */
+	QString validity{};
 };
 
 class Profile
