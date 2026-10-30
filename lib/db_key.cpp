@@ -420,7 +420,12 @@ void db_key::changeDatabasePassword(const Passwd &pass)
 			EVP_PKEY *evp = key->decryptKey();
 			key->set_evp_key(evp);
 			key->encryptKey(pass.constData());
-			key->sqlUpdatePrivateKey();
+			/* not stored: the key would stay encrypted with the
+			 * old password under the new hash (BTD-95) */
+			if (!key->sqlUpdatePrivateKey())
+				throw errorEx(tr("The private key '%1' was not "
+					"stored with the new password")
+					.arg(key->getIntName()));
 		}
 		AuditKey::reencrypt(pass);
 		Settings["pwhash"] = passhash;

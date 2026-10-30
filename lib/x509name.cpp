@@ -259,12 +259,14 @@ void x509name::addEntryByNid(int nid, const QString &entry)
 	if (entry.isEmpty())
 		return;
 	ASN1_STRING *a = QStringToAsn1(entry.simplified(), nid);
-	X509_NAME_add_entry_by_NID(_get(), nid,
+	/* unchecked, a refused entry was left out (BTD-95) */
+	int ok = X509_NAME_add_entry_by_NID(_get(), nid,
                                ASN1_STRING_type(a),
                                ASN1_STRING_get0_data(a),
 							   (int)ASN1_STRING_get_length(a), -1, 0);
 	ASN1_STRING_free(a);
-	openssl_error_msg(QString("'%1' (%2)").arg(entry).arg(OBJ_nid2ln(nid)));
+	if (!ok)
+		throwInvalidString(entry, nid);
 }
 
 X509_NAME *x509name::get() const

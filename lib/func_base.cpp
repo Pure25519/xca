@@ -104,8 +104,18 @@ ASN1_STRING *QStringToAsn1(const QString s, int nid)
 			mask &= global_mask;
 	}
 	ASN1_mbstring_copy(&out, utf8, -1, MBSTRING_UTF8, mask);
-	openssl_error_msg(QString("'%1' (%2)").arg(s).arg(OBJ_nid2ln(nid)));
+	/* a character the attribute's string types cannot hold: both
+	 * callers passed NULL on and the entry went missing (BTD-95) */
+	if (!out)
+		throwInvalidString(s, nid);
 	return out;
+}
+
+void throwInvalidString(const QString &s, int nid)
+{
+	throw serviceError("invalid_string", QString("%1\n%2")
+		.arg(QObject::tr("The value '%1' is not valid for %2.")
+			.arg(s, OBJ_nid2ln(nid)), take_openssl_errors()));
 }
 
 const char *OBJ_ln2sn(const char *ln)

@@ -210,11 +210,14 @@ void pki_x509req::addAttribute(int nid, QString content)
 		return;
 
 	ASN1_STRING *a = QStringToAsn1(content, nid);
-	X509_REQ_add1_attr_by_NID(request, nid, ASN1_STRING_type(a),
+	/* unchecked, a refused attribute was left out of the request
+	 * (BTD-95) */
+	int ok = X509_REQ_add1_attr_by_NID(request, nid, ASN1_STRING_type(a),
 							  ASN1_STRING_get0_data(a),
 							  (int)ASN1_STRING_get_length(a));
 	ASN1_STRING_free(a);
-	openssl_error_msg(QString("'%1' (%2)").arg(content).arg(OBJ_nid2ln(nid)));
+	if (!ok)
+		throwInvalidString(content, nid);
 }
 
 x509name pki_x509req::getSubject() const

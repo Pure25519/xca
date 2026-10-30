@@ -65,9 +65,13 @@ Passwd AuditKey::password(bool ask)
 static QByteArray encryptPrivate(EVP_PKEY *pkey, const Passwd &pass)
 {
 	BioByteArray der;
-	if (!i2d_PKCS8PrivateKey_bio(der, pkey, EVP_aes_256_cbc(),
-			(char *)pass.constData(), pass.size(), NULL, NULL))
-		openssl_error_msg(QObject::tr("Failed to encrypt the audit key"));
+	/* openssl_error_msg() only prints: an empty key was stored (BTD-95) */
+	if (i2d_PKCS8PrivateKey_bio(der, pkey, EVP_aes_256_cbc(),
+			(char *)pass.constData(), pass.size(), NULL, NULL) <= 0 ||
+	    der.size() == 0)
+		throw serviceError("audit_key_failed", QString("%1\n%2")
+			.arg(QObject::tr("Failed to encrypt the audit key"),
+				take_openssl_errors()));
 	return der.byteArray();
 }
 
@@ -102,7 +106,9 @@ static QByteArray spkiDer(EVP_PKEY *pkey)
 	unsigned char *der = nullptr;
 	int len = i2d_PUBKEY(pkey, &der);
 	if (len <= 0)
-		openssl_error_msg(QObject::tr("Invalid audit key"));
+		throw serviceError("audit_key_failed", QString("%1\n%2")
+			.arg(QObject::tr("Invalid audit key"),
+				take_openssl_errors()));
 	QByteArray ba((const char *)der, len);
 	OPENSSL_free(der);
 	return ba;
@@ -121,13 +127,18 @@ AuditKey::Generated AuditKey::generate(const Passwd &pass)
 {
 	EVP_PKEY *pkey = EVP_PKEY_Q_keygen(NULL, NULL, "ED25519");
 	if (!pkey)
-		openssl_error_msg(QObject::tr("Failed to generate the audit key"));
+		throw serviceError("audit_key_failed", QString("%1\n%2")
+			.arg(QObject::tr("Failed to generate the audit key"),
+				take_openssl_errors()));
 
 	Generated key;
 	try {
 		BioByteArray pem;
 		if (!PEM_write_bio_PUBKEY(pem, pkey))
-			openssl_error_msg(QObject::tr("Invalid audit key"));
+			throw serviceError("audit_key_failed",
+				QString("%1\n%2").arg(QObject::tr(
+					"Invalid audit key"),
+					take_openssl_errors()));
 		key.publicPem = pem.byteArray();
 		key.id = spkiId(spkiDer(pkey));
 		key.encryptedPrivate = encryptPrivate(pkey, pass);
@@ -202,8 +213,12 @@ QByteArray AuditKey::sign(const Generated &key, const QByteArray &data,
 	}
 	EVP_MD_CTX_free(ctx);
 	EVP_PKEY_free(pkey);
-	if (!ok)
-		openssl_error_msg(QObject::tr("Failed to sign the audit checkpoint"));
+	/* before: an empty signature was stored and committed (BTD-95);
+	 * a checkpoint signs before its first write, so nothing is written */
+	if (!ok || sig.isEmpty())
+		throw serviceError("audit_signing_failed", QString("%1\n%2")
+			.arg(QObject::tr("Failed to sign the audit checkpoint"),
+				take_openssl_errors()));
 	return sig;
 }
 

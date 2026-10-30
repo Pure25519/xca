@@ -159,6 +159,10 @@ ServiceTest(test_service_loaders)
 target_compile_definitions(test_service_loaders PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
 
+# OpenSSL results a service path checks itself: key encryption, the audit
+# checkpoint signature, refused subject entries (BTD-95)
+ServiceTest(test_service_openssl_checks)
+
 # Checks before every signature: path length, issuer, CSR, OPC UA chains
 # (BTD-55)
 ServiceTest(test_service_signing)

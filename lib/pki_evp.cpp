@@ -850,13 +850,15 @@ void pki_evp::encryptKey(const char *password)
 
 	/* Convert private key to DER(PKCS8-aes) */
 	BioByteArray bba;
-	try {
-		i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
+	int ok = i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
 			ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
-		pki_openssl_error();
-	} catch (...) {
+	/* before the private key is replaced by the public one: a failure
+	 * left an empty encKey, and the key was lost (BTD-95) */
+	if (ok <= 0 || bba.size() == 0) {
 		EVP_PKEY_free(moved);
-		throw;
+		throw serviceError("key_encryption_failed", QString("%1\n%2")
+			.arg(tr("The private key '%1' could not be encrypted.")
+				.arg(getIntName()), take_openssl_errors()));
 	}
 	encKey = bba;
 

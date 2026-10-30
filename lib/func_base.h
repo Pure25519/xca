@@ -32,7 +32,12 @@ QString formatHash(const QByteArray &data, QString sep = ":", int width = 2);
 QString compressFilename(const QString &filename, int maxlen = 50);
 
 QString asn1ToQString(const ASN1_STRING *str, bool quote = false);
+/* Throws serviceError("invalid_string") for a character the string types
+ * of nid cannot hold */
 ASN1_STRING *QStringToAsn1(QString s, int nid);
+/* serviceError("invalid_string"): s is no valid value of nid, e.g. too
+ * long; the message names both and the OpenSSL reasons (BTD-95) */
+[[noreturn]] void throwInvalidString(const QString &s, int nid);
 
 QByteArray Digest(const QByteArray &data, const EVP_MD *type);
 
