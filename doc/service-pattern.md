@@ -35,6 +35,16 @@ true, and the caller reported success with nothing stored). Every outermost comm
 service function turns false into `database_error` with a `failure` entry. The log names the first
 inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
 
+The close of a database vacuums only after a run that committed a write (BTD-225). For SQLite
+the file change counter in the header (bytes 24 to 27) decides: it is read at the open and at the
+close, and a read, `--plan`'s rolled-back work or an open that wrote nothing leave it as it was. So
+a read-only command (`bxc-pki list` and `show`, `--list-items`, `--index`, `--hierarchy`,
+`--audit-verify`, an `--audit-export` with no checkpoint due) leaves the file byte-identical, also
+its mtime, and a read-only file closes without a VACUUM attempt. A plan run and an export that
+writes its due checkpoint are audited, so they are writes. A failed VACUUM is logged with its SQL
+error and the close goes on. Remote databases (PostgreSQL, MariaDB) keep the VACUUM on every close
+that they had. `test_cli_readonly`, `test_service_sql_errors::failedVacuumLogged`.
+
 A failed SQL write is a typed error, never a message box in a service path (BTD-50).
 
 - **The helper.** `throwSqlError(QSqlError, what)` in `lib/sql.h` picks the code from SQLite's result code:
