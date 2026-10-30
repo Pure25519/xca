@@ -248,8 +248,10 @@ if(OPENSSL_PROGRAM)
 endif()
 
 # ML-DSA keys under an openssl.cnf that changes the default provider
-# (BTD-16): the same test function with data/mldsa-<mode>.cnf
-foreach(mode output retain prefer)
+# (BTD-16): the same test functions with data/mldsa-<mode>.cnf; prefer_seed
+# also in the other spellings OpenSSL reads as false (BTD-194). Each run
+# checks first that OpenSSL loaded the cnf (checkOpensslConf)
+foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
   add_test(NAME test_service_importexport_cnf_${mode}
 	COMMAND test_service_importexport mlDsaUnderOpensslConf
 		mlDsaSeedlessPasswordChange)
