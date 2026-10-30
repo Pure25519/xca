@@ -1342,7 +1342,7 @@ void db_x509::setRevocations(const ServiceContext &ctx, pki_x509 *ca,
 	auditedTransaction(ctx, "ca.set_revocations", "certificate",
 				itemId(ca), params, [&]() {
 		if (!ca || !ca->isCA())
-			throw serviceError("not_a_ca",
+			throw serviceError("issuer_not_ca",
 				tr("Revocations need a CA certificate"));
 		QVariant caId = ca->getSqlItemId();
 		QList<x509rev> wanted;

@@ -7,6 +7,7 @@
 
 
 #include "db_crl.h"
+#include "issuance_checks.h"
 #include "db_x509.h"
 #include "audit.h"
 #include "exception.h"
@@ -313,19 +314,20 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 			if (!cert)
 				throw serviceError("missing_issuer",
 					tr("No CA certificate given"));
-			if (!cert->isCA())
-				throw serviceError("not_a_ca",
-					tr("'%1' is not a CA certificate")
-						.arg(cert->getIntName()));
 			pki_key *signkey = cert->getRefKey();
-			if (!signkey || signkey->isPubKey())
+			if (!signkey || signkey->isPubKey()) {
+				/* a non-CA has no use for its key here */
+				if (!cert->isCA())
+					throw serviceError("issuer_not_ca",
+						tr("'%1' is not a CA certificate")
+							.arg(cert->getIntName()));
 				throw serviceError("no_private_signing_key",
 					tr("There is no private key for '%1'")
 						.arg(cert->getIntName()));
-			if (task.hashAlgo.isInsecure())
-				throw serviceError("insecure_hash",
-					tr("A CRL is never signed with %1")
-						.arg(task.hashAlgo.name()));
+			}
+			/* the issuer checks of certificates (BTD-188) */
+			IssuanceChecks::crlIssuer(cert, signkey, task.hashAlgo,
+						params);
 			a1int last = lastCrlNumber(cert);
 			if (!(task.crlNumber > last))
 				throw serviceError("crl_number_not_increasing",
