@@ -47,6 +47,7 @@ class test_main: public QObject
 	void importAuditFailureKeepsItem();
 	void tokenDialogClosedDatabase();
 	void exportFormat();
+	void exportMlDsaEncoding();
 	void revoke();
 	void renewalSigningFails();
 	void issueRefusedByPolicy();

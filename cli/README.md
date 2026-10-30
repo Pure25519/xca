@@ -266,7 +266,12 @@ with `missing_password` and writes no file. Legacy only on request: `--pkcs12-al
 PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
 `--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
 (`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
-`key.export_private` name it; on another key it is `format_not_applicable`. `--plan` runs the
+`key.export_private` name it; on another key it is `format_not_applicable`. To check the stored
+encoding, read the first byte of the RFC 9881 `ML-DSA-PrivateKey` inside the decrypted PKCS#8:
+`0x80` seed, `0x04` expanded, `0x30` both. `openssl pkcs8` and `openssl pkey` are no proof:
+they decode the key and encode it again, so a seed-only key comes back as both.
+`misc/mldsa-key-encoding.sh <file> [<password variable>]` decrypts PBES2 without decoding the
+key and prints the encoding as JSON (password from `EXPORT_PASS` by default). `--plan` runs the
 option checks of the export service (`db_base::checkExportSpec()`: format, PKCS#12 algorithm,
 ML-DSA key format) and reports the error of the real run (BTD-211). Every export writes
 `object.export`, a private key also `key.export_private`. `--type` selects the object kind when
