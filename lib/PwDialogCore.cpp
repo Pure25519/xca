@@ -14,6 +14,9 @@
 #include <QFile>
 #include <QTextStream>
 #include <QThread>
+#if !defined(Q_OS_WIN32)
+#include <unistd.h>
+#endif
 
 PwDialogUI_i *PwDialogCore::pwdialog;
 PwDialogHeadless PwDialogCore::headlessUI;
@@ -143,10 +146,15 @@ Passwd PwDialogHeadless::secret(enum pass_info::purpose purpose)
 {
 	if (!sources.contains(purpose))
 		throw secretError(secretError::missing,
-			QObject::tr("No password source given"));
+			QObject::tr("No password source given"), purpose);
 	entry &s = sources[purpose];
 	if (!s.read) {
-		s.secret = readSource(s.name);
+		try {
+			s.secret = readSource(s.name);
+		} catch (secretError &err) {
+			err.purpose = purpose;
+			throw;
+		}
 		s.read = true;
 	}
 	return s.secret;
@@ -261,11 +269,33 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 		return pw_ok;
 	}
 #if !defined(Q_OS_WIN32)
+	/* Prompts go to stderr, stdout carries only results (BTD-41) */
 	if (interactive) {
-		console_write(stdout, QString(COL_CYAN "%1\n" COL_LRED "%2:" COL_RESET)
+		/* Without a terminal readPass() refuses (BTD-145): no
+		 * prompt then, and the error names the request */
+		if (!isatty(0)) {
+			bool db = p->getPurpose() == pass_info::DatabasePassword ||
+				p->getPurpose() == pass_info::KeyPassword;
+			throw secretError(secretError::missing,
+				QObject::tr("%1 required, but --interactive has "
+					"no terminal on standard input: %2. Give "
+					"it from a source (pass:, env:, file:, fd: "
+					"or stdin)%3")
+					.arg(p->getType())
+					.arg(p->getDescription())
+					.arg(db ? QObject::tr(", e.g. --password "
+						"env:<variable>") : QString()),
+				p->getPurpose());
+		}
+		console_write(stderr, QString(COL_CYAN "%1\n" COL_LRED "%2:" COL_RESET)
 				.arg(p->getDescription())
 				.arg(p->getType()).toUtf8());
-		*passwd = readPass();
+		try {
+			*passwd = readPass();
+		} catch (secretError &err) {
+			err.purpose = p->getPurpose();
+			throw;
+		}
 		return pw_ok;
 	}
 #endif
@@ -276,10 +306,11 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 				.arg(hasSource ?
 					sourceName(sources[p->getPurpose()].name) :
 					QObject::tr("the command line"))
-				.arg(p->getDescription()));
+				.arg(p->getDescription()), p->getPurpose());
 	throw secretError(secretError::missing,
 		QObject::tr("%1 required, but no source is given and %2: %3")
-			.arg(p->getType()).arg(noInput()).arg(p->getDescription()));
+			.arg(p->getType()).arg(noInput()).arg(p->getDescription()),
+		p->getPurpose());
 }
 
 int PwDialogHeadless::selectToken(const QStringList &names)
@@ -291,7 +322,7 @@ int PwDialogHeadless::selectToken(const QStringList &names)
 		for (int i = 0; i < names.size(); i++)
 			s += QString("  %1: %2\n").arg(i + 1).arg(names[i]);
 		s += QObject::tr("Select a token (1-%1): ").arg(names.size());
-		console_write(stdout, s.toUtf8());
+		console_write(stderr, s.toUtf8());
 		QTextStream in(stdin);
 		bool ok;
 		int i = in.readLine().trimmed().toInt(&ok);
@@ -314,7 +345,7 @@ int PwDialogHeadless::selectKeySlot(const QString &label,
 		for (int i = 0; i < names.size(); i++)
 			s += QString("  %1: %2\n").arg(i + 1).arg(names[i]);
 		s += QObject::tr("Select a key slot (1-%1): ").arg(names.size());
-		console_write(stdout, s.toUtf8());
+		console_write(stderr, s.toUtf8());
 		QTextStream in(stdin);
 		bool ok;
 		int i = in.readLine().trimmed().toInt(&ok);
@@ -332,7 +363,7 @@ void PwDialogHeadless::pinPadLogin(pass_info *p, QThread *login)
 	 * only with interactive input */
 #if !defined(Q_OS_WIN32)
 	if (interactive) {
-		console_write(stdout, QString(COL_CYAN "%1\n" COL_RESET "%2\n")
+		console_write(stderr, QString(COL_CYAN "%1\n" COL_RESET "%2\n")
 				.arg(p->getDescription())
 				.arg(QObject::tr("Please enter the PIN on the PinPad"))
 				.toUtf8());

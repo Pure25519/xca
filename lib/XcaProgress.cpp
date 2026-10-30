@@ -11,22 +11,23 @@
 #include "base.h"
 #include "XcaProgress.h"
 
+/* The progress of the command line goes to stderr: stdout carries
+ * only results (BTD-41) */
 void XcaProgressCmd::stop()
 {
-	puts(" finished.");
+	fputs(" finished.\n", stderr);
 }
 
 void XcaProgressCmd::start(const QString &what, int)
 {
-	puts("");
-	puts(CCHAR(what));
+	fprintf(stderr, "\n%s\n", CCHAR(what));
 }
 
 void XcaProgressCmd::increment()
 {
 	static const char *spinner = "|/-\\";
-	printf("\rGenerating %c ...", spinner[i++%4]);
-	fflush(stdout);
+	fprintf(stderr, "\rGenerating %c ...", spinner[i++%4]);
+	fflush(stderr);
 }
 
 XcaProgress_i *XcaProgress::progress;

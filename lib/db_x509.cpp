@@ -414,7 +414,8 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	p.set("not_after", (QDateTime)spec.effectiveNotAfter(&capped));
 	p.set("validity_capped", capped);
 	if (capped)
-		p.set("requested_not_after", (QDateTime)spec.notAfter);
+		p.set("requested_not_after",
+			(QDateTime)spec.requestedNotAfter());
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (!spec.templateName.isEmpty())
 		p.set("template", spec.templateName);
