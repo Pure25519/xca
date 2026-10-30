@@ -167,8 +167,13 @@ if(NOT rid EQUAL id_dev2)
 endif()
 crl_number_of("${r}")
 hex2dec(dec "${serial_dev3}")
-bxc("by decimal serial" 0 revoke --serial ${dec} --ca "Rev Root" --db "${DB}"
-    ${PW} --reason cessationOfOperation)
+# digits only are hex, as XCA shows serials; decimal needs "dec:" (review
+# of xca#62: an all-digit serial must not name the other reading silently)
+bxc("decimal serial without dec:" 1 revoke --serial ${dec} --ca "Rev Root"
+    --db "${DB}" ${PW} --reason cessationOfOperation)
+expect_error("decimal serial without dec:" unknown_serial)
+bxc("by decimal serial" 0 revoke --serial dec:${dec} --ca "Rev Root"
+    --db "${DB}" ${PW} --reason cessationOfOperation)
 one_doc("by decimal serial" "${out}" cli-result r)
 string(JSON rid GET "${r}" revocation certificate_id)
 if(NOT rid EQUAL id_dev3)
@@ -234,6 +239,10 @@ audit_has("${a}" "\"action\":\"certificate\\.revoke\".*\"channel\":\"cli\".*\"re
 audit_has("${a}" "\"action\":\"certificate\\.revoke\".*\"channel\":\"cli\".*\"error_code\":\"already_revoked\".*\"result\":\"failure\"" "revoke refused")
 foreach(trig init revoke command)
   audit_has("${a}" "\"action\":\"crl\\.generate\".*\"channel\":\"cli\".*\"trigger\":\"${trig}\".*\"result\":\"success\"" "crl.generate ${trig}")
+endforeach()
+# refusals before the service call get a failure entry too (review of xca#62)
+foreach(code wrong_issuer unknown_serial invalid_fingerprint ambiguous_reference)
+  audit_has("${a}" "\"action\":\"certificate\\.revoke\".*\"channel\":\"cli\".*\"error_code\":\"${code}\".*\"result\":\"failure\"" "refusal ${code}")
 endforeach()
 audit_has("${a}" "\"action\":\"cli\\.plan\".*\"channel\":\"cli\".*\"command\":\"revoke\"" "plan entry")
 audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*Rev_Root\\.crl" "CRL file export")

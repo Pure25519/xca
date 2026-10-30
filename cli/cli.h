@@ -43,6 +43,7 @@ class pki_key;
 class pki_x509;
 class pki_x509req;
 class pki_temp;
+class StagedDirectory;
 class StagedFile;
 class x509name;
 
@@ -271,6 +272,9 @@ class OutputFiles
 	bool force{};
 	bool plan{};
 	bool done{};
+	/* the directory replaced as a whole (trust lists) */
+	std::shared_ptr<StagedDirectory> directory{};
+	QString plannedDirectory{};
 
   public:
 	OutputFiles(bool forceReplace, bool planOnly)
@@ -287,10 +291,18 @@ class OutputFiles
 	 * "{id}" for an id not known yet */
 	void planned(const QString &path, const QString &kind,
 			const QString &type, const QString &name, bool secret);
+	/* A directory replaced as a whole (trust lists, review of
+	 * xca#62): checked and staged now (lib/staged_file.h
+	 * StagedDirectory, marker: the file of an earlier export); the
+	 * files added below it go to its sibling and become visible
+	 * together in publish(). --plan: the checks only. */
+	void addDirectory(const QString &dir, const QString &marker);
 	/* After the commit; throws the error of the first file that fails,
 	 * the files before it stay published */
 	void publish();
 	void discard();
+	/* Whether the file of e is visible under its path */
+	bool written(const entry &e) const;
 	bool isEmpty() const
 	{
 		return files.isEmpty();
@@ -382,6 +394,13 @@ T *resolveAs(const QString &ref, const QString &kind, const QString &option)
 {
 	return dynamic_cast<T *>(resolve(ref, QStringList(kind), option));
 }
+/* A refusal of a handler before its service call (review of xca#62):
+ * the failure entry of action the service would have written; pki is
+ * the object if known. Not under --plan, whose cli.plan entry records
+ * the run. */
+void auditRefusal(const CommandContext &ctx, const QString &action,
+		const pki_base *pki, const AuditParams &params,
+		const QString &code);
 
 /* RFC 4514 distinguished name; order kept, multi-valued RDNs (+),
  * UTF8String for directory strings. Throws usageError invalid_subject. */

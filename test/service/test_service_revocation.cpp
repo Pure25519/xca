@@ -755,10 +755,13 @@ void test_service_revocation::certBySerial()
 	QCOMPARE(certs()->certBySerial(ca, hex), ee);
 	QCOMPARE(certs()->certBySerial(ca, "0x" + hex.toLower()), ee);
 	QCOMPARE(certs()->certBySerial(ca, colons), ee);
-	QCOMPARE(certs()->certBySerial(ca, " " + ee->getSerial().toDec()), ee);
+	QCOMPARE(certs()->certBySerial(ca, " dec:" + ee->getSerial().toDec()),
+		ee);
 
 	/* Two certificates whose serials read the same digits as hex and
-	 * as decimal */
+	 * as decimal: digits only are hex, as XCA shows serials; decimal
+	 * needs "dec:" (review of xca#62: the unintended reading was
+	 * taken silently when only it existed) */
 	pki_x509 *a = new pki_x509(ee), *b = new pki_x509(ee);
 	pki_key *caKey = ca->getRefKey();
 	a->setSerial(a1int().setHex("1234"));
@@ -769,10 +772,24 @@ void test_service_revocation::certBySerial()
 		QVERIFY(certs()->insert(c));
 	}
 	QCOMPARE(certs()->certBySerial(ca, "0x1234"), a);
+	QCOMPARE(certs()->certBySerial(ca, "1234"), a);
 	QCOMPARE(certs()->certBySerial(ca, "04D2"), b);
+	QCOMPARE(certs()->certBySerial(ca, "dec:1234"), b);
+	QCOMPARE(certs()->certBySerial(ca, "DEC:1234"), b);
+
+	/* only the decimal reading exists: digits only do not find it */
+	pki_x509 *d = new pki_x509(ee);
+	d->setSerial(a1int().setDec("5678"));
+	d->setIntName("dec-only");
+	d->sign(caKey, digest(NID_sha256));
+	QVERIFY(certs()->insert(d));
+	QCOMPARE(certs()->certBySerial(ca, "dec:5678"), d);
 
 	const QList<QPair<QString, QString> > bad {
-		{ "1234", "ambiguous_serial" },
+		{ "5678", "unknown_serial" },
+		{ "dec:12AB", "invalid_serial" },
+		{ "dec:", "invalid_serial" },
+		{ "dec:0x10", "invalid_serial" },
 		{ "0x" + hex + "00", "unknown_serial" },
 		{ "4711", "unknown_serial" },
 		{ "12G4", "invalid_serial" },

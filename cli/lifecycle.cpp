@@ -271,27 +271,44 @@ static void cmdRevoke(CommandContext &ctx)
 	QString reason = reasonName(o.value("reason"), &rfcReason);
 	checkOutOptions(ctx, false);
 
-	pki_x509 *ca = o.has("ca") ? resolveAs<pki_x509>(o.value("ca"),
-				"certificate", "--ca") : nullptr;
-	pki_x509 *cert;
+	pki_x509 *ca = nullptr, *cert = nullptr, *issuer = nullptr;
 	db_x509 *certs = Database.model<db_x509>();
-	if (o.has("serial"))
-		/* hex or decimal, normalised; unknown_serial,
-		 * ambiguous_serial */
-		cert = certs->certBySerial(ca, o.value("serial"));
-	else if (o.has("fingerprint"))
-		cert = byFingerprint(o.value("fingerprint"));
-	else
-		cert = resolveAs<pki_x509>(o.args()[0], "certificate",
-					"<certificate>");
-	pki_x509 *issuer = cert->getSigner();
-	if (ca && issuer != ca)
-		throw serviceError("wrong_issuer", QObject::tr(
-			"'%1' is issued by %2, not by --ca '%3'")
-			.arg(cert->getIntName())
-			.arg(issuer ? QString("'%1'").arg(issuer->getIntName())
-				: QObject::tr("a CA outside the database"))
-			.arg(ca->getIntName()));
+	try {
+		if (o.has("ca"))
+			ca = resolveAs<pki_x509>(o.value("ca"), "certificate",
+						"--ca");
+		if (o.has("serial"))
+			/* hex (digits only too) or dec:<decimal>;
+			 * unknown_serial */
+			cert = certs->certBySerial(ca, o.value("serial"));
+		else if (o.has("fingerprint"))
+			cert = byFingerprint(o.value("fingerprint"));
+		else
+			cert = resolveAs<pki_x509>(o.args()[0], "certificate",
+						"<certificate>");
+		issuer = cert->getSigner();
+		if (ca && issuer != ca)
+			throw serviceError("wrong_issuer", QObject::tr(
+				"'%1' is issued by %2, not by --ca '%3'")
+				.arg(cert->getIntName())
+				.arg(issuer ? QString("'%1'").arg(
+					issuer->getIntName()) :
+					QObject::tr("a CA outside the database"))
+				.arg(ca->getIntName()));
+	} catch (serviceError &err) {
+		AuditParams p;
+		p.set("reason", reason);
+		for (const QString &n : { QString("serial"),
+					QString("fingerprint") })
+			if (o.has(n))
+				p.set(n, o.value(n));
+		if (!o.args().isEmpty())
+			p.set("name", o.args()[0]);
+		if (ca)
+			p.set("issuer", ca->getIntName());
+		auditRefusal(ctx, "certificate.revoke", cert, p, err.code);
+		throw;
+	}
 
 	x509rev rev;
 	rev.setReason(reason);
@@ -374,10 +391,11 @@ void registerLifecycleCommands(Registry &r)
 		"  The certificate is a database id or a unique name (an "
 		"ambiguous name is refused\n  with the candidates), or "
 		"--serial (hex as XCA shows it, with or without 0x\n  and "
-		"colons, or decimal) with --ca, or --fingerprint (SHA-256). "
-		"--reason is\n  required; with --ca the issuer must be that "
-		"CA. The CRL of the issuing CA is\n  issued at once (rule 8 "
-		"of PLAN.md 8.4).");
+		"colons, also digits only; decimal as dec:<digits>) with "
+		"--ca, or\n  --fingerprint (SHA-256). --reason is "
+		"required; with --ca the issuer must be that\n  CA. The "
+		"CRL of the issuing CA is issued at once (rule 8 of PLAN.md "
+		"8.4).");
 	c.options = QList<OptionSpec> {
 		opt("reason", OptionSpec::string, "<reason>", QObject::tr(
 			"RFC 5280 reason: unspecified, keyCompromise, "
@@ -385,7 +403,8 @@ void registerLifecycleCommands(Registry &r)
 			"cessationOfOperation, certificateHold, "
 			"privilegeWithdrawn, AACompromise"), false, true),
 		opt("serial", OptionSpec::string, "<serial>", QObject::tr(
-			"the serial number of the certificate (needs --ca)")),
+			"the serial number of the certificate, hex or "
+			"dec:<digits> (needs --ca)")),
 		opt("fingerprint", OptionSpec::string, "<sha256>",
 			QObject::tr("the SHA-256 fingerprint of the "
 			"certificate")),

@@ -718,20 +718,28 @@ void test_service_importexport::privateExportEncrypted()
 		spec.clipboard = true;
 		out = db->exportItems(ctx, spec);
 	} else if (emptyPassword) {
-		/* The password dialog returns an empty password */
+		/* The password dialog returns an empty password: refused
+		 * outside the GUI for every format, PKCS#12 included (review
+		 * of xca#62: it protects nothing) */
 		pwdialog->expect(QByteArray());
 		try {
-			out = exportTo(db, item, format, QString());
-			QVERIFY2(xport->match_all(F_PKCS12),
-				"empty password accepted");
+			exportTo(db, item, format, QString());
+			QFAIL("empty password accepted outside the GUI");
 		} catch (serviceError &err) {
-			QVERIFY(!xport->match_all(F_PKCS12));
 			QCOMPARE(err.code, QString("missing_password"));
 			QCOMPARE(entries("key.export_private").size(), 0);
 			QCOMPARE(entries("object.export").last().errorCode,
 				QString("missing_password"));
-			return;
 		}
+		if (!xport->match_all(F_PKCS12))
+			return;
+		/* the GUI keeps XCA's behaviour: PKCS#12 accepts it */
+		pwdialog->expect(QByteArray());
+		ExportSpec spec;
+		spec.items << item;
+		spec.format = xport;
+		out = db->exportItems(ServiceContext(ServiceContext::gui,
+						"os:service-test"), spec);
 	} else {
 		out = exportTo(db, item, format, QString(), passin);
 	}

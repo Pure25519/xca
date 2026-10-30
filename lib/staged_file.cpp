@@ -25,6 +25,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #else
+#include <cstdio>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -42,6 +43,7 @@ QString StagedFile::stepName(enum step s)
 	case sync: return "sync";
 	case publish_step: return "publish";
 	case recheck: return "recheck";
+	case owner_check: return "owner_check";
 	}
 	return "unknown";
 }
@@ -53,11 +55,23 @@ static serviceError failed(const QString &what, const QString &path,
 		.arg(what, QDir::toNativeSeparators(path), why));
 }
 
+bool StagedFile::injected(enum step s) const
+{
+	return faultHook && faultHook(s, targetPath);
+}
+
 void StagedFile::fault(enum step s) const
 {
-	if (faultHook && faultHook(s, targetPath))
+	if (injected(s))
 		throw failed(stepName(s), targetPath,
 			QObject::tr("injected fault (test)"));
+}
+
+static serviceError notOwnerOnly(const QString &path, const QString &why)
+{
+	return serviceError("permission_check_failed", QObject::tr(
+		"'%1' cannot be kept owner-only: %2")
+		.arg(QDir::toNativeSeparators(path), why));
 }
 
 StagedFile::StagedFile(const QString &target, bool secretFile,
@@ -163,6 +177,20 @@ void StagedFile::stage(const QByteArray &data)
 		if (secret && fchmod(fd, 0600) != 0)
 			throw failed(QObject::tr("Setting the mode of"),
 					tempPath, sysError(errno));
+		/* rule 10 before the commit (review of xca#62): a file
+		 * system that ignores the mode (WSL drvfs, vfat) shows it
+		 * here already; nothing is stored for a key it cannot hold */
+		struct stat st;
+		if (secret && fstat(fd, &st) != 0)
+			throw failed(QObject::tr("Checking"), tempPath,
+					sysError(errno));
+		if (secret && (injected(owner_check) ||
+		    (st.st_mode & 077) != 0 || st.st_uid != geteuid()))
+			throw notOwnerOnly(targetPath, QObject::tr(
+				"a new file in this directory has mode %1 and "
+				"owner %2; choose a directory on a file system "
+				"with POSIX permissions").arg(st.st_mode & 07777,
+				4, 8, QChar('0')).arg(st.st_uid));
 		const char *p = data.constData();
 		qint64 left = data.size();
 		while (left > 0) {
@@ -237,20 +265,25 @@ void StagedFile::publish()
 	staged = false;
 	syncDirectory(targetPath);
 
-	fault(recheck);
-	/* rule 10: the published secret is owner-only and ours */
+	/* rule 10: the published secret is owner-only and ours; one that
+	 * is not is removed again (review of xca#62), not left readable */
 	struct stat st;
-	if (::lstat(dst.constData(), &st) != 0)
-		throw serviceError("permission_check_failed", QObject::tr(
-			"'%1' cannot be checked after writing: %2")
-			.arg(QDir::toNativeSeparators(targetPath),
-				sysError(errno)));
-	if (!S_ISREG(st.st_mode) || (secret && ((st.st_mode & 077) != 0 ||
-	    st.st_uid != geteuid())))
-		throw serviceError("permission_check_failed", QObject::tr(
-			"'%1' is not an owner-only regular file after writing "
-			"(mode %2)").arg(QDir::toNativeSeparators(targetPath))
-			.arg(st.st_mode & 07777, 4, 8, QChar('0')));
+	QString why;
+	if (injected(recheck))
+		why = QObject::tr("injected fault (test)");
+	else if (::lstat(dst.constData(), &st) != 0)
+		why = sysError(errno);
+	else if (!S_ISREG(st.st_mode) || (secret && ((st.st_mode & 077) != 0 ||
+		 st.st_uid != geteuid())))
+		why = QObject::tr("not an owner-only regular file after "
+			"writing (mode %1)").arg(st.st_mode & 07777, 4, 8,
+			QChar('0'));
+	if (!why.isEmpty()) {
+		if (::unlink(dst.constData()) == 0)
+			published = false;
+		syncDirectory(targetPath);
+		throw notOwnerOnly(targetPath, why);
+	}
 }
 
 #else /* Q_OS_WIN: NOT compiled or tested yet (BTD-13) */
@@ -270,6 +303,29 @@ static QString sysError(DWORD err)
 /* D: protected DACL (no inherited entries), OWNER RIGHTS (S-1-3-4) full
  * control only */
 static const wchar_t ownerOnlySddl[] = L"D:P(A;;FA;;;OW)";
+
+/* rule 10: the DACL is protected and has one entry; from the open handle
+ * (h) or the path */
+static bool ownerOnlyAcl(HANDLE h, const QString &path)
+{
+	PSECURITY_DESCRIPTOR sd = nullptr;
+	PACL dacl = nullptr;
+	DWORD r = h != INVALID_HANDLE_VALUE ?
+		GetSecurityInfo(h, SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+			nullptr, nullptr, &dacl, nullptr, &sd) :
+		GetNamedSecurityInfoW(
+			(LPCWSTR)QDir::toNativeSeparators(path).utf16(),
+			SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr,
+			nullptr, &dacl, nullptr, &sd);
+	SECURITY_DESCRIPTOR_CONTROL ctl = 0;
+	DWORD rev = 0;
+	bool ok = r == ERROR_SUCCESS && dacl && dacl->AceCount == 1 &&
+		GetSecurityDescriptorControl(sd, &ctl, &rev) &&
+		(ctl & SE_DACL_PROTECTED);
+	if (sd)
+		LocalFree(sd);
+	return ok;
+}
 
 void StagedFile::stage(const QByteArray &data)
 {
@@ -293,7 +349,7 @@ void StagedFile::stage(const QByteArray &data)
 		tempPath = tempName(targetPath);
 		fault(create);
 		h = CreateFileW((LPCWSTR)QDir::toNativeSeparators(tempPath).utf16(),
-			GENERIC_WRITE, 0, &sa, CREATE_NEW,
+			GENERIC_WRITE | READ_CONTROL, 0, &sa, CREATE_NEW,
 			FILE_ATTRIBUTE_NORMAL, nullptr);
 		if (h == INVALID_HANDLE_VALUE &&
 		    GetLastError() != ERROR_FILE_EXISTS) {
@@ -311,6 +367,12 @@ void StagedFile::stage(const QByteArray &data)
 				sysError(ERROR_FILE_EXISTS));
 	staged = true;
 	try {
+		/* rule 10 before the commit (review of xca#62) */
+		if (secret && (injected(owner_check) ||
+		    !ownerOnlyAcl(h, tempPath)))
+			throw notOwnerOnly(targetPath, QObject::tr(
+				"a new file in this directory gets no "
+				"owner-only ACL"));
 		const char *p = data.constData();
 		qint64 left = data.size();
 		while (left > 0) {
@@ -362,27 +424,164 @@ void StagedFile::publish()
 	published = true;
 	staged = false;
 
-	fault(recheck);
-	if (!secret)
+	/* rule 10: the DACL moved with the file and is still protected;
+	 * a secret without it is removed again (review of xca#62) */
+	if (!secret && !injected(recheck))
 		return;
-	/* rule 10: the DACL moved with the file and is still protected */
-	PSECURITY_DESCRIPTOR sd = nullptr;
-	PACL dacl = nullptr;
-	DWORD r = GetNamedSecurityInfoW(
-		(LPCWSTR)QDir::toNativeSeparators(targetPath).utf16(),
-		SE_FILE_OBJECT, DACL_SECURITY_INFORMATION, nullptr, nullptr,
-		&dacl, nullptr, &sd);
-	SECURITY_DESCRIPTOR_CONTROL ctl = 0;
-	DWORD rev = 0;
-	bool ok = r == ERROR_SUCCESS && dacl && dacl->AceCount == 1 &&
-		GetSecurityDescriptorControl(sd, &ctl, &rev) &&
-		(ctl & SE_DACL_PROTECTED);
-	if (sd)
-		LocalFree(sd);
-	if (!ok)
-		throw serviceError("permission_check_failed", QObject::tr(
-			"'%1' has no owner-only ACL after writing")
-			.arg(QDir::toNativeSeparators(targetPath)));
+	if (injected(recheck) || !ownerOnlyAcl(INVALID_HANDLE_VALUE,
+						targetPath)) {
+		if (DeleteFileW((LPCWSTR)QDir::toNativeSeparators(targetPath)
+				.utf16()))
+			published = false;
+		throw notOwnerOnly(targetPath, QObject::tr(
+			"no owner-only ACL after writing"));
+	}
 }
 
 #endif
+
+/* --- StagedDirectory ----------------------------------------------------- */
+
+StagedDirectory::StagedDirectory(const QString &target, bool replaceTarget)
+	: givenPath(QDir::cleanPath(QFileInfo(target).absoluteFilePath())),
+	  replace(replaceTarget)
+{
+	QString canonical = QFileInfo(target).canonicalFilePath();
+	targetPath = canonical.isEmpty() ? givenPath : canonical;
+}
+
+StagedDirectory::~StagedDirectory()
+{
+	removeTemp();
+}
+
+void StagedDirectory::removeTemp()
+{
+	if (staged && !published && !tempPath.isEmpty())
+		QDir(tempPath).removeRecursively();
+	staged = false;
+}
+
+void StagedDirectory::discard()
+{
+	removeTemp();
+}
+
+void StagedDirectory::checkTarget(const QString &target,
+			const QString &marker, bool replaceTarget)
+{
+	QString native = QDir::toNativeSeparators(target);
+	QFileInfo t(QFileInfo(target).canonicalFilePath());
+	if (t.filePath().isEmpty() || !t.isDir())
+		throw serviceError("invalid_output", QObject::tr(
+			"The output directory '%1' does not exist").arg(native));
+	QFileInfo parent(t.absolutePath());
+	if (t.isRoot() || !parent.isWritable())
+		throw serviceError("invalid_output", QObject::tr(
+			"The directory above '%1' is not writable; the new "
+			"content is prepared there and swapped in").arg(native));
+#if !defined(Q_OS_WIN)
+	struct stat st, pst;
+	if (::stat(QFile::encodeName(t.filePath()).constData(), &st) == 0 &&
+	    ::stat(QFile::encodeName(parent.filePath()).constData(),
+		    &pst) == 0 && st.st_dev != pst.st_dev)
+		throw serviceError("invalid_output", QObject::tr(
+			"'%1' is a mount point and cannot be replaced as a "
+			"whole; give a directory below it").arg(native));
+#endif
+	QStringList content = QDir(t.filePath()).entryList(QDir::AllEntries |
+			QDir::Hidden | QDir::System | QDir::NoDotAndDotDot);
+	if (content.isEmpty())
+		return;
+	if (!QFileInfo(QDir(t.filePath()).filePath(marker)).isFile())
+		throw serviceError("invalid_output", QObject::tr(
+			"'%1' holds files of something else (no %2); its "
+			"content would be replaced as a whole: give an empty "
+			"directory").arg(native, marker));
+	if (!replaceTarget)
+		throw serviceError("file_exists", QObject::tr(
+			"'%1' holds an earlier export; it is replaced only with "
+			"--force").arg(native));
+}
+
+void StagedDirectory::stage(const QString &marker)
+{
+	if (staged || published)
+		throw errorEx(QObject::tr("StagedDirectory: '%1' staged twice")
+			.arg(targetPath));
+	checkTarget(givenPath, marker, replace);
+	for (int tries = 0; tries < 8; tries++) {
+		QString t = tempName(targetPath);
+		if (QFileInfo::exists(t))
+			continue;
+		if (!QDir().mkdir(t))
+			throw failed(QObject::tr("Creating"), t,
+				QObject::tr("the directory cannot be created"));
+		tempPath = t;
+		staged = true;
+		return;
+	}
+	throw failed(QObject::tr("Creating"), targetPath,
+		QObject::tr("no free temporary name"));
+}
+
+bool StagedDirectory::contains(const QString &path) const
+{
+	QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+	for (const QString &d : { givenPath, targetPath })
+		if (p == d || p.startsWith(d + "/"))
+			return true;
+	return false;
+}
+
+QString StagedDirectory::stagedPath(const QString &path) const
+{
+	QString p = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+	for (const QString &d : { givenPath, targetPath }) {
+		if (p == d)
+			return tempPath;
+		if (p.startsWith(d + "/"))
+			return tempPath + p.mid(d.size());
+	}
+	return QString();
+}
+
+void StagedDirectory::publish()
+{
+	if (!staged || published)
+		throw errorEx(QObject::tr("StagedDirectory: '%1' is not staged")
+			.arg(targetPath));
+	if (StagedFile::faultHook &&
+	    StagedFile::faultHook(StagedFile::publish_step, targetPath))
+		throw failed(QObject::tr("Swapping in"), targetPath,
+			QObject::tr("injected fault (test)"));
+	QString old;
+#if defined(RENAME_EXCHANGE)
+	/* one step: the sibling becomes the target, the target the sibling */
+	if (::renameat2(AT_FDCWD, QFile::encodeName(tempPath).constData(),
+			AT_FDCWD, QFile::encodeName(targetPath).constData(),
+			RENAME_EXCHANGE) == 0)
+		old = tempPath;
+	else if (errno != EINVAL && errno != ENOSYS && errno != ENOTSUP)
+		throw failed(QObject::tr("Swapping in"), targetPath,
+				sysError(errno));
+#endif
+	if (old.isEmpty()) {
+		/* two steps: for a moment the target is absent */
+		old = tempPath + ".old";
+		if (!QDir().rename(targetPath, old))
+			throw failed(QObject::tr("Moving aside"), targetPath,
+				QObject::tr("rename failed"));
+		if (!QDir().rename(tempPath, targetPath)) {
+			QDir().rename(old, targetPath);
+			throw failed(QObject::tr("Swapping in"), targetPath,
+				QObject::tr("rename failed"));
+		}
+	}
+	published = true;
+	staged = false;
+	/* the old content; best effort, the new one is in place */
+	if (!QDir(old).removeRecursively())
+		qWarning("'%s' could not be removed completely",
+			QFile::encodeName(old).constData());
+}

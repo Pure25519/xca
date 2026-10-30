@@ -32,9 +32,9 @@ using namespace bxcpki;
 #include "lib/staged_file.h"
 
 /* Test build only (bxc-pki-faults, BTD-42): BXC_PKI_FAULT=<mode>:<step>:<text>
- * makes the step (create, write, sync, publish, recheck) of every staged
- * file whose target contains <text> fail (mode fail) or ends the process
- * there with exit code 137 like a killed run (mode kill) */
+ * makes the step (create, owner_check, write, sync, publish, recheck) of
+ * every staged file whose target contains <text> fail (mode fail) or ends
+ * the process there with exit code 137 like a killed run (mode kill) */
 static void installFaults()
 {
 	QStringList f = QString::fromLocal8Bit(qgetenv("BXC_PKI_FAULT"))

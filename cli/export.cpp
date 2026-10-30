@@ -10,9 +10,7 @@
 
 #include <QCryptographicHash>
 #include <QDir>
-#include <QDirIterator>
 #include <QJsonDocument>
-#include <QSet>
 
 #include "lib/BioByteArray.h"
 #include "lib/PwDialogCore.h"
@@ -190,6 +188,9 @@ class TrustListItem
 	pki_base *object{};      // nullptr: a CRL --plan would issue
 	QString name{};
 	qint64 id{};
+	/* the id of the file name: the CA's for a CRL, so that a new CRL
+	 * replaces the file of the old one (review of xca#62) */
+	qint64 fileId{};
 	QByteArray der{}, pem{};
 };
 
@@ -217,10 +218,13 @@ class TrustListFormat
 		layout{};
 };
 
+/* The file of an earlier trust list in --out (StagedDirectory marker) */
+static const QString manifestName("manifest.json");
+
 static QString itemFile(const TrustListItem &i, const QString &ext)
 {
 	return QString("%1-%2.%3").arg(fileBase(i.name))
-		.arg(i.id ? QString::number(i.id) : QString("{id}")).arg(ext);
+		.arg(i.fileId).arg(ext);
 }
 
 static TrustListFile single(const QString &path, const QString &kind,
@@ -321,6 +325,7 @@ static TrustListItem certItem(pki_x509 *cert, const QString &kind,
 	i.object = cert;
 	i.name = cert->getIntName();
 	i.id = cert->getSqlItemId().toLongLong();
+	i.fileId = i.id;
 	i.der = cert->i2d();
 	BioByteArray b;
 	cert->pem(b);
@@ -335,6 +340,7 @@ static TrustListItem crlItem(pki_crl *crl, pki_x509 *ca, const QString &role)
 	i.role = role;
 	i.object = crl;
 	i.name = ca->getIntName();
+	i.fileId = ca->getSqlItemId().toLongLong();
 	if (crl) {
 		i.id = crl->getSqlItemId().toLongLong();
 		i.der = crl->i2d();
@@ -347,14 +353,16 @@ static TrustListItem crlItem(pki_crl *crl, pki_x509 *ca, const QString &role)
 
 /* The CRL of ca for the trust list: renewed when it is missing or past
  * its re-issue point (rule 7) unless --no-reissue or the CA has no
- * private key; an expired one or one past the re-issue point is refused
- * without --force (an S7 refuses the whole trust list for one expired
- * CRL, SMP-831) */
+ * private key; a missing or expired one or one past the re-issue point
+ * is refused without --allow-stale-crl (an S7 refuses the whole trust
+ * list for one expired CRL, SMP-831). --force only replaces files: a
+ * routine re-export needs it and must not switch this check off (review
+ * of xca#62). */
 static pki_crl *trustListCrl(CommandContext &ctx, pki_x509 *ca,
 		const CrlPolicy &policy, QJsonObject *report)
 {
 	const Options &o = ctx.opts;
-	bool force = o.has("force");
+	bool allowStale = o.has("allow-stale-crl");
 	QDateTime now = nowSeconds();
 	pki_crl *crl = CrlPolicy::latestCrl(ca);
 	pki_key *key = ca->getRefKey();
@@ -375,10 +383,11 @@ static pki_crl *trustListCrl(CommandContext &ctx, pki_x509 *ca,
 		}
 	}
 	if (!crl) {
-		if (!force)
+		if (!allowStale)
 			throw serviceError("crl_missing", QObject::tr(
 				"The CA '%1' has no CRL%2; every CA of a trust "
-				"list needs one (--force exports without)")
+				"list needs one (--allow-stale-crl exports "
+				"without)")
 				.arg(ca->getIntName()).arg(canIssue ? QString() :
 				QObject::tr(" and none can be issued here")));
 		ctx.result->warning("crl_missing", QObject::tr(
@@ -407,10 +416,11 @@ static pki_crl *trustListCrl(CommandContext &ctx, pki_x509 *ca,
 			crl->getNextUpdate().toPrettyGMT());
 	}
 	if (!code.isEmpty()) {
-		if (!force)
+		if (!allowStale)
 			throw serviceError(code, why + QObject::tr(
 				"; a new CRL needs the CA key (without "
-				"--no-reissue), or --force exports it as it is"));
+				"--no-reissue), or --allow-stale-crl exports it "
+				"as it is"));
 		ctx.result->warning(code, why);
 	}
 	return crl;
@@ -440,6 +450,10 @@ static void exportTrustList(CommandContext &ctx)
 			throw usageError("invalid_value", QObject::tr(
 				"--trust-list-budget must be at least 1024"));
 	}
+	/* the trust list owns --out: empty, or an earlier trust list
+	 * (replaced with --force) */
+	const QString out = o.value("out");
+	ctx.files->addDirectory(out, manifestName);
 
 	/* trusted: the given CAs; issuer: their chains and --issuer-ca */
 	QList<pki_x509 *> trusted, issuers;
@@ -534,7 +548,6 @@ static void exportTrustList(CommandContext &ctx)
 	}
 
 	/* the files, then the manifest */
-	QString out = o.value("out");
 	QList<TrustListFile> files = format.layout(items);
 	QJsonArray entries;
 	int position = 0;
@@ -576,45 +589,23 @@ static void exportTrustList(CommandContext &ctx)
 	manifest["budget"] = listBudget;
 	manifest["entries"] = entries;
 
-	QSet<QString> produced;
-	for (const TrustListFile &f : files)
-		produced << QDir::cleanPath(QDir(out).absoluteFilePath(f.path));
-	produced << QDir::cleanPath(QDir(out).absoluteFilePath(
-						"manifest.json"));
+	/* --out was checked and staged by addDirectory(): the files go to
+	 * its sibling, which replaces it as a whole after the commit; no
+	 * file of an earlier export stays (review of xca#62) */
 	if (ctx.plan) {
 		for (const TrustListFile &f : files)
 			ctx.files->planned(QDir(out).filePath(f.path), f.kind,
 				QString(), QString(), false);
-		ctx.files->planned(QDir(out).filePath("manifest.json"),
+		ctx.files->planned(QDir(out).filePath(manifestName),
 			"manifest", QString(), QString(), false);
 		return;
 	}
-	for (const TrustListFile &f : files) {
-		QString path = QDir(out).filePath(f.path);
-		QDir().mkpath(QFileInfo(path).absolutePath());
-		ctx.files->add(path, f.kind, f.items.size() == 1 ?
-			f.items[0]->object : nullptr, f.data, false);
-	}
-	ctx.files->add(QDir(out).filePath("manifest.json"), "manifest",
+	for (const TrustListFile &f : files)
+		ctx.files->add(QDir(out).filePath(f.path), f.kind,
+			f.items.size() == 1 ? f.items[0]->object : nullptr,
+			f.data, false);
+	ctx.files->add(QDir(out).filePath(manifestName), "manifest",
 		nullptr, QJsonDocument(manifest).toJson(), false);
-
-	/* files of an earlier export in the layout directories stay; a
-	 * device would read them too */
-	QStringList stale;
-	for (const QString &sub : { QString("trusted"), QString("issuer"),
-				QString("own") }) {
-		QDirIterator it(QDir(out).filePath(sub), QDir::Files,
-				QDirIterator::Subdirectories);
-		while (it.hasNext()) {
-			QString p = QDir::cleanPath(it.next());
-			if (!produced.contains(p))
-				stale << p;
-		}
-	}
-	if (!stale.isEmpty())
-		ctx.result->warning("stale_files", QObject::tr(
-			"Files of an earlier export stay in the trust list "
-			"directories: %1").arg(stale.join(", ")));
 
 	AuditParams p;
 	p.set("format", format.name);
@@ -642,9 +633,9 @@ static void cmdExport(CommandContext &ctx)
 			"--format '%1' is not one of %2").arg(format)
 			.arg(exportFormats.join(", ")));
 	static const QStringList trustListOnly { "target-format", "leaf",
-		"issuer-ca", "no-reissue", "trust-list-budget",
-		"on-budget-exceeded", "crl-validity", "crl-reissue-fraction",
-		"crl-size-budget" };
+		"issuer-ca", "no-reissue", "allow-stale-crl",
+		"trust-list-budget", "on-budget-exceeded", "crl-validity",
+		"crl-reissue-fraction", "crl-size-budget" };
 	if (format != "trustlist")
 		for (const QString &n : trustListOnly)
 			if (o.has(n))
@@ -688,8 +679,22 @@ static void cmdExport(CommandContext &ctx)
 				.arg(o.value("type")).arg(kinds.join(", ")));
 		kinds = QStringList(o.value("type"));
 	}
-	for (const QString &ref : o.args())
-		exportObject(ctx, resolve(ref, kinds, "<object>"));
+	for (const QString &ref : o.args()) {
+		/* the refusals before the export service, audited like its
+		 * own (review of xca#62) */
+		pki_base *pki = nullptr;
+		try {
+			pki = resolve(ref, kinds, "<object>");
+			choose(o, pki, format);
+		} catch (serviceError &err) {
+			AuditParams p;
+			p.set("format", format);
+			p.set("name", pki ? pki->getIntName() : ref);
+			auditRefusal(ctx, "object.export", pki, p, err.code);
+			throw;
+		}
+		exportObject(ctx, pki);
+	}
 }
 
 /* --- Registration ------------------------------------------------------- */
@@ -725,9 +730,8 @@ void registerExportCommands(Registry &r)
 			"file names: id (default, <name>-<id>.<ext>) or "
 			"certstrap (<name>.<ext>)")),
 		opt("force", OptionSpec::flag, QString(), QObject::tr(
-			"replace existing files; trustlist: also export an "
-			"expired CRL or one past its re-issue point, with a "
-			"warning")),
+			"replace existing files; trustlist: replace the trust "
+			"list in --out")),
 		opt("key-unencrypted", OptionSpec::flag, QString(),
 			QObject::tr("pkcs8: unencrypted PKCS#8 (legacy, "
 			"explicit only)")),
@@ -755,7 +759,11 @@ void registerExportCommands(Registry &r)
 		opt("no-reissue", OptionSpec::flag, QString(), QObject::tr(
 			"trustlist: issue no CRL; export the stored ones (an "
 			"expired one or one past its re-issue point only with "
-			"--force)")),
+			"--allow-stale-crl)")),
+		opt("allow-stale-crl", OptionSpec::flag, QString(),
+			QObject::tr("trustlist: also export a CA without CRL, "
+			"with an expired CRL or one past its re-issue point, "
+			"with a warning (a device may refuse the whole list)")),
 		opt("trust-list-budget", OptionSpec::integer, "<bytes>",
 			QObject::tr("trustlist: size budget of the whole list, "
 			"at least 1024 (default %1)")

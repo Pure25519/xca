@@ -1488,40 +1488,31 @@ pki_x509 *db_x509::certBySerial(pki_x509 *issuer, const QString &serial) const
 	static const QRegularExpression hex("^[0-9A-Fa-f]+$");
 	static const QRegularExpression dec("^[0-9]+$");
 	QString s = serial.trimmed();
-	bool hexOnly = s.contains(':');
-	QList<pki_x509 *> found;
+	/* digits only are hex as well, as XCA shows serials; "dec:" for
+	 * decimal (review of xca#62: an all-digit serial that named the
+	 * other reading was taken without a word) */
+	bool decimal = s.startsWith("dec:", Qt::CaseInsensitive);
 
-	s.remove(':');
-	if (s.startsWith("0x", Qt::CaseInsensitive)) {
-		s = s.mid(2);
-		hexOnly = true;
+	if (decimal) {
+		s = s.mid(4);
+	} else {
+		s.remove(':');
+		if (s.startsWith("0x", Qt::CaseInsensitive))
+			s = s.mid(2);
 	}
 	if (!issuer)
 		throw serviceError("unknown_issuer", tr("No issuer given"));
-	if (!hex.match(s).hasMatch())
+	if (!(decimal ? dec : hex).match(s).hasMatch())
 		throw serviceError("invalid_serial",
 			tr("Invalid serial number '%1'").arg(serial));
-	if (!dec.match(s).hasMatch())
-		hexOnly = true;
 
-	pki_x509 *cert = issuer->getBySerial(a1int().setHex(s));
-	if (cert)
-		found << cert;
-	if (!hexOnly) {
-		cert = issuer->getBySerial(a1int().setDec(s));
-		if (cert && !found.contains(cert))
-			found << cert;
-	}
-	if (found.isEmpty())
+	pki_x509 *cert = issuer->getBySerial(decimal ? a1int().setDec(s) :
+						a1int().setHex(s));
+	if (!cert)
 		throw serviceError("unknown_serial",
 			tr("'%1' has issued no certificate with serial number %2")
 				.arg(issuer->getIntName(), serial));
-	if (found.size() > 1)
-		throw serviceError("ambiguous_serial",
-			tr("The serial number %1 names the certificates '%2' (hex) and '%3' (decimal)")
-				.arg(serial, found[0]->getIntName(),
-					found[1]->getIntName()));
-	return found[0];
+	return cert;
 }
 
 void db_x509::toRequest(QModelIndex idx)

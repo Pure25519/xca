@@ -88,6 +88,32 @@ if(l)
   fail("publish failed: files stay: ${l}")
 endif()
 
+# --- owner-only secrets (review of xca#62, blocker 1) ---------------------------------
+# a target that cannot hold an owner-only file (WSL drvfs, vfat) is refused
+# in stage(), before the commit: nothing stored, nothing written
+count_items(key before)
+fx("owner check" 1 "fail:owner_check:k2.key" request-cert --db "${DB}" ${PW}
+    --cn k2 --out f --layout certstrap --key-unencrypted)
+expect_error("owner check" permission_check_failed)
+count_items(key after)
+dir_listing(l)
+if(NOT before EQUAL after OR l)
+  fail("failed owner check: keys ${before} -> ${after}, files: ${l}")
+endif()
+# a secret that fails the check after the publish is removed again and gets
+# a failure entry; it is listed as not written
+fx("recheck" 1 "fail:recheck:k3.key" request-cert --db "${DB}" ${PW}
+    --cn k3 --out f --layout certstrap --key-unencrypted)
+expect_error("recheck" publish_failed)
+if(EXISTS "${D}/k3.key")
+  fail("a key that failed the permission recheck stays on disk")
+endif()
+if(NOT detail MATCHES "Not written: [^\n]*k3\\.key")
+  fail("publish_failed does not list the removed key: ${detail}")
+endif()
+file(REMOVE_RECURSE "${D}")
+file(MAKE_DIRECTORY "${D}")
+
 # --- a killed run leaves an old file complete ---------------------------------------
 bxc("first file" 0 crl --ca "F Root" --db "${DB}" ${PW} --out f --layout certstrap)
 file(SHA256 "${D}/F_Root.crl" good)
@@ -119,3 +145,4 @@ endif()
 # --- audit ------------------------------------------------------------------------
 audit_entries(a)
 audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*\"error_code\":\"write_failed\".*\"file\":\"f/F_Root\\.crl\".*\"result\":\"failure\"" "publish failure entry")
+audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*\"error_code\":\"permission_check_failed\".*\"file\":\"f/k3\\.key\".*\"result\":\"failure\"" "recheck failure entry")

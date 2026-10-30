@@ -10,8 +10,16 @@ bxc-main (bxc-pki fork, unreleased)
    re-issue at one third, size budget); sign and the trust-list export
    renew a CRL past its re-issue point. All files are staged, written
    atomically (keys owner-only) and published after the database commit
-   (lib/staged_file.h). New audit actions ca.crl_settings and
-   trustlist.export, parameter trigger of crl.generate.
+   (lib/staged_file.h); a key file is refused before the commit on a
+   file system that cannot keep it owner-only and removed again if the
+   check after writing fails. The trust list replaces its directory as a
+   whole (staged beside it, swapped in), names a CRL after its CA and
+   accepts a missing or stale CRL only with --allow-stale-crl (--force
+   only replaces files). A serial of digits only is hex; decimal needs
+   dec:. Refusals before a service call are audited; an empty export
+   password is refused, --interactive asks for a new one twice. New
+   audit actions ca.crl_settings and trustlist.export, parameter trigger
+   of crl.generate.
  * BTD-203: the default templates fit the key usage by key type of
    BTD-195, which refused the old TLS_server and TLS_client
    (keyEncipherment and keyAgreement together) for every key type.

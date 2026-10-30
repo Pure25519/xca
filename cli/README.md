@@ -67,7 +67,7 @@ Members of part 2 (BTD-42), present only when a command sets them:
 | `crls` | init, revoke, crl, sign (re-issue), export trustlist | one entry per CRL: `ca_id`, `ca_name`, `crl_id`, `crl_name`, `crl_number`, `revoked_count`, `this_update`, `next_update`, `reissue_fraction`, `reissue_at`, `remaining_seconds`, `remaining_validity` (ISO 8601), `reissue_due`, `expired`, `der_size`, `size_budget`, `within_budget`, `trigger` (init, revoke, command, reissue_due, missing); trustlist also `role` (trusted, issuer) and `reissued`. With `--plan` a CRL to be issued has `crl_id` null and only the times and settings |
 | `revocation` | revoke | `certificate_id`, `certificate_name`, `serial`, `reason` (RFC 5280 name), `ca_id`, `ca_name`, `revocation_date` (not with `--plan`) |
 | `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates and CRLs), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
-| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--force`), `stale_files`, `crl_not_issued` (init of a CA not valid now); also printed on stderr |
+| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `crl_not_issued` (init of a CA not valid now); also printed on stderr |
 
 `--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
 that need no signature — key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
@@ -134,8 +134,10 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 
 - `revoke [<certificate>] --reason <reason>`: the certificate is a database id or a unique name
   (an ambiguous name is `ambiguous_reference` with the candidates), or `--serial <serial> --ca
-  <ca>` (hex as XCA shows it, with or without `0x` and colons, or decimal; normalised by
-  `db_x509::certBySerial()`: `unknown_serial`, `ambiguous_serial`), or `--fingerprint <sha256>`.
+  <ca>` (hex as XCA shows it, with or without `0x` and colons, digits only too; decimal only as
+  `dec:<digits>`; normalised by `db_x509::certBySerial()`: `unknown_serial`), or
+  `--fingerprint <sha256>`. A refusal before the revocation (unknown or ambiguous reference,
+  serial or fingerprint, `wrong_issuer`) gets a `certificate.revoke` failure entry as well.
   `--reason` is required and takes the RFC 5280 names (`removeFromCRL` is refused: delta CRLs
   only). With `--ca` the issuer must be that CA (`wrong_issuer`). The revocation and the new CRL
   of the issuing CA are written in one transaction; sign, revoke and crl unlock the CA key the
@@ -172,10 +174,13 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 Every file goes through one helper, `lib/staged_file.h` (`StagedFile`): a temporary file
 `.<name>.bxc-tmp-<random>` is created in the target directory with `O_EXCL`, mode 0600 from its
 creation for private keys (Windows: a protected DACL with OWNER RIGHTS only; written for
-BTD-13, not yet compiled or tested), written, `fsync`ed; only after the database commit it is
+BTD-13, not yet compiled or tested), checked to be owner-only (a file system that ignores the
+mode, such as WSL drvfs or vfat, is refused here with `permission_check_failed`, before
+anything is stored), written, `fsync`ed; only after the database commit it is
 published: without `--force` with `link()` (an existing file, also one that appeared meanwhile,
 is never replaced: `file_exists`), with `--force` with `rename()`; then the directory is
-`fsync`ed and the mode of a key file is checked again (`permission_check_failed`). Everything
+`fsync`ed and the mode of a key file is checked again: a key file that fails is removed again
+and listed as not written (`permission_check_failed` in `publish_failed`). Everything
 that can fail before (key unlock, encoding, export password, directory and collision checks,
 writing the temporary file) runs before the commit, so a refused file leaves the database
 unchanged. A failure of the publish step is `publish_failed`: its detail names the objects that
@@ -233,7 +238,14 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
   (only for chain building, OPC 10000-12 7.8.2). Every CA comes with its latest CRL. `--leaf`
   adds leaf certificates after them. One export is meant for one hierarchy; CAs of several roots
   share the same `trusted/` and `issuer/` directories.
-- `opcua-dir`: `trusted/certs/<name>-<id>.der`, `trusted/crl/<CA>-<crl id>.crl` (DER),
+- The trust list owns `--out`: it must be empty or hold an earlier trust list (a
+  `manifest.json`; replaced only with `--force`, else `file_exists`); other content is refused
+  (`invalid_output`) and kept, and so is a mount point. The files are staged in a hidden
+  sibling `.<dir>.bxc-tmp-<random>` and, after the database commit, swapped in as a whole
+  (`renameat2` `RENAME_EXCHANGE`; without it two renames), then the old content is removed. A
+  device sees the old or the new list, never a mix, and no file of an earlier export stays.
+- `opcua-dir`: `trusted/certs/<name>-<id>.der`, `trusted/crl/<CA>-<CA id>.crl` (DER; named after
+  the CA, so a new CRL replaces the old one),
   `issuer/certs/`, `issuer/crl/`, leaves in `own/certs/`. `pem-bundle`: `trustlist.pem` with
   all CA certificates, then all CRLs (leaves in `leaves.pem`). `der-files`: one DER file per
   certificate (`.der`) and CRL (`.crl`).
@@ -243,15 +255,14 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
   list before CreateSigningRequest and UpdateCertificate).
 - CRL freshness: a missing CRL or one past its re-issue point is renewed with the CA key; with
   `--no-reissue` (or a CA without private key) an expired CRL is `crl_expired`, one past its
-  re-issue point `crl_reissue_due`, a missing one `crl_missing`; `--force` exports them with a
-  warning (an S7 refuses the whole trust list for one expired CRL, SMP-831).
+  re-issue point `crl_reissue_due`, a missing one `crl_missing`; `--allow-stale-crl` exports
+  them with a warning (an S7 refuses the whole trust list for one expired CRL, SMP-831).
+  `--force` only replaces the files; a routine re-export needs it and keeps the CRL check.
 - Budgets: per CRL (`--crl-size-budget`, else the CA's setting, default 4096) and for the whole
   list (`--trust-list-budget`, default 65535; the size is the sum of the DER sizes of the CA
   certificates and CRLs). `--on-budget-exceeded warning` (default) exports and warns,
   `error` refuses (`budget_exceeded`) and writes nothing. The result reports every size and the
   remaining validity of every CRL.
-- Files of an earlier export that stay in `trusted/`, `issuer/` or `own/` are reported
-  (`stale_files`); nothing is deleted.
 - One audit entry `trustlist.export` (object type `object`) with `format`, `file` (the
   directory), `count`, `der_size`, `trust_list_budget`, `name` (the trusted CAs) and `warning`;
   a refusal is the same action with result `failure`.
@@ -275,7 +286,9 @@ of the services (`certificate.revoke`, `crl.generate`, `object.export`, `key.exp
 `invalid_output`, `write_failed`, `permission_check_failed`, `publish_failed` (files);
 `format_not_applicable` (export format for the object), `crl_missing`, `crl_expired`,
 `crl_reissue_due`, `budget_exceeded` (trust lists); from the services `unknown_serial`,
-`ambiguous_serial`, `already_revoked`, `self_signed`, `unknown_issuer`, `missing_password`.
+`already_revoked`, `self_signed`, `unknown_issuer`, `missing_password` (also for an empty
+export password, PKCS#12 included; `--interactive` asks for a new password twice,
+`wrong_password` for an export when the entries differ).
 
 ## Tests
 

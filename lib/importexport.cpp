@@ -479,8 +479,12 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw passwordError(err);
 			}
 			/* PKCS#12 accepts an empty password, OpenSSL's PEM
-			 * and PKCS#8 encryption rejects it */
-			if (pass.isEmpty() && !xport->match_all(F_PKCS12))
+			 * and PKCS#8 encryption rejects it. Outside the GUI
+			 * an empty one is refused for PKCS#12 too: it
+			 * protects nothing, while the result says
+			 * "encrypted" (review of xca#62) */
+			if (pass.isEmpty() && (!xport->match_all(F_PKCS12) ||
+			    ctx.getChannel() != ServiceContext::gui))
 				throw serviceError("missing_password",
 					tr("The password must not be empty"));
 		}

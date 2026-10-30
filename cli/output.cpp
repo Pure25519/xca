@@ -64,9 +64,37 @@ void OutputFiles::add(const QString &path, const QString &kind,
 	e.size = data.size();
 	e.sha256 = QString::fromLatin1(QCryptographicHash::hash(data,
 			QCryptographicHash::Sha256).toHex());
-	e.file = std::make_shared<StagedFile>(path, secret, force);
+	/* below a staged directory: into its sibling, which is new */
+	QString staged = directory ? directory->stagedPath(path) : QString();
+	if (!staged.isEmpty() &&
+	    !QDir().mkpath(QFileInfo(staged).absolutePath()))
+		throw serviceError("write_failed", QObject::tr(
+			"Creating the directory of '%1' failed")
+			.arg(QDir::toNativeSeparators(path)));
+	e.file = std::make_shared<StagedFile>(staged.isEmpty() ? path : staged,
+			secret, staged.isEmpty() && force);
 	e.file->stage(data);
 	files << e;
+}
+
+void OutputFiles::addDirectory(const QString &dir, const QString &marker)
+{
+	if (plan) {
+		StagedDirectory::checkTarget(dir, marker, force);
+		plannedDirectory = QDir::cleanPath(QFileInfo(dir)
+					.absoluteFilePath());
+		return;
+	}
+	directory = std::make_shared<StagedDirectory>(dir, force);
+	directory->stage(marker);
+}
+
+bool OutputFiles::written(const entry &e) const
+{
+	if (plan || !e.file || !e.file->isPublished())
+		return false;
+	return !directory || !directory->contains(e.path) ||
+		directory->isPublished();
 }
 
 void OutputFiles::planned(const QString &path, const QString &kind,
@@ -81,9 +109,13 @@ void OutputFiles::planned(const QString &path, const QString &kind,
 		dir = QFileInfo(dir).absolutePath();
 		missing = true;
 	}
-	if (missing || path.contains("{id}"))
+	/* below a directory of addDirectory(): checked as a whole there */
+	QString abs = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+	bool inDirectory = !plannedDirectory.isEmpty() &&
+		abs.startsWith(plannedDirectory + "/");
+	if (!inDirectory && (missing || path.contains("{id}")))
 		StagedFile::checkTarget(dir + "/.bxc-pki-plan-check", true);
-	else
+	else if (!inDirectory)
 		StagedFile::checkTarget(path, force);
 	entry e;
 	e.path = path;
@@ -100,6 +132,8 @@ void OutputFiles::publish()
 		return;
 	for (entry &e : files)
 		e.file->publish();
+	if (directory)
+		directory->publish();
 	done = true;
 }
 
@@ -108,6 +142,8 @@ void OutputFiles::discard()
 	for (entry &e : files)
 		if (e.file)
 			e.file->discard();
+	if (directory)
+		directory->discard();
 }
 
 QJsonArray OutputFiles::json() const
@@ -118,7 +154,7 @@ QJsonArray OutputFiles::json() const
 		o["path"] = e.path;
 		o["kind"] = e.kind;
 		o["secret"] = e.secret;
-		o["written"] = !plan && e.file && e.file->isPublished();
+		o["written"] = written(e);
 		if (!plan) {
 			o["size"] = e.size;
 			o["sha256"] = e.sha256;

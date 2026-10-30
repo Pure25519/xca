@@ -77,6 +77,41 @@ if(NOT detail MATCHES "--export-pass")
 endif()
 xport("pkcs8 without pass" 1 dev --type key --format pkcs8)
 expect_error("pkcs8 without pass" missing_password)
+# an empty password protects nothing; PKCS#12 accepts one, the command
+# line does not (review of xca#62)
+set(ENV{BXC_EMPTY} "")
+xport("p12 with empty pass" 1 dev --type certificate --format p12
+    --export-pass env:BXC_EMPTY)
+expect_error("p12 with empty pass" missing_password)
+# --interactive on a terminal (script(1) gives one): an empty password is
+# refused, a new password is asked twice and must match
+find_program(SCRIPT script)
+if(SCRIPT)
+  # tty(<label> <code> <lines>...): the p12 export with --interactive; one
+  # line per prompt, sent after a pause (readPass() flushes input typed
+  # ahead when it switches the terminal mode); "-" is an empty line
+  function(tty label code)
+    set(feed "")
+    foreach(line IN LISTS ARGN)
+      if(line STREQUAL "-")
+        set(line "")
+      endif()
+      string(APPEND feed "sleep 2; printf '%s\\n' '${line}'; ")
+    endforeach()
+    execute_process(COMMAND sh -c "(${feed}sleep 2) | '${SCRIPT}' -qec \"'${BXC_PKI}' export dev --db '${DB}' --password env:BXC_DB_PW --type certificate --format p12 --out x --layout certstrap --force --interactive\" /dev/null"
+      WORKING_DIRECTORY "${WORK}"
+      RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    file(APPEND "${TRANSCRIPT}" "### ${label}\nexit ${r}\n${o}${e}\n")
+    if(NOT o MATCHES "\"code\": *\"${code}\"")
+      fail("${label}: expected ${code} (exit ${r}):\n${o}${e}")
+    endif()
+  endfunction()
+  tty("interactive empty p12 pass" missing_password -)
+  tty("interactive p12 pass mismatch" wrong_password Tty-Pass-1
+      Tty-Pass-2)
+else()
+  message(STATUS "script(1) not found: no --interactive terminal test")
+endif()
 file(GLOB after "${WORK}/x/*")
 if(NOT before STREQUAL after)
   fail("a refused encrypted export wrote a file")
@@ -192,5 +227,9 @@ audit_has("${a}" "\"action\":\"key\\.export_private\".*\"channel\":\"cli\".*\"en
 audit_has("${a}" "\"action\":\"key\\.export_private\".*\"channel\":\"cli\".*\"encrypted\":true.*\"file\":\"x/dev-${kid}\\.key\"" "pkcs8 key export")
 audit_has("${a}" "\"action\":\"key\\.export_private\".*\"channel\":\"cli\".*\"legacy\":true" "legacy key export")
 audit_has("${a}" "\"action\":\"key\\.export_private\".*\"channel\":\"cli\".*\"ml_dsa_encoding\":\"seed\"" "ML-DSA seed")
+# refusals before the service call get a failure entry too (review of xca#62)
+foreach(code format_not_applicable unknown_reference)
+  audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*\"error_code\":\"${code}\".*\"result\":\"failure\"" "refusal ${code}")
+endforeach()
 audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*\"error_code\":\"missing_password\".*\"result\":\"failure\"" "refused export")
 audit_has("${a}" "\"action\":\"object\\.export\".*\"channel\":\"cli\".*\"error_code\":\"format_not_applicable\"" "ML-DSA option on RSA")

@@ -253,7 +253,7 @@ static void publishFiles(CommandContext &ctx)
 	} catch (serviceError &err) {
 		QStringList missing;
 		for (const OutputFiles::entry &f : ctx.files->all()) {
-			if (f.file && f.file->isPublished())
+			if (ctx.files->written(f))
 				continue;
 			missing << f.path;
 			AuditParams p;
@@ -315,6 +315,17 @@ void runInTransaction(CommandContext &ctx,
 }
 
 /* --- References ------------------------------------------------------- */
+
+void auditRefusal(const CommandContext &ctx, const QString &action,
+		const pki_base *pki, const AuditParams &params,
+		const QString &code)
+{
+	if (ctx.plan)
+		return;
+	AuditLog::appendFailure(ctx.svc, action, pki ?
+		JsonReport::objectType(pki) : QString("object"), pki ?
+		pki->getSqlItemId().toString() : QString(), params, code);
+}
 
 static QString describe(const pki_base *pki)
 {

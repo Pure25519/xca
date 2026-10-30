@@ -5,9 +5,12 @@
 # file, the manifest lists CAs, then CRLs, then leaves; per-CRL and
 # whole-list sizes against the budgets (a CRL above 4096 bytes: warning
 # by default, error per target); an expired CRL or one past its re-issue
-# point is refused without --force when it cannot be renewed
-# (--no-reissue), renewed otherwise; the remaining validity of every CRL
-# is in the result; per-target re-issue fraction and budgets.
+# point is refused without --allow-stale-crl when it cannot be renewed
+# (--no-reissue), renewed otherwise; --force only replaces files; the
+# remaining validity of every CRL is in the result; per-target re-issue
+# fraction and budgets. The trust list replaces its directory as a whole
+# (staged beside it, swapped in): one CRL file per CA, named after the CA,
+# no files of an earlier export (review of xca#62).
 
 include("${LIB}")
 
@@ -192,10 +195,14 @@ bxc("expired root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW}
     --this-update 2026-01-01T00:00:00Z)
 tl("expired, no reissue" 1 exp1 "TL Issuing" --no-reissue)
 expect_error("expired, no reissue" crl_expired)
-tl("expired, --force" 0 exp2 "TL Issuing" --no-reissue --force)
+# --force replaces files only; it does not accept a stale CRL
+tl("expired, --force" 1 exp2 "TL Issuing" --no-reissue --force)
+expect_error("expired, --force" crl_expired)
+tl("expired, --allow-stale-crl" 0 exp2 "TL Issuing" --no-reissue
+    --allow-stale-crl)
 warning_codes("${_r}" w)
 if(NOT w MATCHES "crl_expired")
-  fail("--force without the warning crl_expired: '${w}'")
+  fail("--allow-stale-crl without the warning crl_expired: '${w}'")
 endif()
 crl_entry("${_r}" 1 c)
 string(JSON expd GET "${c}" expired)
@@ -217,11 +224,17 @@ time_ago(t60 216000)   # 60 h: past one third of P7D, not expired
 bxc("old root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW} --this-update ${t60})
 tl("past re-issue point" 1 due1 "TL Issuing" --no-reissue)
 expect_error("past re-issue point" crl_reissue_due)
-tl("past re-issue point, --force" 0 due2 "TL Issuing" --no-reissue --force)
+tl("past re-issue point, --force" 1 due2 "TL Issuing" --no-reissue --force)
+expect_error("past re-issue point, --force" crl_reissue_due)
+tl("past re-issue point, --allow-stale-crl" 0 due2 "TL Issuing" --no-reissue
+    --allow-stale-crl)
 warning_codes("${_r}" w)
 if(NOT w MATCHES "crl_reissue_due")
-  fail("--force without the warning crl_reissue_due: '${w}'")
+  fail("--allow-stale-crl without the warning crl_reissue_due: '${w}'")
 endif()
+bxc("allow-stale-crl without trustlist" 2 export plc11 --db "${DB}" ${PW}
+    --format pem --out bad --allow-stale-crl)
+expect_error("allow-stale-crl without trustlist" conflicting_options)
 
 # per target: re-issue fraction of the export target
 time_ago(t30 108000)   # 30 h: before one third of P7D
@@ -238,12 +251,72 @@ if(NOT re OR NOT fr MATCHES "^0\\.1")
   fail("per-target fraction: ${c}")
 endif()
 
-# --- stale files and --plan ---------------------------------------------------------
-tl("again into opcua" 0 opcua "TL Issuing" --force)
+# --- re-export: the directory is replaced as a whole -----------------------------
+# one_crl_per_ca(<dir> <sub>...): exactly one CRL per CA in each sub, named
+# like the certificate of its CA (<CA>-<ca id>)
+function(one_crl_per_ca dir)
+  foreach(sub ${ARGN})
+    file(GLOB crls "${WORK}/${dir}/${sub}/crl/*.crl")
+    file(GLOB certs "${WORK}/${dir}/${sub}/certs/*.der")
+    list(LENGTH crls nc)
+    list(LENGTH certs nd)
+    if(NOT nc EQUAL 1 OR NOT nd EQUAL 1)
+      fail("${dir}/${sub}: ${nc} CRLs for ${nd} CAs: ${crls}")
+    endif()
+    get_filename_component(a "${crls}" NAME_WE)
+    get_filename_component(b "${certs}" NAME_WE)
+    if(NOT a STREQUAL b)
+      fail("${dir}/${sub}: the CRL ${a} is not named after its CA ${b}")
+    endif()
+  endforeach()
+endfunction()
+tl("re-export 1" 0 re "TL Issuing" --leaf plc11)
+one_crl_per_ca(re trusted issuer)
+# a new CRL of each CA, then the same export again
+bxc("new issuing crl" 0 crl --ca "TL Issuing" --db "${DB}" ${PW})
+bxc("new root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW})
+tl("re-export without --force" 1 re "TL Issuing")
+expect_error("re-export without --force" file_exists)
+tl("re-export 2" 0 re "TL Issuing" --force)
+one_crl_per_ca(re trusted issuer)
 warning_codes("${_r}" w)
-if(NOT w MATCHES "stale_files")
-  fail("files of the earlier export in opcua/ are not reported: '${w}'")
+if(w MATCHES "stale_files")
+  fail("a re-export reports stale files: '${w}'")
 endif()
+# own/ of the first export is gone: the directory holds this list only
+if(EXISTS "${WORK}/re/own")
+  fail("the leaf of the earlier export stays in re/own")
+endif()
+# the new CRL is the one in the directory
+string(JSON crl_id GET "${_r}" crls 0 crl_id)
+file(READ "${WORK}/re/manifest.json" m)
+if(NOT m MATCHES "\"object_id\": *${crl_id}[,\n ]")
+  fail("the manifest does not list the new CRL ${crl_id}:\n${m}")
+endif()
+# der-files: the same names, one CRL per CA
+tl("der re-export 1" 0 der2 "TL Issuing" --target-format der-files)
+bxc("newer issuing crl" 0 crl --ca "TL Issuing" --db "${DB}" ${PW})
+tl("der re-export 2" 0 der2 "TL Issuing" --target-format der-files --force)
+file(GLOB l "${WORK}/der2/*.crl")
+list(LENGTH l n)
+if(NOT n EQUAL 2)
+  fail("der-files after a re-issue: ${n} CRLs for two CAs: ${l}")
+endif()
+# a directory with other files is not a trust list: refused, kept
+file(MAKE_DIRECTORY "${WORK}/notes")
+file(WRITE "${WORK}/notes/readme.txt" "keep me")
+tl("foreign directory" 1 notes "TL Issuing" --force)
+expect_error("foreign directory" invalid_output)
+if(NOT EXISTS "${WORK}/notes/readme.txt")
+  fail("a refused export removed a foreign file")
+endif()
+# no staging directory stays behind
+file(GLOB left "${WORK}/.*bxc-tmp*")
+if(left)
+  fail("staging directories stay: ${left}")
+endif()
+
+# --- --plan -------------------------------------------------------------------------
 file(GLOB_RECURSE before "${WORK}/plan/*")
 tl("plan" 0 plan "TL Issuing" --plan)
 file(GLOB_RECURSE after "${WORK}/plan/*")
