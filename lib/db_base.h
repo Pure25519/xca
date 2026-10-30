@@ -89,6 +89,15 @@ class db_base: public QAbstractItemModel
 		db_base(const char *classname);
 		virtual void updateHeaders();
 		virtual ~db_base();
+		/* A database row that did not decode: left out of the store,
+		 * collected by loadContainer() and reported once for the
+		 * whole load (BTD-209) */
+		struct SkippedRow {
+			QString type, id, reason;
+		};
+		static QList<SkippedRow> takeSkippedRows();
+		/* The message naming each row and its reason */
+		static QString skippedRowsText(const QList<SkippedRow> &rows);
 		/* Stores pki and returns it. A failed write throws the typed
 		 * error of throwSqlError() and leaves pki with the caller,
 		 * not stored and without id (BTD-50); it used to delete it
@@ -128,6 +137,11 @@ class db_base: public QAbstractItemModel
 		 * Returns the exported bytes, also when they went to a file. */
 		QByteArray exportItems(const ServiceContext &ctx,
 			const ExportSpec &spec);
+		/* The checks of exportItems() before it asks for a password
+		 * (items, format, PKCS#12 algorithm, ML-DSA key format):
+		 * throws their serviceError, writes nothing (bxc-pki
+		 * --plan, BTD-211) */
+		void checkExportSpec(const ExportSpec &spec) const;
 		/* The writers behind exportItems(): no prompt, no audit */
 		virtual void writeItem(pki_base *pki, const pki_export *xport,
 			QIODevice &file, const Passwd &pass) const;

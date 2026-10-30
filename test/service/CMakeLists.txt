@@ -372,3 +372,14 @@ add_test(NAME test_cli_json_output
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_json_output
 		-P ${SERVICE_TEST_DIR}/cli_json_output.cmake)
 set_tests_properties(test_cli_json_output PROPERTIES LABELS service)
+
+# A database with an unreadable row that the reader may not write: open,
+# read and verify work, no audit entry is left (BTD-209)
+find_program(SKIPPED_ROWS_SETPRIV setpriv)
+add_test(NAME test_cli_skipped_rows_readonly
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DSETPRIV=${SKIPPED_ROWS_SETPRIV}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_skipped_rows_readonly
+		-P ${SERVICE_TEST_DIR}/cli_skipped_rows_readonly.cmake)
+set_tests_properties(test_cli_skipped_rows_readonly PROPERTIES LABELS service)
