@@ -339,9 +339,7 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			AuditLog::append(ctx, "object.import",
 				auditObjectType(stored), itemId(stored), p);
 		}
-		if (!TransCommit())
-			throw serviceError("database_error",
-				tr("Failed to commit the database transaction"));
+		TransCommitThrow();
 		/* in order: a later, higher CRL of the same CA wins */
 		foreach(pki_crl *crl, raised) {
 			crl->getIssuer()->setCrlNumber(crl->getCrlNumber());
@@ -567,9 +565,7 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw serviceError("write_failed",
 					tr("Failed writing to %1").arg(spec.fileName));
 		}
-		if (!TransCommit())
-			throw serviceError("database_error",
-				tr("Failed to commit the database transaction"));
+		TransCommitThrow();
 		/* The success entries say "handed to the file layer": if the
 		 * rename fails now, a write_failed entry follows them. The
 		 * temporary file carries the permissions set above (POSIX);

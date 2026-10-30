@@ -977,9 +977,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 		recordProfile(named, stored);
 	AuditLog::append(ctx, "certificate.issue", "certificate",
 			stored->getSqlItemId().toString(), params);
-	if (!TransCommit())
-		throw serviceError("database_error",
-			tr("Failed to commit the database transaction"));
+	TransCommitThrow();
     }
     catch (...) {
 	delete cert;

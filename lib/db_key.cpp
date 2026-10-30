@@ -229,9 +229,7 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 	key = nullptr;
 	AuditLog::append(ctx, "key.generate", "key",
 			stored->getSqlItemId().toString(), params);
-	if (!TransCommit())
-		throw serviceError("database_error",
-			tr("Failed to commit the database transaction"));
+	TransCommitThrow();
     }
     catch (...) {
 	delete key;

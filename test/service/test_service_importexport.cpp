@@ -1097,7 +1097,7 @@ void test_service_importexport::exportFailureKeepsFile()
 	foreach(const QString &name, QStringList({ "existing.pem",
 						"new.pem" })) {
 		qsizetype before = entries("object.export").size();
-		warning->expectMessage("FOREIGN KEY constraint failed");
+		/* no SQL message box before the typed error (review of xca#68) */
 		QString code;
 		try {
 			exportTo(Database.model<db_x509>(), leaf, certPem,

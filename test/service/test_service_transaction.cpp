@@ -436,7 +436,7 @@ void test_service_transaction::appendCommitFails()
 		"BEGIN INSERT INTO btd142_child VALUES (42); END");
 	int before = AuditLog::entries().size();
 
-	warning->expectMessage("FOREIGN KEY");
+	/* no SQL message box before the typed error (review of xca#68) */
 	QString code = errorCode([&]() {
 		AuditLog::append(ctx, "object.rename", "key", "1",
 			AuditParams().set("name", "BTD-142"));
@@ -566,7 +566,7 @@ void test_service_transaction::crlInsertBeginFails()
 	pki_crl *crl = new pki_crl();
 	crl->fromBytes(der, "btd149.crl");
 	sql("BEGIN");
-	warning->expectMessage("transaction");
+	/* no SQL message box before the typed error (review of xca#68) */
 	QString code = errorCode([&]() {
 		Database.model<db_crl>()->insert(crl);
 	});
@@ -591,7 +591,7 @@ void test_service_transaction::failedBeginLeavesOuterAlone()
 	bool begun, active;
 	{
 		Transaction;
-		warning->expectMessage("transaction");
+		/* no SQL message box before the typed error (review of xca#68) */
 		begun = TransBegin();
 		active = DbTransaction::active();
 	}

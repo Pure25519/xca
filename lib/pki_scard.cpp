@@ -774,6 +774,9 @@ void pki_scard::updateLabel(QString label)
 	execOrThrow(q, tr("The token label of '%1' could not be stored")
 			.arg(getIntName()));
 	AffectedItems(sqlItemId);
-	TransCommitThrow();
+	QString old = slot_label;
 	slot_label = label;
+	/* an outer transaction may still roll back (review of xca#68) */
+	DbTransaction::onRollback([this, old]() { slot_label = old; });
+	TransCommitThrow();
 }

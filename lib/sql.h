@@ -116,6 +116,10 @@ class DbTransaction
  * reason, never the statement and its values (they may hold key
  * material); those go to the debug log. */
 [[noreturn]] void throwSqlError(const QSqlError &e, const QString &what);
+/* The service error code of a native error code of the Qt driver:
+ * QSQLITE result codes (the low byte of an extended one), QPSQL
+ * SQLSTATEs, QMYSQL/QMARIADB error numbers; database_error otherwise */
+QString sqlErrorCode(const QString &driver, const QString &native);
 
 class XSqlQuery: public QSqlQuery
 {

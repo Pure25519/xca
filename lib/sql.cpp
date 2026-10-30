@@ -60,7 +60,8 @@ bool DbTransaction::begin(const char *file, int line)
 	bool ret = db.transaction();
 	if (!ret) {
 		failure = db.lastError();
-		XCA_SQLERROR(failure);
+		/* TransThrow() throws it typed, no message box first */
+		qWarning() << "BEGIN failed:" << failure.databaseText();
 		/* Not begun: the level as before, and the destructor ends
 		 * no transaction this object did not start (BTD-172) */
 		mutex--;
@@ -123,7 +124,8 @@ bool DbTransaction::finish(bool commit, const char *file, int line)
 	bool ret = hasTransaction ? db.commit() : true;
 	if (!ret) {
 		failure = db.lastError();
-		XCA_SQLERROR(failure);
+		/* TransCommitThrow() throws it typed */
+		qWarning() << "COMMIT failed:" << failure.databaseText();
 		/* SQLite keeps the transaction open after a failed COMMIT
 		 * (busy, deferred constraint): every later write would end
 		 * up in it and be lost on close (BTD-114) */
@@ -195,23 +197,50 @@ bool DbTransaction::done(QSqlError e, const char *file, int line)
 	return e.isValid() ? rollback(file, line) : commit(file, line);
 }
 
+QString sqlErrorCode(const QString &driver, const QString &native)
+{
+	static const QString readOnly("read_only_database"),
+		full("disk_full"), other("database_error");
+	if (driver == "QSQLITE") {
+		/* primary result codes; an extended code keeps them in its
+		 * low byte, e.g. SQLITE_READONLY_DBMOVED (file removed) */
+		switch (native.toInt() & 0xff) {
+		case 8: return readOnly;        /* SQLITE_READONLY */
+		case 13: return full;           /* SQLITE_FULL */
+		}
+		return other;
+	}
+	if (driver == "QPSQL") {
+		if (native == "25006")          /* read_only_sql_transaction */
+			return readOnly;
+		if (native == "53100")          /* disk_full */
+			return full;
+		return other;
+	}
+	if (driver == "QMYSQL" || driver == "QMARIADB") {
+		switch (native.toInt()) {
+		case 1036:      /* ER_OPEN_AS_READONLY */
+		case 1290:      /* ER_OPTION_PREVENTS_STATEMENT (read_only) */
+		case 1792:      /* ER_CANT_EXECUTE_IN_READ_ONLY_TRANSACTION */
+			return readOnly;
+		case 1021:      /* ER_DISK_FULL */
+		case 1114:      /* ER_RECORD_FILE_FULL */
+			return full;
+		}
+	}
+	return other;
+}
+
 void throwSqlError(const QSqlError &e, const QString &what)
 {
-	/* SQLite primary result codes; an extended code keeps them in its
-	 * low byte, e.g. SQLITE_READONLY_DBMOVED (database file removed) */
-	enum { sqlite_readonly = 8, sqlite_full = 13 };
-	QString code = "database_error";
-	switch (e.nativeErrorCode().toInt() & 0xff) {
-	case sqlite_readonly:
-		code = "read_only_database";
-		break;
-	case sqlite_full:
-		code = "disk_full";
-		break;
-	}
+	QString code = sqlErrorCode(QSqlDatabase::database(
+			QSqlDatabase::defaultConnection, false).driverName(),
+			e.nativeErrorCode());
 	qDebug() << "SQL error:" << code << what << e.text();
-	QString reason = e.databaseText().isEmpty() ? e.driverText() :
-							e.databaseText();
+	/* The reason of the database only: the driver text of XSqlQuery
+	 * carries the statement and its bound values, which may be a
+	 * tls-auth key or an encrypted private key (review of xca#68) */
+	QString reason = e.databaseText().trimmed();
 	throw serviceError(code, reason.isEmpty() ? what :
 				QString("%1: %2").arg(what, reason));
 }

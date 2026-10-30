@@ -361,8 +361,11 @@ pki_base *database_model::insert(pki_base *pki)
 			try {
 				insert(i);
 			} catch (...) {
-				/* insert() left it with us (BTD-50) */
-				delete i;
+				/* insert() left it with us (BTD-50); one still
+				 * in the store is freed by its unstore() */
+				db_base *m = modelForPki(i);
+				if (!m || !m->isStored(i))
+					delete i;
 				qDeleteAll(items);
 				delete pki;
 				throw;
@@ -454,6 +457,9 @@ database_model::~database_model()
 	QByteArray ba;
 	QString connName =  QSqlDatabase::database().connectionName();
 
+	/* no transactions on a connection that is gone (review of
+	 * xca#68): begin() would run on the removed connection */
+	DbTransaction::setHasTransaction(false);
 	if (!QSqlDatabase::database().isOpen()) {
 		QSqlDatabase::removeDatabase(connName);
 		Settings.clear();

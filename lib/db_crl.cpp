@@ -377,14 +377,15 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				params.set("next_update", (QDateTime)crl->getNextUpdate());
 				params.set("count", (qint64)crl->numRev());
 				params.set("der_size", (qint64)crl->i2d().size());
-				/* stored, or the write error with the CRL
-				 * still ours (BTD-50) */
-				stored = dynamic_cast<pki_crl *>(
-						insertPKI(crl));
 			} catch (...) {
 				delete crl;
 				throw;
 			}
+			/* a write error may come after the CRL is in the
+			 * store: the outer catch frees it once the rollback
+			 * took it out again (BTD-50, review of xca#68) */
+			stored = crl;
+			insertPKI(crl);
 			params.set("name", stored->getIntName());
 			AuditLog::append(ctx, AuditLog::actionCrlGenerate, "crl",
 					stored->getSqlItemId().toString(), params);

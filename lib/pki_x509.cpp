@@ -342,8 +342,7 @@ QString pki_x509::getTaKey()
 		execOrThrow(q, tr("The tls-auth key could not be stored"));
 		qDebug() << "Generated TA key" << this << b.size() << QString::fromLatin1(b.toHex()).left(6);
 	}
-	if (!TransCommit())
-		throw errorEx(tr("The tls-auth key could not be stored"));
+	TransCommitThrow();
 	QString takey(D5 "BEGIN " OVPN_TA_KEY D5 "\n");
 	QString hex(QString::fromLatin1(b.toHex()));
 	for (int i=0; i<16; i++)

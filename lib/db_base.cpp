@@ -690,9 +690,7 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			result.deleted << current;
 			result.revocations += revocations;
 		}
-		if (!TransCommit())
-			throw serviceError("database_error", tr(
-				"Failed to commit the database transaction"));
+		TransCommitThrow();
 	} catch (serviceError &err) {
 		AuditLog::appendFailure(ctx, action, current.objectType, current.id,
 				params.getValues().isEmpty() ?
