@@ -142,6 +142,10 @@ class db_base: public QAbstractItemModel
 		virtual QList<pki_key *> exportedPrivateKeys(
 			const QList<pki_base *> &items,
 			const pki_export *xport) const;
+		/* True if the format writes the private key of an ML-DSA key:
+		 * only then may ExportSpec::privateKeyFormat be set */
+		bool exportsMlDsaPrivateKey(const QList<pki_base *> &items,
+			const pki_export *xport) const;
 		/* The format of pki_base::pem() for the clipboard text, or
 		 * NULL if it never contains a private key */
 		virtual const pki_export *clipboardFormat() const

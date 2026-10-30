@@ -613,6 +613,11 @@ void XcaTreeView::exportItems(const QModelIndexList &indexes)
 					for (pki_base *pki : spec.items) {
 						ExportSpec one = spec;
 						one.items = QList<pki_base *>() << pki;
+						/* the ML-DSA encoding only for an
+						 * ML-DSA private key (BTD-190) */
+						if (!ExportDialog::mlDsaApplies(
+								one.items, xport))
+							one.privateKeyFormat.clear();
 						one.fileName = pki->get_dump_filename(fname,
 							QString(".%1").arg(xport->extension));
 						// Will be cleared by PwDialogCore

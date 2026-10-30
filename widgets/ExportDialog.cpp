@@ -11,6 +11,7 @@
 #include "Help.h"
 #include "XcaWarning.h"
 #include "lib/base.h"
+#include "lib/database_model.h"
 #include "lib/pki_pkcs12.h"
 
 #include <QComboBox>
@@ -29,6 +30,16 @@ ExportDialog::ExportDialog(QWidget *w, const QString &title,
 	QString fname = "selected_items";
 	setupUi(this);
 	setWindowTitle(XCA_TITLE);
+	for (const QModelIndex &idx : indexes) {
+		pki_base *pki = db_base::fromIndex(idx);
+		if (pki)
+			pkis << pki;
+	}
+	/* The values of ExportSpec::privateKeyFormat; empty: the default */
+	mlDsaFormat->addItem(tr("Default (seed and expanded key)"), QString());
+	mlDsaFormat->addItem(tr("Seed and expanded key"), QString("both"));
+	mlDsaFormat->addItem(tr("Seed only"), QString("seed"));
+	mlDsaFormat->addItem(tr("Expanded key only"), QString("expanded"));
 	if (indexes.size() == 1) {
 		pki_base *pki = db_base::fromIndex(indexes[0]);
 		if (pki) {
@@ -197,7 +208,17 @@ ExportSpec ExportDialog::exportSpec(const QList<pki_base *> &items) const
 	spec.items = items;
 	spec.format = export_type();
 	spec.fileName = filename->text();
+	if (mlDsaApplies(items, spec.format))
+		spec.privateKeyFormat = mlDsaFormat->currentData().toString();
 	return spec;
+}
+
+bool ExportDialog::mlDsaApplies(const QList<pki_base *> &items,
+				const pki_export *xport)
+{
+	db_base *db = items.isEmpty() ? nullptr :
+				Database.modelForPki(items[0]);
+	return db && db->exportsMlDsaPrivateKey(items, xport);
 }
 
 void ExportDialog::on_exportFormat_highlighted(int index)
@@ -205,12 +226,44 @@ void ExportDialog::on_exportFormat_highlighted(int index)
 	const pki_export *x = export_type(index);
 	if (!x)
 		return;
+	bool mlDsa = mlDsaApplies(pkis, x);
+	mlDsaLabel->setHidden(!mlDsa);
+	mlDsaFormat->setHidden(!mlDsa);
+	pemComment->setEnabled(x->flags & F_PEM);
+	samePassword->setEnabled(x->flags & F_CRYPT);
+	mlDsaHelp(x);
+}
+
+void ExportDialog::on_mlDsaFormat_currentIndexChanged(int)
+{
+	mlDsaHelp(export_type());
+}
+
+/* The help of the format, and of the ML-DSA encoding where it applies */
+void ExportDialog::mlDsaHelp(const pki_export *x)
+{
+	if (!x)
+		return;
 	QString help = x->help;
 	if (x->flags & F_PKCS12)
 		help += QString("\n") + encAlgo::forExport().description();
+	if (!mlDsaFormat->isHidden()) {
+		QString format = mlDsaFormat->currentData().toString();
+		help += "\n";
+		if (format == "seed")
+			help += tr("The ML-DSA private key holds only the 32 byte "
+				"seed (RFC 9881). Readers derive the key from it; "
+				"some, like XiPKI, cannot read it.");
+		else if (format == "expanded")
+			help += tr("The ML-DSA private key holds only the expanded "
+				"key (RFC 9881), without the seed. Every reader "
+				"accepts it, e.g. XiPKI, but the seed is not "
+				"exported.");
+		else
+			help += tr("The ML-DSA private key holds the seed and the "
+				"expanded key (RFC 9881).");
+	}
 	infoBox->setText(help);
-	pemComment->setEnabled(x->flags & F_PEM);
-	samePassword->setEnabled(x->flags & F_CRYPT);
 }
 
 void ExportDialog::on_separateFiles_clicked(bool checked)

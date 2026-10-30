@@ -121,6 +121,10 @@ void test_main::exportMlDsaEncoding()
 		/* the default leaves the service default */
 		combo->setCurrentIndex(combo->findData(QString()));
 		QVERIFY(dlg->exportSpec({ ml }).privateKeyFormat.isEmpty());
+		/* a public key format sends no encoding */
+		combo->setCurrentIndex(combo->findData("expanded"));
+		QVERIFY(!comboShown(dlg, keyDerPublic));
+		QVERIFY(dlg->exportSpec({ ml }).privateKeyFormat.isEmpty());
 		delete dlg;
 
 		/* hidden for the other key types */
@@ -130,8 +134,15 @@ void test_main::exportMlDsaEncoding()
 			QVERIFY(other);
 			dlg = dialogFor(other);
 			QVERIFY2(!comboShown(dlg, keyPemPrivate), job);
+			QVERIFY2(dlg->exportSpec({ other }).privateKeyFormat.isEmpty(),
+				job);
+			/* "separate files" clears the choice per item */
+			QVERIFY2(!ExportDialog::mlDsaApplies({ other },
+				pki_export::by_id(keyPemPrivate)), job);
 			delete dlg;
 		}
+		QVERIFY(ExportDialog::mlDsaApplies({ ml },
+			pki_export::by_id(keyPemPrivate)));
 
 		/* a certificate with an ML-DSA key: PKCS#12 and PEM + key */
 		IssuanceSpec spec;

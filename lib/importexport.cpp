@@ -443,13 +443,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw serviceError("invalid_ml_dsa_encoding",
 					tr("Unknown ML-DSA private key format '%1'")
 					.arg(spec.privateKeyFormat));
-			bool mlDsa = false;
-			if (!spec.clipboard) {
-				foreach(pki_key *key,
-					exportedPrivateKeys(spec.items, xport))
-					mlDsa |= pki_evp::isMlDsa(key->getKeyType());
-			}
-			if (!mlDsa)
+			if (spec.clipboard ||
+			    !exportsMlDsaPrivateKey(spec.items, xport))
 				throw serviceError("format_not_applicable",
 					tr("An ML-DSA private key format needs a "
 					   "private key export of an ML-DSA key"));
@@ -613,4 +608,14 @@ QList<pki_key *> db_base::exportedPrivateKeys(const QList<pki_base *> &items,
 			keys << key;
 	}
 	return keys;
+}
+
+bool db_base::exportsMlDsaPrivateKey(const QList<pki_base *> &items,
+			const pki_export *xport) const
+{
+	foreach(pki_key *key, exportedPrivateKeys(items, xport)) {
+		if (pki_evp::isMlDsa(key->getKeyType()))
+			return true;
+	}
+	return false;
 }
