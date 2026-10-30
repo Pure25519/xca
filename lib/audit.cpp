@@ -102,15 +102,19 @@ const QStringList &AuditParams::allowList()
 		"outcome",
 		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
-		"revocation_date", "revocations", "serial", "subject",
+		"revocation_date", "revocations", "serial",
+		/* the effective algorithm of a signature (BTD-164) */
+		"signature_algorithm", "subject",
 		"template", "this_update", "validity_capped",
 		/* accepted with a note: issuer without key usage (BTD-55),
 		 * SHA-1 CSR (BTD-65) */
 		"warning",
 		/* device CSRs (BTD-65) */
 		"csr_signature_algorithm",
-		/* certificate profiles (BTD-54) */
-		"profile",
+		/* certificate profiles (BTD-54), the profile store and the
+		 * name policies (BTD-167) */
+		"profile", "profile_version", "policies", "policy_result",
+		"version", "dropped_extensions", "profile_warnings",
 		/* the merge decision per extension, e.g. "ku=union+csr"
 		 * (mr-processor review of xca#47) */
 		"merge",

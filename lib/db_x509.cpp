@@ -22,6 +22,7 @@
 #include "audit.h"
 #include "issuance.h"
 #include "issuance_checks.h"
+#include "profile_store.h"
 #include "request.h"
 
 #include "XcaWarningCore.h"
@@ -421,7 +422,43 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 		p.set("template", spec.templateName);
 	if (!spec.profile.isEmpty())
 		p.set("profile", spec.profile);
+	if (spec.profileVersion)
+		p.set("profile_version", spec.profileVersion);
+	/* a validity capped by the profile's validity.max (BTD-167) */
+	if (spec.profileCappedFrom.isValid()) {
+		p.set("validity_capped", true);
+		p.set("requested_not_after", spec.profileCappedFrom);
+	}
+	if (!spec.profileWarnings.isEmpty())
+		p.set("profile_warnings", spec.profileWarnings.join(","));
+	QStringList policies;
+	for (const Policy &policy : spec.policies)
+		policies << policy.id;
+	if (!policies.isEmpty())
+		p.set("policies", policies.join(","));
 	return p;
+}
+
+/* The stored profile version and the policies a certificate was issued
+ * under (BTD-167); inside the issuing transaction */
+static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
+{
+	QStringList policies;
+	for (const Policy &p : spec.policies)
+		policies << p.id;
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO issued_profiles (item, profile, version, "
+		"policy_names) VALUES (?, ?, ?, ?)");
+	q.bindValue(0, cert->getSqlItemId());
+	q.bindValue(1, spec.profile);
+	q.bindValue(2, spec.profileVersion);
+	q.bindValue(3, policies.join(","));
+	q.exec();
+	if (q.lastError().isValid())
+		throw serviceError("database_error",
+			QCoreApplication::translate("db_x509",
+			"The profile of the certificate could not be stored: %1")
+			.arg(q.lastError().text()));
 }
 
 /* The subject as given, byte for byte; with a profile that adds a
@@ -439,7 +476,8 @@ static x509name subjectOf(const IssuanceSpec &spec)
 
 /* Under a profile the SAN is the CSR's, in its order and encoding, with
  * the profile's criticality; the registered ApplicationUri is appended
- * when the CSR has none. A dNSName is never made from the CN.
+ * when the CSR has none. A dNSName is made from the CN only when a
+ * generic profile says so (XCA's DNS:copycn, BTD-167).
  * IssuanceChecks::request() has checked the SAN against the profile and
  * refused a CSR with two extension instances, so ext is the only one. */
 static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
@@ -473,18 +511,37 @@ static void requestSan(const IssuanceSpec &spec, pki_x509 *cert)
 			QCoreApplication::translate("db_x509",
 			"The request's %1 cannot be decoded")
 			.arg("subjectAltName"));
-	bool hasUri = false;
-	for (int i = 0; i < sk_GENERAL_NAME_num(names); i++)
-		hasUri |= sk_GENERAL_NAME_value(names, i)->type == GEN_URI;
-	if (!uri.isEmpty() && !hasUri) {
+	bool hasUri = false, hasCn = false;
+	QString cn;
+	int at = X509_NAME_get_index_by_NID(spec.subject.get0(),
+					NID_commonName, -1);
+	if (spec.csrPolicy.dnsFromCn && at >= 0)
+		cn = spec.subject.getEntry(at);
+	for (int i = 0; i < sk_GENERAL_NAME_num(names); i++) {
+		GENERAL_NAME *gn = sk_GENERAL_NAME_value(names, i);
+		hasUri |= gn->type == GEN_URI;
+		hasCn |= gn->type == GEN_DNS && !cn.isEmpty() &&
+			QString::fromLatin1((const char *)ASN1_STRING_get0_data(gn->d.ia5),
+				ASN1_STRING_get_length(gn->d.ia5)) == cn;
+	}
+	bool addUri = !uri.isEmpty() && !hasUri;
+	bool addCn = !cn.isEmpty() && !hasCn;
+	auto add = [&](int type, const QString &value, const char *prefix) {
 		GENERAL_NAME *gn = a2i_GENERAL_NAME(nullptr, nullptr, nullptr,
-				GEN_URI, uri.toUtf8().constData(), 0);
+				type, value.toUtf8().constData(), 0);
 		if (!gn || !sk_GENERAL_NAME_push(names, gn)) {
 			GENERAL_NAME_free(gn);
 			fail("invalid_extension", QCoreApplication::translate(
 				"db_x509", "The extension %1 cannot be built "
-				"from '%2'.").arg("subjectAltName", "URI:" + uri));
+				"from '%2'.").arg("subjectAltName",
+				QString(prefix) + value));
 		}
+	};
+	if (addUri || addCn) {
+		if (addUri)
+			add(GEN_URI, uri, "URI:");
+		if (addCn)
+			add(GEN_DNS, cn, "DNS:");
 		if (X509_add1_ext_i2d(cert->getCert(), NID_subject_alt_name,
 				names, spec.csrPolicy.sanCritical,
 				X509V3_ADD_DEFAULT) != 1)
@@ -857,7 +914,25 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	orderExtensions(spec.extensionOrder, cert);
 
 	IssuanceChecks::certificate(spec, cert, chain);
-	IssuanceChecks::names(spec, cert, chain);
+	/* the policies of the spec, of the CA and of its stored profile:
+	 * every issuance channel checks the same (BTD-167) */
+	IssuanceSpec named(spec);
+	for (const Policy &p : ProfileStore::policiesFor(spec.signer,
+				spec.profileVersion ? spec.profile : QString())) {
+		bool known = false;
+		for (const Policy &q : named.policies)
+			known |= q.id == p.id;
+		if (!known)
+			named.policies << p;
+	}
+	QStringList policyNames;
+	for (const Policy &p : named.policies)
+		policyNames << p.id;
+	if (!policyNames.isEmpty())
+		params.set("policies", policyNames.join(","));
+	IssuanceChecks::names(named, cert, chain);
+	if (!named.policies.isEmpty())
+		params.set("policy_result", "pass");
 
 	// the serial only once every check passed
 	cert->setSerial(getUniqueSerial(spec.signer));
@@ -875,6 +950,10 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	params.set("subject", cert->getSubject().oneLine());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
+	/* what was signed with: hash_algo is what the spec asked for, a
+	 * digest-less issuer ignores it (BTD-164) */
+	params.set("signature_algorithm",
+		OBJ_nid2ln(X509_get_signature_nid(cert->getCert())));
 
 	if (getByReference(cert))
 		throw serviceError("duplicate_certificate",
@@ -889,6 +968,8 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	delete tempkey;
 	tempkey = nullptr;
 	markRequestSigned(spec.request, stored);
+	if (spec.profileVersion)
+		recordProfile(named, stored);
 	AuditLog::append(ctx, "certificate.issue", "certificate",
 			stored->getSqlItemId().toString(), params);
 	if (!TransCommit())
@@ -1385,7 +1466,7 @@ void db_x509::setRevocations(const ServiceContext &ctx, pki_x509 *ca,
 	auditedTransaction(ctx, "ca.set_revocations", "certificate",
 				itemId(ca), params, [&]() {
 		if (!ca || !ca->isCA())
-			throw serviceError("not_a_ca",
+			throw serviceError("issuer_not_ca",
 				tr("Revocations need a CA certificate"));
 		QVariant caId = ca->getSqlItemId();
 		QList<x509rev> wanted;

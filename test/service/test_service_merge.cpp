@@ -164,8 +164,8 @@ void test_service_merge::modes_data()
 	const ext exts[] = {
 		{ NID_subject_alt_name, "SAN", "DNS:csr.example",
 		  "DNS:tmpl.example", "DNS:csr.example, DNS:tmpl.example" },
-		{ NID_key_usage, "KU", "Digital Signature", "Key Encipherment",
-		  "Digital Signature, Key Encipherment" },
+		{ NID_key_usage, "KU", "Digital Signature", "Key Agreement",
+		  "Digital Signature, Key Agreement" },
 		{ NID_ext_key_usage, "EKU", "TLS Web Client Authentication",
 		  "TLS Web Server Authentication",
 		  "TLS Web Client Authentication, TLS Web Server Authentication" },
@@ -224,7 +224,7 @@ void test_service_merge::modes()
 		if (nid == NID_subject_alt_name)
 			e.subjectAltName = "DNS:tmpl.example";
 		else if (nid == NID_key_usage)
-			e.keyUsage << "keyEncipherment";
+			e.keyUsage << "keyAgreement";
 		else
 			e.extKeyUsage << "serverAuth";
 	}
@@ -430,7 +430,7 @@ void test_service_merge::criticalityFromTemplate()
 	IssuanceSpec s = spec(req, signer);
 	s.copyRequestExtensions = false;
 	s.extensions.kuMerge = mode;
-	s.extensions.keyUsage << "keyEncipherment";
+	s.extensions.keyUsage << "keyAgreement";
 	s.extensions.keyUsageCritical = templateCritical;
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, s);
 	QVERIFY(cert);
@@ -455,7 +455,7 @@ void test_service_merge::mergeDecisionAudited()
 	s.copyRequestExtensions = false;
 	s.extensions.sanMerge = ExtensionSpec::merge_template;
 	s.extensions.kuMerge = ExtensionSpec::merge_union;
-	s.extensions.keyUsage << "keyEncipherment";
+	s.extensions.keyUsage << "keyAgreement";
 	s.extensions.ekuMerge = ExtensionSpec::merge_request;
 	s.extensions.ekuDefault << "clientAuth";
 	QVERIFY(Database.model<db_x509>()->newCert(ctx, s));

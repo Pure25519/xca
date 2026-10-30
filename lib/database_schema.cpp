@@ -397,6 +397,41 @@
 << "UPDATE settings SET value='3' WHERE key_='bxc_schema'"
 	;
 
+	bxc_schemas[3]
+// Profiles and name policies as versioned documents (BTD-167,
+// lib/profile_store.h): one row per version, the JSON document as text.
+// IF NOT EXISTS: MariaDB commits DDL at once, so a failed migration
+// leaves tables behind that a second run must accept.
+<< "CREATE TABLE IF NOT EXISTS profiles ("
+	"name VARCHAR(64), "            // profile id of the document
+	"version INTEGER, "             // 1, 2, 3, ... per name
+	"document " B64_BLOB ", "       // JSON (schemas/profile.schema.json)
+	"created VARCHAR(32), "         // UTC time, RFC 3339
+	"retired SMALLINT NOT NULL DEFAULT 0, "
+	"PRIMARY KEY (name, version))"
+<< "CREATE TABLE IF NOT EXISTS policies ("
+	"name VARCHAR(64), "
+	"version INTEGER, "
+	"document " B64_BLOB ", "       // JSON (schemas/policy.schema.json)
+	"created VARCHAR(32), "
+	"retired SMALLINT NOT NULL DEFAULT 0, "
+	"PRIMARY KEY (name, version))"
+// The profiles and policies a CA may use, the policies of a profile
+<< "CREATE TABLE IF NOT EXISTS assignments ("
+	"owner_type VARCHAR(8), "       // ca or profile
+	"owner VARCHAR(64), "           // items(id) of the CA, or profile name
+	"kind VARCHAR(8), "             // profile or policy
+	"name VARCHAR(64))"
+// The profile version and the policies a certificate was issued under
+<< "CREATE TABLE IF NOT EXISTS issued_profiles ("
+	"item INTEGER UNIQUE, "         // reference to items(id)
+	"profile VARCHAR(64), "
+	"version INTEGER, "
+	"policy_names VARCHAR(1024), "  // comma separated policy names
+	"FOREIGN KEY (item) REFERENCES items (id))"
+<< "UPDATE settings SET value='4' WHERE key_='bxc_schema'"
+	;
+
 /* When adding new tables or views, also add them to the list
  * in XSqlQuery::rewriteQuery(QString) in lib/sql.cpp
  */

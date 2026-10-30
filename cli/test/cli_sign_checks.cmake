@@ -2,7 +2,7 @@
 # checks of the service layer before every signature (BTD-55,
 # lib/issuance_checks.h) end to end. Every rejection is a JSON error with
 # its typed code, exit code 1, nothing written. Rule 3 (key usage by key
-# type, BTD-54) is in cli_sign_checks_pending.cmake.
+# type, BTD-195) is in cli_sign_checks_pending.cmake.
 
 include("${LIB}")
 

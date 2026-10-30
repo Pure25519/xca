@@ -1,12 +1,16 @@
 
 list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp templateRoundTrip.cpp
+	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp policy.cpp crlRefused.cpp kuByKeyType.cpp templateRoundTrip.cpp
 	automationIds.cpp issuanceExt.cpp TestEnv.cpp TestEnv.h)
 
 list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)
 
 add_executable(testxca img/imgres.qrc ${srcs}
 		${UI_FILES} ${PROJECT_BINARY_DIR}/local.h)
+
+# the policy examples of test/service/data (BTD-167)
+target_compile_definitions(testxca PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
 add_test(NAME testxca COMMAND testxca)
 set_tests_properties(testxca PROPERTIES LABELS gui)

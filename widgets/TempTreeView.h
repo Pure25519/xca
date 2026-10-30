@@ -34,6 +34,7 @@ class TempTreeView: public XcaTreeView
 	void certFromTemp();
 	void reqFromTemp();
 	void duplicateTemp();
+	void migrateTemp();
 	void newItem();
 	void load();
 

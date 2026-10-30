@@ -37,6 +37,7 @@ class test_main: public QObject
 	void cleanup();
 	void newKey();
 	void keyDetailFixed();
+	void digestLessSigner();
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();
@@ -44,6 +45,7 @@ class test_main: public QObject
 	void exportFormat();
 	void revoke();
 	void renewalSigningFails();
+	void issueRefusedByPolicy();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();
@@ -52,6 +54,8 @@ class test_main: public QObject
 	void automationIds();
 	void issuanceExtensions();
 	void templateMergeRoundTrip();
+	void crlRefusedWithoutCrlSign();
+	void keyUsageByKeyType();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

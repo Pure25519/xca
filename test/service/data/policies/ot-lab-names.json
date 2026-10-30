@@ -1,0 +1,56 @@
+{
+  "schema": "urn:bxc-pki:schema:policy:v1",
+  "id": "ot-lab-names",
+  "description": "Names of the OT lab: host names below lab.bxc-technology.de, the single-label PLC and switch names (plc10, scalance1), the two lab networks, ApplicationUris below urn:bxc:lab:, no e-mail addresses, O fixed to the lab organisation.",
+  "names": {
+    "dns": {
+      "allow": [
+        {
+          "type": "subtree",
+          "value": "lab.bxc-technology.de"
+        },
+        {
+          "type": "single-label",
+          "pattern": "plc[0-9]+"
+        },
+        {
+          "type": "single-label",
+          "pattern": "scalance[0-9]*"
+        }
+      ],
+      "deny": [
+        {
+          "type": "exact",
+          "value": "ca.lab.bxc-technology.de"
+        }
+      ]
+    },
+    "ip": {
+      "allow": [
+        "192.168.0.0/24",
+        "10.10.10.0/24"
+      ]
+    },
+    "uri": {
+      "allow": [
+        {
+          "type": "prefix",
+          "value": "urn:bxc:lab:"
+        }
+      ]
+    },
+    "email": {
+      "allow": []
+    },
+    "dn": {
+      "O": {
+        "allow": [
+          {
+            "type": "exact",
+            "value": "BxC Security"
+          }
+        ]
+      }
+    }
+  }
+}
