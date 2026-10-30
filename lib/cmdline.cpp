@@ -318,9 +318,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			ProfileStore::Document d = ProfileStore::migrateTemplate(
 				ServiceContext::localUser(ServiceContext::cli),
 				TemplateSpec::fromTemplate(temp), cmd_opts["name"]);
+			QString dropped = d.dropped.isEmpty() ? QString() :
+				QString(" (not migrated: %1)")
+				.arg(d.dropped.join(", "));
 			console_write(stdout, QString("Profile '%1' version %2 "
-				"from the template '%3'\n").arg(d.name)
-				.arg(d.version).arg(name).toUtf8());
+				"from the template '%3'%4\n").arg(d.name)
+				.arg(d.version).arg(name, dropped).toUtf8());
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;

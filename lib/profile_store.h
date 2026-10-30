@@ -52,6 +52,9 @@ namespace ProfileStore
 		QJsonObject document{};
 		QString created{};
 		bool retired{};
+		/* migrateTemplate(): the extensions of the template that a
+		 * profile does not carry (Netscape), in the audit entry too */
+		QStringList dropped{};
 	};
 
 	Document create(const ServiceContext &ctx, const QString &kind,

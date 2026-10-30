@@ -230,6 +230,11 @@ void test_service_template_migration::migrateIntoStore()
 	AuditEntry e = AuditLog::entries().last();
 	QCOMPARE(e.action, QString("profile.migrate"));
 	QCOMPARE(e.params.value("template").toString(), QString("TLS_client"));
+	/* the Netscape extensions of the template are named, never dropped
+	 * silently (review of bxc-pki#46) */
+	QCOMPARE(d.dropped, QStringList({ "nsCertType", "nsComment" }));
+	QCOMPARE(e.params.value("dropped_extensions").toString(),
+		QString("nsCertType,nsComment"));
 	QCOMPARE(ProfileStore::show("profile", "xca-tls-client").document,
 		d.document);
 }

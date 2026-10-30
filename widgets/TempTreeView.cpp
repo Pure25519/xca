@@ -69,8 +69,12 @@ void TempTreeView::migrateTemp()
 		ProfileStore::Document d = ProfileStore::migrateTemplate(
 			ServiceContext::localUser(ServiceContext::gui),
 			TemplateSpec::fromTemplate(temp));
-		XCA_INFO(tr("The template '%1' is now the profile '%2', version %3")
-			.arg(temp->getIntName(), d.name).arg(d.version));
+		QString msg = tr("The template '%1' is now the profile '%2', version %3")
+			.arg(temp->getIntName(), d.name).arg(d.version);
+		if (!d.dropped.isEmpty())
+			msg += "\n" + tr("Not migrated, a profile has no place for: %1")
+				.arg(d.dropped.join(", "));
+		XCA_INFO(msg);
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}

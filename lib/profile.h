@@ -30,7 +30,8 @@
  * SAN of the CSR (the template only with "copy extensions"), any key
  * type of the schema, SHA-256 (SHA-384 for P-384 CAs), and keeps the
  * order of the extensions as XCA builds them. Netscape extensions are not
- * migrated (bxc-pki profiles/README.md). Refused, with the field named
+ * migrated (bxc-pki profiles/README.md); droppedFromTemplate() names
+ * them for the migration result and the audit entry. Refused, with the field named
  * (template_not_migratable): a fixed subject, a fixed SAN, name
  * constraints, issuer alternative name, CRL distribution points, AIA,
  * OCSP must-staple, advanced extensions, no basicConstraints, no key
@@ -86,6 +87,11 @@ class Profile
 	 * serviceError template_not_migratable naming the field. */
 	static QJsonObject fromTemplate(const TemplateSpec &t,
 			const QString &id = QString());
+	/* What fromTemplate() leaves out because a profile has no place for
+	 * it: the Netscape values the template holds (nsCertType,
+	 * nsComment, ...), named in the migration result and its audit
+	 * entry, never dropped silently */
+	static QStringList droppedFromTemplate(const TemplateSpec &t);
 
 	/* The key type as the profile names it: rsa-2048, ec-p256, ... */
 	static QString keyType(const EVP_PKEY *pkey);

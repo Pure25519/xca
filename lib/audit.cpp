@@ -112,7 +112,7 @@ const QStringList &AuditParams::allowList()
 		/* certificate profiles (BTD-54), the profile store and the
 		 * name policies (BTD-167) */
 		"profile", "profile_version", "policies", "policy_result",
-		"version",
+		"version", "dropped_extensions",
 		/* the merge decision per extension, e.g. "ku=union+csr"
 		 * (mr-processor review of xca#47) */
 		"merge",

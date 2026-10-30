@@ -86,15 +86,19 @@ static int newestVersion(const QString &kind, const QString &name)
 static ProfileStore::Document store(const ServiceContext &ctx,
 		const QString &kind, const QJsonObject &doc, const QString &action,
 		bool newName, const QString &file = QString(),
-		const QString &templateName = QString())
+		const QString &templateName = QString(),
+		const QStringList &dropped = QStringList())
 {
 	ProfileStore::Document d;
+	d.dropped = dropped;
 	AuditParams params;
 	params.set("name", doc["id"].toString());
 	if (!file.isEmpty())
 		params.set("file", file);
 	if (!templateName.isEmpty())
 		params.set("template", templateName);
+	if (!dropped.isEmpty())
+		params.set("dropped_extensions", dropped.join(","));
 	auditedTransaction(ctx, kind + "." + action, kind, doc["id"].toString(),
 			params, [&]() {
 		d.kind = kind;
@@ -166,7 +170,8 @@ ProfileStore::Document ProfileStore::migrateTemplate(const ServiceContext &ctx,
 				QString(), params, err.code);
 		throw;
 	}
-	return store(ctx, "profile", doc, "migrate", true, QString(), t.name);
+	return store(ctx, "profile", doc, "migrate", true, QString(), t.name,
+			Profile::droppedFromTemplate(t));
 }
 
 ProfileStore::Document ProfileStore::update(const ServiceContext &ctx,

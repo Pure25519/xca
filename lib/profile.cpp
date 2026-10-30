@@ -129,6 +129,27 @@ static serviceError notMigratable(const TemplateSpec &t, const QString &field)
 		.arg(t.name, field));
 }
 
+QStringList Profile::droppedFromTemplate(const TemplateSpec &t)
+{
+	const ExtensionSpec &e = t.extensions;
+	QStringList dropped;
+	const QList<std::pair<const char *, bool>> netscape {
+		{ "nsCertType", !e.nsCertType.isEmpty() },
+		{ "nsComment", !e.nsComment.isEmpty() },
+		{ "nsBaseUrl", !e.nsBaseUrl.isEmpty() },
+		{ "nsRevocationUrl", !e.nsRevocationUrl.isEmpty() },
+		{ "nsCARevocationUrl", !e.nsCARevocationUrl.isEmpty() },
+		{ "nsRenewalUrl", !e.nsRenewalUrl.isEmpty() },
+		{ "nsCaPolicyUrl", !e.nsCaPolicyUrl.isEmpty() },
+		{ "nsSslServerName", !e.nsSslServerName.isEmpty() },
+	};
+	for (const auto &n : netscape) {
+		if (n.second)
+			dropped << n.first;
+	}
+	return dropped;
+}
+
 /* The migration rule of XCA templates (BTD-167), see profile.h */
 QJsonObject Profile::fromTemplate(const TemplateSpec &t, const QString &id)
 {
