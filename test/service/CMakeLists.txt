@@ -249,6 +249,15 @@ add_test(NAME test_cli_keygen_types
 		-P ${SERVICE_TEST_DIR}/cli_keygen_types.cmake)
 set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
 
+# xca --no-gui on a read-only database: exit 1, read_only_database (BTD-50)
+find_program(SERVICE_SETPRIV setpriv)
+add_test(NAME test_cli_readonly_database
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSETPRIV=${SERVICE_SETPRIV}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_readonly_database
+		-P ${SERVICE_TEST_DIR}/cli_readonly_database.cmake)
+set_tests_properties(test_cli_readonly_database PROPERTIES LABELS service)
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)
