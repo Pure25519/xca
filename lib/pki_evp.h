@@ -75,6 +75,9 @@ class pki_evp: public pki_key
 		  public:
 			MlDsaFormatScope(const QString &format);
 			~MlDsaFormatScope();
+			/* The encoding the export wrote for the key; empty
+			 * for other keys */
+			static QString written(const pki_key *key);
 		};
 		static bool isMlDsa(int keytype);
 		void fromPEMbyteArray(const QByteArray &ba, const QString &name);
