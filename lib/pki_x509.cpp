@@ -650,9 +650,13 @@ bool pki_x509::addV3ext(const x509v3ext &e, bool skip_existing)
 	if (skip_existing && X509_get_ext_by_NID(cert, e.nid(), -1) != -1)
 		return false;
 	X509_EXTENSION *ext = e.get();
-	X509_add_ext(cert, ext, -1);
+	int ok = ext && X509_add_ext(cert, ext, -1);
 	X509_EXTENSION_free(ext);
-	pki_openssl_error();
+	/* unchecked, a copied request extension went missing (BTD-197) */
+	if (!ok)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(tr("The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(e.nid())), take_openssl_errors()));
 	return true;
 }
 

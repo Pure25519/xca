@@ -126,8 +126,13 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	if (el.count() > 0) {
 		STACK_OF(X509_EXTENSION) *sk;
 		sk = el.getStack();
-		X509_REQ_add_extensions(request, sk);
+		int ok = X509_REQ_add_extensions(request, sk);
 		sk_X509_EXTENSION_pop_free(sk, X509_EXTENSION_free);
+		/* unchecked, the request was signed without them (BTD-197) */
+		if (!ok)
+			throw serviceError("invalid_extension", QString("%1\n%2")
+				.arg(tr("The extensions cannot be added to the "
+					"request."), take_openssl_errors()));
 	}
 	pki_openssl_error();
 
