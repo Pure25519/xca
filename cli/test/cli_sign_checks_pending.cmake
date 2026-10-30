@@ -1,13 +1,10 @@
-# Sign checks of bxc-pki that wait for the service (BTD-41): switched on
-# with -DBXC_PKI_SIGN_CHECKS=ON (cli/CMakeLists.txt).
+# Sign checks of bxc-pki (BTD-41) that needed the service check of
+# BTD-195:
 #  - rule 3: no keyEncipherment or dataEncipherment for an EC, EdDSA,
 #    ML-DSA or SLH-DSA key, whatever the template says; the certificate
 #    is either refused with a typed error or issued without those bits.
-#    bxc-main (bfd65e51) applies key usage by key type only in the
-#    profile engine (Profile::apply, BTD-54), not to a template or a plain
-#    IssuanceSpec; the CLI's --profile is reserved until Phase 2. Needs
-#    the service check for every issuance of BTD-195 (boss decision
-#    2026-10-30: not in BTD-41).
+#    Since BTD-195 IssuanceChecks refuses it on every issuance
+#    (key_usage_not_for_key_type).
 
 include("${LIB}")
 

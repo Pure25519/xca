@@ -103,11 +103,10 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 - Rule 12: see input checks; no template object is shared between calls.
 - Rules 1 and 5: the checks of the service layer before every signature (BTD-55,
   `lib/issuance_checks.h`) end to end in `cli/test/cli_sign_checks.cmake`. Rule 3 by key type
-  for templates waits for **BTD-195** (a service check of key usage by key type for every
-  issuance; boss decision 2026-10-30) in `cli/test/cli_sign_checks_pending.cmake`
-  (`-DBXC_PKI_SIGN_CHECKS=ON`). Until then an EC/EdDSA/ML-DSA certificate signed with a template
-  that names keyEncipherment keeps it; bxc-main applies key usage by key type only in the
-  profile engine (BTD-54), and `--profile` is reserved until Phase 2.
+  for templates in `cli/test/cli_sign_checks_pending.cmake`: the service checks key usage by
+  the type of the subject key on every issuance (BTD-195), so an EC, EdDSA, ML-DSA or SLH-DSA
+  key with a template that names keyEncipherment or dataEncipherment is refused with
+  `key_usage_not_for_key_type`. `--profile` is reserved until Phase 2.
 
 ## Tests
 
