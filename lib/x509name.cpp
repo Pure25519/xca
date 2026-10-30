@@ -6,6 +6,7 @@
  */
 
 #include "x509name.h"
+#include <QMap>
 #include "base.h"
 #include "func_base.h"
 #include "openssl_compat.h"
@@ -203,32 +204,45 @@ int x509name::getNidByName(const QString &nid_name)
 	return OBJ_txt2nid(nid_name.toLatin1());
 }
 
-QString x509name::checkLength() const
+std::pair<int, int> x509name::valueBounds(int nid)
 {
-	ASN1_STRING_TABLE *tab;
-	int i, max = entryCount();
-	QString warn;
+	static const QMap<int, std::pair<int, int>> rfc5280 {
+		{ NID_countryName, { 2, 2 } },
+		{ NID_commonName, { 1, 64 } },
+		{ NID_organizationName, { 1, 64 } },
+		{ NID_organizationalUnitName, { 1, 64 } },
+		{ NID_title, { 1, 64 } },
+		{ NID_serialNumber, { 1, 64 } },
+		{ NID_localityName, { 1, 128 } },
+		{ NID_stateOrProvinceName, { 1, 128 } },
+		{ NID_pseudonym, { 1, 128 } },
+		{ NID_pkcs9_emailAddress, { 1, 255 } },
+	};
+	if (rfc5280.contains(nid))
+		return rfc5280[nid];
+	if (ASN1_STRING_TABLE *tab = ASN1_STRING_TABLE_get(nid))
+		return { tab->minsize, tab->maxsize };
+	return { -1, -1 };
+}
 
-	for (i=0; i<max; i++) {
-		int n = nid(i);
-		QString entry;
+void x509name::checkValue(int nid, const QString &value)
+{
+	auto [min, max] = valueBounds(nid);
+	/* characters, not UTF-8 bytes */
+	int len = value.toUcs4().size();
+	if ((min < 0 || len >= min) && (max < 0 || len <= max))
+		return;
+	QString limit = min == max ? QObject::tr("exactly %1").arg(max) :
+			max >= 0 && len > max ? QObject::tr("at most %1").arg(max) :
+			QObject::tr("at least %1").arg(min);
+	throw serviceError("invalid_dn_value", QObject::tr("The %1 '%2' has %3 characters; RFC 5280 allows %4")
+		.arg(OBJ_nid2ln(nid)).arg(value).arg(len).arg(limit));
+}
 
-		tab = ASN1_STRING_TABLE_get(n);
-		if (!tab)
-			continue;
-		entry = getEntry(i);
-		if (tab->minsize > entry.size()) {
-			warn += QObject::tr("%1 is shorter than %2 bytes: '%3'").
-				arg(OBJ_nid2ln(n)).arg(tab->maxsize).arg(entry);
-			warn += "\n";
-		}
-		if ((tab->maxsize != -1) && (tab->maxsize < entry.size())) {
-			warn += QObject::tr("%1 is longer than %2 bytes: '%3'").
-				arg(OBJ_nid2ln(n)).arg(tab->maxsize).arg(entry);
-			warn += "\n";
-		}
-	}
-	return warn;
+void x509name::checkUpperBounds() const
+{
+	for (int i = 0; i < entryCount(); i++)
+		checkValue(nid(i), getEntry(i));
 }
 
 bool x509name::search(const QRegularExpression &pattern) const
@@ -258,6 +272,9 @@ void x509name::addEntryByNid(int nid, const QString &entry)
 {
 	if (entry.isEmpty())
 		return;
+	/* the string table's size limits apply only to MBSTRING_* input,
+	 * not to the fixed type passed below (BTD-202) */
+	checkValue(nid, entry.simplified());
 	ASN1_STRING *a = QStringToAsn1(entry.simplified(), nid);
 	/* unchecked, a refused entry was left out (BTD-95) */
 	int ok = X509_NAME_add_entry_by_NID(_get(), nid,

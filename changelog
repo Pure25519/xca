@@ -18,6 +18,17 @@ bxc-main (bxc-pki fork, unreleased)
    shortened temporary name. The Windows ACL check (BTD-13, not
    compiled) requires exactly one full-control entry for OWNER RIGHTS
    or the owner, and the owner to be the user of the process.
+ * BTD-202: DN values are checked against the RFC 5280 upper bounds, in
+   characters: C exactly 2; CN, O, OU, title and serialNumber at most 64;
+   L, ST and pseudonym at most 128; emailAddress at most 255; other
+   attributes by OpenSSL's string table. New error code invalid_dn_value,
+   naming attribute, length and limit, before any object, serial or
+   signature: for subjects of the dialog, templates, profiles and the
+   bxc-pki --subject option, and for subjects copied byte-faithfully from
+   a device CSR. The New Certificate dialog no longer offers "Continue
+   rollout" for an overlong value. Stored templates and registrations
+   whose values exceed the bounds now fail with invalid_dn_value instead
+   of a warning; shorten the value in the template.
  * BTD-42: bxc-pki command line part 2: revoke (by name, serial or
    SHA-256 fingerprint; reason required; issuer checked) with the new CRL
    of the CA at once, crl, export (pem, der, pkcs8, p12, chain and the
