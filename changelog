@@ -34,6 +34,14 @@ bxc-main (bxc-pki fork, unreleased)
    otherwise), so the GUI, which uses crlDays, and the command line issue
    CRLs of the same validity. export --plan runs the option checks of the
    export service and reports the error of the real run.
+
+   Upgrade note: stored CRL settings written by older runs that the
+   command line now refuses (e.g. a crlpolicy_<id> row with the
+   validity PT12H) are crl_settings_invalid on every command that reads
+   them, and they also block the automatic CRL re-issue on sign, until
+   all three --crl-* options are set again. Repair:
+   bxc-pki crl --ca <CA> --crl-validity P7D --crl-reissue-fraction 1/3
+   --crl-size-budget 4096 --db <db> --password <source>
  * BTD-212: the New Certificate dialog issues the certificate itself when
    OK is pressed and closes only on success, on all four entry points
    (new, from a request, from a template, from a certificate). A refusal
