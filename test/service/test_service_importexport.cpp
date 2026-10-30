@@ -1914,6 +1914,21 @@ void test_service_importexport::mlDsaMismatchRejected()
 	warning->expectMessage("cannot be read");
 	QString err = importError(name, &created);
 	QVERIFY2(!err.isEmpty(), "the mismatched key was imported");
+	/* the reason of the private-key read, not the "no start line" of
+	 * the PUBKEY fallback (BTD-209, review of xca#59 MINOR 4) */
+	QFile f(name);
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QString text;
+	try {
+		pki_evp key;
+		key.fromPEMbyteArray(f.readAll(), name);
+	} catch (errorEx &e) {
+		text = e.getString();
+	}
+	QVERIFY2(text.contains("cannot be read: "), qPrintable(text));
+	QVERIFY2(!text.contains("no start line"), qPrintable(text));
+	QVERIFY2(text.section("cannot be read: ", 1).trimmed().size() > 0,
+		qPrintable(text));
 	QCOMPARE(created.size(), 0);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
 	/* and no XCA template of the same file (BTD-88) */
