@@ -80,6 +80,7 @@ class test_service_csr_acceptance : public ServiceTestCase
 	void pssSha1();
 	void addedOrganizationChecked();
 	void sha1IssuanceHashRefused();
+	void nonAsciiSan();
 };
 
 pki_x509 *test_service_csr_acceptance::issuingCa(const QString &keyJob)
@@ -869,6 +870,77 @@ void test_service_csr_acceptance::sha1IssuanceHashRefused()
 	spec.csrPolicy.registeredUri = "urn:SIMATIC:plc12";
 	spec.hashAlgo = digest(NID_sha1);
 	expectRejected(spec, "signature_hash_not_allowed");
+}
+
+/* IA5String names are ASCII (RFC 5280 4.2.1.6): a URI or e-mail
+ * address with a byte above 0x7F is refused on every issuance path,
+ * never converted; an OPC UA ApplicationUri is compared byte for byte
+ * (BTD-208) */
+void test_service_csr_acceptance::nonAsciiSan()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = issuingCa("RSA:3072");
+	QVERIFY(ca);
+	QJsonObject g = golden("opcua-server.rsa-2048");
+	const QString uri = QString::fromUtf8("urn:bxc:gerät-8");
+
+	/* the registration URI, added by the fork to a CSR without one */
+	QByteArray der = opensslCsr({ "-newkey", "rsa:2048",
+		"-subj", "/C=DE/O=BxC/CN=dev8",
+		"-addext", "subjectAltName=DNS:dev8.example,IP:10.0.0.8" });
+	QVERIFY(!der.isEmpty());
+	pki_x509req *noUri = loadCsr("dev8", der);
+	QVERIFY(noUri);
+	IssuanceSpec spec = profileSpec(g, noUri, ca);
+	spec.csrPolicy.registeredUri = uri;
+	expectRejected(spec, "san_not_ia5");
+
+	/* a device CSR whose URI carries UTF-8 bytes: refused, not repaired */
+	X509_NAME *name = X509_NAME_new();
+	X509_NAME_add_entry_by_txt(name, "C", MBSTRING_ASC,
+			(const unsigned char *)"DE", -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+			(const unsigned char *)"BxC", -1, -1, 0);
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+			(const unsigned char *)"dev8", -1, -1, 0);
+	STACK_OF(X509_EXTENSION) *exts = sk_X509_EXTENSION_new_null();
+	X509_EXTENSION *e = X509V3_EXT_conf_nid(nullptr, nullptr,
+		NID_subject_alt_name,
+		("URI:" + uri + ",DNS:dev8.example").toUtf8().constData());
+	QVERIFY(e);
+	sk_X509_EXTENSION_push(exts, e);
+	QByteArray raw = apiCsr(name, exts);
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	X509_NAME_free(name);
+	pki_x509req *req = loadCsr("dev8-raw", raw);
+	QVERIFY(req);
+	/* apiCsr() makes a P-256 key */
+	spec = profileSpec(golden("opcua-server.ec-p256"), req, ca);
+	spec.csrPolicy.registeredUri = uri;
+	expectRejected(spec, "san_not_ia5");
+
+	/* dialog and template path: an e-mail address with an umlaut */
+	IssuanceSpec plain;
+	plain.name = "mail";
+	x509name n;
+	n.addEntryByNid(NID_commonName, "mail");
+	plain.subject = n;
+	plain.key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+			"mail");
+	plain.notBefore = a1time();
+	plain.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+	plain.hashAlgo = digest(NID_sha256);
+	plain.extensions.subjectAltName =
+		QString::fromUtf8("email:jörg@example.org");
+	expectRejected(plain, "san_not_ia5");
+	/* ASCII stays as it is */
+	plain.name = "mail-ascii";
+	plain.extensions.subjectAltName = "email:joerg@example.org, "
+		"URI:urn:bxc:geraet-8, DNS:xn--mller-kva.example";
+	QVERIFY(issue(plain));
+#endif
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_csr_acceptance)
