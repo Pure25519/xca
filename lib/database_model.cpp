@@ -242,7 +242,6 @@ static void reportSkippedRows(bool unlocked)
 	if (rows.isEmpty())
 		return;
 	QString text = db_base::skippedRowsText(rows);
-	qWarning().noquote() << text;
 	if (unlocked) {
 		QStringList items;
 		for (const db_base::SkippedRow &r : rows)
