@@ -69,6 +69,7 @@ class test_service_loaders : public ServiceTestCase
 	void requestAttributeRefused();
 	void ignoredErrorText();
 	void skippedRowsAudited();
+	void skippedRowsDatabaseLocked();
 };
 
 /* -- valid objects, built with OpenSSL ------------------------------------ */
@@ -695,6 +696,62 @@ void test_service_loaders::skippedRowsAudited()
 		qPrintable(items));
 	QCOMPARE(skipped[0].params.value("warning").toString(),
 		QString("rows_skipped"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* A second connection holds the write lock while it lives (BEGIN
+ * IMMEDIATE): reading works, every write fails with SQLITE_BUSY */
+class WriteLock
+{
+	QString name{ "btd209-lock" };
+
+  public:
+	WriteLock(const QString &file)
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", name);
+		db.setDatabaseName(file);
+		db.setConnectOptions("QSQLITE_BUSY_TIMEOUT=0");
+		if (!db.open() || !QSqlQuery(db).exec("BEGIN IMMEDIATE"))
+			qFatal("BTD-209 test: no write lock");
+	}
+	~WriteLock()
+	{
+		{
+			QSqlDatabase db = QSqlDatabase::database(name);
+			QSqlQuery(db).exec("ROLLBACK");
+			db.close();
+		}
+		QSqlDatabase::removeDatabase(name);
+	}
+};
+
+/* The entry of the skipped rows is best effort: with the database locked
+ * by another connection the open still works and reads, the rows are
+ * named, and no entry or part of one is left (condition of the review
+ * of xca#75). The read-only file is test_cli_skipped_rows_readonly. */
+void test_service_loaders::skippedRowsDatabaseLocked()
+{
+	EVP_PKEY *key = ecKey();
+	ImportSpec keySpec;
+	keySpec.data = PEM(PEM_write_bio_PUBKEY, key);
+	EVP_PKEY_free(key);
+	keySpec.dataName = "btd209-locked";
+	QCOMPARE(Database.importItems(ctx, keySpec).created.size(), 1);
+	QSqlQuery q;
+	QVERIFY(q.exec("UPDATE public_keys SET \"public\"='/////w=='"));
+	q.finish();
+	int audit = AuditLog::entries().size();
+
+	Database.close();
+	{
+		WriteLock lock(dbFile);
+		warning->expectMessage("left out");
+		openDatabase();
+		QVERIFY(Database.isOpen());
+		QCOMPARE(storedObjects(), 0);
+		QCOMPARE(AuditLog::entries().size(), audit);
+	}
+	QCOMPARE(AuditLog::entries().size(), audit);
 	QVERIFY(AuditLog::verify().ok());
 }
 
