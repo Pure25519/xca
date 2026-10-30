@@ -82,6 +82,18 @@ void test_main::optionsStoreChangedOnly()
 		QCOMPARE(diff, QStringList({ "serial_len", "suppress_messages" }));
 		QCOMPARE(back["suppress_messages"], QString("no"));
 
+		/* set back to the old value: that is stored, and an OK
+		 * without a change afterwards stores nothing (review of
+		 * xca#76) */
+		int oldLen = QString(back["serial_len"]).toInt() - 8;
+		QCOMPARE(runOptions([oldLen](Options *o) {
+			o->serial_len->setValue(oldLen);
+		}), (int)QDialog::Accepted);
+		QMap<QString, QString> reset = settingsRows();
+		QCOMPARE(reset["serial_len"], QString::number(oldLen));
+		QCOMPARE(runOptions([](Options *) {}), (int)QDialog::Accepted);
+		QCOMPARE(settingsRows(), reset);
+
 		/* back to the default hash after another one was chosen: the
 		 * old check against the default did not store it (BTD-52) */
 		Settings["default_hash"] = digest(NID_sha384).name();
