@@ -199,9 +199,15 @@ NewX509::NewX509(QWidget *w) : XcaDetail(w)
 	// settings for the templates ....
 	tempList->insertPkiItems(getAllTempsAndPredefs());
 
-	// setup Extended keyusage
-	foreach(int nid, extkeyuse_nid)
-		ekeyUsage->addItem(OBJ_nid2ln(nid));
+	// setup Extended keyusage: the short name of each row as its data,
+	// so rows for EKUs outside the list can follow (BTD-215)
+	foreach(int nid, extkeyuse_nid) {
+		QListWidgetItem *it = new QListWidgetItem(OBJ_nid2ln(nid),
+							ekeyUsage);
+		it->setData(Qt::UserRole, QString(OBJ_nid2sn(nid)));
+	}
+	if (extkeyuse_builtin)
+		ekeyUsage->setToolTip(tr("eku.txt was not found: the built-in list of extended key usages is shown"));
 
 	// init the X509 v3 context
 	X509V3_set_ctx(&ext_ctx, NULL , NULL, NULL, NULL, 0);
@@ -473,6 +479,45 @@ static void selectRows(QListWidget *lb, const QStringList &rowNames,
 	}
 }
 
+/* The short name of an EKU, or its OID when OpenSSL does not know it */
+static QString ekuName(const QString &name)
+{
+	int nid = OBJ_txt2nid(CCHAR(name));
+	return nid != NID_undef ? QString(OBJ_nid2sn(nid)) : name;
+}
+
+/* The EKUs of a template replace the selection, as the service path
+ * does (BTD-127; upstream XCA only adds). An EKU without a row in the
+ * list (missing or old eku.txt, own OID) gets a row marked as coming
+ * from the template, selected, so it is shown and kept (BTD-215); the
+ * rows of an earlier template go. */
+void NewX509::selectEkus(const QStringList &names)
+{
+	for (int i = ekeyUsage->count() - 1; i >= 0; i--) {
+		if (ekeyUsage->item(i)->data(Qt::UserRole + 1).toBool())
+			delete ekeyUsage->takeItem(i);
+	}
+	QStringList wanted;
+	for (const QString &n : names)
+		wanted << ekuName(n);
+	QStringList missing = wanted;
+	for (int i = 0; i < ekeyUsage->count(); i++) {
+		QListWidgetItem *it = ekeyUsage->item(i);
+		QString name = it->data(Qt::UserRole).toString();
+		it->setSelected(wanted.contains(name));
+		missing.removeAll(name);
+	}
+	for (const QString &name : missing) {
+		int nid = OBJ_txt2nid(CCHAR(name));
+		QListWidgetItem *it = new QListWidgetItem(
+			tr("%1 (from the template)").arg(nid != NID_undef ?
+				QString(OBJ_nid2ln(nid)) : name), ekeyUsage);
+		it->setData(Qt::UserRole, name);
+		it->setData(Qt::UserRole + 1, true);
+		it->setSelected(true);
+	}
+}
+
 void NewX509::subjectFromTemplate(pki_temp *temp)
 {
 	if (temp)
@@ -518,11 +563,7 @@ void NewX509::extensionsFromTemplate(pki_temp *temp)
 	basicCA->setCurrentIndex(e.basicCA == ExtensionSpec::bc_ca ? 1 :
 			e.basicCA == ExtensionSpec::bc_not_ca ? 2 : 0);
 	selectRows(keyUsage, TemplateSpec::keyUsageNames, e.keyUsage);
-	/* as always: selects the template's usages, keeps the others */
-	QStringList ekuNames;
-	foreach(int nid, extkeyuse_nid)
-		ekuNames << OBJ_nid2sn(nid);
-	selectRows(ekeyUsage, ekuNames, e.extKeyUsage, false);
+	selectEkus(e.extKeyUsage);
 	validRange->setCurrentIndex(t.unit);
 	nconf_data->document()->setPlainText(e.advanced);
 

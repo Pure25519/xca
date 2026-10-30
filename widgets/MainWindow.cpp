@@ -47,6 +47,7 @@
 #include "OpenDb.h"
 #include "Help.h"
 #include "OidResolver.h"
+#include "lib/oid.h"
 
 OidResolver *MainWindow::resolver;
 MainWindow *mainwin;
@@ -86,6 +87,12 @@ MainWindow::MainWindow() : QMainWindow()
 	pki_export::init_elements();
 
 	statusBar()->addWidget(dbindex, 1);
+	/* once per start of the GUI, not of the command line (BTD-215) */
+	if (extkeyuse_builtin) {
+		qWarning() << "eku.txt not found in the data directories"
+			<< "- using the built-in list of extended key usages";
+		statusBar()->showMessage(tr("eku.txt was not found: the built-in list of extended key usages is used"), 60000);
+	}
 
 	setupUi(this);
 	setWindowTitle(XCA_TITLE);
