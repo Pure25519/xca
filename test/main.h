@@ -54,6 +54,7 @@ class test_main: public QObject
 	void issuanceExtensions();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
+	void keyUsageByKeyType();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

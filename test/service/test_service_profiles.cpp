@@ -61,6 +61,7 @@ class test_service_profiles : public ServiceTestCase
 	void keygenBuiltSan_data();
 	void keygenBuiltSan();
 	void keygenSanCritical();
+	void profileKeyUsageTable();
 };
 
 pki_x509 *test_service_profiles::issuingCa(const QString &keyJob)
@@ -699,6 +700,33 @@ void test_service_profiles::keygenSanCritical()
 		QCOMPARE((bool)X509_EXTENSION_get_critical(X509_get_ext(x,
 			X509_get_ext_by_NID(x, NID_subject_alt_name, -1))), critical);
 	}
+}
+
+/* BTD-195: a profile bit the key cannot use is refused with the code of
+ * the issuance check, from the same table */
+void test_service_profiles::profileKeyUsageTable()
+{
+	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
+	QVERIFY(f.open(QIODevice::ReadOnly));
+	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
+	QJsonObject ku = doc["ku_by_key_type"].toObject();
+	QJsonObject ec = ku["ec"].toObject();
+	ec["bits"] = QJsonArray{ "digitalSignature", "keyEncipherment" };
+	ku["ec"] = ec;
+	doc["ku_by_key_type"] = ku;
+	Profile p = Profile::fromJson(doc);
+	pki_x509 *ca = issuingCa("EC:prime256v1");
+	pki_key *key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"device key");
+	Registration reg;
+	x509name n;
+	n.addEntryByNid(NID_commonName, "plc");
+	reg.subject = n;
+	reg.subjectAltName = "DNS:plc.example";
+	reg.applicationUri = "urn:bxc:plc";
+	pki_x509 *cert = nullptr;
+	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert),
+		QString("key_usage_not_for_key_type"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_profiles)

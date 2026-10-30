@@ -33,6 +33,8 @@ macro(ServiceTest name)
 endmacro()
 
 ServiceTest(test_service_harness)
+# Key usage by the subject key type, every issuance (BTD-195)
+ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
 ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)

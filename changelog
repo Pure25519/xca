@@ -1,6 +1,14 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-195: key usage by the type of the subject key on every issuance
+   (template, profile, CSR merge, GUI, CLI): EC keys get no
+   keyEncipherment or dataEncipherment, Ed25519, Ed448, ML-DSA and
+   SLH-DSA keys only digitalSignature, nonRepudiation, keyCertSign and
+   cRLSign, RSA keys no keyAgreement. A forbidden bit is refused with
+   key_usage_not_for_key_type, naming the bit. XCA's default TLS_server
+   and TLS_client templates carry keyEncipherment and therefore refuse EC
+   and EdDSA keys: remove the bit from the template for them.
  * BTD-188: CRL generation runs the issuer checks of certificate issuance
    before anything is written. A CA whose key usage lacks cRLSign no
    longer issues CRLs (new error code issuer_no_crlsign; without any key

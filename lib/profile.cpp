@@ -14,6 +14,7 @@
 #include <openssl/x509v3.h>
 
 #include "exception.h"
+#include "issuance_checks.h"
 #include "pki_key.h"
 #include "pki_x509.h"
 #include "pki_x509req.h"
@@ -212,6 +213,9 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 		throw serviceError("profile_key_type",
 			tr("The profile '%1' has no key usage for %2 keys").arg(id, keyFamily));
 	e.keyUsage = strings(ku["bits"]);
+	/* the table of every issuance (BTD-195) */
+	IssuanceChecks::keyUsageFits(pkey, e.keyUsage + strings(ku["optional_bits"]),
+			tr("profile '%1'").arg(id));
 	if (request && ku.contains("optional_bits")) {
 		/* only the bits the device asked for */
 		STACK_OF(X509_EXTENSION) *exts =
