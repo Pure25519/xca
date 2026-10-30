@@ -51,6 +51,9 @@ ServiceTest(test_service_transaction)
 # Memory follows the database after a rollback (BTD-130)
 ServiceTest(test_service_memory)
 
+# A failed SQL write is a typed service error (BTD-50)
+ServiceTest(test_service_sql_errors)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -255,6 +258,15 @@ add_test(NAME test_cli_keygen_types
 		-P ${SERVICE_TEST_DIR}/cli_keygen_types.cmake)
 set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
 
+# xca --no-gui on a read-only database: exit 1, read_only_database (BTD-50)
+find_program(SERVICE_SETPRIV setpriv)
+add_test(NAME test_cli_readonly_database
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSETPRIV=${SERVICE_SETPRIV}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_readonly_database
+		-P ${SERVICE_TEST_DIR}/cli_readonly_database.cmake)
+set_tests_properties(test_cli_readonly_database PROPERTIES LABELS service)
+
 # Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)
@@ -294,6 +306,10 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
 endforeach()
 
 # Secure export defaults (BTD-52); every export read back with openssl
+# Export integrity (BTD-199): a failing encoder is an error, never an
+# empty export; i2d_bytearray() never returns empty DER
+ServiceTest(test_service_export_integrity)
+
 ServiceTest(test_service_export_defaults)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_export_defaults PRIVATE

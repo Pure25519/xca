@@ -252,12 +252,19 @@ void CertTreeView::caProperties()
 		cert->getIntName(), "ca_properties");
 
 	if (dlg->exec()) {
+		int oldDays = cert->getCrlDays();
 		templ = ui.temp->currentPkiItem();
-		tmplId = templ ? templ->getSqlItemId() : QVariant();
-		cert->setTemplateSqlId(tmplId);
+		cert->setTemplateSqlId(templ ? templ->getSqlItemId() :
+						QVariant());
 		cert->setCrlDays(ui.days->value());
-
-		certs()->updateCaProperties(cert);
+		try {
+			certs()->updateCaProperties(cert);
+		} catch (errorEx &err) {
+			/* not stored: memory keeps the stored values (BTD-50) */
+			cert->setTemplateSqlId(tmplId);
+			cert->setCrlDays(oldDays);
+			XCA_ERROR(err);
+		}
 		columnsChanged();
 	}
 	delete dlg;

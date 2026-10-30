@@ -34,9 +34,8 @@ class ImportSpec
 	QList<pki_base *> items{};
 	/* If set, a failed importItems() hands the objects of items it
 	 * neither stored nor deleted back in this list instead of deleting
-	 * them, e.g. to keep them in the import dialog (BTD-114). An object
-	 * that a store step failed on is deleted all the same
-	 * (db_base::insertPKI()). */
+	 * them, e.g. to keep them in the import dialog (BTD-114). That
+	 * includes the object whose store step failed (BTD-50). */
 	QList<pki_base *> *unstored{};
 	/* pass:, env:, file:, fd: or stdin for encrypted input. Empty:
 	 * PwDialogCore asks (the GUI dialog, or the headless source of

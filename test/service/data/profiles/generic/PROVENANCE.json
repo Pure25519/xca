@@ -1,7 +1,7 @@
 {
-  "description": "Generic profiles of profile schema v1.1 (BTD-167): the XCA default templates CA, TLS_server and TLS_client, a sub-CA with pathLen 0, code signing and e-mail, copied unchanged from the schema examples of bxc-pki; the profile engine applies them in test_service_profiles. Change them in bxc-pki and copy them again; never edit them here.",
+  "description": "Generic profiles of profile schema v1.1 (BTD-167): the XCA default templates CA, TLS_server and TLS_client (key usage by key type since BTD-195 and BTD-203), a sub-CA with pathLen 0, code signing and e-mail, copied unchanged from the schema examples of bxc-pki; the profile engine applies them in test_service_profiles. Change them in bxc-pki and copy them again; never edit them here. The example tls-eku-from-csr.json of bxc-pki (csr_eku, BTD-54) is not copied: no fork test uses it.",
   "source_repository": "https://github.com/Pure25519/bxc-pki",
   "source_path": "schemas/examples/profile/",
-  "source_commit": "9f831e8523fa47ea91a3fbab3c2fb0bc3fb7ba95",
-  "files": "the 6 files of schemas/examples/profile/ at that commit"
+  "source_commit": "781845117be8aa9dcbe63711ef07c01995465bc0",
+  "files": "code-signing.json, email.json, xca-ca.json, xca-sub-ca.json, xca-tls-client.json and xca-tls-server.json of schemas/examples/profile/ at that commit, byte-identical"
 }

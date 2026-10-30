@@ -44,6 +44,7 @@
 #include <openssl/pem.h>
 #include <openssl/pkcs12.h>
 #include <openssl/provider.h>
+#include <openssl/param_build.h>
 
 static const char exportVar[] = "BTD34_EXPORT_PASS";
 static const char exportPass[] = "Export-Secret-34";
@@ -169,6 +170,7 @@ class test_service_importexport : public ServiceTestCase
 	void mlDsaOwnPass();
 	void keyReadErrorNamesSource();
 	void pkcs12CreateFailureFrees();
+	void keyIncompleteNamesSource();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -1097,7 +1099,7 @@ void test_service_importexport::exportFailureKeepsFile()
 	foreach(const QString &name, QStringList({ "existing.pem",
 						"new.pem" })) {
 		qsizetype before = entries("object.export").size();
-		warning->expectMessage("FOREIGN KEY constraint failed");
+		/* no SQL message box before the typed error (review of xca#68) */
 		QString code;
 		try {
 			exportTo(Database.model<db_x509>(), leaf, certPem,
@@ -2005,6 +2007,68 @@ void test_service_importexport::mlDsaUnderOpensslConf()
 		}
 	}
 
+	/* An expanded-only key (no seed in the input, as XiPKI writes it):
+	 * accepted in every mode, PEM and DER, nothing is lost (BTD-204) */
+	for (const char *form : { "PEM", "DER" }) {
+		QString priv = file(QString("priv-only.%1").arg(form));
+		QVERIFY(opensslRun({ "genpkey", "-algorithm", "ML-DSA-44",
+			"-outform", form, "-out", priv, "-provparam",
+			"ml-dsa.output_formats=priv-only" }));
+		created.clear();
+		err = importError(priv, &created);
+		QVERIFY2(err.isEmpty(), qPrintable(QString("%1: %2")
+			.arg(form, err)));
+		QCOMPARE(created.size(), 1);
+		pkey = dynamic_cast<pki_key *>(created[0])->decryptKey();
+		QVERIFY(pkey);
+		len = 0;
+		bool seed = EVP_PKEY_get_octet_string_param(pkey,
+			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len;
+		ign_openssl_error();
+		QVERIFY(!seed);
+		EVP_PKEY_free(pkey);
+	}
+
+	/* Encrypted PKCS#8: the second decode for the seed check takes the
+	 * password the loader was given. Expanded-only is accepted, a
+	 * seed-priv key is refused under prefer_seed off (BTD-204) */
+	for (const char *format : { "priv-only", "seed-priv" }) {
+		QString plain = file(QString("%1.plain.pem").arg(format));
+		QString enc = file(QString("%1.p8").arg(format));
+		QVERIFY(opensslRun({ "genpkey", "-algorithm", "ML-DSA-44", "-out",
+			plain, "-provparam",
+			QString("ml-dsa.output_formats=%1").arg(format) }));
+		QVERIFY(opensslRun({ "pkcs8", "-topk8", "-in", plain, "-out", enc,
+			"-v2", "aes-256-cbc", "-passout", "pass:BTD204-p8" }));
+		bool refuse = refused && QString(format) == "seed-priv";
+		if (refuse)
+			warning->expectMessage(
+				"ml-dsa.retain_seed or ml-dsa.prefer_seed");
+		ImportSpec spec;
+		spec.files << enc;
+		spec.passwordSource = "pass:BTD204-p8";
+		int keys = Store.getAll<pki_key>().size();
+		try {
+			Database.importItems(ctx, spec);
+		} catch (errorEx &) {
+		}
+		QCOMPARE(Store.getAll<pki_key>().size(), keys + (refuse ? 0 : 1));
+	}
+
+	/* The seed-priv key once more as unnamed data: the refusal under
+	 * prefer_seed off names no empty source (BTD-204) */
+	if (refused) {
+		QFile f(both);
+		QVERIFY(f.open(QIODevice::ReadOnly));
+		ImportSpec spec;
+		spec.data = f.readAll();
+		warning->expectMessage("the seed of the ML-DSA key may be lost");
+		try {
+			Database.importItems(ctx, spec);
+		} catch (errorEx &) {
+		}
+	}
+
 	/* A seed of another key is rejected in every mode */
 	QString mismatch = file("mismatch.pem");
 	QVERIFY(writeMismatchedMlDsa(mismatch));
@@ -2323,6 +2387,63 @@ void test_service_importexport::pkcs12CreateFailureFrees()
 	QCOMPARE(buf.size(), qint64(0));
 	ign_openssl_error();
 #endif
+}
+
+/* An EC key whose public part belongs to another key: OpenSSL reads it,
+ * EVP_PKEY_check() refuses it. The message names the file, and unnamed
+ * data gets no empty quotes (BTD-204) */
+void test_service_importexport::keyIncompleteNamesSource()
+{
+	EVP_PKEY *a = EVP_EC_gen("P-256"), *b = EVP_EC_gen("P-256");
+	QVERIFY(a && b);
+	BIGNUM *priv = nullptr;
+	unsigned char pub[133];
+	size_t publen = 0;
+	QVERIFY(EVP_PKEY_get_bn_param(a, OSSL_PKEY_PARAM_PRIV_KEY, &priv));
+	QVERIFY(EVP_PKEY_get_octet_string_param(b, OSSL_PKEY_PARAM_PUB_KEY,
+			pub, sizeof pub, &publen));
+	OSSL_PARAM_BLD *bld = OSSL_PARAM_BLD_new();
+	OSSL_PARAM_BLD_push_utf8_string(bld, OSSL_PKEY_PARAM_GROUP_NAME,
+			"prime256v1", 0);
+	OSSL_PARAM_BLD_push_BN(bld, OSSL_PKEY_PARAM_PRIV_KEY, priv);
+	OSSL_PARAM_BLD_push_octet_string(bld, OSSL_PKEY_PARAM_PUB_KEY,
+			pub, publen);
+	OSSL_PARAM *params = OSSL_PARAM_BLD_to_param(bld);
+	EVP_PKEY_CTX *pctx = EVP_PKEY_CTX_new_from_name(nullptr, "EC", nullptr);
+	EVP_PKEY *mixed = nullptr;
+	QVERIFY(EVP_PKEY_fromdata_init(pctx) > 0);
+	QVERIFY(EVP_PKEY_fromdata(pctx, &mixed, EVP_PKEY_KEYPAIR, params) > 0);
+	EVP_PKEY_CTX_free(pctx);
+	OSSL_PARAM_free(params);
+	OSSL_PARAM_BLD_free(bld);
+	BN_free(priv);
+	EVP_PKEY_free(a);
+	EVP_PKEY_free(b);
+	BioByteArray pem;
+	QVERIFY(PEM_write_bio_PrivateKey(pem, mixed, nullptr, nullptr, 0,
+			nullptr, nullptr));
+	EVP_PKEY_free(mixed);
+	QString name = file("mixed.pem");
+	QFile f(name);
+	QVERIFY(f.open(QIODevice::WriteOnly));
+	f.write(pem.byteArray());
+	f.close();
+
+	QList<pki_base *> created;
+	warning->expectMessage(QString("The key from file '%1' is incomplete "
+				"or inconsistent").arg(name));
+	QVERIFY(!importError(name, &created).isEmpty());
+	QCOMPARE(created.size(), 0);
+
+	ImportSpec spec;
+	spec.data = pem.byteArray();
+	warning->expectMessage("The key is incomplete or inconsistent");
+	try {
+		Database.importItems(ctx, spec);
+	} catch (errorEx &) {
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	ign_openssl_error();
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)

@@ -323,8 +323,7 @@ QString pki_x509::getTaKey()
 		return issuer->getTaKey();
 
 	Transaction;
-	if (!TransBegin())
-		return QString();
+	TransThrow();
 
 	SQL_PREPARE(q, "SELECT value FROM takeys WHERE item = ?");
 	q.bindValue(0, sqlItemId);
@@ -338,11 +337,12 @@ QString pki_x509::getTaKey()
 		SQL_PREPARE(q, "INSERT INTO takeys (item, value) VALUES ( ?, ? )");
 		q.bindValue(0, sqlItemId);
 		q.bindValue(1, b.toBase64());
-		q.exec();
+		/* unchecked, every call made a new key that was never
+		 * stored (BTD-50) */
+		execOrThrow(q, tr("The tls-auth key could not be stored"));
 		qDebug() << "Generated TA key" << this << b.size() << QString::fromLatin1(b.toHex()).left(6);
 	}
-	if (!TransCommit())
-		throw errorEx(tr("The tls-auth key could not be stored"));
+	TransCommitThrow();
 	QString takey(D5 "BEGIN " OVPN_TA_KEY D5 "\n");
 	QString hex(QString::fromLatin1(b.toHex()));
 	for (int i=0; i<16; i++)
@@ -727,17 +727,17 @@ void pki_x509::writeDefault(const QString &dirname) const
 
 void pki_x509::writeCert(QIODevice &file, bool PEM) const
 {
-	if (!cert)
-		return;
+	export_check(cert != nullptr, "writeCert", what());
 	BioByteArray b;
 	if (PEM) {
 		b += PEM_comment();
-		PEM_write_bio_X509(b, cert);
+		export_check(PEM_write_bio_X509(b, cert), "PEM_write_bio_X509",
+				what());
 	} else {
-		i2d_X509_bio(b, cert);
+		export_check(i2d_X509_bio(b, cert), "i2d_X509_bio", what());
 	}
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 QString pki_x509::getIndexEntry()
@@ -769,16 +769,19 @@ bool pki_x509::pem(BioByteArray &b)
 			prev = iss, iss = iss->getSigner())
 		{
 			qDebug() << "Exporting to ClipBoard" << iss->getIntName();
-			if (!PEM_write_bio_X509(b, iss->cert))
-				return false;
+			export_check(PEM_write_bio_X509(b, iss->cert),
+					"PEM_write_bio_X509", iss->what());
 		}
 	} else if (xport->match_all(F_PEM | F_PRIVATE)) {
 		pki_key *key = getRefKey();
-		if (!key || !PEM_write_bio_X509(b, cert))
+		if (!key)
 			return false;
+		export_check(PEM_write_bio_X509(b, cert),
+				"PEM_write_bio_X509", what());
 		return key->pem(b, xport);
 	} else {
-		return PEM_write_bio_X509(b, cert);
+		export_check(PEM_write_bio_X509(b, cert),
+				"PEM_write_bio_X509", what());
 	}
 	return true;
 }

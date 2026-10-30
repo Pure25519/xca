@@ -26,12 +26,32 @@
 #include <openssl/proverr.h>
 #include <openssl/core_names.h>
 #include <openssl/provider.h>
+#include <openssl/decoder.h>
 #include <QMap>
 #include <QMutex>
 
 static OSSL_LIB_CTX *mlDsaContext(const QString &format);
 static bool mlDsaHasSeed(const EVP_PKEY *pkey);
 static bool opensslDropsSeed();
+static bool mlDsaInputWithoutSeed(const QByteArray &input, const Passwd &pass);
+
+/* The password callback of the key loaders: asks like
+ * PwDialogCore::pwCallback and keeps the password, so the input can be
+ * decoded once more for the seed check (BTD-204) */
+struct RecordedPass
+{
+	pass_info *info;
+	Passwd pass{};
+};
+
+static int recordingCallback(char *buf, int size, int rwflag, void *userdata)
+{
+	RecordedPass *r = static_cast<RecordedPass *>(userdata);
+	int len = PwDialogCore::pwCallback(buf, size, rwflag, r->info);
+	if (len > 0)
+		r->pass = QByteArray(buf, len);
+	return len;
+}
 
 Passwd pki_evp::passwd;
 
@@ -74,8 +94,7 @@ bool pki_evp::sqlUpdatePrivateKey()
 	if (encKey.size() <= 0)
 		return false;
 	Transaction;
-	if (!TransBegin())
-		return false;
+	TransThrow();
 	XSqlQuery q;
 	SQL_PREPARE(q, "UPDATE private_keys SET private=?, ownPass=? "
 		"WHERE item=?");
@@ -83,14 +102,19 @@ bool pki_evp::sqlUpdatePrivateKey()
 	q.bindValue(1, ownPass);
 	q.bindValue(2, sqlItemId);
 	AffectedItems(sqlItemId);
-	q.exec();
+	bool ok = q.exec();
 
 	encKey.fill(0);
 	encKey.clear();
 
-	if (!q.lastError().isValid() && q.numRowsAffected() == 1)
-		return TransCommit();
-	return false;
+	if (!ok)
+		throwSqlError(q.lastError(), tr("The private key '%1' could "
+			"not be stored").arg(getIntName()));
+	if (q.numRowsAffected() != 1)
+		throw serviceError("database_error", tr("The private key '%1' "
+			"is not in the database").arg(getIntName()));
+	TransCommitThrow();
+	return true;
 }
 
 /* A failed OpenSSL call must not end in a key with OpenSSL's defaults:
@@ -253,9 +277,10 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 
 	/* why OpenSSL refused the private key, for the error below */
 	QString reason;
+	RecordedPass rec{ &p };
 	while (!pkey) {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(), NULL,
-						PwDialogCore::pwCallback, &p);
+						recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
@@ -285,29 +310,41 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	pki_openssl_error();
 	/* the password callback ran: the file was encrypted (BTD-41) */
 	encryptedFile = p.getAttempts() > 0;
-	set_EVP_PKEY(pkey, name);
+	set_EVP_PKEY(pkey, name, &ba, &rec.pass);
 }
 
-void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name)
+void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name,
+		const QByteArray *input, const Passwd *pass)
 {
 	if (!pkey)
 		return;
+	/* unnamed data (pki_multi) gets no empty quotes (BTD-204) */
 	if (!verify(pkey)) {
 		pki_ign_openssl_error();
 		EVP_PKEY_free(pkey);
-		throw errorEx(tr("The key from file '%1' is incomplete or inconsistent.").arg(name));
+		throw errorEx(name.isEmpty() ?
+			tr("The key is incomplete or inconsistent.") :
+			tr("The key from file '%1' is incomplete or inconsistent.")
+				.arg(name));
 	}
 	/* A seed that openssl.cnf made the default provider drop on
 	 * reading is an error here, on import, not on every later
-	 * encryption of a key without seed (BTD-16) */
+	 * encryption of a key without seed (BTD-16). With the input at
+	 * hand the decision is on the input: a key whose input has no
+	 * seed lost nothing (BTD-204); without it, as before */
 	if (EVP_PKEY_isPrivKey(pkey) && isMlDsa(keytype::nid(pkey)) &&
-	    !mlDsaHasSeed(pkey) && opensslDropsSeed()) {
+	    !mlDsaHasSeed(pkey) && opensslDropsSeed() &&
+	    !(input && mlDsaInputWithoutSeed(*input,
+					pass ? *pass : Passwd()))) {
 		EVP_PKEY_free(pkey);
-		throw serviceError("openssl_config",
-			tr("The OpenSSL configuration switches off "
-			   "ml-dsa.retain_seed or ml-dsa.prefer_seed: the seed of "
-			   "the ML-DSA key in '%1' may be lost. Remove the setting "
-			   "to import ML-DSA keys").arg(name));
+		QString config = tr("The OpenSSL configuration switches off "
+			"ml-dsa.retain_seed or ml-dsa.prefer_seed");
+		QString fix = tr("Remove the setting to import ML-DSA keys");
+		throw serviceError("openssl_config", name.isEmpty() ?
+			tr("%1: the seed of the ML-DSA key may be lost. %2")
+				.arg(config, fix) :
+			tr("%1: the seed of the ML-DSA key in '%2' may be lost. %3")
+				.arg(config, name, fix));
 	}
 	if (key)
 		EVP_PKEY_free(key);
@@ -398,13 +435,14 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 		arg(compressFilename(fname)));
 	p.setPurpose(pass_info::ImportPassword);
 	pem_password_cb *cb = PwDialogCore::pwCallback;
+	RecordedPass rec{ &p };
 
 	pki_ign_openssl_error();
 	EVP_PKEY *pkey;
 
 	do {
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(),
-						NULL, cb, &p);
+						NULL, recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
@@ -421,7 +459,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 	if (!pkey) {
 		pki_ign_openssl_error();
 		pkey = d2i_PKCS8PrivateKey_bio(BioByteArray(ba).ro(),
-						NULL, cb, &p);
+						NULL, recordingCallback, &rec);
 		p.throwError();
 	}
 	if (!pkey) {
@@ -466,7 +504,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 		throw errorEx(tr("Unable to load the private key in file %1. Tried PEM and DER private, public, PKCS#8 key types and SSH2 format.").arg(fname));
 	}
 	encryptedFile = p.getAttempts() > 0;
-	set_EVP_PKEY(pkey, fname);
+	set_EVP_PKEY(pkey, fname, &ba, &rec.pass);
 }
 
 bool pki_evp::validateDatabasePassword(const Passwd &passwd)
@@ -705,6 +743,32 @@ static bool mlDsaHasSeed(const EVP_PKEY *pkey)
 			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len > 0;
 	ign_openssl_error();
 	return seed;
+}
+
+/* Whether the input of an ML-DSA key surely holds no seed: decoded once
+ * more, with the password the loader used, in XCA's own context, which
+ * openssl.cnf does not configure, it gives an ML-DSA key without seed.
+ * An input that does not decode there (e.g. a seed that does not belong
+ * to its expanded key) is no proof: the caller refuses (BTD-204) */
+static bool mlDsaInputWithoutSeed(const QByteArray &input, const Passwd &pass)
+{
+	EVP_PKEY *pkey = nullptr;
+	OSSL_DECODER_CTX *dctx = OSSL_DECODER_CTX_new_for_pkey(&pkey,
+			nullptr, nullptr, nullptr, OSSL_KEYMGMT_SELECT_KEYPAIR,
+			mlDsaContext("both"), nullptr);
+	if (dctx && !pass.isEmpty())
+		OSSL_DECODER_CTX_set_passphrase(dctx, pass.constUchar(),
+						pass.size());
+	const unsigned char *data = (const unsigned char *)input.constData();
+	size_t len = input.size();
+	if (dctx)
+		OSSL_DECODER_from_data(dctx, &data, &len);
+	OSSL_DECODER_CTX_free(dctx);
+	/* the same input as the caller's ML-DSA key: the same type */
+	bool without = pkey && !mlDsaHasSeed(pkey);
+	EVP_PKEY_free(pkey);
+	ign_openssl_error();
+	return without;
 }
 
 /* A copy of the key in the context of the encoding. The key material
@@ -999,17 +1063,19 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport)
 
 	if (xport->match_all(F_PEM | F_PRIVATE)) {
 		pkey = decryptKeyForExport();
-		PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
+		int ok = PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
 						nullptr, 0, nullptr, nullptr);
 		EVP_PKEY_free(pkey);
+		export_check(ok, "PEM_write_bio_PrivateKey_traditional", what());
 	} else if (xport->match_all(F_PKCS8 | F_PRIVATE)) {
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
 		pkey = decryptKeyForExport();
-        PEM_write_bio_PrivateKey(b, pkey, algo,
+		int ok = PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
 		EVP_PKEY_free(pkey);
+		export_check(ok, "PEM_write_bio_PrivateKey", what());
 	} else
 		return pki_key::pem(b, xport);
 
@@ -1047,46 +1113,40 @@ void pki_evp::writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
 		const Passwd &pass, bool pem) const
 {
 	EVP_PKEY *pkey = decryptKeyForExport();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	/* With a cipher, kstr is never NULL: OpenSSL must not fall back
 	 * to its own terminal prompt */
 	char *kstr = enc ? (char *)pass.constData() : NULL;
 	int klen = enc ? pass.size() : 0;
 	BioByteArray b;
+	int ok;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, kstr, klen,
+		ok = PEM_write_bio_PKCS8PrivateKey(b, pkey, enc, kstr, klen,
 						NULL, NULL);
 	} else {
-		i2d_PKCS8PrivateKey_bio(b, pkey, enc, kstr, klen, NULL, NULL);
+		ok = i2d_PKCS8PrivateKey_bio(b, pkey, enc, kstr, klen,
+						NULL, NULL);
 	}
 	EVP_PKEY_free(pkey);
+	export_check(ok, pem ? "PEM_write_bio_PKCS8PrivateKey" :
+				"i2d_PKCS8PrivateKey_bio", what());
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_evp::writePVKprivate(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
-	/* In case of success! the error
-	 *   PEMerr(PEM_F_I2B_PVK_BIO, PEM_R_BIO_WRITE_FAILURE)
-	 * is set. Workaround this behavior */
+	export_check(pkey != nullptr, "decryptKey", what());
+	/* i2b_PVK_bio() returns the length written, -1 on failure; in
+	 * case of success it may leave PEM_R_BIO_WRITE_FAILURE queued */
 	BioByteArray b;
-	if (i2b_PVK_bio(b, pkey, 0, nullptr, nullptr) == -1) {
-		pki_openssl_error();
-		PEMerr(PEM_F_I2B_PVK_BIO, PEM_R_BIO_WRITE_FAILURE);
-		pki_openssl_error();
-	}
-	ign_openssl_error();
+	int len = i2b_PVK_bio(b, pkey, 0, nullptr, nullptr);
 	EVP_PKEY_free(pkey);
-	file.write(b);
+	export_check(len, "i2b_PVK_bio", what());
+	ign_openssl_error();
+	export_write(file, b, what());
 }
 
 void pki_evp::writeDefault(const QString &dirname) const
@@ -1110,22 +1170,22 @@ void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,
 		return;
 	}
 	EVP_PKEY *pkey = key ? decryptKeyForExport() : NULL;
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	BioByteArray b;
+	int ok;
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_PrivateKey_traditional(b, pkey, enc,
+		ok = PEM_write_bio_PrivateKey_traditional(b, pkey, enc,
 			enc ? pass.constUchar() : NULL, enc ? pass.size() : 0,
 			NULL, NULL);
 	} else {
-		i2d_PrivateKey_bio(b, pkey);
+		ok = i2d_PrivateKey_bio(b, pkey);
 	}
 	EVP_PKEY_free(pkey);
+	export_check(ok, pem ? "PEM_write_bio_PrivateKey_traditional" :
+				"i2d_PrivateKey_bio", what());
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
@@ -1139,7 +1199,8 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 	QByteArray data, priv, pubfull;
 
 	pubfull = SSH2publicQByteArray(true);
-	RAND_bytes((unsigned char*)buf_nonce, sizeof buf_nonce);
+	export_check(RAND_bytes((unsigned char*)buf_nonce, sizeof buf_nonce),
+			"RAND_bytes", what());
 	priv.append(buf_nonce, sizeof buf_nonce);
 	priv.append(buf_nonce, sizeof buf_nonce);
 	priv += pubfull;
@@ -1156,8 +1217,9 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 	ssh_key_QBA2data(pubfull, &data);
 	ssh_key_QBA2data(priv, &data);
 
-	PEM_write_bio(b, PEM_STRING_OPENSSH_KEY, (char*)"",
-		(unsigned char*)(data.data()), data.size());
+	export_check(PEM_write_bio(b, PEM_STRING_OPENSSH_KEY, (char*)"",
+		(unsigned char*)(data.data()), data.size()), "PEM_write_bio",
+		what());
 	pki_openssl_error();
 #else
 	(void)b;
@@ -1167,15 +1229,19 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 void pki_evp::writeSSH2private(QIODevice &file) const
 {
 	EVP_PKEY *pkey = decryptKey();
-	if (!pkey) {
-		pki_openssl_error();
-		return;
-	}
+	export_check(pkey != nullptr, "decryptKey", what());
 #ifdef EVP_PKEY_ED25519
 	if (getKeyType() == EVP_PKEY_ED25519) {
 		BioByteArray b;
-		write_SSH2_ed25519_private(b, pkey);
-		file.write(b);
+		try {
+			write_SSH2_ed25519_private(b, pkey);
+		} catch (...) {
+			EVP_PKEY_free(pkey);
+			throw;
+		}
+		EVP_PKEY_free(pkey);
+		export_write(file, b, what());
+		return;
 	} else
 #endif
 		writeKey(file, nullptr, Passwd(), true);

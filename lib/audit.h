@@ -457,9 +457,7 @@ void auditedTransaction(const ServiceContext &ctx, const QString &action,
 		Transaction;
 		TransThrow();
 		work();
-		if (!TransCommit())
-			throw serviceError("database_error", QObject::tr(
-				"Failed to commit the database transaction"));
+		TransCommitThrow();
 	} catch (serviceError &err) {
 		AuditLog::appendFailure(ctx, action, objectType, objectId,
 				params, err.code);

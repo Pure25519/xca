@@ -43,6 +43,7 @@ class pki_x509req : public pki_x509super
 		void writeDefault(const QString &dirname) const;
 		x509name getSubject() const;
 		void writeReq(QIODevice &file, bool pem) const;
+		/* a failed write throws (BTD-50) */
 		void markSigned(bool signe);
 		void print(BioByteArray &b, enum print_opt opt) const;
 		X509_REQ *getReq()

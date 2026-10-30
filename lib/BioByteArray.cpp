@@ -77,7 +77,9 @@ BioByteArray::~BioByteArray()
 BIO *BioByteArray::bio()
 {
 	if (!read_write) {
-		read_write = BIO_new(BIO_s_mem());
+		/* test hook (BTD-199): a read-only BIO, writes fail */
+		read_write = encodeFault::bioWrites ?
+			BIO_new_mem_buf("", 0) : BIO_new(BIO_s_mem());
 		Q_CHECK_PTR(read_write);
 		biowrite(store);
 		store.fill(0);
