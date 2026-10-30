@@ -33,24 +33,21 @@
 #define ZERO_SECS "yyyyMMddHHmm'00Z'"
 a1time not_after = a1time::now(3*356*24*60*60);
 
-void revoke_and_renew()
+/* The dialog drivers run in the dialog's event loop (whenShown(), BTD-180) */
+static void revoke_and_renew(CertExtend *dlg)
 {
-	CertExtend *dlg = test_main::findWindow<CertExtend>("CertExtend");
-	if (!dlg)
-		return;
 	dlg->replace->setCheckState(Qt::Checked);
 	dlg->revoke->setCheckState(Qt::Checked);
 	dlg->notAfter->setDate(not_after);
+	/* the revocation dialog opens once this one is accepted */
+	whenShown<Revocation>("Revoke", [](Revocation *rev) {
+		rev->buttonBox->button(QDialogButtonBox::Ok)->click();
+	});
 	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
-	Revocation *rev = test_main::findWindow<Revocation>("Revoke");
-	rev->buttonBox->button(QDialogButtonBox::Ok)->click();
 }
 
-void renew()
+static void renew(CertExtend *dlg)
 {
-	CertExtend *dlg = test_main::findWindow<CertExtend>("CertExtend");
-	if (!dlg)
-		return;
 	dlg->validNumber->setText("1");
 	dlg->validRange->setCurrentIndex(1);
 	dlg->applyTime->click();
@@ -60,11 +57,8 @@ void renew()
 	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
 }
 
-void renew_del_keep_serial()
+static void renew_del_keep_serial(CertExtend *dlg)
 {
-	CertExtend *dlg = test_main::findWindow<CertExtend>("CertExtend");
-	if (!dlg)
-		return;
 	dlg->replace->setCheckState(Qt::Checked);
 	dlg->revoke->setCheckState(Qt::Unchecked);
 	dlg->noWellDefinedExpDate->setCheckState(Qt::Checked);
@@ -96,11 +90,8 @@ class renewalErrors : public xcaWarningCore
 };
 
 /* Accepts the renewal dialog as it is */
-static void renewAsIs()
+static void renewAsIs(CertExtend *dlg)
 {
-	CertExtend *dlg = test_main::findWindow<CertExtend>("CertExtend");
-	if (!dlg)
-		return;
 	dlg->replace->setCheckState(Qt::Unchecked);
 	dlg->revoke->setCheckState(Qt::Unchecked);
 	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
@@ -156,11 +147,8 @@ void test_main::renewalSigningFails()
 		ca->setRefKey(small);
 		renewErrors.clear();
 		xcaWarning::setGui(new renewalErrors());
-		QThread *job = QThread::create(renewAsIs);
-		job->start();
+		whenShown<CertExtend>("CertExtend", renewAsIs);
 		mainwin->certView->renewal({ certs->index(leaf) });
-		job->wait();
-		delete job;
 		xcaWarning::setGui(new xcaWarningCore());
 
 		QCOMPARE(renewErrors.size(), 1);
@@ -187,7 +175,6 @@ void test_main::revoke()
 	Database.insert(pem);
 	dbstatus();
 
-	QThread *job;
 	QList<pki_x509*> l;
 	db_x509 *certs = Database.model<db_x509>();
 	pki_x509 *cert;
@@ -196,12 +183,8 @@ void test_main::revoke()
 	// Revoke and renew
 	cert = dynamic_cast<pki_x509*>(certs->getByName("Inter CA 1"));
 	serial = cert->getSerial();
-	job = QThread::create(revoke_and_renew);
-	job->start();
+	whenShown<CertExtend>("CertExtend", revoke_and_renew);
 	mainwin->certView->renewal({ certs->index(cert) });
-	job->wait();
-
-	delete job;
 	dbstatus();
 	l = getcerts("Inter CA 1");
 	QCOMPARE(1, l.size());
@@ -215,12 +198,8 @@ void test_main::revoke()
 	QVERIFY2(found, "Revoked serial not found");
 
 	// renew
-	job = QThread::create(renew);
-	job->start();
+	whenShown<CertExtend>("CertExtend", renew);
 	mainwin->certView->renewal({ certs->index(certs->getByName("Inter CA 1")) });
-	job->wait();
-
-	delete job;
 	dbstatus();
 	l = getcerts("Inter CA 1");
 	QCOMPARE(2, l.size());
@@ -235,12 +214,8 @@ void test_main::revoke()
 	cert = dynamic_cast<pki_x509*>(certs->getByName("Inter CA 1"));
 	serial = cert->getSerial();
 
-	job = QThread::create(renew_del_keep_serial);
-	job->start();
+	whenShown<CertExtend>("CertExtend", renew_del_keep_serial);
 	mainwin->certView->renewal({ certs->index(certs->getByName("Inter CA 1")) });
-	job->wait();
-
-	delete job;
 	dbstatus();
 	l = getcerts("Inter CA 1");
 	QCOMPARE(1, l.size());

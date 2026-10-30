@@ -65,8 +65,12 @@ void test_main::cleanupTestCase()
 	testEnv = nullptr;
 }
 
+int dialogDriverRun;
+
 void test_main::cleanup()
 {
+	/* no dialog driver of this test acts on the next one (BTD-180) */
+	dialogDriverRun++;
 	mainwin->close_database();
 	dbstatus();
 	QFile::remove("testdb.xdb");

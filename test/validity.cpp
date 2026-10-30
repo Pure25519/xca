@@ -118,12 +118,10 @@ void test_main::proposalUnderUnlimitedCa()
 
 static QString warningText;
 
-/* Answers the next warning box of the dialog with "Edit dates" (Ok) */
-static void editDates()
+/* Answers the next warning box of the dialog with "Edit dates" (Ok);
+ * runs in the box's event loop (whenShown(), BTD-180) */
+static void editDates(xcaWarningBox *box)
 {
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (!box)
-		return;
 	warningText = box->text();
 	box->button(QMessageBox::Ok)->click();
 }
@@ -132,11 +130,8 @@ static bool hadAnyway;
 
 /* Answers the next warning box with "Edit dates" / "Select other
  * algorithm" / "Edit" (all Ok) and notes whether a way past existed */
-static void editOnly()
+static void editOnly(xcaWarningBox *box)
 {
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (!box)
-		return;
 	warningText = box->text();
 	hadAnyway = box->button(QMessageBox::Apply) ||
 		    (box->button(QMessageBox::Yes) &&
@@ -188,11 +183,8 @@ void test_main::issueMidnightBelowTodaysCa()
 			QDateTime::currentDateTimeUtc().addYears(1)));
 
 		warningText.clear();
-		QThread *job = QThread::create(editOnly);
-		job->start();
+		whenShown<xcaWarningBox>("dlg_warning", editOnly);
 		dlg->accept();
-		job->wait();
-		delete job;
 		QVERIFY2(warningText.contains("earlier than the signer"),
 			CCHAR(warningText));
 		QVERIFY(!hadAnyway);
@@ -248,22 +240,16 @@ void test_main::issueRefusedInsideDialog()
 
 		dlg->hashAlgo->setCurrent(digest(NID_sha1));
 		warningText.clear();
-		QThread *job = QThread::create(editOnly);
-		job->start();
+		whenShown<xcaWarningBox>("dlg_warning", editOnly);
 		dlg->accept();
-		job->wait();
-		delete job;
 		QVERIFY2(warningText.contains("insecure"), CCHAR(warningText));
 		QVERIFY(!hadAnyway);
 		QVERIFY(dlg->result() != QDialog::Accepted);
 
 		dlg->hashAlgo->setCurrent(digest(NID_sha256));
 		warningText.clear();
-		job = QThread::create(editOnly);
-		job->start();
+		whenShown<xcaWarningBox>("dlg_warning", editOnly);
 		dlg->accept();
-		job->wait();
-		delete job;
 		QVERIFY2(warningText.contains("path length"), CCHAR(warningText));
 		QVERIFY(dlg->result() != QDialog::Accepted);
 		QCOMPARE(dlg->description->text(), QString("refused ee"));
@@ -314,11 +300,8 @@ void test_main::issueBelowExpiredCa()
 			QDateTime::currentDateTimeUtc().addYears(1)));
 
 		warningText.clear();
-		QThread *job = QThread::create(editDates);
-		job->start();
+		whenShown<xcaWarningBox>("dlg_warning", editDates);
 		dlg->accept();
-		job->wait();
-		delete job;
 
 		QVERIFY2(warningText.contains("cannot be issued"),
 			CCHAR(warningText));
