@@ -53,10 +53,12 @@ class test_main: public QObject
 	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
+	void lineExtensionTyping();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
 	void keyUsageByKeyType_data();
 	void keyUsageByKeyType();
+	void dnUpperBounds();
 
   public:
 	template <class T> static T *findWindow(const QString &name)

@@ -88,6 +88,8 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 		throw serviceError("no_private_key",
 			tr("The key you selected for signing is not a private one."));
 	IssuanceChecks::pathLength(spec.extensions);
+	/* RFC 5280 upper bounds of the subject, whatever built it (BTD-202) */
+	spec.subject.checkUpperBounds();
 
 	req = new pki_x509req();
 	req->pkiSource = spec.source;

@@ -40,8 +40,20 @@ class x509name
 		bool operator == (const x509name &x) const;
 		bool operator != (const x509name &x) const;
 		static int getNidByName(const QString &nid_name);
+		/* Throws invalid_dn_value for a value outside the RFC 5280
+		 * upper bounds (BTD-202) */
 		void addEntryByNid(int nid, const QString &entry);
-		QString checkLength() const;
+		/* The RFC 5280 Appendix A bounds in characters, one table for
+		 * every path: C exactly 2; CN, O, OU, title, serialNumber 64;
+		 * L, ST, pseudonym 128; emailAddress 255; other attributes
+		 * by the string table of OpenSSL. Throws invalid_dn_value
+		 * naming attribute, length and limit. */
+		static void checkValue(int nid, const QString &value);
+		/* the bounds checkValue() applies; -1: none */
+		static std::pair<int, int> valueBounds(int nid);
+		/* checkValue() for every entry, e.g. a subject copied from a
+		 * device CSR */
+		void checkUpperBounds() const;
 		QString popEntryByNid(int nid);
 		X509_NAME *get() const;
 		const X509_NAME *get0() const;
