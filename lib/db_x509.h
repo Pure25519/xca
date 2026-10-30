@@ -93,7 +93,7 @@ class db_x509: public db_x509super
 		 * one transaction; on a rejection or error nothing changes
 		 * and one entry ca.set_revocations with the error code is
 		 * written (invalid_serial, invalid_reason, duplicate_serial,
-		 * not_a_ca, database_error, internal_error). An entry already
+		 * issuer_not_ca, database_error, internal_error). An entry already
 		 * in a CRL keeps its revocation date and CRL number. */
 		void setRevocations(const ServiceContext &ctx, pki_x509 *ca,
 				const x509revList &list);

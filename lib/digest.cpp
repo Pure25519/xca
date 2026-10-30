@@ -37,7 +37,8 @@ digest::digest(const EVP_MD *md) : md_nid(default_md)
 digest::digest(const QString &name) : md_nid(default_md)
 {
 	QString s(name);
-	// Workaround for Ed25519
+	/* No digest, e.g. the empty hash box of a digest-less signer
+	 * (pki_key::digestLess(), BTD-164) */
 	if (s.isEmpty()) {
 		md_nid = NID_undef;
 		return;

@@ -9,6 +9,13 @@ bxc-main (bxc-pki fork, unreleased)
    key_usage_not_for_key_type, naming the bit. XCA's default TLS_server
    and TLS_client templates carry keyEncipherment and therefore refuse EC
    and EdDSA keys: remove the bit from the template for them.
+ * BTD-188: CRL generation runs the issuer checks of certificate issuance
+   before anything is written. A CA whose key usage lacks cRLSign no
+   longer issues CRLs (new error code issuer_no_crlsign; without any key
+   usage it signs with the warning issuer_without_key_usage). An expired
+   or not yet valid CA issues no CRL, not even a last one. Error codes
+   changed: insecure_hash is now signature_hash_not_allowed, not_a_ca is
+   now issuer_not_ca (CRL generation and the revocation list dialog).
  * BTD-52: PKCS#12 default AES-256-CBC with PBES2/PBKDF2-HMAC-SHA256 and an
    HMAC-SHA256 MAC; legacy 3DES/RC2 only when chosen; a stored old default
    PBE-SHA1-3DES moves to AES-256-CBC once (audited; kept when confirmed

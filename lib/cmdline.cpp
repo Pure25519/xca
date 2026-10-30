@@ -51,10 +51,14 @@ static int cmd_help(int exitcode = EXIT_SUCCESS, const char *msg = NULL)
 
 /* A --password or --sqlpass value as source: without a known prefix
  * the value is the password itself (upstream behaviour) */
-static QString password_source(const QString &arg)
+static QString password_source(const QString &arg, const char *option)
 {
 	if (arg.isEmpty() || PwDialogHeadless::isSource(arg))
 		return arg;
+	/* Kept for upstream compatibility; bxc-pki rejects it (BTD-41) */
+	console_write(stderr, QObject::tr("Warning: --%1 without a source "
+		"prefix is used as the password itself; use pass:, env:, "
+		"file:, fd: or stdin\n").arg(option).toUtf8());
 	return QString("pass:") + arg;
 }
 
@@ -85,8 +89,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		else
 			XCA_ERROR(err);
 	};
-	QString dbpass = password_source(cmd_opts["password"]);
-	QString sqlpass = password_source(cmd_opts["sqlpass"]);
+	QString dbpass = password_source(cmd_opts["password"], "password");
+	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
 	Passwd sqlpw;
 
@@ -284,13 +288,16 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 
 	if (cmd_opts.has("keygen")) {
 		keyjob task(cmd_opts["keygen"]);
-		if (!task.isValid()) {
+		/* Only the type here: size and curve are checked by the
+		 * key generation service, which audits a rejection (BTD-41) */
+		if (!task.ktype.isValid()) {
 			Database.close();
-			throw errorEx(QObject::tr("Unknown key type %1")
+			throw serviceError("invalid_key_type",
+				QObject::tr("Unknown key type %1")
 					.arg(cmd_opts["keygen"]));
 		}
 		db_key *keys = Database.model<db_key>();
-		pki_key *pki = keys->newKey(task, cmd_opts["name"]);
+		pki_key *pki = keys->newKey(task, cmd_opts["name"], false);
 		if (pki)
 			cmdline_items->append_item(pki);
 	}

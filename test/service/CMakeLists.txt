@@ -217,6 +217,14 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
+# Signing with Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-164); every
+# object checked with the openssl program
+ServiceTest(test_service_pqc_signing)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_pqc_signing PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
 # Import and export (BTD-34); files made and checked with the openssl program
 ServiceTest(test_service_importexport)
 target_compile_definitions(test_service_importexport PRIVATE
@@ -255,6 +263,9 @@ ServiceTest(test_service_objects)
 # object no test uses fails too) and checks with readelf that it and the
 # binaries linking xcacore need no Qt Gui, Widgets or Help.
 get_target_property(CORE_SOURCES xcacore SOURCES)
+# The bxc-pki command line is headless too (BTD-41)
+get_target_property(CLI_SOURCES bxc-pki SOURCES)
+list(APPEND CORE_SOURCES ${CLI_SOURCES})
 list(JOIN CORE_SOURCES "|" CORE_SOURCES)
 add_test(NAME test_core_sources
 	COMMAND ${CMAKE_COMMAND} "-DSOURCES=${CORE_SOURCES}"
@@ -270,7 +281,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
   add_dependencies(tests xcacore_linkcheck)
   set(core_files "")
   foreach(bin xcacore_linkcheck test_x509rev test_takey test_x509v3ext
-		${CORE_BINARIES})
+		bxc-pki cli_fixture ${CORE_BINARIES})
     list(APPEND core_files "$<TARGET_FILE:${bin}>")
   endforeach()
   list(JOIN core_files "|" core_files)

@@ -244,7 +244,7 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 	X509_CRL_sort(crl);
 	pkey = key->decryptKey();
 	/* 0 leaves the CRL unsigned (BTD-171) */
-	int size = X509_CRL_sign(crl, pkey, digest.MD());
+	int size = X509_CRL_sign(crl, pkey, key->signatureDigest(digest));
 	EVP_PKEY_free(pkey);
 	if (size <= 0)
 		throw serviceError("signing_failed",

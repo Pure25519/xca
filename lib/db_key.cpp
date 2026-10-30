@@ -265,7 +265,8 @@ pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
 	}
 }
 
-pki_key *db_key::newKey(const keyjob &task, const QString &name)
+pki_key *db_key::newKey(const keyjob &task, const QString &name,
+			bool reportErrors)
 {
 	pki_key *key = NULL;
 	ServiceContext ctx = ServiceContext::localUser(
@@ -292,6 +293,8 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name)
 		emit keyDone(key);
 		createSuccess(key);
 	} catch (errorEx &err) {
+		if (!reportErrors)
+			throw;
 		key = NULL;
 		XCA_ERROR(err);
 	}

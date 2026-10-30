@@ -48,8 +48,11 @@ class db_key: public db_base
 		pki_key *newKey(const ServiceContext &ctx, const keyjob &task,
 				const QString &name);
 		/* GUI and command line: asks before an unusual RSA/DSA size,
-		 * reports success or the error, returns NULL on failure */
-		pki_key *newKey(const keyjob &task, const QString &name);
+		 * reports success or the error, returns NULL on failure; with
+		 * reportErrors false the error is thrown instead (xca
+		 * --keygen, BTD-41: typed code and exit code 1) */
+		pki_key *newKey(const keyjob &task, const QString &name,
+				bool reportErrors = true);
 		/* Audit parameters key_type, key_size, curve of a key */
 		static void keyParams(AuditParams &params, pki_key *key);
 		int exportFlags(pki_base *pki) const;

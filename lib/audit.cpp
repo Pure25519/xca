@@ -102,7 +102,9 @@ const QStringList &AuditParams::allowList()
 		"outcome",
 		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
-		"revocation_date", "revocations", "serial", "subject",
+		"revocation_date", "revocations", "serial",
+		/* the effective algorithm of a signature (BTD-164) */
+		"signature_algorithm", "subject",
 		"template", "this_update", "validity_capped",
 		/* accepted with a note: issuer without key usage (BTD-55),
 		 * SHA-1 CSR (BTD-65) */
@@ -114,6 +116,9 @@ const QStringList &AuditParams::allowList()
 		/* the merge decision per extension, e.g. "ku=union+csr"
 		 * (mr-processor review of xca#47) */
 		"merge",
+		/* a --plan run of the bxc-pki command line (BTD-41): the
+		 * command and the planned objects as "type:name,..." */
+		"command", "planned",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
@@ -565,8 +570,14 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (!ctx.confirmations().isEmpty())
 		p.set("confirmed", ctx.confirmations().join(","));
 	p.set("db_unlock_verified", ctx.passwordVerified());
+	/* Inside a caller's transaction a failure may be rolled back with
+	 * it (BTD-41, AuditFailureCapture) */
+	bool inTransaction = DbTransaction::active();
 	AuditEntry e = insertEntry(ctx, action, objectType, objectId,
 				p, result, errorCode);
+	if (inTransaction && result != "success")
+		AuditFailureCapture::record(ctx, action, objectType, objectId,
+				params, result, errorCode);
 	if (e.seq - lastCheckpointSeq() < checkpointInterval())
 		return e;
 	bool writing = false;
@@ -1224,4 +1235,39 @@ AuditVerifyResult AuditLog::verify()
 		r.mismatches << m;
 	}
 	return r;
+}
+
+AuditFailureCapture *AuditFailureCapture::current;
+
+AuditFailureCapture::AuditFailureCapture()
+	: outer(current)
+{
+	current = this;
+}
+
+AuditFailureCapture::~AuditFailureCapture()
+{
+	current = outer;
+}
+
+void AuditFailureCapture::record(const ServiceContext &ctx,
+		const QString &action, const QString &objectType,
+		const QString &objectId, const AuditParams &params,
+		const QString &result, const QString &errorCode)
+{
+	if (current)
+		current->captured << entry{ ctx, action, objectType, objectId,
+					params, result, errorCode };
+}
+
+QList<AuditEntry> AuditFailureCapture::replay()
+{
+	QList<entry> list;
+	QList<AuditEntry> written;
+
+	list.swap(captured);
+	for (const entry &e : list)
+		written << AuditLog::append(e.ctx, e.action, e.objectType,
+				e.objectId, e.params, e.result, e.errorCode);
+	return written;
 }

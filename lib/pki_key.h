@@ -16,6 +16,7 @@
 #include <openssl/evp.h>
 #include "pki_base.h"
 #include "builtin_curves.h"
+#include "digest.h"
 
 #define PEM_STRING_OPENSSH_KEY "OPENSSH PRIVATE KEY"
 #define DEFAULT_KEY_LENGTH 2048
@@ -239,6 +240,10 @@ class pki_key: public pki_base
 		EVP_PKEY *fromParamData(QSharedPointer<OSSL_PARAM_BLD> bld,
 			const QMap<const char *, BIGNUM*> &params, int keytype) const;
 
+		/* Read from a file that needed a password to decrypt
+		 * (BTD-41, JsonReport::key() of an unstored key) */
+		bool encryptedFile{};
+
 	private:
 		mutable int useCount; // usage counter
 
@@ -263,6 +268,18 @@ class pki_key: public pki_base
 		void fillJWK(QJsonObject &json, const pki_export *xport) const;
 		bool compare(const pki_base *ref) const;
 		int getKeyType() const;
+		/* Signs the message itself, no digest: Ed25519, Ed448,
+		 * ML-DSA, SLH-DSA (keytype::fixed(), BTD-164) */
+		bool digestLess() const
+		{
+			return keytype::byType(getKeyType()).fixed();
+		}
+		/* The digest a signature with this key uses: none for a
+		 * digest-less key, whatever a template or profile asks */
+		const EVP_MD *signatureDigest(const digest &asked) const
+		{
+			return digestLess() ? nullptr : asked.MD();
+		}
 		bool isPrivKey() const;
 		virtual bool verify(EVP_PKEY *pkey) const;
 		int getUcount() const;
@@ -273,6 +290,15 @@ class pki_key: public pki_base
 		enum passType getOwnPass(void) const
 		{
 			return ownPass;
+		}
+		bool fileEncrypted() const
+		{
+			return encryptedFile;
+		}
+		/* For a container that decrypted the key, e.g. PKCS#12 */
+		void setFileEncrypted(bool e)
+		{
+			encryptedFile = e;
 		}
 		EVP_PKEY *getPubKey()
 		{
