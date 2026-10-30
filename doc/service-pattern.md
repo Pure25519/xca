@@ -153,6 +153,11 @@ after a failure checks the OpenSSL result itself:
   key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or
   `audit_signing_failed` instead of storing an empty key or signature; a checkpoint signs before
   its first write, so a failure writes nothing.
+- The CRL build checks every step (version, issuer, each revoked entry with serial, date, reason
+  and invalidity date, AKI, IAN, CRL number, update times) and compares the built CRL with the
+  revocations it was built from before signing; a failure or a difference is `crl_build_failed`
+  naming the step, nothing is stored and the CRL number is not consumed (BTD-198). Tests inject
+  a failed step with `crlBuild::fail()` (`lib/x509rev.h`).
 - A value that a subject entry or request attribute cannot hold is `invalid_string`
   (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
 - `take_openssl_errors()` builds the message text: the reasons with their data strings, one per

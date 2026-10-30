@@ -109,27 +109,52 @@ bool crlBuild::fail(const char *step)
 	return !injected.isEmpty() && injected == step;
 }
 
+void crlBuild::failed(const char *step, const QString &detail)
+{
+	QString reason = take_openssl_errors();
+	throw serviceError("crl_build_failed", QString("%1\n%2").arg(
+		QObject::tr("The revocation list cannot be built: %1 %2")
+			.arg(step, detail).trimmed(), reason));
+}
+
+/* Every step checked: unchecked, a CRL could be signed without the
+ * serial, the date, the reason or the invalidity date (BTD-198) */
 X509_REVOKED *x509rev::toREVOKED(bool withReason) const
 {
 	X509_REVOKED *rev = X509_REVOKED_new();
 	Q_CHECK_PTR(rev);
-	if (!crlBuild::fail("serial"))
-		X509_REVOKED_set_serialNumber(rev, serial.get());
-	if (!crlBuild::fail("revocation_date"))
-		X509_REVOKED_set_revocationDate(rev, (ASN1_TIME*)date.get_utc());
+	QString sn = serial.toHex();
+	auto fail = [&](const char *step) {
+		X509_REVOKED_free(rev);
+		crlBuild::failed(step, sn);
+	};
+	ASN1_INTEGER *s = serial.get();
+	bool ok = !crlBuild::fail("serial") &&
+		X509_REVOKED_set_serialNumber(rev, s);
+	ASN1_INTEGER_free(s);
+	if (!ok)
+		fail("serial");
+	if (crlBuild::fail("revocation_date") ||
+	    !X509_REVOKED_set_revocationDate(rev, (ASN1_TIME*)date.get_utc()))
+		fail("revocation_date");
 	/* RFC 5280 5.3.2: only add the extension if the date is known */
-	if (!ivalDate.isUndefined() && !crlBuild::fail("invalidity_date"))
-		X509_REVOKED_add1_ext_i2d(rev, NID_invalidity_date,
-							 (ASN1_TIME*)ivalDate.get(), 0, 0);
+	if (!ivalDate.isUndefined() && (crlBuild::fail("invalidity_date") ||
+	    X509_REVOKED_add1_ext_i2d(rev, NID_invalidity_date,
+				(ASN1_TIME*)ivalDate.get(), 0, 0) != 1))
+		fail("invalidity_date");
 
 	/* RFC says to not add the extension if it is "unspecified" */
-	if (reason_idx != 0 && withReason && !crlBuild::fail("reason")) {
+	if (reason_idx != 0 && withReason) {
 		ASN1_ENUMERATED *a = ASN1_ENUMERATED_new();
-		ASN1_ENUMERATED_set(a, crl_reasons[reason_idx].bitnum);
-		X509_REVOKED_add1_ext_i2d(rev, NID_crl_reason, a, 0, 0);
+		ok = !crlBuild::fail("reason") && a &&
+			ASN1_ENUMERATED_set(a, crl_reasons[reason_idx].bitnum) &&
+			X509_REVOKED_add1_ext_i2d(rev, NID_crl_reason, a,
+						0, 0) == 1;
 		ASN1_ENUMERATED_free(a);
+		if (!ok)
+			fail("reason");
 	}
-	openssl_error();
+	ign_openssl_error();
 	qDebug() << *this;
 	return rev;
 }

@@ -26,6 +26,10 @@ namespace crlBuild
 {
 	extern QString injected;
 	bool fail(const char *step);
+	/* serviceError("crl_build_failed") naming the step, a detail such
+	 * as the serial, and the OpenSSL reason */
+	[[noreturn]] void failed(const char *step,
+				const QString &detail = QString());
 }
 
 class x509rev
