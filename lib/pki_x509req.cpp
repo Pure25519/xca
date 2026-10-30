@@ -33,7 +33,9 @@ pki_x509req::pki_x509req(const QString &name)
 pki_x509req::pki_x509req(const pki_x509req *req)
 	: pki_x509super(req)
 {
-	request = X509_REQ_dup(request);
+	/* the copy of req: dup(request) read the uninitialised member of
+	 * this object (BTD-200) */
+	request = X509_REQ_dup(req->request);
 	done = req->done;
 	resetX509count();
 	pki_openssl_error();
@@ -112,10 +114,10 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	}
 	AuditKey::refuseSigning(key);
 
-	X509_REQ_set_version(request, 0L);
-	X509_REQ_set_pubkey(request, key->getPubKey());
+	certBuild::check(X509_REQ_set_version(request, 0L), "request_version");
+	certBuild::check(X509_REQ_set_pubkey(request, key->getPubKey()),
+			"request_public_key");
 	setSubject(dn);
-	pki_openssl_error();
 
 	foreach(int nid , bad_nids)
 		el.delByNid(nid);
@@ -241,7 +243,9 @@ int pki_x509req::sigAlg() const
 
 void pki_x509req::setSubject(const x509name &n)
 {
-	X509_REQ_set_subject_name(request, n.get());
+	/* get0(): get() is a copy that was never freed (BTD-200) */
+	certBuild::check(X509_REQ_set_subject_name(request, n.get0()),
+			"request_subject");
 }
 
 void pki_x509req::writeDefault(const QString &dirname) const

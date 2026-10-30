@@ -10,6 +10,28 @@
 #include "pki_x509super.h"
 #include "db_base.h"
 #include "XcaPresentation.h"
+#include "exception.h"
+
+QString certBuild::injected;
+
+bool certBuild::fail(const char *step)
+{
+	return !injected.isEmpty() && injected == step;
+}
+
+void certBuild::failed(const char *step)
+{
+	QString reason = take_openssl_errors();
+	throw serviceError("certificate_build_failed", QString("%1\n%2").arg(
+		QObject::tr("The certificate or request cannot be built: %1")
+			.arg(step), reason));
+}
+
+void certBuild::check(int ok, const char *step)
+{
+	if (fail(step) || ok != 1)
+		failed(step);
+}
 
 pki_x509super::pki_x509super(const QString &name)
 	: pki_x509name(name)
