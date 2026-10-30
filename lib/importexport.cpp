@@ -195,9 +195,12 @@ static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 	foreach(pki_base *pki, items) {
 		if (pki->getSqlItemId().isValid())
 			continue;
-		if (spec.unstored && spec.items.contains(pki))
+		if (spec.unstored && spec.items.contains(pki)) {
+			/* the caller's again, not freed with the next
+			 * transaction (BTD-228) */
+			pki_base::claimUnstored(pki);
 			*spec.unstored << pki;
-		else
+		} else
 			delete pki;
 	}
 }

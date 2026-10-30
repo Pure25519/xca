@@ -94,6 +94,7 @@ class test_service_transaction : public ServiceTestCase
 	void failedBeginLeavesOuterAlone();
 	void lockedImportKeepsCode();
 	void lockedExportKeepsCode();
+	void outerRollbackFreesStored();
 };
 
 /* A second connection holds the write lock of the database file while
@@ -665,6 +666,36 @@ void test_service_transaction::lockedExportKeepsCode()
 	QCOMPARE(code, QString("nothing_to_export"));
 	QCOMPARE(AuditLog::entries().size(), entries);
 	QVERIFY(AuditLog::verify().ok());
+}
+
+/* A certificate stored by a service call inside an outer transaction
+ * that a later step rolls back, as bxc-pki's runInTransaction does: the
+ * rollback takes it out of the store, and it is freed exactly once, with
+ * its key, at the start of the next request (BTD-228). Before, nobody
+ * freed it: LeakSanitizer reported it in the CLI tests. The ASan run
+ * (dev.py asan) is the check for "freed"; here: out of the store, and a
+ * later transaction works. */
+void test_service_transaction::outerRollbackFreesStored()
+{
+	pki_x509 *cert = nullptr;
+	try {
+		Transaction;
+		QVERIFY(TransBegin());
+		cert = issue("BTD-228 cert", nullptr);
+		QVERIFY(cert);
+		QVERIFY(Database.model<db_x509>()->isStored(cert));
+		throw errorEx("BTD-228: a later step fails");
+	} catch (errorEx &) {
+	}
+	QVERIFY(cert);
+	QVERIFY(!Database.model<db_x509>()->isStored(cert));
+	QCOMPARE(Store.getAll<pki_x509>().size(), 0);
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	/* the next request frees what the rollback left (bxc-pki
+	 * runInTransaction, the database close) */
+	pki_base::freeUnstored();
+	QVERIFY(newKey("BTD-228 next"));
+	QCOMPARE(Store.getAll<pki_key>().size(), 1);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_transaction)

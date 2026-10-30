@@ -60,6 +60,15 @@ class pki_base : public QObject
 		static QString rmslashdot(const QString &fname);
 		static unsigned hash(const QByteArray &ba);
 		static bool pem_comment;
+		/* Objects a rollback took out of the store (BTD-228): they
+		 * belong to the database until someone deletes or claims
+		 * them. freeUnstored() runs where no caller holds one: at
+		 * the start of a request (bxc-pki runInTransaction) and when
+		 * the database closes. A deleted object leaves the list by
+		 * itself. */
+		static void addUnstored(pki_base *pki);
+		static void claimUnstored(pki_base *pki);
+		static void freeUnstored();
 		static int count;
 
 	protected:

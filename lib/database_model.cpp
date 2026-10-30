@@ -506,6 +506,7 @@ database_model::~database_model()
 	qDeleteAll(models);
 	models.clear();
 	Store.flush();
+	pki_base::freeUnstored();
 
 	XSqlQuery q("VACUUM");
 
