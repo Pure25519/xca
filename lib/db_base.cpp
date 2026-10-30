@@ -225,23 +225,22 @@ pki_base *db_base::insertPKI(pki_base *pki)
 		pki->setFilename(QString());
 	}
 	Transaction;
-	if (!TransBegin()) {
-		delete pki;
-		return NULL;
+	TransThrow();
+	QSqlError e;
+	try {
+		e = pki->insertSql();
+	} catch (...) {
+		pki->clearSqlItemId();
+		throw;
 	}
-	QSqlError e = pki->insertSql();
 	if (e.isValid()) {
-		XCA_SQLERROR(e);
-		TransRollback();
-		delete pki;
-		return NULL;
+		pki->clearSqlItemId();
+		throwSqlError(e, tr("The item '%1' could not be stored")
+				.arg(pki->getIntName()));
 	}
 	storeInMemory(pki);
-	if (!TransCommit()) {
-		/* rolled back and unstored: keeps or deletes (BTD-142) */
-		delete pki;
-		return NULL;
-	}
+	/* a failed commit rolled back and unstored it (BTD-142) */
+	TransCommitThrow();
 	restart_timer();
 	emit columnsContentChanged();
 	return pki;
@@ -268,7 +267,8 @@ void db_base::removeItem(pki_base *pki)
 	TransThrow();
 	QSqlError e = pki->deleteSql();
 	if (e.isValid())
-		throw serviceError("database_error", e.text());
+		throwSqlError(e, tr("The item '%1' could not be deleted")
+				.arg(pki->getIntName()));
 	AffectedItems(id);
 	/* memory only after the COMMIT: a rollback leaves it alone */
 	DbTransaction::afterCommit([this, pki, id]() {
@@ -276,9 +276,7 @@ void db_base::removeItem(pki_base *pki)
 		Store.remove(id);
 		delete pki;
 	});
-	if (!TransCommit())
-		throw serviceError("database_error",
-			tr("Failed to commit the database transaction"));
+	TransCommitThrow();
 }
 
 void db_base::unstore(pki_base *pki)
@@ -537,10 +535,8 @@ void db_base::writeNameComment(pki_base *pki)
 	q.bindValue(0, pki->getIntName());
 	q.bindValue(1, pki->getComment());
 	q.bindValue(2, pki->getSqlItemId());
-	q.exec();
-	QSqlError e = q.lastError();
-	if (e.isValid())
-		throw serviceError("database_error", e.text());
+	execOrThrow(q, tr("The item '%1' could not be updated")
+			.arg(pki->getIntName()));
 	AffectedItems(pki->getSqlItemId());
 }
 

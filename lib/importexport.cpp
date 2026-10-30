@@ -309,13 +309,21 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			revocationTable before = readRevocations();
 			items.removeFirst();
 			pki_base *stored;
-			if (completes) {
-				stored = model<db_key>()->insertKey(
-					static_cast<pki_key *>(pki), completes);
-			} else {
-				stored = db->insert(pki);
+			try {
+				if (completes) {
+					stored = model<db_key>()->insertKey(
+						static_cast<pki_key *>(pki),
+						completes);
+				} else {
+					stored = db->insert(pki);
+				}
+			} catch (...) {
+				/* a write error leaves the object with us: back
+				 * to the caller with the others (BTD-50) */
+				items.prepend(pki);
+				throw;
 			}
-			/* insert() keeps the object in the store or deletes it */
+			/* NULL: a duplicate, deleted by insert() */
 			if (!stored)
 				throw serviceError("database_error",
 					tr("The item could not be stored"));

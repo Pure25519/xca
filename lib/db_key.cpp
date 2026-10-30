@@ -119,8 +119,8 @@ void db_key::inToCont(pki_base *pki)
 		});
 		q.bindValue(1, x509s->getSqlItemId());
 		AffectedItems(x509s->getSqlItemId());
-		q.exec();
-		XCA_SQLERROR(q.lastError());
+		execOrThrow(q, tr("The key could not be linked to '%1'")
+				.arg(x509s->getIntName()));
 	}
 }
 
@@ -224,12 +224,9 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 	if (getByReference(key))
 		throw serviceError("duplicate_key",
 			tr("The key already exists in the database"));
+	/* a write error throws with the key still ours (BTD-50) */
 	stored = dynamic_cast<pki_key*>(insert(key));
-	/* insert() keeps the key in the store or deletes it */
 	key = nullptr;
-	if (!stored)
-		throw serviceError("database_error",
-			tr("The key could not be stored"));
 	AuditLog::append(ctx, "key.generate", "key",
 			stored->getSqlItemId().toString(), params);
 	if (!TransCommit())
@@ -464,6 +461,11 @@ void db_key::setOwnPass(QModelIndex idx, enum pki_key::passType x)
 	}
 	old_type = targetKey->getOwnPass();
 	targetKey->setOwnPass(x);
-	if (!targetKey->sqlUpdatePrivateKey())
+	try {
+		if (!targetKey->sqlUpdatePrivateKey())
+			targetKey->setOwnPass(old_type);
+	} catch (...) {
 		targetKey->setOwnPass(old_type);
+		throw;
+	}
 }

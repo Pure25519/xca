@@ -155,6 +155,8 @@ class x509revList : public QList<x509rev>
 			merged = r.merged;
 			return *this;
 		}
-		bool sqlUpdate(QVariant caId);
+		/* Replaces the revocations of caId; a failed write throws
+		 * (throwSqlError(), BTD-50) */
+		void sqlUpdate(QVariant caId);
 };
 #endif

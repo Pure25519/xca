@@ -218,8 +218,8 @@ void db_x509::inToCont(pki_base *pki)
 		insertChild(child, cert);
 		q.bindValue(1, child->getSqlItemId());
 		AffectedItems(child->getSqlItemId());
-		q.exec();
-		XCA_SQLERROR(q.lastError());
+		execOrThrow(q, tr("The issuer of '%1' could not be stored")
+				.arg(child->getIntName()));
 		if (child->isRevoked())
 			revokedChilds << child->getRevocation();
 	}
@@ -243,8 +243,8 @@ void db_x509::inToCont(pki_base *pki)
 		q.bindValue(0, cert->getSqlItemId());
 		q.bindValue(1, crl->getSqlItemId());
 		AffectedItems(crl->getSqlItemId());
-		q.exec();
-		XCA_SQLERROR(q.lastError());
+		execOrThrow(q, tr("The issuer of '%1' could not be stored")
+				.arg(crl->getIntName()));
 	}
 }
 
@@ -372,8 +372,7 @@ void db_x509::markRequestSigned(pki_x509req *req, pki_x509 *cert)
 	pki_x509 *issuer = cert->getSigner();
 
 	Transaction;
-	if (!TransBegin())
-		return;
+	TransThrow();
 
 	XSqlQuery q;
 	bool done = req->getDone();
@@ -387,7 +386,10 @@ void db_x509::markRequestSigned(pki_x509req *req, pki_x509 *cert)
 	q.bindValue(0, 1);
 	q.bindValue(1, req->getSqlItemId());
 	AffectedItems(req->getSqlItemId());
-	q.exec();
+	/* unchecked, the certificate was stored with its request still
+	 * unsigned (BTD-50) */
+	execOrThrow(q, tr("The request '%1' could not be marked as signed")
+			.arg(req->getIntName()));
 
 	a1time a;
 	req->selfComment(tr("Signed on %1 by '%2'").arg(a.toPretty())
@@ -395,9 +397,10 @@ void db_x509::markRequestSigned(pki_x509req *req, pki_x509 *cert)
 	SQL_PREPARE(q, "UPDATE items SET comment=? WHERE id=?");
 	q.bindValue(0, req->getComment());
 	q.bindValue(1, req->getSqlItemId());
-	q.exec();
+	execOrThrow(q, tr("The request '%1' could not be marked as signed")
+			.arg(req->getIntName()));
 
-	TransCommit();
+	TransCommitThrow();
 }
 
 static AuditParams issuanceParams(const IssuanceSpec &spec)
@@ -1250,15 +1253,6 @@ static a1time wholeSeconds(const a1time &t)
 				QTimeZone::utc()));
 }
 
-static void execOrThrow(XSqlQuery &q)
-{
-	q.exec();
-	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QObject::tr("Database error: %1")
-				.arg(q.lastError().text()));
-}
-
 namespace {
 /* A row of the revocations table with its serial as stored: rows of
  * older databases need not be written like a1int::toHex() */
@@ -1606,7 +1600,7 @@ void db_x509::updateCaProperties(pki_x509 *cert)
 	q.bindValue(2, cert->getSqlItemId());
 
 	AffectedItems(cert->getSqlItemId());
-	q.exec();
-	TransDone(q.lastError());
-	XCA_SQLERROR(q.lastError());
+	execOrThrow(q, tr("The CA properties of '%1' could not be stored")
+			.arg(cert->getIntName()));
+	TransCommitThrow();
 }

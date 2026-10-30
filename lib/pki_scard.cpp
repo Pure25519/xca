@@ -766,14 +766,14 @@ void pki_scard::updateLabel(QString label)
 
 	if (slot_label == label)
 		return;
-	if (!TransBegin())
-		return;
-	slot_label = label;
+	TransThrow();
 
 	SQL_PREPARE(q, "UPDATE tokens SET slot_label=? WHERE item=?");
-	q.bindValue(0, slot_label);
+	q.bindValue(0, label);
 	q.bindValue(1, sqlItemId);
-	q.exec();
+	execOrThrow(q, tr("The token label of '%1' could not be stored")
+			.arg(getIntName()));
 	AffectedItems(sqlItemId);
-	TransCommit();
+	TransCommitThrow();
+	slot_label = label;
 }

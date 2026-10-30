@@ -356,8 +356,18 @@ pki_base *database_model::insert(pki_base *pki)
 	pki_multi *multi = dynamic_cast<pki_multi*>(pki);
 	if (multi) {
 		QList<pki_base *> items = multi->pull();
-		foreach(pki_base *i, items)
-			insert(i);
+		while (!items.isEmpty()) {
+			pki_base *i = items.takeFirst();
+			try {
+				insert(i);
+			} catch (...) {
+				/* insert() left it with us (BTD-50) */
+				delete i;
+				qDeleteAll(items);
+				delete pki;
+				throw;
+			}
+		}
 	}
 	delete pki;
 	return NULL;

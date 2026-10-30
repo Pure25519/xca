@@ -267,21 +267,17 @@ x509revList x509revList::fromSql(QVariant caId)
 	return list;
 }
 
-bool x509revList::sqlUpdate(QVariant caId)
+void x509revList::sqlUpdate(QVariant caId)
 {
 	XSqlQuery q;
 	Transaction;
-
-	if (!TransBegin())
-		return false;
+	TransThrow();
 
 	x509revList oldList = fromSql(caId);
 
 	SQL_PREPARE(q, "DELETE FROM revocations WHERE caId=?");
 	q.bindValue(0, caId);
-	q.exec();
-	if (q.lastError().isValid())
-		return false;
+	execOrThrow(q, QObject::tr("The revocations could not be stored"));
 
 	SQL_PREPARE(q, "INSERT INTO revocations "
 			"(caId, serial, date, invaldate, crlNo, reasonBit) "
@@ -298,11 +294,11 @@ bool x509revList::sqlUpdate(QVariant caId)
 		}
 		r.executeQuery(q);
 		if (q.lastError().isValid())
-			return false;
+			throwSqlError(q.lastError(), QObject::tr("The revocation "
+				"of %1 could not be stored")
+				.arg(r.getSerial().toHex()));
 	}
 
-	if (!TransCommit())
-		return false;
+	TransCommitThrow();
 	merged = false;
-	return true;
 }
