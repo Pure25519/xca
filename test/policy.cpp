@@ -6,8 +6,9 @@
  * and value, and no certificate is stored.
  */
 
+#include <QApplication>
 #include <QPointer>
-#include <QThread>
+#include <QTimer>
 
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
@@ -28,40 +29,56 @@ static bool policyStillOpen;
 static pki_x509 *policyCa;
 static pki_key *policyKey;
 
-/* Fills the dialog on the GUI thread, presses OK and reads the refusal,
- * which since BTD-212 shows in the open dialog; then aborts */
+/* the visible widget of that type and name, or nullptr */
+template <class T> static T *visibleWidget(const QString &name)
+{
+	for (QWidget *w : QApplication::allWidgets()) {
+		T *t = dynamic_cast<T *>(w);
+		if (t && t->objectName() == name && t->isVisible())
+			return t;
+	}
+	return nullptr;
+}
+
+/* Reads the refusal box and answers "Edit"; runs in its event loop */
+static void readRefusal()
+{
+	xcaWarningBox *box = visibleWidget<xcaWarningBox>("dlg_warning");
+	if (!box)
+		return;
+	policyBoxText = box->text();
+	box->button(QMessageBox::Ok)->click();
+}
+
+/* Fills the dialog and presses OK on the GUI thread (BTD-180: no worker
+ * thread); since BTD-212 the refusal shows in the open dialog, which is
+ * then aborted */
 static void issueOtherOrganisation()
 {
-	QPointer<NewX509> dlg = test_main::findWindow<NewX509>("NewX509");
+	QPointer<NewX509> dlg = visibleWidget<NewX509>("NewX509");
 	if (!dlg)
 		return;
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		dlg->defineSigner(policyCa, false);
-		dlg->keyList->setCurrentPkiItem(policyKey);
-		x509name n;
-		n.addEntryByNid(NID_organizationName, "Other");
-		n.addEntryByNid(NID_commonName, "plc10");
-		dlg->setX509name(n);
-		dlg->description->setText("outside the policy");
-		dlg->basicCA->setCurrentIndex(2);
-		dlg->notBefore->setDate(a1time());
-		dlg->notAfter->setDate(a1time(
-			QDateTime::currentDateTimeUtc().addYears(1)));
-	}, Qt::BlockingQueuedConnection);
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		if (dlg)
-			dlg->accept();
-	}, Qt::QueuedConnection);
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (box) {
-		policyBoxText = box->text();
-		box->button(QMessageBox::Ok)->click();
-	}
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		policyStillOpen = dlg && dlg->isVisible();
-		if (policyStillOpen)
-			dlg->reject();
-	}, Qt::BlockingQueuedConnection);
+	dlg->defineSigner(policyCa, false);
+	dlg->keyList->setCurrentPkiItem(policyKey);
+	x509name n;
+	n.addEntryByNid(NID_organizationName, "Other");
+	n.addEntryByNid(NID_commonName, "plc10");
+	dlg->setX509name(n);
+	dlg->description->setText("outside the policy");
+	dlg->basicCA->setCurrentIndex(2);
+	dlg->notBefore->setDate(a1time());
+	dlg->notAfter->setDate(a1time(
+		QDateTime::currentDateTimeUtc().addYears(1)));
+	/* a local timer, so no answer is left over for a later test */
+	QTimer answer;
+	answer.setSingleShot(true);
+	QObject::connect(&answer, &QTimer::timeout, readRefusal);
+	answer.start(0);
+	dlg->accept();
+	answer.stop();
+	policyStillOpen = dlg && dlg->isVisible();
+	if (policyStillOpen)
+		dlg->reject();
 }
 
 void test_main::issueRefusedByPolicy()
@@ -92,12 +109,8 @@ void test_main::issueRefusedByPolicy()
 
 		policyBoxText.clear();
 		policyStillOpen = false;
-		QThread *job = QThread::create(issueOtherOrganisation);
-		job->start();
+		QTimer::singleShot(0, issueOtherOrganisation);
 		mainwin->certView->newItem();
-		while (!job->isFinished())
-			QTest::qWait(20);
-		delete job;
 
 		QVERIFY2(policyBoxText.contains("ot-lab-names") &&
 			 policyBoxText.contains("Other"), CCHAR(policyBoxText));

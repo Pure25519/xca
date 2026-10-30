@@ -10,8 +10,9 @@
  * (invalid_dns_name), which no check of the dialog itself catches.
  */
 
+#include <QApplication>
 #include <QPointer>
-#include <QThread>
+#include <QTimer>
 
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
@@ -35,46 +36,64 @@ static pki_key *iaKey;
 static QString iaBoxText, iaSanKept;
 static bool iaStillOpen;
 
+/* the visible widget of that type and name, or nullptr */
+template <class T> static T *visibleWidget(const QString &name)
+{
+	for (QWidget *w : QApplication::allWidgets()) {
+		T *t = dynamic_cast<T *>(w);
+		if (t && t->objectName() == name && t->isVisible())
+			return t;
+	}
+	return nullptr;
+}
+
+/* Answers the refusal box with "Edit"; runs in the box's event loop */
+static void answerRefusal()
+{
+	xcaWarningBox *box = visibleWidget<xcaWarningBox>("dlg_warning");
+	if (!box)
+		return;
+	iaBoxText = box->text();
+	box->button(QMessageBox::Ok)->click();
+}
+
+/* Drives the dialog on the GUI thread, in its own event loop (BTD-180:
+ * no worker thread): a refused OK, then the corrected one */
 static void driveDialog()
 {
-	QPointer<NewX509> dlg = test_main::findWindow<NewX509>("NewX509");
+	QPointer<NewX509> dlg = visibleWidget<NewX509>("NewX509");
 	if (!dlg)
 		return;
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		if (!dlg)
-			return;
-		dlg->defineSigner(iaSigner, false);
-		if (dlg->keyList->isEnabled())
-			dlg->keyList->setCurrentPkiItem(iaKey);
-		if (!dlg->fromReqCB->isChecked()) {
-			x509name n;
-			n.addEntryByNid(NID_commonName, "host.example");
-			dlg->setX509name(n);
-			dlg->description->setText("in accept");
-		}
-		dlg->notBefore->setDate(a1time());
-		dlg->notAfter->setDate(a1time(
-			QDateTime::currentDateTimeUtc().addYears(1)));
-		dlg->subAltName->setText("DNS:*.com");
-	}, Qt::BlockingQueuedConnection);
-	/* the refusal shows a box: accept() must not block this thread */
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		if (dlg)
-			dlg->accept();
-	}, Qt::QueuedConnection);
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (box) {
-		iaBoxText = box->text();
-		box->button(QMessageBox::Ok)->click();
+	dlg->defineSigner(iaSigner, false);
+	if (dlg->keyList->isEnabled())
+		dlg->keyList->setCurrentPkiItem(iaKey);
+	if (!dlg->fromReqCB->isChecked()) {
+		x509name n;
+		n.addEntryByNid(NID_commonName, "host.example");
+		dlg->setX509name(n);
+		dlg->description->setText("in accept");
 	}
-	QMetaObject::invokeMethod(qApp, [dlg]() {
-		iaStillOpen = dlg && dlg->isVisible();
-		if (!iaStillOpen)
-			return;
-		iaSanKept = dlg->subAltName->text();
-		dlg->subAltName->setText("DNS:host.example");
-		dlg->accept();
-	}, Qt::BlockingQueuedConnection);
+	dlg->notBefore->setDate(a1time());
+	dlg->notAfter->setDate(a1time(
+		QDateTime::currentDateTimeUtc().addYears(1)));
+	dlg->subAltName->setText("DNS:*.com");
+	/* the refusal box runs its own event loop inside accept(); a
+	 * local timer, so no answer is left over for a later test */
+	QTimer answer;
+	answer.setSingleShot(true);
+	QObject::connect(&answer, &QTimer::timeout, answerRefusal);
+	answer.start(0);
+	dlg->accept();
+	answer.stop();
+	iaStillOpen = dlg && dlg->isVisible();
+	if (!iaStillOpen)
+		return;
+	iaSanKept = dlg->subAltName->text();
+	dlg->subAltName->setText("DNS:host.example");
+	dlg->accept();
+	/* a second refusal must not leave the dialog waiting */
+	if (dlg && dlg->isVisible())
+		dlg->reject();
 }
 
 void test_main::issueInAccept_data()
@@ -141,8 +160,8 @@ void test_main::issueInAccept()
 		iaBoxText.clear();
 		iaSanKept.clear();
 		iaStillOpen = false;
-		QThread *job = QThread::create(driveDialog);
-		job->start();
+		/* the dialog's event loop runs the driver */
+		QTimer::singleShot(0, driveDialog);
 		if (entry == "new")
 			mainwin->certView->newItem();
 		else if (entry == "request")
@@ -151,10 +170,6 @@ void test_main::issueInAccept()
 			mainwin->certView->newCert(temp);
 		else
 			mainwin->certView->newCert(model);
-		/* the thread waits for the GUI thread: keep its events going */
-		while (!job->isFinished())
-			QTest::qWait(20);
-		delete job;
 		delete temp;
 
 		QVERIFY2(iaBoxText.contains("*.com"), CCHAR(iaBoxText));
