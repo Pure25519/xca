@@ -128,6 +128,11 @@ class db_base: public QAbstractItemModel
 		 * Returns the exported bytes, also when they went to a file. */
 		QByteArray exportItems(const ServiceContext &ctx,
 			const ExportSpec &spec);
+		/* The checks of exportItems() before it asks for a password
+		 * (items, format, PKCS#12 algorithm, ML-DSA key format):
+		 * throws their serviceError, writes nothing (bxc-pki
+		 * --plan, BTD-211) */
+		void checkExportSpec(const ExportSpec &spec) const;
 		/* The writers behind exportItems(): no prompt, no audit */
 		virtual void writeItem(pki_base *pki, const pki_export *xport,
 			QIODevice &file, const Passwd &pass) const;

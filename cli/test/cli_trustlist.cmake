@@ -10,7 +10,9 @@
 # remaining validity of every CRL is in the result; per-target re-issue
 # fraction and budgets. The trust list replaces its directory as a whole
 # (staged beside it, swapped in): one CRL file per CA, named after the CA,
-# no files of an earlier export (review of xca#62).
+# no files of an earlier export (review of xca#62). BTD-211: leaves are
+# trusted peers in trusted/certs (manifest role trusted) and count into the
+# reported size and the whole-list budget in every target format.
 
 include("${LIB}")
 
@@ -22,6 +24,8 @@ bxc("sign" 0 sign plc11 --db "${DB}" ${PW} --ca "TL Issuing")
 one_doc("sign" "${out}" cli-result r)
 object_doc("${r}" certificate c)
 pem_file("${c}" "${WORK}/plc11.pem")
+bxc("request plc12" 0 request-cert --db "${DB}" ${PW} --cn plc12)
+bxc("sign plc12" 0 sign plc12 --db "${DB}" ${PW} --ca "TL Issuing")
 
 # tl(<label> <code> <dir> <args>...): export --format trustlist into <dir>
 macro(tl label code dir)
@@ -34,11 +38,31 @@ macro(tl label code dir)
   endif()
 endmacro()
 
+# manifest_size(<dir> <var>): the sum of der_size over every entry of
+# <dir>/manifest.json
+function(manifest_size dir var)
+  file(READ "${WORK}/${dir}/manifest.json" m)
+  jlen(n "${m}" entries)
+  set(sum 0)
+  math(EXPR last "${n} - 1")
+  foreach(i RANGE ${last})
+    string(JSON ds GET "${m}" entries ${i} der_size)
+    math(EXPR sum "${sum} + ${ds}")
+  endforeach()
+  set(${var} ${sum} PARENT_SCOPE)
+endfunction()
+
+# no_leaf(<list var>): the list without the leaf files plc11, plc12
+macro(no_leaf var)
+  list(FILTER ${var} EXCLUDE REGEX "/plc1[12]-[0-9]+\\.der$")
+endmacro()
+
 # --- opcua-dir ---------------------------------------------------------------
-tl("opcua-dir" 0 opcua "TL Issuing" --target-format opcua-dir --leaf plc11)
+tl("opcua-dir" 0 opcua "TL Issuing" --target-format opcua-dir --leaf plc11
+    --leaf plc12)
 set(kinds "")
 foreach(f IN LISTS files)
-  if(f MATCHES "/(trusted|issuer)/certs/[^/]+\\.der$" OR f MATCHES "/own/certs/")
+  if(f MATCHES "/(trusted|issuer)/certs/[^/]+\\.der$")
     openssl_run(t x509 -inform DER -in ${f} -noout -subject)
   elseif(f MATCHES "/(trusted|issuer)/crl/[^/]+\\.crl$")
     openssl_run(t crl -inform DER -in ${f} -noout -issuer)
@@ -50,13 +74,19 @@ foreach(pat "opcua/trusted/certs/TL_Issuing-[0-9]+\\.der"
     "opcua/trusted/crl/TL_Issuing-[0-9]+\\.crl"
     "opcua/issuer/certs/TL_Root-[0-9]+\\.der"
     "opcua/issuer/crl/TL_Root-[0-9]+\\.crl"
-    "opcua/own/certs/plc11-[0-9]+\\.der" "opcua/manifest\\.json")
+    "opcua/trusted/certs/plc11-[0-9]+\\.der"
+    "opcua/trusted/certs/plc12-[0-9]+\\.der" "opcua/manifest\\.json")
   if(NOT files MATCHES "${pat}")
     fail("opcua-dir: no file ${pat} in ${files}")
   endif()
 endforeach()
+# own/ is the application's own certificate, never a trusted leaf (BTD-211)
+if(files MATCHES "/own/")
+  fail("opcua-dir: a leaf in own/: ${files}")
+endif()
 # the CRL in trusted/crl belongs to the CA in trusted/certs
 file(GLOB tc "${WORK}/opcua/trusted/certs/*.der")
+no_leaf(tc)
 file(GLOB tcrl "${WORK}/opcua/trusted/crl/*.crl")
 openssl_run(t crl -inform DER -in ${tcrl} -noout -issuer)
 if(NOT t MATCHES "CN=TL Issuing")
@@ -96,7 +126,7 @@ foreach(i RANGE ${last})
   string(JSON role GET "${m}" entries ${i} role)
   list(APPEND order "${k}:${role}")
 endforeach()
-if(NOT order STREQUAL "ca_certificate:trusted;ca_certificate:issuer;crl:trusted;crl:issuer;leaf_certificate:own")
+if(NOT order STREQUAL "ca_certificate:trusted;ca_certificate:issuer;crl:trusted;crl:issuer;leaf_certificate:trusted;leaf_certificate:trusted")
   fail("manifest order: ${order}")
 endif()
 # the result: sizes, budgets, remaining validity of every CRL
@@ -122,6 +152,49 @@ foreach(i 0 1)
   if(NOT rem MATCHES "^P" OR NOT secs GREATER 0 OR NOT sb EQUAL 4096 OR
      NOT ds GREATER 0 OR NOT role MATCHES "^(trusted|issuer)$")
     fail("crls entry ${i}: ${c}")
+  endif()
+endforeach()
+
+# --- BTD-211 (e): the leaves count into size and budget, in every format ------
+manifest_size(opcua msize)
+string(JSON lc GET "${_r}" trust_list leaf_count)
+if(NOT size EQUAL msize OR NOT lc EQUAL 2)
+  fail("opcua-dir: size ${size}, the manifest entries sum to ${msize} (leaves: ${lc})")
+endif()
+# the list without leaves fits a budget that the two leaves push over
+tl("without leaves" 0 noleaf "TL Issuing")
+string(JSON size0 GET "${_r}" trust_list size)
+math(EXPR lbudget "${size0} + 64")
+if(lbudget LESS 1024)
+  set(lbudget 1024)
+endif()
+if(NOT msize GREATER lbudget)
+  fail("the two leaves do not exceed ${lbudget} (with them ${msize})")
+endif()
+tl("without leaves, budget" 0 noleaf2 "TL Issuing" --trust-list-budget
+    ${lbudget} --on-budget-exceeded error)
+foreach(format opcua-dir pem-bundle der-files)
+  tl("${format} with leaves" 0 leaves-${format} "TL Issuing"
+      --target-format ${format} --leaf plc11 --leaf plc12)
+  string(JSON s GET "${_r}" trust_list size)
+  manifest_size(leaves-${format} ms)
+  if(NOT s EQUAL ms OR NOT s GREATER size0)
+    fail("${format}: size ${s}, manifest ${ms}, without leaves ${size0}")
+  endif()
+  tl("${format} leaves over budget" 1 over-${format} "TL Issuing"
+      --target-format ${format} --leaf plc11 --leaf plc12
+      --trust-list-budget ${lbudget} --on-budget-exceeded error)
+  expect_error("${format} leaves over budget" budget_exceeded)
+  if(NOT detail MATCHES "the trust list has ${s} bytes, budget ${lbudget}")
+    fail("${format}: the refusal does not name the size with leaves: ${detail}")
+  endif()
+  tl("${format} leaves, budget warning" 0 warn-${format} "TL Issuing"
+      --target-format ${format} --leaf plc11 --leaf plc12
+      --trust-list-budget ${lbudget})
+  warning_codes("${_r}" w)
+  string(JSON within GET "${_r}" trust_list within_budget)
+  if(within OR NOT w MATCHES "budget_exceeded")
+    fail("${format}: leaves over the budget: within ${within}, warnings '${w}'")
   endif()
 endforeach()
 
@@ -192,7 +265,7 @@ endif()
 
 # --- expired and nearly expired CRLs -----------------------------------------------
 bxc("expired root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW}
-    --this-update 2026-01-01T00:00:00Z)
+    --this-update 2026-01-01T00:00:00Z --allow-stale-crl)
 tl("expired, no reissue" 1 exp1 "TL Issuing" --no-reissue)
 expect_error("expired, no reissue" crl_expired)
 # --force replaces files only; it does not accept a stale CRL
@@ -221,7 +294,8 @@ if(NOT re OR NOT trig STREQUAL "reissue_due" OR expd)
 endif()
 
 time_ago(t60 216000)   # 60 h: past one third of P7D, not expired
-bxc("old root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW} --this-update ${t60})
+bxc("old root crl" 0 crl --ca "TL Root" --db "${DB}" ${PW} --this-update ${t60}
+    --allow-stale-crl)
 tl("past re-issue point" 1 due1 "TL Issuing" --no-reissue)
 expect_error("past re-issue point" crl_reissue_due)
 tl("past re-issue point, --force" 1 due2 "TL Issuing" --no-reissue --force)
@@ -258,6 +332,7 @@ function(one_crl_per_ca dir)
   foreach(sub ${ARGN})
     file(GLOB crls "${WORK}/${dir}/${sub}/crl/*.crl")
     file(GLOB certs "${WORK}/${dir}/${sub}/certs/*.der")
+    no_leaf(certs)
     list(LENGTH crls nc)
     list(LENGTH certs nd)
     if(NOT nc EQUAL 1 OR NOT nd EQUAL 1)
@@ -283,9 +358,10 @@ warning_codes("${_r}" w)
 if(w MATCHES "stale_files")
   fail("a re-export reports stale files: '${w}'")
 endif()
-# own/ of the first export is gone: the directory holds this list only
-if(EXISTS "${WORK}/re/own")
-  fail("the leaf of the earlier export stays in re/own")
+# the leaf of the first export is gone: the directory holds this list only
+file(GLOB l "${WORK}/re/trusted/certs/plc11-*.der")
+if(l OR EXISTS "${WORK}/re/own")
+  fail("the leaf of the earlier export stays: ${l}")
 endif()
 # the new CRL is the one in the directory
 string(JSON crl_id GET "${_r}" crls 0 crl_id)
