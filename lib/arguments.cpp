@@ -56,6 +56,8 @@ const QList<arg_option> arguments::opts = {
 		"Prints all known Elliptic Curves."),
 	arg_option("list-items", NULL, no_argument, true, true,
 		"List all items in the database."),
+	arg_option("migrate-template", "template", required_argument, true, true,
+		"Turn the template <template> (internal name or item id; a default template such as TLS_server by its name) into a generic certificate profile in the profile store (BTD-167). Use the 'name' option to set the profile id, default 'xca-' plus the template name. The template stays; values a profile cannot hold end the command with an error that names them."),
 	arg_option("name", "internal-name", required_argument, false, true,
 		"Provides the name of new generated items. An automatic name will be generated if omitted."),
 	arg_option("no-native-dialogs", NULL, no_argument, false, false,

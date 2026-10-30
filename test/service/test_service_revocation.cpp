@@ -75,6 +75,10 @@ class test_service_revocation : public ServiceTestCase
 	void expiredEntryLeavesCrl();
 	void manageRevocations();
 	void certBySerial();
+	void crlIssuerChecks_data();
+	void crlIssuerChecks();
+	void sameCodeForCertificateAndCrl_data();
+	void sameCodeForCertificateAndCrl();
 	void passwordProtectedCaKey();
 };
 
@@ -435,11 +439,11 @@ void test_service_revocation::rejected_data()
 	QTest::newRow("unrevoke a valid certificate") << "notrevoked"
 		<< "certificate.unrevoke" << "not_revoked";
 	QTest::newRow("CRL with SHA-1") << "sha1"
-		<< "crl.generate" << "insecure_hash";
+		<< "crl.generate" << "signature_hash_not_allowed";
 	QTest::newRow("CRL number not increasing") << "crlnumber"
 		<< "crl.generate" << "crl_number_not_increasing";
 	QTest::newRow("CRL of an end entity") << "notca"
-		<< "crl.generate" << "not_a_ca";
+		<< "crl.generate" << "issuer_not_ca";
 	QTest::newRow("CRL without CA key") << "nokey"
 		<< "crl.generate" << "no_private_signing_key";
 	QTest::newRow("revocation list with a serial twice") << "duplicate"
@@ -506,6 +510,121 @@ void test_service_revocation::rejected()
 	QCOMPARE(ca->getCrlNumber().toDec(), QString("1"));
 	AuditVerifyResult v = AuditLog::verify();
 	QVERIFY2(v.ok(), v.toJson().constData());
+}
+
+/* BTD-188: the issuer of a CRL passes the checks of IssuanceChecks
+ * before anything is written: cRLSign when it has key usage (none: a
+ * warning, BTD-55), valid now, its own key; no CRL row, no new CRL
+ * number, one failure entry */
+void test_service_revocation::crlIssuerChecks_data()
+{
+	QTest::addColumn<QString>("ku");          // "-": no key usage
+	QTest::addColumn<int>("fromDays");
+	QTest::addColumn<int>("toDays");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("keyCertSign only") << "keyCertSign" << -30 << 3650
+		<< "issuer_no_crlsign";
+	QTest::newRow("expired") << "keyCertSign,cRLSign" << -30 << -1
+		<< "issuer_expired";
+	QTest::newRow("not yet valid") << "keyCertSign,cRLSign" << 2 << 3650
+		<< "issuer_not_yet_valid";
+	QTest::newRow("no key usage") << "-" << -30 << 3650 << "";
+	QTest::newRow("cRLSign") << "keyCertSign,cRLSign" << -30 << 3650 << "";
+}
+
+void test_service_revocation::crlIssuerChecks()
+{
+	QFETCH(QString, ku);
+	QFETCH(int, fromDays);
+	QFETCH(int, toDays);
+	QFETCH(QString, code);
+	QDateTime now = QDateTime::currentDateTimeUtc();
+	IssuanceSpec spec;
+	spec.name = "CRL issuer";
+	spec.subject.addEntryByNid(NID_commonName, spec.name);
+	spec.key = newKey("CRL issuer key");
+	spec.notBefore = a1time(now.addDays(fromDays));
+	spec.notAfter = a1time(now.addDays(toDays));
+	spec.hashAlgo = digest(NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_ca;
+	spec.extensions.basicCritical = true;
+	spec.extensions.subjectKeyId = true;
+	if (ku != "-")
+		spec.extensions.keyUsage = ku.split(",");
+	pki_x509 *ca = certs()->newCert(ctx, spec);
+	QVERIFY(ca);
+
+	int crlCount = Store.getAll<pki_crl>().size();
+	QString number = ca->getCrlNumber().toDec();
+	int entries = AuditLog::entries().size();
+	QString got;
+	try {
+		crls()->newCrl(ctx, crljob(ca));
+	} catch (serviceError &err) {
+		got = err.code;
+	}
+	QCOMPARE(got, code);
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	if (!code.isEmpty()) {
+		lastEntry("crl.generate", "failure", code);
+		QCOMPARE(Store.getAll<pki_crl>().size(), crlCount);
+		QCOMPARE(ca->getCrlNumber().toDec(), number);
+		return;
+	}
+	QCOMPARE(Store.getAll<pki_crl>().size(), crlCount + 1);
+	QCOMPARE(AuditLog::entries().last().params.value("warning").toString()
+		.contains("issuer_without_key_usage"), ku == "-");
+}
+
+/* One rule, one code: the same issuer problem refuses a certificate and
+ * a CRL with the same code */
+void test_service_revocation::sameCodeForCertificateAndCrl_data()
+{
+	QTest::addColumn<QString>("rule");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("insecure hash") << "sha1" << "signature_hash_not_allowed";
+	QTest::newRow("issuer is no CA") << "notca" << "issuer_not_ca";
+	QTest::newRow("expired issuer") << "expired" << "issuer_expired";
+}
+
+void test_service_revocation::sameCodeForCertificateAndCrl()
+{
+	QFETCH(QString, rule);
+	QFETCH(QString, code);
+	QDateTime now = QDateTime::currentDateTimeUtc();
+	pki_x509 *ca = rule == "expired" ?
+		issue("Old CA", newKey("old key"), nullptr, now.addDays(-30),
+			now.addDays(-1)) :
+		rootCa("Rule CA");
+	QVERIFY(ca);
+	pki_x509 *issuer = rule == "notca" ? endEntity("not a CA", ca) : ca;
+	QVERIFY(issuer);
+
+	IssuanceSpec spec;
+	spec.name = "leaf";
+	spec.subject.addEntryByNid(NID_commonName, "leaf");
+	spec.key = newKey("leaf key");
+	spec.signer = issuer;
+	spec.notBefore = a1time(now.addDays(-40));
+	spec.notAfter = a1time(now.addDays(30));
+	spec.hashAlgo = digest(rule == "sha1" ? NID_sha1 : NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_not_ca;
+	QString certCode, crlCode;
+	try {
+		certs()->newCert(ctx, spec);
+	} catch (serviceError &err) {
+		certCode = err.code;
+	}
+	crljob job(issuer);
+	if (rule == "sha1")
+		job.hashAlgo = digest(NID_sha1);
+	try {
+		crls()->newCrl(ctx, job);
+	} catch (serviceError &err) {
+		crlCode = err.code;
+	}
+	QCOMPARE(certCode, code);
+	QCOMPARE(crlCode, code);
 }
 
 /* RFC 5280 3.3: listed once after notAfter, then dropped */

@@ -313,6 +313,10 @@ QList<int> pki_key::possibleHashNids()
 	QList<int> allSha3;
 #endif
 
+	/* no digest to choose (BTD-164) */
+	if (digestLess())
+		return QList<int>({ NID_undef });
+
 	switch (EVP_PKEY_type(getKeyType())) {
 		case EVP_PKEY_RSA:
 			nids << NID_md5 << NID_ripemd160 << NID_sha1;
@@ -325,15 +329,6 @@ QList<int> pki_key::possibleHashNids()
 		case EVP_PKEY_EC:
 			nids << NID_sha1;
 			nids += allSha2 + allSha3;
-			break;
-#ifdef EVP_PKEY_ED25519
-		case EVP_PKEY_ED25519:
-#endif
-#ifdef EVP_PKEY_ED448
-		case EVP_PKEY_ED448:
-#endif
-			/* EdDSA signs the message itself, no digest */
-			nids << NID_undef;
 			break;
 #endif
 	}

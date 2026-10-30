@@ -149,6 +149,7 @@ QSqlError pki_x509::deleteSqlData()
 		<< "UPDATE certs SET issuer=NULL WHERE issuer=?"
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
+		<< "DELETE FROM issued_profiles WHERE item=?"
 		;
 	foreach(QString task, tasks) {
 		SQL_PREPARE(q, task);
@@ -158,6 +159,13 @@ QSqlError pki_x509::deleteSqlData()
 		if (e.isValid())
 			return e;
 	}
+	/* the profiles and policies assigned to it as a CA (BTD-167) */
+	SQL_PREPARE(q, "DELETE FROM assignments WHERE owner_type='ca' AND owner=?");
+	q.bindValue(0, sqlItemId.toString());
+	q.exec();
+	e = q.lastError();
+	if (e.isValid())
+		return e;
 	/* Another certificate with this name and key takes over the
 	 * childs, as db_x509::remFromCont() shows it after the commit
 	 * (BTD-130: memory changes only then) */
@@ -697,7 +705,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 	pki_openssl_error();
 	/* X509_sign() returns the signature size or 0: a failure leaves
 	 * the certificate unsigned and its DER empty (BTD-171) */
-	int size = X509_sign(cert, tkey, digest.MD());
+	int size = X509_sign(cert, tkey, signkey->signatureDigest(digest));
 	EVP_PKEY_free(tkey);
 	if (size <= 0)
 		throw serviceError("signing_failed",

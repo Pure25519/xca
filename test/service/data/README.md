@@ -49,6 +49,28 @@ xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --keyge
 python3 -c "import sqlite3; open('schema8-bxc2.sql','w').write('\n'.join(sqlite3.connect('fixture.xdb').iterdump())+'\n')"
 ```
 
+## `schema8-bxc3.sql`
+
+SQL dump of a database with fork migration `bxc_schema` 3 (BTD-16), made with the BTD-167 branch
+before it added `bxc_schema` 4 (schema identical to bxc-main `53f2df01`).
+`test_service_audit::upgradeProfileTables` checks that `bxc_schema` 4 (BTD-167) adds the empty
+tables `profiles`, `policies`, `assignments` and `issued_profiles`, keeps every row and writes no
+audit entry; `test_service_audit::upgradeWaitsForPassword` checks that a rejected password leaves
+it unchanged.
+
+Content: an imported EC CA key and self-signed CA certificate (`fixture-ca-key`, `fixture-ca`) and a
+generated EC key (`fixture-ec`), with their audit entries. The private keys are throwaway test
+keys, encrypted with `ServiceTestCase::dbPassword`. Created in the dev container:
+
+```
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout ca.key -out ca.crt -days 3650 -subj "/CN=Fixture CA" -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign,cRLSign
+xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --import ca.key ca.crt --import-names "fixture-ca-key;fixture-ca"
+xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --keygen EC:prime256v1 --name fixture-ec
+python3 -c "import sqlite3; open('schema8-bxc3.sql','w').write('
+'.join(sqlite3.connect('fixture.xdb').iterdump())+'
+')"
+```
+
 ## `json/`
 
 Fixtures of the JSON documents (BTD-39), made once with OpenSSL 4.1 in the dev container by
@@ -103,6 +125,18 @@ The certificate profiles of bxc-pki (`<id>.json`) and their golden expectation f
 `test_service_profiles` (BTD-54) applies every profile and compares with the golden files,
 `test_service_csr_acceptance` (BTD-65) uses the golden files. Regenerate them in bxc-pki and copy
 them again.
+
+`profiles/generic/` holds the generic profiles of profile schema v1.1 (BTD-167: the XCA default
+templates CA, TLS_server, TLS_client, a sub-CA with pathLen 0, code signing, e-mail), copied
+unchanged from the bxc-pki schema examples at the commit named in `generic/PROVENANCE.json`;
+`test_service_profiles` issues one certificate per profile and checks its extensions.
+
+## `policies/`
+
+The name policies of bxc-pki (`schemas/policy.schema.json`, BTD-167), copied unchanged from the
+schema examples at the commit named in `policies/PROVENANCE.json`. `test_service_names` checks
+issued names against them (allow and deny rules per name form, minimum content, strict issuer
+key usage, uniqueness with a status filter).
 
 ## `templates/CA-v2.xca`, `templates/CA-v6.xca`
 

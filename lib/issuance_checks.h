@@ -15,15 +15,34 @@
 #define __ISSUANCE_CHECKS_H
 
 #include <QList>
+#include <QString>
+#include <QStringList>
+
+#include <openssl/types.h>
 
 class AuditParams;
 class ExtensionSpec;
 class IssuanceSpec;
+class digest;
 class pki_key;
 class pki_x509;
 
 namespace IssuanceChecks
 {
+	/* The key usage bits a subject key of this type may carry (BTD-195;
+	 * RFC 5480 3, RFC 8410 5, RFC 9881), one table for every issuance
+	 * and for Profile::apply(): RSA all but keyAgreement, encipherOnly,
+	 * decipherOnly; EC no keyEncipherment, dataEncipherment; Ed25519,
+	 * Ed448, ML-DSA, SLH-DSA and DSA only digitalSignature,
+	 * nonRepudiation, keyCertSign, cRLSign; X25519 and X448 only
+	 * keyAgreement, encipherOnly, decipherOnly. *keyType receives the
+	 * name of the family. An unknown key type: every bit. */
+	QStringList keyUsageAllowed(const EVP_PKEY *key, QString *keyType);
+	/* Throws key_usage_not_for_key_type for the first of bits a key of
+	 * this type may not carry; source names where the bit comes from */
+	void keyUsageFits(const EVP_PKEY *key, const QStringList &bits,
+			const QString &source);
+
 	/* The issuer and its issuers up to the self-signed root, nearest
 	 * first; empty for a self-signed certificate. A broken or looping
 	 * chain ends where it breaks. */
@@ -62,6 +81,19 @@ namespace IssuanceChecks
 	 * unless the profile takes the dNSName from the CN (BTD-191). */
 	void request(const IssuanceSpec &spec, AuditParams &params);
 
+	/* The issuer of a CRL (BTD-188), before the CRL number and any
+	 * write: no insecure hash (signature_hash_not_allowed), version 3
+	 * and cA (issuer_v1, issuer_not_ca), cRLSign when it has key usage
+	 * (issuer_no_crlsign; without key usage warning
+	 * issuer_without_key_usage, RFC 5280 6.1.4 (n) as for keyCertSign),
+	 * valid now (issuer_expired, issuer_not_yet_valid), signkey its key
+	 * (issuer_key_mismatch). The same codes as for certificates. An
+	 * expired CA issues no CRL, not even a last one (boss decision,
+	 * review of xca#55): since BTD-51 every certificate of a CA ends
+	 * with it, so their revocation status no longer matters. */
+	void crlIssuer(const pki_x509 *ca, pki_key *signkey,
+			const digest &hashAlgo, AuditParams &params);
+
 	/* The certificate to be signed: one instance per extension, the
 	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them, and
 	 * for a server-side key under a profile the SAN rules of the CSR
@@ -69,9 +101,11 @@ namespace IssuanceChecks
 	void certificate(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 
-	/* Hook for the name rules over the whole chain: name constraints
-	 * of every CA up to the root, the name policy and the EKU subset
-	 * rule (BTD-167). Nothing is checked yet. */
+	/* The names over the whole chain (BTD-167): the syntax of every
+	 * dNSName (invalid_dns_name), the name constraints of every CA up to
+	 * the root (name_constraints_violation), the EKU as a subset of the
+	 * EKU of every CA that has one (eku_not_in_issuer), then the name
+	 * policies of the spec (lib/policy.h). */
 	void names(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 }

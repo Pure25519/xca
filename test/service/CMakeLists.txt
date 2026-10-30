@@ -33,6 +33,8 @@ macro(ServiceTest name)
 endmacro()
 
 ServiceTest(test_service_harness)
+# Key usage by the subject key type, every issuance (BTD-195)
+ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
 ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)
@@ -180,8 +182,10 @@ if(OPENSSL_PROGRAM)
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 
-# What a CSR adds per extension, and the profile engine (BTD-54)
-foreach(t test_service_merge test_service_profiles)
+# What a CSR adds per extension, the profile engine (BTD-54), the name
+# checks and policies (BTD-167)
+foreach(t test_service_merge test_service_profiles test_service_names
+	test_service_profile_store test_service_template_migration)
   ServiceTest(${t})
   target_compile_definitions(${t} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
@@ -191,6 +195,9 @@ foreach(t test_service_merge test_service_profiles)
   endif()
 endforeach()
 
+target_compile_definitions(test_service_template_migration PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -198,6 +205,14 @@ add_test(NAME test_cli_exit_codes
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_exit_codes
 		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
 set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
+
+# xca --migrate-template turns a template into a profile (BTD-167)
+add_test(NAME test_cli_migrate_template
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSOURCE=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_migrate_template
+		-P ${SERVICE_TEST_DIR}/cli_migrate_template.cmake)
+set_tests_properties(test_cli_migrate_template PROPERTIES LABELS service)
 
 # Key generation and request creation (BTD-32); openssl req -verify
 ServiceTest(test_service_request)
@@ -223,6 +238,14 @@ set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
 ServiceTest(test_service_revocation)
 if(OPENSSL_PROGRAM)
   target_compile_definitions(test_service_revocation PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+endif()
+
+# Signing with Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-164); every
+# object checked with the openssl program
+ServiceTest(test_service_pqc_signing)
+if(OPENSSL_PROGRAM)
+  target_compile_definitions(test_service_pqc_signing PRIVATE
 	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
 endif()
 

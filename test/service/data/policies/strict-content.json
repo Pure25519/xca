@@ -1,0 +1,25 @@
+{
+  "schema": "urn:bxc-pki:schema:policy:v1",
+  "id": "strict-content",
+  "description": "Strict CA policy: no certificate without extensions, CN and O required, the issuer must carry key usage, one valid certificate per subject DN and per public key for each issuing CA.",
+  "uniqueness": {
+    "fields": [
+      "subject_dn",
+      "public_key"
+    ],
+    "scope": "issuer",
+    "status": [
+      "valid"
+    ]
+  },
+  "content": {
+    "require_extensions": true,
+    "required_dn_attributes": [
+      "CN",
+      "O"
+    ]
+  },
+  "issuer": {
+    "require_key_usage": true
+  }
+}

@@ -134,7 +134,8 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 
 	privkey = key->decryptKey();
 	/* 0 leaves the request unsigned (BTD-171) */
-	int size = X509_REQ_sign(request, privkey, digest.MD());
+	int size = X509_REQ_sign(request, privkey,
+				key->signatureDigest(digest));
 	EVP_PKEY_free(privkey);
 	if (size <= 0)
 		throw serviceError("signing_failed",

@@ -1,0 +1,98 @@
+{
+  "schema": "urn:bxc-pki:schema:profile:v1.1",
+  "id": "email",
+  "description": "S/MIME certificate: one or two e-mail addresses as rfc822Name, emailProtection, keyEncipherment for RSA and keyAgreement for EC, one year.",
+  "family": "generic",
+  "key_source": "csr",
+  "key_types": [
+    "rsa-2048",
+    "rsa-3072",
+    "rsa-4096",
+    "ec-p256",
+    "ec-p384"
+  ],
+  "ku_by_key_type": {
+    "rsa": {
+      "bits": [
+        "digitalSignature",
+        "keyEncipherment"
+      ],
+      "critical": true
+    },
+    "ec": {
+      "bits": [
+        "digitalSignature",
+        "keyAgreement"
+      ],
+      "critical": true
+    }
+  },
+  "eku": {
+    "purposes": [
+      "emailProtection"
+    ],
+    "critical": false
+  },
+  "csr_eku": "ignore",
+  "csr_basic_constraints": "ignore",
+  "csr_aki_ski": "ignore",
+  "basic_constraints": {
+    "ca": false,
+    "critical": true
+  },
+  "san": {
+    "uri": {
+      "count": 0
+    },
+    "dns": {
+      "min": 0,
+      "max": 0
+    },
+    "ip": {
+      "min": 0,
+      "max": 0
+    },
+    "email": {
+      "min": 1,
+      "max": 2
+    },
+    "dns_or_ip_min": 0,
+    "keep_csr_order": true,
+    "dns_from_cn": false,
+    "critical": false
+  },
+  "subject": {
+    "copy": "byte-faithful",
+    "required_attributes": [
+      "CN"
+    ],
+    "add_missing_o": false,
+    "cn_source": "csr"
+  },
+  "aki": {
+    "form": "key-id"
+  },
+  "signature": {
+    "rsa": {
+      "padding": "pkcs1v15",
+      "hashes": [
+        "sha256",
+        "sha384"
+      ]
+    },
+    "ec": {
+      "hash_by_curve": {
+        "ec-p256": "sha256",
+        "ec-p384": "sha384"
+      }
+    }
+  },
+  "validity": {
+    "default": "P1Y",
+    "max": "P1Y",
+    "backdate": "PT0S"
+  },
+  "csr_sha1": "reject",
+  "keycertsign_request": "reject",
+  "warnings": []
+}
