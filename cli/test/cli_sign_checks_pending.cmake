@@ -6,7 +6,8 @@
 #    bxc-main (bfd65e51) applies key usage by key type only in the
 #    profile engine (Profile::apply, BTD-54), not to a template or a plain
 #    IssuanceSpec; the CLI's --profile is reserved until Phase 2. Needs
-#    a service check for every issuance (follow-up ticket) or --profile.
+#    the service check for every issuance of BTD-195 (boss decision
+#    2026-10-30: not in BTD-41).
 
 include("${LIB}")
 

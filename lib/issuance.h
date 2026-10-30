@@ -148,7 +148,10 @@ class IsoDuration
 		return !years && !months && !weeks && !days && !hours &&
 			!minutes && !seconds;
 	}
+	/* The end may be invalid for a huge duration; no certificate ends
+	 * after lastEnd(), 9999-12-31T23:59:59Z (RFC 5280 4.1.2.5) */
 	QDateTime addTo(const QDateTime &t) const;
+	static QDateTime lastEnd();
 	QDateTime subtractFrom(const QDateTime &t) const;
 	QString toString() const;
 };

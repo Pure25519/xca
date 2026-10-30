@@ -282,15 +282,14 @@ IsoDuration IsoDuration::parse(const QString &text, QString *error)
 			QString c = m.captured(i + 1);
 			bool ok = true;
 			*parts[i] = c.isEmpty() ? 0 : c.toLongLong(&ok);
-			/* 10000 years are beyond any certificate */
-			if (!ok || *parts[i] > 10000LL * 366 * 86400) {
+			/* QDateTime::addYears()/addMonths() take an int; the
+			 * end itself is checked by the caller against
+			 * 9999-12-31T23:59:59Z (lastEnd()) */
+			if (!ok || *parts[i] > 999999999) {
 				why = QObject::tr("'%1' is too large").arg(text);
 				break;
 			}
 		}
-		if (why.isEmpty() && (d.years > 10000 || d.months > 120000 ||
-				d.weeks > 530000 || d.days > 3660000))
-			why = QObject::tr("'%1' is too large").arg(text);
 	}
 	if (!why.isEmpty()) {
 		if (error)
@@ -313,6 +312,11 @@ QDateTime IsoDuration::subtractFrom(const QDateTime &t) const
 	return t.addSecs(-(hours * 3600 + minutes * 60 + seconds))
 		.addDays(-(weeks * 7 + days))
 		.addMonths(-months).addYears(-years);
+}
+
+QDateTime IsoDuration::lastEnd()
+{
+	return QDateTime(QDate(9999, 12, 31), QTime(23, 59, 59), Qt::UTC);
 }
 
 QString IsoDuration::toString() const

@@ -127,6 +127,7 @@ class CommandContext
   public:
 	Options opts{};
 	ServiceContext svc{ ServiceContext::cli, QString() };
+	QString command{};
 	bool plan{};                // --plan: evaluate, write nothing
 	bool text{};                // --text instead of JSON
 	QString database{};
@@ -202,6 +203,12 @@ class ResultCollector
 	/* A certificate: validity_capped and, when capped,
 	 * requested_not_after (BTD-51) */
 	void writtenCertificate(const pki_x509 *cert, const IssuanceSpec &spec);
+	/* --plan: an object that would be written; no document, because
+	 * nothing is signed (id and document null) */
+	void planned(const QString &type, const QString &name);
+	void plannedCertificate(const IssuanceSpec &spec);
+	/* "type:name" of every object, for the cli.plan audit entry */
+	QStringList plannedObjects() const;
 	QJsonObject document() const;
 	QString text() const;
 	int count() const

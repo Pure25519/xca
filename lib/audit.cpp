@@ -114,6 +114,9 @@ const QStringList &AuditParams::allowList()
 		/* the merge decision per extension, e.g. "ku=union+csr"
 		 * (mr-processor review of xca#47) */
 		"merge",
+		/* a --plan run of the bxc-pki command line (BTD-41): the
+		 * command and the planned objects as "type:name,..." */
+		"command", "planned",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

@@ -26,19 +26,22 @@ namespace bxcpki {
 
 QJsonObject ResultCollector::entry(const pki_base *pki) const
 {
-	QJsonObject doc = JsonReport::object(pki);
 	QJsonObject o;
 	o["type"] = JsonReport::objectType(pki);
 	o["id"] = pki->getSqlItemId().toLongLong();
 	o["name"] = pki->getIntName();
-	if (plan) {
-		/* rolled back: the ids are not in the database */
-		o["id"] = QJsonValue();
-		doc["id"] = QJsonValue();
-		doc["created"] = QJsonValue();
-	}
-	o["document"] = doc;
+	o["document"] = JsonReport::object(pki);
 	return o;
+}
+
+static void addCap(QJsonObject &o, const IssuanceSpec &spec)
+{
+	bool capped = false;
+	spec.effectiveNotAfter(&capped);
+	o["validity_capped"] = capped;
+	if (capped)
+		o["requested_not_after"] =
+			JsonReport::timestamp(spec.requestedNotAfter());
 }
 
 void ResultCollector::written(const pki_base *pki)
@@ -50,13 +53,36 @@ void ResultCollector::writtenCertificate(const pki_x509 *cert,
 				const IssuanceSpec &spec)
 {
 	QJsonObject o = entry(cert);
-	bool capped = false;
-	spec.effectiveNotAfter(&capped);
-	o["validity_capped"] = capped;
-	if (capped)
-		o["requested_not_after"] =
-			JsonReport::timestamp(spec.requestedNotAfter());
+	addCap(o, spec);
 	objects.append(o);
+}
+
+/* --plan: nothing exists, nothing is signed, so there is no document */
+void ResultCollector::planned(const QString &type, const QString &name)
+{
+	QJsonObject o;
+	o["type"] = type;
+	o["id"] = QJsonValue();
+	o["name"] = name;
+	o["document"] = QJsonValue();
+	objects.append(o);
+}
+
+void ResultCollector::plannedCertificate(const IssuanceSpec &spec)
+{
+	planned("certificate", spec.name);
+	QJsonObject o = objects.last().toObject();
+	addCap(o, spec);
+	objects.replace(objects.size() - 1, o);
+}
+
+QStringList ResultCollector::plannedObjects() const
+{
+	QStringList l;
+	for (const QJsonValue &v : objects)
+		l << QString("%1:%2").arg(v.toObject()["type"].toString())
+			.arg(v.toObject()["name"].toString());
+	return l;
 }
 
 QJsonObject ResultCollector::document() const
@@ -99,36 +125,76 @@ QString ResultCollector::text() const
 
 /* --- Runner ----------------------------------------------------------- */
 
+/* --plan (BTD-41 review of xca#54): the handlers check and sign nothing;
+ * the transaction only guards against a write. One audit entry cli.plan
+ * records the run, success or failure, after the rollback. */
+static void runPlan(CommandContext &ctx,
+		const QList<std::function<void(CommandContext &)> > &steps)
+{
+	AuditFailureCapture capture;
+	auto params = [&ctx]() {
+		AuditParams p;
+		p.set("command", ctx.command);
+		p.set("planned", ctx.result->plannedObjects().join(","));
+		p.set("count", ctx.result->count());
+		return p;
+	};
+	auto failed = [&](const QString &code) {
+		/* after the rollback: the entries of service calls first,
+		 * then the plan's own; best effort, the error wins */
+		try {
+			capture.replay();
+		} catch (errorEx &err) {
+			qWarning() << "Audit failure entries lost:"
+				<< err.getString();
+		}
+		AuditLog::appendFailure(ctx.svc, "cli.plan", "object",
+				QString(), params(), code);
+	};
+	try {
+		Transaction;
+		TransThrow();
+		for (const auto &step : steps)
+			step(ctx);
+		TransRollback();
+	} catch (errorEx &err) {
+		failed(JsonReport::error(err)["code"].toString());
+		throw;
+	} catch (...) {
+		failed("internal_error");
+		throw;
+	}
+	capture.discard();
+	AuditLog::append(ctx.svc, "cli.plan", "object", QString(), params());
+}
+
 void runInTransaction(CommandContext &ctx,
 		const QList<std::function<void(CommandContext &)> > &steps)
 {
+	if (ctx.plan) {
+		runPlan(ctx, steps);
+		return;
+	}
 	AuditFailureCapture capture;
 	try {
 		Transaction;
 		TransThrow();
 		for (const auto &step : steps)
 			step(ctx);
-		if (ctx.plan) {
-			TransRollback();
-		} else if (!TransCommit()) {
+		if (!TransCommit())
 			throw serviceError("database_error", QObject::tr(
 				"Failed to commit the database transaction"));
-		}
-		/* committed with the objects, or a plan writes nothing */
+		/* committed with the objects */
 		capture.discard();
 	} catch (...) {
 		/* The transaction was rolled back when it went out of
 		 * scope; the failure entries of the service calls went
 		 * with it and are written again, outside of it */
-		if (ctx.plan) {
-			capture.discard();
-		} else {
-			try {
-				capture.replay();
-			} catch (errorEx &err) {
-				qWarning() << "Audit failure entries lost:"
-					<< err.getString();
-			}
+		try {
+			capture.replay();
+		} catch (errorEx &err) {
+			qWarning() << "Audit failure entries lost:"
+				<< err.getString();
 		}
 		throw;
 	}
@@ -160,21 +226,21 @@ pki_base *resolve(const QString &ref, const QStringList &kinds,
 	if (kinds.isEmpty() || kinds.contains("template"))
 		predefs = Database.model<db_temp>()->getPredefs();
 
-	if (number.match(ref).hasMatch()) {
-		for (pki_base *pki : all)
-			if (pki->getSqlItemId().toString() == ref &&
-			    wanted(pki))
-				hits << pki;
+	/* An id and a name are equal candidates: "7" that is the id of
+	 * one object and the name of another is ambiguous (review of
+	 * xca#54) */
+	bool numeric = number.match(ref).hasMatch();
+	for (pki_base *pki : all) {
+		if (!wanted(pki))
+			continue;
+		if ((numeric && pki->getSqlItemId().toString() == ref) ||
+		    pki->getIntName() == ref)
+			hits << pki;
 	}
-	if (hits.isEmpty()) {
-		for (pki_base *pki : all)
-			if (pki->getIntName() == ref && wanted(pki))
-				hits << pki;
-		/* predefined templates: "TLS_server" or "[default] TLS_server" */
-		for (pki_temp *t : predefs)
-			if (t->getIntName() == ref || t->comboText() == ref)
-				hits << t;
-	}
+	/* predefined templates: "TLS_server" or "[default] TLS_server" */
+	for (pki_temp *t : predefs)
+		if (t->getIntName() == ref || t->comboText() == ref)
+			hits << t;
 	QString what = kinds.isEmpty() ? QObject::tr("object") :
 				kinds.join(QObject::tr(" or "));
 	if (hits.isEmpty())

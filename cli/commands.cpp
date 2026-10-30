@@ -19,6 +19,7 @@
 #include "lib/digest.h"
 #include "lib/func.h"
 #include "lib/issuance.h"
+#include "lib/issuance_checks.h"
 #include "lib/json_report.h"
 #include "lib/pki_key.h"
 #include "lib/pki_multi.h"
@@ -130,6 +131,12 @@ static void applyValidity(const Options &o, IssuanceSpec &spec,
 			((QDateTime)tmplStart).secsTo(tmplEnd)));
 	}
 	a1time end = spec.requestedNotAfter();
+	/* no certificate ends after 9999 (review of xca#54: P10000Y) */
+	if (!end.isValid() || (!end.isUndefined() &&
+			(QDateTime)end > IsoDuration::lastEnd()))
+		throw usageError("invalid_validity", QObject::tr(
+			"The certificate would end after %1")
+			.arg(IsoDuration::lastEnd().toString(Qt::ISODate)));
 	if (!end.isUndefined() && end <= spec.notBefore)
 		throw usageError("invalid_validity", QObject::tr(
 			"The certificate would end on %1, not after its start "
@@ -193,9 +200,48 @@ static pki_key *obtainKey(CommandContext &ctx, const QString &name,
 	}
 	keyjob job(keyJobText(o.value("key", defaultType)));
 	ctx.step = QObject::tr("key '%1'").arg(name);
+	if (ctx.plan) {
+		/* --plan generates nothing; the name fixes a valid job */
+		ctx.result->planned("key", name);
+		return nullptr;
+	}
 	pki_key *key = Database.model<db_key>()->newKey(ctx.svc, job, name);
 	ctx.result->written(key);
 	return key;
+}
+
+/* --plan: the key would sign; decrypting it checks its password (or
+ * PIN) without making a signature */
+static void unlockCheck(const pki_key *key)
+{
+	if (!key)
+		return;
+	EVP_PKEY *pkey = key->decryptKey();
+	EVP_PKEY_free(pkey);
+}
+
+/* --plan of an issuance: the checks of db_x509::issue() that need no
+ * signature (IssuanceChecks::preflight(): spec, issuer chain, CSR), the
+ * private key of the signer, its unlock and the validity cap; the
+ * extension checks run only when the certificate is built. Nothing is
+ * signed, so the result has no document (review of xca#54). */
+static void planCertificate(CommandContext &ctx, IssuanceSpec &spec)
+{
+	AuditParams params;
+	pki_key *signkey = spec.signer ? spec.signer->getRefKey() : spec.key;
+	if (spec.signer && (!signkey || signkey->isPubKey()))
+		throw serviceError("no_private_signing_key", QObject::tr(
+			"The key you selected for signing is not a private one."));
+	IssuanceChecks::preflight(spec, params);
+	unlockCheck(signkey);
+	bool capped;
+	a1time end = spec.effectiveNotAfter(&capped);
+	if (capped && end <= spec.notBefore)
+		throw serviceError("invalid_validity", QObject::tr(
+			"The issuer chain ends on %1, not after the start of the "
+			"certificate on %2").arg(end.toPrettyGMT())
+			.arg(spec.notBefore.toPrettyGMT()));
+	ctx.result->plannedCertificate(spec);
 }
 
 static QList<OptionSpec> keyOptions(const QString &def, bool withFile)
@@ -265,6 +311,10 @@ static void cmdInit(CommandContext &ctx)
 	spec.key = obtainKey(ctx, spec.name, "ec-p384", &fileItems);
 	spec.hashAlgo = hashFrom(o, parent ? parent->getRefKey() : spec.key);
 	ctx.step = QObject::tr("certificate '%1'").arg(spec.name);
+	if (ctx.plan) {
+		planCertificate(ctx, spec);
+		return;
+	}
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
 	ctx.result->writtenCertificate(cert, spec);
 }
@@ -305,6 +355,12 @@ static void cmdRequestCert(CommandContext &ctx)
 	spec.key = obtainKey(ctx, spec.name, "ec-p256", &fileItems);
 	spec.hashAlgo = hashFrom(o, spec.key);
 	ctx.step = QObject::tr("request '%1'").arg(spec.name);
+	if (ctx.plan) {
+		/* the key that would sign the request must unlock */
+		unlockCheck(spec.key);
+		ctx.result->planned("request", spec.name);
+		return;
+	}
 	pki_x509req *req = Database.model<db_x509req>()->newRequest(ctx.svc,
 								spec);
 	ctx.result->written(req);
@@ -362,6 +418,10 @@ static void cmdSign(CommandContext &ctx)
 			fromTemplate);
 	spec.hashAlgo = hashFrom(o, ca->getRefKey());
 	ctx.step = QObject::tr("certificate '%1'").arg(spec.name);
+	if (ctx.plan) {
+		planCertificate(ctx, spec);
+		return;
+	}
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
 	ctx.result->writtenCertificate(cert, spec);
 }

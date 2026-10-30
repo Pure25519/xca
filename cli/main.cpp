@@ -38,7 +38,10 @@ class CliWarning: public xcaWarningCore
 
 	void sqlerror(QSqlError err) override
 	{
-		lastSqlError = err.text();
+		/* the cause, without the statement and its values */
+		lastSqlError = err.databaseText().trimmed();
+		if (lastSqlError.isEmpty())
+			lastSqlError = err.driverText().trimmed();
 		xcaWarningCore::sqlerror(err);
 	}
 	void error(const QString &msg) override
@@ -84,13 +87,11 @@ static int report(const errorEx &err, const CommandContext &ctx)
 		if (!o.isEmpty())
 			detail += QObject::tr(" (option %1)").arg(o);
 	}
-	/* rule 11: a write error names the object and the cause */
-	if ((code == "internal_error" || code == "database_error") &&
-	    !CliWarning::lastSqlError.isEmpty()) {
-		code = "database_error";
+	/* rule 11: a write error names the object and the cause; the
+	 * code stays the one of the error (review of xca#54) */
+	if (code == "database_error" && !CliWarning::lastSqlError.isEmpty())
 		detail += QObject::tr(" (database: %1)")
 				.arg(CliWarning::lastSqlError);
-	}
 	if (!ctx.step.isEmpty())
 		detail = QObject::tr("%1 was not written to %2: %3")
 			.arg(ctx.step).arg(ctx.database).arg(detail);
@@ -130,17 +131,34 @@ static void setupSecrets(const Options &o)
 			h->setSource(p, o.value(spec.name));
 }
 
+/* The open results of database_model (review of xca#54): a cancelled
+ * or ended password input is missing_password, no database no_database */
+[[noreturn]] static void throwOpenError(enum open_result r,
+		const QString &db)
+{
+	if (r == open_abort)
+		throw serviceError("no_database", QObject::tr(
+			"No database was given or '%1' was not opened").arg(db));
+	throw secretError(secretError::missing, QObject::tr(
+		"The password input for '%1' was cancelled").arg(db),
+		pass_info::DatabasePassword);
+}
+
 static void openDatabase(const Command &cmd, CommandContext &ctx)
 {
 	const Options &o = ctx.opts;
 	ctx.database = o.value("db", defaultDatabase());
-	bool exists = QFileInfo::exists(ctx.database);
+	/* user@host/db#QPSQL7 and the like: the server knows (review of
+	 * xca#54) */
+	bool remote = database_model::isRemoteDB(ctx.database);
+	bool exists = remote || QFileInfo::exists(ctx.database);
 	bool pw = o.has("password") || o.has("interactive");
 
-	/* No database file appears for a command that cannot go on */
-	if (!exists && !cmd.writes)
+	/* Only init (not --plan) creates a database */
+	if (!exists && (cmd.name != "init" || ctx.plan))
 		throw serviceError("no_database", QObject::tr(
-			"The database '%1' does not exist").arg(ctx.database));
+			"The database '%1' does not exist; init creates it")
+			.arg(ctx.database));
 	if (!exists && !pw)
 		throw secretError(secretError::missing, QObject::tr(
 			"A new database '%1' needs a database password")
@@ -156,9 +174,7 @@ static void openDatabase(const Command &cmd, CommandContext &ctx)
 	try {
 		Database.open(ctx.database, sqlpw);
 	} catch (enum open_result r) {
-		throw serviceError("database_error", QObject::tr(
-			"The database '%1' was not opened (%2)")
-			.arg(ctx.database).arg((int)r));
+		throwOpenError(r, ctx.database);
 	}
 	database_model::open_without_password = false;
 	ctx.svc = ServiceContext::localUser(ServiceContext::cli);
@@ -201,9 +217,11 @@ static int run(const QStringList &argv)
 			return exitOk;
 		}
 		ctx.plan = ctx.opts.has("plan");
+		ctx.command = cmd->name;
 		JsonReport::setActive(!ctx.text);
 
 		initObjects();
+		CliWarning::lastSqlError.clear();
 		setupSecrets(ctx.opts);
 		ctx.openDatabase = [cmd, &ctx]() { openDatabase(*cmd, ctx); };
 		if (cmd->needsDatabase)
@@ -215,7 +233,6 @@ static int run(const QStringList &argv)
 		}
 		ResultCollector result(cmd->name, ctx.plan);
 		ctx.result = &result;
-		CliWarning::lastSqlError.clear();
 		runInTransaction(ctx, { cmd->handler });
 		if (ctx.text)
 			console_write(stdout, result.text().toUtf8());
@@ -225,8 +242,13 @@ static int run(const QStringList &argv)
 	} catch (errorEx &err) {
 		return report(err, ctx);
 	} catch (enum open_result r) {
-		return report(serviceError("database_error", QObject::tr(
-			"The database was not opened (%1)").arg((int)r)), ctx);
+		/* anything that still throws an open result */
+		if (r == open_abort)
+			return report(serviceError("no_database", QObject::tr(
+				"No database was given")), ctx);
+		return report(secretError(secretError::missing, QObject::tr(
+			"The password input was cancelled"),
+			pass_info::DatabasePassword), ctx);
 	}
 }
 

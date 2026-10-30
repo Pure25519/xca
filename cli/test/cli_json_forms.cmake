@@ -73,6 +73,30 @@ foreach(case "plain.key|key_pair|none|" "enc.key|key_pair|own|--import-pass,env:
     fail("${f}: storage ${st}, protection ${pr}, kind ${kd}, id ${id}")
   endif()
 endforeach()
+# a key from an encrypted PKCS#12 file reports its own protection
+openssl_run(x req -new -x509 -key plain.key -subj "/CN=p12" -days 30
+    -out p12.crt)
+openssl_run(x pkcs12 -export -in p12.crt -inkey plain.key -out enc.p12
+    -passout env:BXC_KEY_PW)
+bxc("show p12" 0 show --file enc.p12 --import-pass env:BXC_KEY_PW)
+split_lines("${out}" docs)
+set(seen FALSE)
+foreach(d IN LISTS docs)
+  string(JSON sch GET "${d}" schema)
+  if(sch STREQUAL "urn:bxc-pki:schema:key:v1")
+    string(JSON st GET "${d}" storage)
+    string(JSON pr GET "${d}" protection)
+    if(NOT st STREQUAL "file" OR NOT pr STREQUAL "own")
+      fail("PKCS#12 key: storage ${st}, protection ${pr}")
+    endif()
+    set(seen TRUE)
+  endif()
+endforeach()
+if(NOT seen)
+  fail("show --file enc.p12: no key document:
+${out}")
+endif()
+
 # stored keys keep "database"
 bxc("show stored key" 0 show "Forms Root" --type key --db "${DB}" ${PW})
 one_doc("show stored key" "${out}" key k)

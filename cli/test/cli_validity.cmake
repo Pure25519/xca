@@ -141,6 +141,9 @@ foreach(case
     "invalid_value|--not-after;2030-13-01T00:00:00Z"
     "invalid_value|--not-before;2030-01-01T00:00:00.5Z"
     "invalid_value|--backdate;yesterday"
+    "invalid_value|--validity;P9999999999Y"
+    "invalid_validity|--validity;P10000Y"
+    "invalid_validity|--validity;P7975Y"
     "invalid_validity|--not-before;${y2}-01-01T00:00:00Z;--not-after;${y1}-01-01T00:00:00Z")
   string(REPLACE "|" ";" parts "${case}")
   list(GET parts 0 code)

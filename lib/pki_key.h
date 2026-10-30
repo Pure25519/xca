@@ -282,6 +282,11 @@ class pki_key: public pki_base
 		{
 			return encryptedFile;
 		}
+		/* For a container that decrypted the key, e.g. PKCS#12 */
+		void setFileEncrypted(bool e)
+		{
+			encryptedFile = e;
+		}
 		EVP_PKEY *getPubKey()
 		{
 			return key;

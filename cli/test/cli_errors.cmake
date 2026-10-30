@@ -79,6 +79,23 @@ else()
   file(CHMOD "${DB}" PERMISSIONS OWNER_READ OWNER_WRITE)
 endif()
 
+# --- a number that is an id and a name is ambiguous (review of xca#54) ----
+bxc("key named 1" 0 request-cert --db "${DB}" ${PW} --cn one --name 1)
+bxc("numeric ambiguous" 1 show 1 --type key --db "${DB}" ${PW})
+expect_error("numeric ambiguous" ambiguous_reference)
+if(NOT detail MATCHES "key 1 'Err Root'" OR NOT detail MATCHES "key [0-9]+ '1'")
+  fail("both candidates expected: ${detail}")
+endif()
+
+# --- a remote database is no file: it is opened, not refused -------------
+bxc("remote db" 1 list --db "nobody@127.0.0.1:1/QPSQL7:nodb" ${PW})
+split_lines("${err}" el)
+list(POP_BACK el last)
+string(JSON code GET "${last}" code)
+if(code STREQUAL "no_database")
+  fail("a remote database must not be checked as a file: ${err}")
+endif()
+
 # --- stdout clean: a warning and a failure -------------------------------
 bxc("warns" 0 list --db "${DB}" --password "pass:${DB_PW}")
 json_lines("warns" "${out}")

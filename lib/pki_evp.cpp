@@ -520,6 +520,13 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 		X509_SIG_free(p8);
 		if (!p8inf) {
 			pki_ign_openssl_error();
+			/* a password of its own that does not fit is a
+			 * rejected secret, typed password_rejected (BTD-41) */
+			if (ownPass == ptPrivate)
+				throw secretError(secretError::rejected,
+					tr("The password of the private key '%1' "
+					"was not accepted").arg(getIntName()),
+					pass_info::KeyPassword);
 			throw errorEx(tr("Decryption of private key '%1' failed")
 							.arg(getIntName()));
 		}

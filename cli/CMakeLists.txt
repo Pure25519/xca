@@ -29,9 +29,8 @@ if(BUILD_TESTING)
   find_program(CLI_LDD ldd)
 
   # Sign checks that wait for the service: rule 3 (key usage by key
-  # type) for templates; bxc-main has it only in the profile engine
-  # (cli/test/cli_sign_checks_pending.cmake says why)
-  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the pending sign checks (rule 3 for templates)" OFF)
+  # type) for templates waits for BTD-195
+  option(BXC_PKI_SIGN_CHECKS "bxc-pki CLI tests of the pending sign checks (rule 3 for templates, BTD-195)" OFF)
 
   # CliTest(<name>): cli/test/<name>.cmake as ctest test_<name>, label cli
   macro(CliTest name)
@@ -63,6 +62,7 @@ if(BUILD_TESTING)
   CliTest(cli_errors)
   CliTest(cli_json_forms)
   CliTest(cli_keytypes)
+  CliTest(cli_plan)
   # rules 1 and 5 through the checks of BTD-55
   CliTest(cli_sign_checks)
   if(BXC_PKI_SIGN_CHECKS)

@@ -52,24 +52,7 @@ foreach(cmd init request-cert sign list show)
   bxc("help ${cmd}" 0 help ${cmd})
 endforeach()
 
-# --plan: the result of a run, ids null, nothing stored or audited
-bxc("plan" 0 init ${db} ${PW} --cn "Plan Root" --plan)
-one_doc("plan" "${out}" cli-result plan)
-string(JSON p GET "${plan}" plan)
-string(JSON id TYPE "${plan}" objects 1 id)
-if(NOT p OR NOT id STREQUAL "NULL")
-  fail("plan: plan '${p}', id '${id}'")
-endif()
-bxc("list after plan" 0 list ${db} ${PW})
-one_doc("list after plan" "${out}" list l)
-string(JSON n LENGTH "${l}" items)
-if(NOT n EQUAL 0)
-  fail("--plan stored ${n} objects")
-endif()
-audit_entries(lines)
-if(lines MATCHES "key\\.generate|certificate\\.issue")
-  fail("--plan wrote audit entries:\n${lines}")
-endif()
+# --plan: cli_plan.cmake
 
 # --text: the result for people on stdout, an error as text on stderr
 bxc("text" 0 init ${db} ${PW} --cn "Text Root" --text)

@@ -54,6 +54,17 @@ Result document of `init`, `request-cert`, `sign` (schema `urn:bxc-pki:schema:cl
 `objects` lists only what was actually written, after the commit. A certificate entry carries
 `validity_capped` and, when capped at the issuer chain, `requested_not_after` (BTD-51).
 
+`--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
+that need no signature — key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
+CSR signature), the signer's private key and its unlock (the key is decrypted, nothing is
+signed), the validity cap — and list the objects that would be written with `"id": null` and
+`"document": null` (no PEM, serial, signature or fingerprint), certificates with
+`validity_capped`/`requested_not_after`. The extension checks of a real issue (duplicate
+extensions, CSR merge rules, OPC UA chain rules) run only when the certificate is built. One
+audit entry `cli.plan` (object type `object`) records the run with the parameters `command`,
+`planned` (`type:name,...`) and `count`; a failed plan writes it with result `failure` and the
+error code, after the failure entries of service calls.
+
 ## Design (prepared for `bootstrap`, BTD-166)
 
 | Piece | File | What it does |
@@ -63,7 +74,7 @@ Result document of `init`, `request-cert`, `sign` (schema `urn:bxc-pki:schema:cl
 | `CommandContext` | `cli.h` | what a handler gets: parsed options, the `ServiceContext` (channel `cli`), `plan`, `text`, the result collector, the current step (for "object X was not written" errors) |
 | handlers | `commands.cpp` | functions over the service layer (`db_key::newKey`, `db_x509req::newRequest`, `db_x509::newCert`); they neither open nor commit a transaction and record each written object in the collector |
 | `ResultCollector` | `framework.cpp` | takes the JSON document of each written object at once (an object of a rolled back transaction is gone afterwards) and becomes one result document per command |
-| `runInTransaction()` | `framework.cpp` | runs a list of handlers in ONE transaction it owns: commit, or with `--plan` a deliberate rollback (nothing written, ids null in the result). On failure everything is rolled back and the failure audit entries of the service calls are written again after the rollback (`AuditFailureCapture`, `lib/audit.h`) |
+| `runInTransaction()` | `framework.cpp` | runs a list of handlers in ONE transaction it owns and commits. On failure everything is rolled back and the failure audit entries of the service calls are written again after the rollback (`AuditFailureCapture`, `lib/audit.h`). With `--plan` the handlers write and sign nothing (see below) |
 | references | `framework.cpp` | `--ca`, `--parent`, `--use-key`, `--template` and `show` take a database id or a unique name; an ambiguous name is `ambiguous_reference` with the candidates |
 | input checks | `input.cpp` | RFC 4514 subjects (order kept, multi-valued RDNs, DC, UTF8String), strict IP/URI/DNS/e-mail SANs, RFC 3339, ISO 8601 durations (`IsoDuration`, `lib/issuance.h`), key types |
 
@@ -92,9 +103,11 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
 - Rule 12: see input checks; no template object is shared between calls.
 - Rules 1 and 5: the checks of the service layer before every signature (BTD-55,
   `lib/issuance_checks.h`) end to end in `cli/test/cli_sign_checks.cmake`. Rule 3 by key type
-  for templates waits in `cli/test/cli_sign_checks_pending.cmake` (`-DBXC_PKI_SIGN_CHECKS=ON`):
-  bxc-main applies key usage by key type only in the profile engine (BTD-54), and `--profile`
-  is reserved until Phase 2.
+  for templates waits for **BTD-195** (a service check of key usage by key type for every
+  issuance; boss decision 2026-10-30) in `cli/test/cli_sign_checks_pending.cmake`
+  (`-DBXC_PKI_SIGN_CHECKS=ON`). Until then an EC/EdDSA/ML-DSA certificate signed with a template
+  that names keyEncipherment keeps it; bxc-main applies key usage by key type only in the
+  profile engine (BTD-54), and `--profile` is reserved until Phase 2.
 
 ## Tests
 
