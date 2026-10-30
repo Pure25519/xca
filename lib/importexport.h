@@ -10,6 +10,7 @@
 
 #include <QByteArray>
 #include <QList>
+#include <QMap>
 #include <QString>
 #include <QStringList>
 
@@ -76,6 +77,10 @@ class ExportSpec
 	/* Target file, created or truncated; private keys get mode 0600.
 	 * Empty: exportItems() only returns the bytes */
 	QString fileName{};
+	/* With fileName empty: the file the caller writes the returned
+	 * bytes to (the bxc-pki command line publishes them after its
+	 * commit, BTD-42); the audit param file names it */
+	QString publishedFile{};
 	/* The clipboard text of the items (Ctrl+C, drag) instead of
 	 * format: pki_base::pem() in the formats of the settings
 	 * KeyFormat and CertFormat */
@@ -89,6 +94,10 @@ class ExportSpec
 	 * without seed support. Empty: OpenSSL's default, both, or the
 	 * expanded key of a key imported without seed (BTD-16) */
 	QString privateKeyFormat{};
+	/* Out, optional: the ML-DSA encoding written per private key, by
+	 * its item id, as the audit entry key.export_private names it
+	 * (the bxc-pki command line reports it, BTD-42) */
+	QMap<QString, QString> *mlDsaWritten{};
 };
 
 /* "certificate", "key", "request", "crl", "template": the audit object

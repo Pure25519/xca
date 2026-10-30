@@ -110,12 +110,13 @@ endif()
 # --- init --parent --plan and request-cert --plan --------------------------
 bxc("init plan" 0 init --db "${DB}" ${PW} --cn "Planned Sub" --parent "Plan Root"
     --plan)
-plan_objects("init plan" "key:Planned Sub;certificate:Planned Sub")
+# rule 7 (BTD-42): init also plans the empty CRL of the new CA
+plan_objects("init plan" "key:Planned Sub;certificate:Planned Sub;crl:Planned Sub")
 bxc("request plan" 0 request-cert --db "${DB}" ${PW} --cn planned-dev
     --dns planned-dev.lab --plan)
 plan_objects("request plan" "key:planned-dev;request:planned-dev")
 bxc("text plan" 0 init --db "${DB}" ${PW} --cn "Text Plan" --plan --text)
-if(NOT out MATCHES "^would write key - 'Text Plan'\nwould write certificate - 'Text Plan'\n$")
+if(NOT out MATCHES "^would write key - 'Text Plan'\nwould write certificate - 'Text Plan'\nwould write crl - 'Text Plan'\n$")
   fail("--plan --text: ${out}")
 endif()
 

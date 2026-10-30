@@ -20,7 +20,9 @@
 #define __BXC_PKI_CLI_H
 
 #include <functional>
+#include <memory>
 
+#include <QDateTime>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QList>
@@ -29,15 +31,20 @@
 #include <QStringList>
 
 #include "lib/audit.h"
+#include "lib/crl_policy.h"
+#include "lib/digest.h"
 #include "lib/exception.h"
 #include "lib/issuance.h"
 #include "lib/pass_info.h"
 
 class pki_base;
+class pki_crl;
 class pki_key;
 class pki_x509;
 class pki_x509req;
 class pki_temp;
+class StagedDirectory;
+class StagedFile;
 class x509name;
 
 namespace bxcpki {
@@ -121,6 +128,7 @@ class Options
 /* --- Commands -------------------------------------------------------- */
 
 class ResultCollector;
+class OutputFiles;
 
 class CommandContext
 {
@@ -138,6 +146,9 @@ class CommandContext
 	/* Opens --db; for a command that needs the database only for some
 	 * inputs (show without --file) */
 	std::function<void()> openDatabase{};
+	/* The files of --out and export (BTD-42): staged by the handlers
+	 * before the commit, published by the runner after it */
+	OutputFiles *files{};
 };
 
 class Command
@@ -215,7 +226,155 @@ class ResultCollector
 	{
 		return objects.size();
 	}
+
+	/* Members of BTD-42 beside objects: files (OutputFiles), crls
+	 * (crlReport()), trust_list, warnings. A member is present only
+	 * when a command sets it. */
+	void set(const QString &member, const QJsonValue &v);
+	void append(const QString &member, const QJsonValue &v);
+	/* A warning the command accepted, e.g. budget_exceeded,
+	 * crl_reissue_due (with --force); also printed on stderr */
+	void warning(const QString &code, const QString &detail);
+	/* "certificate 7 'plc10', crl 8 'BxC Root'": the objects that are
+	 * stored, for an error after the commit (rule 11) */
+	QString storedText() const;
+
+  private:
+	QJsonObject extra{};
+	QStringList textWarnings{};
 };
+
+/* --- Files (BTD-42) ---------------------------------------------------- */
+
+/* The files of one command: each is staged (written to a temporary file
+ * beside its target, lib/staged_file.h) before the commit and published
+ * after it; with --plan only the target is checked. */
+class OutputFiles
+{
+  public:
+	class entry
+	{
+	  public:
+		QString path{};
+		QString kind{};          // key, csr, crt, crl, der, p12, ...
+		QString objectType{};
+		qint64 objectId{};
+		QString objectName{};
+		bool secret{};
+		qint64 size{};
+		QString sha256{};
+		QJsonObject info{};       // more members, e.g. ml_dsa_encoding
+		std::shared_ptr<StagedFile> file{};
+	};
+
+  private:
+	QList<entry> files{};
+	bool force{};
+	bool plan{};
+	bool done{};
+	/* the directory replaced as a whole (trust lists) */
+	std::shared_ptr<StagedDirectory> directory{};
+	QString plannedDirectory{};
+
+  public:
+	OutputFiles(bool forceReplace, bool planOnly)
+		: force(forceReplace), plan(planOnly)
+	{
+	}
+	/* Stages data for path (absolute or relative to the working
+	 * directory); throws file_exists, invalid_output, write_failed. Two
+	 * files of one command with the same path are file_exists too. */
+	void add(const QString &path, const QString &kind, const pki_base *pki,
+			const QByteArray &data, bool secret,
+			const QJsonObject &info = QJsonObject());
+	/* --plan: the checks of add() without writing; the path may hold
+	 * "{id}" for an id not known yet */
+	void planned(const QString &path, const QString &kind,
+			const QString &type, const QString &name, bool secret);
+	/* A directory replaced as a whole (trust lists, review of
+	 * xca#62): checked and staged now (lib/staged_file.h
+	 * StagedDirectory: empty, or exactly an earlier export whose
+	 * marker file is a JSON manifest with this schema); the files
+	 * added below it go to its sibling and become visible together
+	 * in publish(). --plan: the checks only. */
+	void addDirectory(const QString &dir, const QString &marker,
+			const QString &schema);
+	/* After publish(): old content of the directory that could not be
+	 * removed (files that appeared during the run); empty if none */
+	QString leftover() const;
+	/* After the commit; throws the error of the first file that fails,
+	 * the files before it stay published */
+	void publish();
+	void discard();
+	/* Whether the file of e is visible under its path */
+	bool written(const entry &e) const;
+	bool isEmpty() const
+	{
+		return files.isEmpty();
+	}
+	QList<entry> all() const
+	{
+		return files;
+	}
+	QJsonArray json() const;
+};
+
+/* --out <dir> [--layout id|certstrap] [--force] and, for commands that
+ * write a key, --key-unencrypted and --no-key-file */
+QList<OptionSpec> outOptions(bool withKey);
+/* The file name part of an internal name: certstrap replaces spaces by
+ * '_'; bxc-pki also every character outside [A-Za-z0-9._+@-] and a
+ * leading '.', so a name never leaves the directory or hides */
+QString fileBase(const QString &name);
+/* <dir>/<base>-<id>.<ext> (layout id, default) or <dir>/<base>.<ext>
+ * (layout certstrap) */
+QString outPath(const CommandContext &ctx, const QString &dir,
+		const QString &name, qint64 id, const QString &ext);
+/* Up-front checks of the --out options of a command that writes a key
+ * (before anything is generated): an encrypted key file needs
+ * --export-pass (missing_password naming the option) */
+void checkOutOptions(const CommandContext &ctx, bool writesKey);
+/* --out of init, request-cert, sign, crl, revoke: writes one file of
+ * the certstrap layout for pki (kind key, csr, crt or crl); with --plan
+ * only the check under its planned name */
+void writeOut(CommandContext &ctx, pki_base *pki, const QString &kind,
+		const QString &plannedName = QString());
+
+/* --- CRLs (BTD-42) ------------------------------------------------------ */
+
+/* --crl-validity, --crl-reissue-fraction, --crl-size-budget */
+QList<OptionSpec> crlOptions(const QString &scope);
+bool hasCrlOptions(const Options &o);
+/* The CA's stored setting with the options of the command over it */
+CrlPolicy crlPolicy(const Options &o, const pki_x509 *ca);
+/* Issues a CRL of ca with policy (nextUpdate = thisUpdate + validity),
+ * records it in the result (object and crls report) and returns it;
+ * with --plan only the checks without signature and nullptr */
+pki_crl *issueCrl(CommandContext &ctx, pki_x509 *ca, const CrlPolicy &policy,
+		const QString &trigger, const QDateTime &thisUpdate = QDateTime(),
+		bool report = true);
+/* Rule 7: issues a new CRL when the latest one of ca is past its
+ * re-issue point (or expired). Returns the new CRL or nullptr. */
+pki_crl *reissueIfDue(CommandContext &ctx, pki_x509 *ca,
+		const CrlPolicy &policy);
+/* The crls entry of the result: sizes, budget, re-issue point and the
+ * remaining validity */
+QJsonObject crlReport(const pki_crl *crl, const CrlPolicy &policy,
+		const QDateTime &now);
+
+/* --- Shared helpers of the handlers ----------------------------------- */
+
+OptionSpec opt(const QString &name, enum OptionSpec::kind type,
+		const QString &valueName, const QString &help,
+		bool repeatable = false, bool required = false);
+QDateTime nowSeconds();
+/* --hash or the default for the key type of signKey */
+digest hashFrom(const Options &o, const pki_key *signKey);
+/* --plan: decrypts the key (checks its password), signs nothing */
+void unlockCheck(const pki_key *key);
+
+void registerLifecycleCommands(Registry &r);  // revoke, crl
+void registerExportCommands(Registry &r);     // export
 
 /* --- Runner ----------------------------------------------------------- */
 
@@ -240,6 +399,13 @@ T *resolveAs(const QString &ref, const QString &kind, const QString &option)
 {
 	return dynamic_cast<T *>(resolve(ref, QStringList(kind), option));
 }
+/* A refusal of a handler before its service call (review of xca#62):
+ * the failure entry of action the service would have written; pki is
+ * the object if known. Not under --plan, whose cli.plan entry records
+ * the run. */
+void auditRefusal(const CommandContext &ctx, const QString &action,
+		const pki_base *pki, const AuditParams &params,
+		const QString &code);
 
 /* RFC 4514 distinguished name; order kept, multi-valued RDNs (+),
  * UTF8String for directory strings. Throws usageError invalid_subject. */

@@ -391,6 +391,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		params.set("format", (qint64)xport->id);
 	if (!spec.fileName.isEmpty())
 		params.set("file", spec.fileName);
+	else if (!spec.publishedFile.isEmpty())
+		params.set("file", spec.publishedFile);
 	params.set("count", (qint64)spec.items.size());
 	if (spec.items.size() == 1 && spec.items[0])
 		params.set("name", spec.items[0]->getIntName());
@@ -477,8 +479,12 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 				throw passwordError(err);
 			}
 			/* PKCS#12 accepts an empty password, OpenSSL's PEM
-			 * and PKCS#8 encryption rejects it */
-			if (pass.isEmpty() && !xport->match_all(F_PKCS12))
+			 * and PKCS#8 encryption rejects it. Outside the GUI
+			 * an empty one is refused for PKCS#12 too: it
+			 * protects nothing, while the result says
+			 * "encrypted" (review of xca#62) */
+			if (pass.isEmpty() && (!xport->match_all(F_PKCS12) ||
+			    ctx.getChannel() != ServiceContext::gui))
 				throw serviceError("missing_password",
 					tr("The password must not be empty"));
 		}
@@ -532,8 +538,11 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			 * nothing */
 			p.set("encrypted", encrypted && !pass.isEmpty());
 			QString enc = pki_evp::MlDsaFormatScope::written(key);
-			if (!enc.isEmpty())
+			if (!enc.isEmpty()) {
 				p.set("ml_dsa_encoding", enc);
+				if (spec.mlDsaWritten)
+					(*spec.mlDsaWritten)[itemId(key)] = enc;
+			}
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}

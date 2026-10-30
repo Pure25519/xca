@@ -9,7 +9,30 @@ bxc-main (bxc-pki fork, unreleased)
    signature: for subjects of the dialog, templates, profiles and the
    bxc-pki --subject option, and for subjects copied byte-faithfully from
    a device CSR. The New Certificate dialog no longer offers "Continue
-   rollout" for an overlong value.
+   rollout" for an overlong value. Stored templates and registrations
+   whose values exceed the bounds now fail with invalid_dn_value instead
+   of a warning; shorten the value in the template.
+ * BTD-42: bxc-pki command line part 2: revoke (by name, serial or
+   SHA-256 fingerprint; reason required; issuer checked) with the new CRL
+   of the CA at once, crl, export (pem, der, pkcs8, p12, chain and the
+   trust list in the target formats opcua-dir, pem-bundle, der-files) and
+   --out with the certstrap file names. init issues the empty CRL of the
+   new CA (its result lists the CRL too). CRL settings per CA (validity,
+   re-issue at one third, size budget); sign and the trust-list export
+   renew a CRL past its re-issue point. All files are staged, written
+   atomically (keys owner-only) and published after the database commit
+   (lib/staged_file.h); a key file is refused before the commit on a
+   file system that cannot keep it owner-only and removed again if the
+   check after writing fails. The trust list replaces its directory as a
+   whole (staged beside it, swapped in; only an empty directory or
+   exactly an earlier trust list, checked again before the swap, and only
+   its files are removed), names a CRL after its CA and
+   accepts a missing or stale CRL only with --allow-stale-crl (--force
+   only replaces files). A serial of digits only is hex; decimal needs
+   dec:. Refusals before a service call are audited; an empty export
+   password is refused, --interactive asks for a new one twice. New
+   audit actions ca.crl_settings and trustlist.export, parameter trigger
+   of crl.generate.
  * BTD-203: the default templates fit the key usage by key type of
    BTD-195, which refused the old TLS_server and TLS_client
    (keyEncipherment and keyAgreement together) for every key type.

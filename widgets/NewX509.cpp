@@ -938,28 +938,39 @@ void NewX509::checkIcon(const QString &text, int nid, QLabel *img)
 	x509v3ext ext;
 	if (text.isEmpty()) {
 		img->clear();
+		img->setAccessibleName(QString());
 		return;
 	}
 	setupTmpCtx();
 	ign_openssl_error();
-	switch (nid) {
-	case NID_name_constraints:
-		ext = getNameConstraints();
-		break;
-	case NID_subject_alt_name:
-		ext = getSubAltName();
-		break;
-	case NID_issuer_alt_name:
-		ext = getIssAltName();
-		break;
-	case NID_crl_distribution_points:
-		ext = getCrlDist();
-		break;
-	case NID_info_access:
-		ext = getAuthInfAcc();
-		break;
-	}
+	ext = lineExt(nid);
 	img->setPixmap(ext.isValid() ? QPixmap(":doneIco") : QPixmap(":warnIco"));
+	/* the icon state for screen readers and the GUI harness */
+	img->setAccessibleName(ext.isValid() ? tr("valid") : tr("invalid"));
+}
+
+/* Runs on every key: an input OpenSSL cannot encode throws since
+ * BTD-197, which is a warning icon here, not a message box. The
+ * validation and the service name the input and the reason. */
+x509v3ext NewX509::lineExt(int nid)
+{
+	try {
+		switch (nid) {
+		case NID_name_constraints:
+			return getNameConstraints();
+		case NID_subject_alt_name:
+			return getSubAltName();
+		case NID_issuer_alt_name:
+			return getIssAltName();
+		case NID_crl_distribution_points:
+			return getCrlDist();
+		case NID_info_access:
+			return getAuthInfAcc();
+		}
+	} catch (errorEx &) {
+		ign_openssl_error();
+	}
+	return x509v3ext();
 }
 
 void NewX509::checkNameConstraints(const QString & text)
@@ -1090,15 +1101,19 @@ enum NewX509::extension_error NewX509::validateExtensions(QString &result)
 		result = errtxt + result;
 	}
 	QString lineext;
-	if (!nameCons->text().isEmpty() && !getNameConstraints().isValid())
+	if (!nameCons->text().isEmpty() &&
+	    !lineExt(NID_name_constraints).isValid())
 		lineext += tr("The Name Constraints are invalid") + "<br>\n";
-	if (!subAltName->text().isEmpty() && !getSubAltName().isValid())
+	if (!subAltName->text().isEmpty() &&
+	    !lineExt(NID_subject_alt_name).isValid())
 		lineext += tr("The Subject Alternative Name is invalid") + "<br>\n";
-	if (!issAltName->text().isEmpty() && !getIssAltName().isValid())
+	if (!issAltName->text().isEmpty() &&
+	    !lineExt(NID_issuer_alt_name).isValid())
 		lineext += tr("The Issuer Alternative Name is invalid") + "<br>\n";
-	if (!crlDist->text().isEmpty() && !getCrlDist().isValid())
+	if (!crlDist->text().isEmpty() &&
+	    !lineExt(NID_crl_distribution_points).isValid())
 		lineext += tr("The CRL Distribution Point is invalid") + "<br>\n";
-	if (!authInfAcc->text().isEmpty() && !getAuthInfAcc().isValid())
+	if (!authInfAcc->text().isEmpty() && !lineExt(NID_info_access).isValid())
 		lineext += tr("The Authority Information Access is invalid") + "<br>\n";
 	if (!lineext.isEmpty()) {
 		if (!result.isEmpty())
@@ -1456,7 +1471,8 @@ void NewX509::accept()
 		setupTmpCtx();
 		// Update SAN and BC of ctx_cert
 		getBasicConstraints();
-		getSubAltName();
+		/* an invalid SAN is left out here; the service refuses it */
+		lineExt(NID_subject_alt_name);
 		for (pki_x509 *crt = getSelectedSigner(), *oldcrt = nullptr;
 			crt && crt != oldcrt;
 			oldcrt = crt, crt = crt->getSigner())

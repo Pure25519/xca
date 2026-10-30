@@ -292,6 +292,23 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 				.arg(p->getType()).toUtf8());
 		try {
 			*passwd = readPass();
+			/* a new secret (write): not empty, typed twice
+			 * (review of xca#62) */
+			if (write && passwd->isEmpty())
+				throw secretError(secretError::missing,
+					QObject::tr("The %1 must not be empty: %2")
+					.arg(p->getType())
+					.arg(p->getDescription()));
+			if (write) {
+				console_write(stderr, QString(COL_LRED "%1:"
+					COL_RESET).arg(QObject::tr("Repeat %1")
+					.arg(p->getType())).toUtf8());
+				if (readPass() != *passwd)
+					throw secretError(secretError::rejected,
+						QObject::tr("The two entries of "
+						"the %1 differ").arg(
+						p->getType()));
+			}
 		} catch (secretError &err) {
 			err.purpose = p->getPurpose();
 			throw;
