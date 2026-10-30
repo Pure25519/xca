@@ -178,10 +178,14 @@ static AuditParams keyjobParams(const keyjob &task, const QString &name)
 	p.set("name", name);
 	if (!task.ktype.name.isEmpty())
 		p.set("key_type", task.ktype.name);
-	if (task.isEC() && task.ec_nid != NID_undef)
-		p.set("curve", OBJ_nid2sn(task.ec_nid));
-	else if (!task.isFixed())
+	/* only what was requested for a real type: no size for an unknown
+	 * type, an EC job without a known curve or a fixed type (BTD-184) */
+	if (task.isEC()) {
+		if (task.ec_nid != NID_undef)
+			p.set("curve", OBJ_nid2sn(task.ec_nid));
+	} else if (task.ktype.isValid() && !task.isFixed()) {
 		p.set("key_size", task.size);
+	}
 	return p;
 }
 
