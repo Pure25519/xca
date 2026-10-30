@@ -187,6 +187,11 @@ endforeach()
 target_compile_definitions(test_service_template_migration PRIVATE
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 
+# the default templates of misc/ against every key type (BTD-203)
+ServiceTest(test_service_default_templates)
+target_compile_definitions(test_service_default_templates PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+
 # xca --no-gui exits 1 when a command fails, 0 when it succeeds
 add_test(NAME test_cli_exit_codes
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

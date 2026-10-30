@@ -1506,6 +1506,8 @@ void NewX509::accept()
 		}
 	}
 	/* the checks the issuance runs, while the input is still here */
+	if (pt == x509 && !keyUsageFitsKey())
+		return;
 	if (pt == x509) {
 		try {
 			AuditParams params;
@@ -1519,6 +1521,54 @@ void NewX509::accept()
 		}
 	}
 	XcaDetail::accept();
+}
+
+/* Key usage by key type (BTD-195, BTD-203): bits the subject key cannot
+ * use are never stripped silently. The dialog shows the error of the
+ * service check and offers to remove them; the audit entry of the
+ * issuance names the removed bits (ku_removed). Without the click the
+ * dialog stays open. Bits a CSR adds through the merge modes are checked
+ * when the certificate is built. */
+bool NewX509::keyUsageFitsKey()
+{
+	IssuanceSpec spec = getIssuanceSpec();
+	pki_key *requestKey = spec.request ? spec.request->getPubKey() : nullptr;
+	pki_key *key = spec.request ? requestKey : spec.key;
+	QStringList unfit;
+	QString error;
+	if (key) {
+		unfit = IssuanceChecks::keyUsageUnfit(key->getPubKey(),
+				spec.extensions.keyUsage);
+		try {
+			IssuanceChecks::keyUsageFits(key->getPubKey(),
+				spec.extensions.keyUsage, spec.templateName.isEmpty() ?
+				tr("key usage of the certificate") :
+				tr("template '%1'").arg(spec.templateName));
+		} catch (serviceError &err) {
+			error = err.getString();
+		}
+	}
+	delete requestKey;
+	if (unfit.isEmpty())
+		return true;
+	xcaWarningBox msg(this, tr("The certificate cannot be issued: %1")
+		.arg(error));
+	msg.setInformativeText(tr("Removing the bits %1 issues the certificate without them; the audit log records the removal.")
+		.arg(unfit.join(", ")));
+	msg.addButton(QMessageBox::Ok, tr("Edit"));
+	msg.addButton(QMessageBox::Apply, tr("Remove unfitting key usage bits"));
+	if (msg.exec() != QMessageBox::Apply)
+		return false;
+	for (int i = 0; i < keyUsage->count() &&
+			i < TemplateSpec::keyUsageNames.size(); i++) {
+		if (unfit.contains(TemplateSpec::keyUsageNames[i]))
+			keyUsage->item(i)->setSelected(false);
+	}
+	for (const QString &bit : unfit) {
+		if (!keyUsageRemoved.contains(bit))
+			keyUsageRemoved << bit;
+	}
+	return true;
 }
 
 void NewX509::showTemp(QWidget *parent, pki_temp *x)

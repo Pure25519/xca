@@ -1,7 +1,7 @@
 {
   "schema": "urn:bxc-pki:schema:profile:v1.1",
   "id": "xca-tls-server",
-  "description": "XCA default template TLS_server (misc/TLS_server.xca) with its key usage split by key type, since keyEncipherment and keyAgreement together fit no key (BTD-195): digitalSignature, nonRepudiation and keyEncipherment for RSA, keyAgreement instead of keyEncipherment for EC; serverAuth, the CN as dNSName (DNS:copycn), 365 days.",
+  "description": "XCA default templates TLS_server (misc/TLS_server.xca, RSA keys) and TLS_server_EC (misc/TLS_server_EC.xca, EC keys), with the key usage by key type of BTD-195 (BTD-203): digitalSignature, nonRepudiation, keyEncipherment for RSA, digitalSignature, nonRepudiation for EC; serverAuth, the CN as dNSName (DNS:copycn), 365 days.",
   "family": "generic",
   "key_source": "csr",
   "key_types": [
@@ -23,8 +23,7 @@
     "ec": {
       "bits": [
         "digitalSignature",
-        "nonRepudiation",
-        "keyAgreement"
+        "nonRepudiation"
       ],
       "critical": false
     }

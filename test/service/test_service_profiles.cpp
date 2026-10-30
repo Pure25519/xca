@@ -525,7 +525,7 @@ void test_service_profiles::genericProfiles_data()
 	QTest::newRow("TLS server, CN as dNSName") << "xca-tls-server" << "ec-p256"
 		<< "/CN=server.example" << ""
 		<< QStringList{ "bc! EE",
-			"ku digitalSignature,nonRepudiation,keyAgreement",
+			"ku digitalSignature,nonRepudiation",
 			"eku serverAuth", "san DNS:server.example" };
 	QTest::newRow("TLS client") << "xca-tls-client" << "rsa-2048"
 		<< "/CN=client" << ""

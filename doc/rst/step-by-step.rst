@@ -65,8 +65,13 @@ Creating a CA-Signed Host Certificate
 3) Make sure the *Source* tab is showing, clicking it if necessary.
 
    - At the bottom of the panel, select the template "(default) TLS_server"
+     for an RSA key or "(default) TLS_server_EC" for an EC, EdDSA,
+     ML-DSA or SLH-DSA key
      (or another suitable template, if you have created your own)
-     and click the *Apply* button. This will fill in appropriate values
+     and click the *Apply* button. A key usage the key cannot use
+     (keyEncipherment on an EC key, keyAgreement on an RSA key) is
+     refused; the dialog offers "Remove unfitting key usage bits", and
+     the audit log records the removal. This will fill in appropriate values
      under the *Extensions*, *Key Usage*, and *Netscape* tabs.
    - In the Signing section, select the certificate that will be used to
      sign the new certificate.

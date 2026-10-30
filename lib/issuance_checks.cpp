@@ -645,17 +645,26 @@ QStringList IssuanceChecks::keyUsageAllowed(const EVP_PKEY *key,
 	return all;
 }
 
+QStringList IssuanceChecks::keyUsageUnfit(const EVP_PKEY *key,
+			const QStringList &bits, QString *keyType)
+{
+	QStringList allowed = keyUsageAllowed(key, keyType), unfit;
+	for (const QString &bit : bits) {
+		if (!allowed.contains(bit))
+			unfit << bit;
+	}
+	return unfit;
+}
+
 void IssuanceChecks::keyUsageFits(const EVP_PKEY *key,
 			const QStringList &bits, const QString &source)
 {
 	QString type;
-	QStringList allowed = keyUsageAllowed(key, &type);
-	for (const QString &bit : bits) {
-		if (!allowed.contains(bit))
-			throw serviceError("key_usage_not_for_key_type",
-				tr("A %1 key cannot use the key usage %2 (%3); remove %2 there or choose another key type")
-				.arg(type, bit, source));
-	}
+	QStringList unfit = keyUsageUnfit(key, bits, &type);
+	if (!unfit.isEmpty())
+		throw serviceError("key_usage_not_for_key_type",
+			tr("A %1 key cannot use the key usage %2 (%3); remove %2 there, use a template or profile for %1 keys or choose another key type")
+			.arg(type, unfit.join(", "), source));
 }
 
 void IssuanceChecks::certificate(const IssuanceSpec &spec,
