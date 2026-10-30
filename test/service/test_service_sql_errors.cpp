@@ -113,6 +113,10 @@ class test_service_sql_errors : public ServiceTestCase
 	void issueFromRequestStops();
 	void privateKeyUpdate();
 	void taKeyNotStored();
+	void noStatementInText();
+	void codePerDriver_data();
+	void codePerDriver();
+	void commitErrorReachesCaller();
 };
 
 void test_service_sql_errors::cleanup()
@@ -359,6 +363,99 @@ void test_service_sql_errors::taKeyNotStored()
 	QCOMPARE(r.first, QString("database_error"));
 	QVERIFY2(r.second.contains(INJECTED), CCHAR(r.second));
 	QCOMPARE(rows("takeys"), 0);
+}
+
+/* The text of a typed SQL error never carries the statement or its bound
+ * values: the driver text of XSqlQuery holds both, and a value may be a
+ * tls-auth key or an encrypted private key (review of xca#68, blocker 2).
+ * An empty databaseText(), e.g. "Parameter count mismatch" after a failed
+ * prepare, used to put the driver text into the message. */
+void test_service_sql_errors::noStatementInText()
+{
+	const char secret[] = "BTD50-SECRET-tls-auth-0123456789abcdef";
+	XSqlQuery q;
+	Transaction;
+	QVERIFY(TransBegin());
+	SQL_PREPARE(q, "SELECT 1");
+	q.bindValue(0, QString(secret));
+	q.bindValue(1, QString(secret));
+	auto r = codeOf([&]() { execOrThrow(q, "BTD-50 statement"); });
+	TransRollback();
+	QVERIFY2(!r.first.isEmpty(), "the statement did not fail");
+	QVERIFY2(!r.second.contains(secret), CCHAR(r.second));
+	QVERIFY2(!r.second.contains("SELECT"), CCHAR(r.second));
+	QVERIFY2(r.second.startsWith("BTD-50 statement"), CCHAR(r.second));
+
+	/* the same for an error without databaseText at all */
+	QSqlError e(QString("driver - sql.cpp:1 (INSERT INTO takeys "
+		"VALUES (?)[%1])").arg(secret), QString(),
+		QSqlError::StatementError, "1");
+	r = codeOf([&]() { throwSqlError(e, "BTD-50 driver text"); });
+	QCOMPARE(r.first, QString("database_error"));
+	QCOMPARE(r.second, QString("BTD-50 driver text"));
+}
+
+void test_service_sql_errors::codePerDriver_data()
+{
+	QTest::addColumn<QString>("driver");
+	QTest::addColumn<QString>("native");
+	QTest::addColumn<QString>("code");
+
+	QTest::newRow("SQLite read-only") << "QSQLITE" << "8"
+		<< "read_only_database";
+	QTest::newRow("SQLite file moved") << "QSQLITE" << "1032"
+		<< "read_only_database";
+	QTest::newRow("SQLite full") << "QSQLITE" << "13" << "disk_full";
+	QTest::newRow("SQLite constraint") << "QSQLITE" << "19"
+		<< "database_error";
+	/* the low-byte rule of SQLite would make these 8 and 13 */
+	QTest::newRow("PostgreSQL 53000") << "QPSQL" << "53000"
+		<< "database_error";
+	QTest::newRow("PostgreSQL read-only") << "QPSQL" << "25006"
+		<< "read_only_database";
+	QTest::newRow("PostgreSQL disk full") << "QPSQL" << "53100"
+		<< "disk_full";
+	QTest::newRow("MySQL 1032") << "QMYSQL" << "1032" << "database_error";
+	QTest::newRow("MySQL 1037") << "QMYSQL" << "1037" << "database_error";
+	QTest::newRow("MySQL read-only") << "QMYSQL" << "1290"
+		<< "read_only_database";
+	QTest::newRow("MariaDB disk full") << "QMARIADB" << "1021"
+		<< "disk_full";
+	QTest::newRow("ODBC") << "QODBC" << "8" << "database_error";
+}
+
+/* read_only_database and disk_full per driver, not the low byte of any
+ * native code (review of xca#68, MINOR 3) */
+void test_service_sql_errors::codePerDriver()
+{
+	QFETCH(QString, driver);
+	QFETCH(QString, native);
+	QFETCH(QString, code);
+	QCOMPARE(sqlErrorCode(driver, native), code);
+}
+
+/* SQLite reports some errors only at COMMIT (a full disk, a deferred
+ * constraint): the service functions threw a generic "Failed to commit"
+ * without the reason. A deferred foreign key stands in for the full disk
+ * (review of xca#68, MINOR 4). */
+void test_service_sql_errors::commitErrorReachesCaller()
+{
+	QCOMPARE(sql("PRAGMA foreign_keys=ON"), QString());
+	QCOMPARE(sql("CREATE TEMP TABLE btd50_parent (id INTEGER PRIMARY KEY)"),
+		QString());
+	QCOMPARE(sql("CREATE TEMP TABLE btd50_child (p INTEGER REFERENCES "
+		"btd50_parent(id) DEFERRABLE INITIALLY DEFERRED)"), QString());
+	QCOMPARE(sql("CREATE TEMP TRIGGER btd50_commit AFTER INSERT ON items "
+		"BEGIN INSERT INTO btd50_child VALUES (42); END"), QString());
+	int items = rows("items");
+	auto r = codeOf([&]() { key("commit refused"); });
+	sql("DROP TRIGGER temp.btd50_commit");
+	sql("PRAGMA foreign_keys=OFF");
+	QCOMPARE(r.first, QString("database_error"));
+	QVERIFY2(r.second.contains("FOREIGN KEY constraint failed"),
+		CCHAR(r.second));
+	QCOMPARE(rows("items"), items);
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_sql_errors)
