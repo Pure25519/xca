@@ -73,6 +73,9 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		kvmodel *extDNmodel{};
 		extList getExtDuplicates(const extList &el);
 		void checkIcon(const QString &text, int nid, QLabel*img);
+		/* the extension of one line edit, invalid if OpenSSL
+		 * cannot build it from the input (BTD-197) */
+		x509v3ext lineExt(int nid);
 		void selfComment(QString msg);
 		pki_temp *caTemplate(pki_x509 *ca) const;
 		void setupExplicitDN(NIDlist my_dn_nid);
