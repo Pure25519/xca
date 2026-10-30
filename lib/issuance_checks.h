@@ -57,8 +57,10 @@ namespace IssuanceChecks
 	/* The CSR (BTD-65): its signature digest (never MD5, SHA-1 by
 	 * CsrPolicy::csrSha1), the proof of possession, keyCertSign or
 	 * cA=TRUE in a leaf request, forbidden subject characters and the
-	 * ApplicationUri. Writes csr_signature_algorithm and, for an
-	 * accepted SHA-1 signature, warning=csr_sha1_accepted. */
+	 * SAN rules of the profile. Writes csr_signature_algorithm and, for
+	 * an accepted SHA-1 signature, warning=csr_sha1_accepted. Without a
+	 * CSR, under a profile: DNS:copycn in the registration is refused
+	 * unless the profile takes the dNSName from the CN (BTD-191). */
 	void request(const IssuanceSpec &spec, AuditParams &params);
 
 	/* The issuer of a CRL (BTD-188), before the CRL number and any
@@ -67,12 +69,17 @@ namespace IssuanceChecks
 	 * (issuer_no_crlsign; without key usage warning
 	 * issuer_without_key_usage, RFC 5280 6.1.4 (n) as for keyCertSign),
 	 * valid now (issuer_expired, issuer_not_yet_valid), signkey its key
-	 * (issuer_key_mismatch). The same codes as for certificates. */
+	 * (issuer_key_mismatch). The same codes as for certificates. An
+	 * expired CA issues no CRL, not even a last one (boss decision,
+	 * review of xca#55): since BTD-51 every certificate of a CA ends
+	 * with it, so their revocation status no longer matters. */
 	void crlIssuer(const pki_x509 *ca, pki_key *signkey,
 			const digest &hashAlgo, AuditParams &params);
 
-	/* The certificate to be signed: one instance per extension, and the
-	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them */
+	/* The certificate to be signed: one instance per extension, the
+	 * OPC UA chain rules (PLAN.md 14.4) when the spec asks for them, and
+	 * for a server-side key under a profile the SAN rules of the CSR
+	 * path on the SAN as built into the certificate (BTD-191) */
 	void certificate(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
 
