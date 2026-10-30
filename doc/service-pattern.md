@@ -183,6 +183,13 @@ after a failure checks the OpenSSL result itself:
   request's extensions, the merge and order paths of the issuance; an extension of a request that
   does not decode is `invalid_request_extension` with its name, not taken for absent (BTD-197).
   Before, the object was signed without the extension and audited as success.
+- A URI, rfc822Name or dNSName of the SAN is an IA5String (RFC 5280 4.2.1.6): one with a byte
+  above 0x7F is `san_not_ia5` naming the entry, never converted, because an OPC UA
+  ApplicationUri is compared byte for byte. `IssuanceChecks::sanIa5()` runs in
+  `IssuanceChecks::names()` on every certificate path (dialog, template, profile, registration
+  URI, a signed device CSR: refused, not repaired; a non-ASCII dNSName there stays
+  `invalid_dns_name`) and in `db_x509req::create()` for CSR creation (BTD-208). An IRI is written
+  as a URI (RFC 3987), an IDN as A-labels.
 - The CRL build checks every step (version, issuer, each revoked entry with serial, date, reason
   and invalidity date, AKI, IAN, CRL number, update times) and compares the built CRL with the
   revocations it was built from before signing; a failure or a difference is `crl_build_failed`

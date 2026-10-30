@@ -16,6 +16,8 @@
 #include "request.h"
 #include "XcaWarningCore.h"
 
+#include <openssl/x509v3.h>
+
 db_x509req::db_x509req() : db_x509super("requests")
 {
 	sqlHashTable = "requests";
@@ -99,6 +101,19 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 				spec.challengePassword);
 	req->createReq(spec.key, spec.subject, spec.hashAlgo,
 				spec.buildExtensions());
+	/* IA5String names of the SAN: ASCII only (BTD-208) */
+	STACK_OF(X509_EXTENSION) *exts =
+			X509_REQ_get_extensions(req->getReq());
+	GENERAL_NAMES *san = (GENERAL_NAMES *)X509V3_get_d2i(exts,
+			NID_subject_alt_name, nullptr, nullptr);
+	sk_X509_EXTENSION_pop_free(exts, X509_EXTENSION_free);
+	try {
+		IssuanceChecks::sanIa5(san);
+	} catch (...) {
+		GENERAL_NAMES_free(san);
+		throw;
+	}
+	GENERAL_NAMES_free(san);
 	req->setComment(spec.comment);
 
 	params.set("subject", req->getSubject().oneLine());
