@@ -33,13 +33,10 @@ class crlWarnings : public xcaWarningCore
 	}
 };
 
-static void acceptCrlDialog()
+/* runs in the dialog's event loop (whenShown(), BTD-180) */
+static void acceptCrlDialog(QDialog *dlg)
 {
-	QDialog *dlg = test_main::findWindow<QDialog>("XcaDialog");
-	if (!dlg)
-		return;
-	QMetaObject::invokeMethod(dlg, [dlg]() { dlg->accept(); },
-			Qt::BlockingQueuedConnection);
+	dlg->accept();
 }
 
 void test_main::crlRefusedWithoutCrlSign()
@@ -65,11 +62,8 @@ void test_main::crlRefusedWithoutCrlSign()
 
 		crlErrors.clear();
 		xcaWarning::setGui(new crlWarnings());
-		QThread *job = QThread::create(acceptCrlDialog);
-		job->start();
+		whenShown<QDialog>("XcaDialog", acceptCrlDialog);
 		NewCrl::newCrl(mainwin, ca);
-		job->wait();
-		delete job;
 		xcaWarning::setGui(new xcaWarningCore());
 
 		QCOMPARE(crlErrors.size(), 1);
