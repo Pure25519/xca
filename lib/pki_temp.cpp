@@ -192,6 +192,7 @@ static int bitsToInt(extList &el, int nid, bool *crit)
 			if (ASN1_BIT_STRING_get_bit(bits, j))
 				ret |= 1 << j;
 		}
+		ASN1_BIT_STRING_free(bits);
 		el.removeAt(i);
 	}
 	return ret;

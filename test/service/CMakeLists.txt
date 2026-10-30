@@ -36,6 +36,9 @@ ServiceTest(test_service_harness)
 # Key usage by the subject key type, every issuance (BTD-195)
 ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
+# the source scan for printf conversions in .arg() messages (BTD-184)
+target_compile_definitions(test_service_key PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE
@@ -159,6 +162,9 @@ ServiceTest(test_service_signing_failure)
 
 # The content of a CRL matches the database, or it is not signed (BTD-198)
 ServiceTest(test_service_crl_build)
+
+# A certificate or request is complete, or it is not stored (BTD-200)
+ServiceTest(test_service_cert_build)
 
 # Every loader checks its OpenSSL result: broken input is an import error,
 # never an empty object (BTD-95)

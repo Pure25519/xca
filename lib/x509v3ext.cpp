@@ -620,7 +620,8 @@ bool x509v3ext::parse_generalName(QString *single, QString *adv) const
 		*adv = QString("%1=%2\n").arg(tag).
 			arg(parse_critical() +ret) + *adv + sect;
 	}
-	sk_GENERAL_NAME_free(gens);
+	/* with its names: sk_GENERAL_NAME_free() left them (BTD-200) */
+	GENERAL_NAMES_free(gens);
 	return retval;
 }
 
@@ -735,6 +736,7 @@ bool x509v3ext::parse_Crldp(QString *single, QString *adv) const
 				else if (adv)
 					*adv = QString("%1=%2\n").arg(sn).
 					       arg(parse_critical() +ret) +*adv;
+				CRL_DIST_POINTS_free(crld);
 				return true;
 			}
 		}
@@ -773,7 +775,8 @@ bool x509v3ext::parse_Crldp(QString *single, QString *adv) const
 		crldps << tag;
 		othersect = crldpsect + othersect;
 	}
-	sk_DIST_POINT_free(crld);
+	/* with its points: sk_DIST_POINT_free() left them (BTD-200) */
+	CRL_DIST_POINTS_free(crld);
 	if (crldps.size() == 0)
 		return true;
 	if (adv) {
@@ -784,7 +787,7 @@ bool x509v3ext::parse_Crldp(QString *single, QString *adv) const
 	return true;
 
 could_not_parse:
-	sk_DIST_POINT_free(crld);
+	CRL_DIST_POINTS_free(crld);
 	return false;
 }
 
@@ -876,7 +879,7 @@ bool x509v3ext::parse_certpol(QString *, QString *adv) const
 	if (retval && adv)
 		*adv = QString("certificatePolicies=%1ia5org,%2\n").
 		arg(parse_critical()).arg(pols.join(", ")) + *adv + myadv;
-	sk_POLICYINFO_free(pol);
+	CERTIFICATEPOLICIES_free(pol);
 	return retval;
 }
 
@@ -1059,7 +1062,7 @@ bool x509v3ext::parse_policyMappings(QString *, QString *adv) const
 		arg(parse_critical()) + *adv +
 		QString("[policyMappings_sect]\n") + polMaps.join("\n");
 	}
-	sk_POLICY_MAPPING_free(pmaps);
+	sk_POLICY_MAPPING_pop_free(pmaps, POLICY_MAPPING_free);
 	return retval;
 }
 

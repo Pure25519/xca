@@ -19,6 +19,7 @@
 #include <QStringList>
 
 #include <openssl/types.h>
+#include <openssl/x509v3.h>
 
 class AuditParams;
 class ExtensionSpec;
@@ -105,12 +106,19 @@ namespace IssuanceChecks
 			const QList<const pki_x509 *> &chain);
 
 	/* The names over the whole chain (BTD-167): the syntax of every
-	 * dNSName (invalid_dns_name), the name constraints of every CA up to
+	 * dNSName (invalid_dns_name), ASCII in every IA5String name
+	 * (san_not_ia5), the name constraints of every CA up to
 	 * the root (name_constraints_violation), the EKU as a subset of the
 	 * EKU of every CA that has one (eku_not_in_issuer), then the name
 	 * policies of the spec (lib/policy.h). */
 	void names(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain);
+
+	/* RFC 5280 4.2.1.6: a URI, rfc822Name or dNSName is an IA5String,
+	 * ASCII only. One with a byte above 0x7F is refused (san_not_ia5),
+	 * never converted: an OPC UA ApplicationUri is compared byte for
+	 * byte (BTD-208). san may be null. */
+	void sanIa5(const GENERAL_NAMES *san);
 }
 
 #endif

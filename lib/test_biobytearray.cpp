@@ -85,6 +85,7 @@ void test_biobytearray::bio_BN()
 	BioByteArray bd(bn);
 	QCOMPARE(bd.byteArray().size(), 5);
 	QCOMPARE(bd.byteArray(), QByteArray::fromHex("0080000000"));
+	BN_free(bn);
 }
 
 void test_biobytearray::bio_base64UrlEncode()

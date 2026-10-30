@@ -26,11 +26,9 @@ static QString dnBoxText;
 static bool dnHadContinue;
 
 /* Answers the error box of the dialog with Ok and notes its text */
-static void answerDnBox()
+/* runs in the box's event loop (whenShown(), BTD-180) */
+static void answerDnBox(xcaWarningBox *box)
 {
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (!box)
-		return;
 	dnBoxText = box->text();
 	dnHadContinue = box->button(QMessageBox::Apply) != nullptr;
 	box->button(QMessageBox::Ok)->click();
@@ -73,11 +71,8 @@ void test_main::dnUpperBounds()
 
 		dnBoxText.clear();
 		dnHadContinue = false;
-		QThread *job = QThread::create(answerDnBox);
-		job->start();
+		whenShown<xcaWarningBox>("dlg_warning", answerDnBox);
 		dlg->accept();
-		job->wait();
-		delete job;
 		QVERIFY2(dnBoxText.contains("countryName") &&
 			 dnBoxText.contains("exactly 2"), CCHAR(dnBoxText));
 		QVERIFY(!dnHadContinue);

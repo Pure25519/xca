@@ -156,7 +156,9 @@ void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)
 		inheritFilename(cert);
 		append_item(cert);
 	}
-	sk_X509_free(certstack);
+	/* the originals too: the certificates are copies, and the stack is
+	 * no longer part of myp7 (BTD-200) */
+	sk_X509_pop_free(certstack, X509_free);
 	PKCS7_free(myp7);
 }
 

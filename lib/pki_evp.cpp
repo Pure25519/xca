@@ -18,6 +18,7 @@
 #include "PwDialogCore.h"
 #include "XcaWarningCore.h"
 
+#include <memory>
 #include <openssl/rand.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
@@ -79,10 +80,14 @@ void pki_evp::setOwnPass(enum passType x)
 		key = pk;
 		ownPass = x;
 		encryptKey();
+		/* the old public key, kept for a failure (BTD-200) */
+		EVP_PKEY_free(pk_back);
 	}
 	catch (errorEx &err) {
-		if (pk)
-			EVP_PKEY_free(pk);
+		/* pk, or the public key encryptKey() replaced it with and
+		 * freed it: freeing pk again was a double free (BTD-200) */
+		if (key != pk_back)
+			EVP_PKEY_free(key);
 		key = pk_back;
 		ownPass = oldOwnPass;
 		throw;
@@ -1228,25 +1233,21 @@ void pki_evp::write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const
 }
 void pki_evp::writeSSH2private(QIODevice &file) const
 {
-	EVP_PKEY *pkey = decryptKey();
+	/* freed on every path: a failed writeKey() kept the decrypted key
+	 * in memory (BTD-200) */
+	std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(
+		decryptKey(), &EVP_PKEY_free);
 	export_check(pkey != nullptr, "decryptKey", what());
 #ifdef EVP_PKEY_ED25519
 	if (getKeyType() == EVP_PKEY_ED25519) {
 		BioByteArray b;
-		try {
-			write_SSH2_ed25519_private(b, pkey);
-		} catch (...) {
-			EVP_PKEY_free(pkey);
-			throw;
-		}
-		EVP_PKEY_free(pkey);
+		write_SSH2_ed25519_private(b, pkey.get());
+		pkey.reset();
 		export_write(file, b, what());
 		return;
 	} else
 #endif
 		writeKey(file, nullptr, Passwd(), true);
-
-	EVP_PKEY_free(pkey);
 }
 
 bool pki_evp::verify(EVP_PKEY *pkey) const
