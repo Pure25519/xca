@@ -10,6 +10,7 @@
  */
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QSqlQuery>
 
 #include "lib/audit.h"
@@ -66,6 +67,10 @@ class test_service_names : public ServiceTestCase
 	void strictIssuerKeyUsage();
 	void uniquenessWithStatusFilter();
 	void invalidPolicy();
+	void otherNameForms_data();
+	void otherNameForms();
+	void ruleBoundaries_data();
+	void ruleBoundaries();
 };
 
 IssuanceSpec test_service_names::caSpec(const QString &cn, pki_x509 *signer)
@@ -164,6 +169,10 @@ void test_service_names::dnsSyntax_data()
 	QTest::newRow("wildcard inside") << "DNS:www.*.example" << "invalid_dns_name";
 	QTest::newRow("hyphen first") << "DNS:-plc.example" << "invalid_dns_name";
 	QTest::newRow("underscore") << "DNS:plc_10.example" << "invalid_dns_name";
+	QTest::newRow("wildcard on a TLD") << "DNS:*.com" << "invalid_dns_name";
+	QTest::newRow("IP address as name") << "DNS:10.0.0.1" << "invalid_dns_name";
+	QTest::newRow("longer than 253") << "DNS:" + QString("a.").repeated(127) + "example"
+		<< "invalid_dns_name";
 }
 
 void test_service_names::dnsSyntax()
@@ -201,6 +210,11 @@ void test_service_names::nameConstraintsOverTheChain()
 	QCOMPARE(attempt(leafSpec("DNS:plc12.other.example", mid), &message),
 		QString("name_constraints_violation"));
 	QVERIFY2(message.contains("Line CA"), CCHAR(message));
+	/* a CN that looks like a host name counts when there is no SAN
+	 * (review of xca#56, NAME_CONSTRAINTS_check_CN) */
+	IssuanceSpec cnOnly = leafSpec("", mid);
+	cnOnly.subject = dn("plc13.secret.plant.example");
+	QCOMPARE(attempt(cnOnly, &message), QString("name_constraints_violation"));
 }
 
 /* step-ca #2536: an end entity cannot have purposes its CA does not */
@@ -246,8 +260,11 @@ void test_service_names::policyNames_data()
 		<< "policy_name_denied";
 	QTest::newRow("outside the subtree") << lab << "DNS:www.example.com" << O
 		<< "policy_name_not_allowed";
+	/* it covers the denied ca.lab.bxc-technology.de */
 	QTest::newRow("wildcard without flag") << lab << "DNS:*.lab.bxc-technology.de" << O
-		<< "policy_name_not_allowed";
+		<< "policy_name_denied";
+	QTest::newRow("wildcard without flag, nothing denied below") << lab
+		<< "DNS:*.line1.lab.bxc-technology.de" << O << "policy_name_not_allowed";
 	QTest::newRow("lab network") << lab << "IP:192.168.0.10" << O << "";
 	QTest::newRow("outside the networks") << lab << "IP:172.16.0.1" << O
 		<< "policy_name_not_allowed";
@@ -259,7 +276,9 @@ void test_service_names::policyNames_data()
 	QTest::newRow("other organisation") << lab << "DNS:plc10" << "Other"
 		<< "policy_name_not_allowed";
 
-	QTest::newRow("wildcard allowed") << web << "DNS:*.example.com" << O << "";
+	QTest::newRow("wildcard covering a denied subtree") << web << "DNS:*.example.com"
+		<< O << "policy_name_denied";
+	QTest::newRow("wildcard allowed") << web << "DNS:*.www.example.com" << O << "";
 	QTest::newRow("wildcard in denied subtree") << web << "DNS:*.internal.example.com"
 		<< O << "policy_name_denied";
 	QTest::newRow("host in denied subtree") << web << "DNS:db.internal.example.com"
@@ -400,14 +419,109 @@ void test_service_names::invalidPolicy()
 					{ "pattern", "plc[0-9" } } };
 	names["dns"] = dns;
 	regex["names"] = names;
-	for (const QJsonObject &bad : { v2, empty, regex }) {
+	QList<QJsonObject> bad { v2, empty, regex };
+	/* every rule as the schema has it (review of xca#56, blocker 5) */
+	auto with = [&](const char *form, const char *list, const QJsonValue &rule) {
+		QJsonObject d = doc;
+		QJsonObject n = d["names"].toObject();
+		QJsonObject f = n[form].toObject();
+		f[list] = QJsonArray{ rule };
+		n[form] = f;
+		d["names"] = n;
+		return d;
+	};
+	bad << with("ip", "allow", "192.168.0.10")
+	    << with("ip", "deny", "10.0.0.0/33")
+	    << with("ip", "deny", QJsonObject{ { "network", "10.0.0.0/8" } })
+	    << with("dns", "deny", QJsonObject{ { "type", "subtree " },
+					{ "value", "example.com" } })
+	    << with("dns", "deny", QJsonObject{ { "type", "exact" },
+					{ "value", ".example.com" } })
+	    << with("dns", "allow", QJsonObject{ { "type", "subtree" },
+					{ "value", "example.com" }, { "extra", 1 } })
+	    << with("email", "deny", QJsonObject{ { "type", "mailbox" },
+					{ "value", "a@b@example.com" } })
+	    << with("uri", "deny", QJsonObject{ { "type", "starts-with" },
+					{ "value", "urn:" } })
+	    << with("dn", "allow", QJsonObject{ { "type", "exact" } });
+	for (const QJsonObject &b : bad) {
 		try {
-			Policy::fromJson(bad);
-			QFAIL("accepted");
+			Policy::fromJson(b);
+			QFAIL(QJsonDocument(b["names"].toObject()).toJson().constData());
 		} catch (serviceError &err) {
 			QCOMPARE(err.code, QString("invalid_policy"));
 		}
 	}
+}
+
+/* Blocker 4: names of other forms and the subject emailAddress do not
+ * pass a policy that rules on names */
+void test_service_names::otherNameForms_data()
+{
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("email");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("otherName") << "DNS:plc10, otherName:1.3.6.1.4.1.311.20.2.3;UTF8:ceo@evil.org"
+		<< "" << "policy_name_not_allowed";
+	QTest::newRow("registeredID") << "DNS:plc10, RID:1.2.3.4" << ""
+		<< "policy_name_not_allowed";
+	QTest::newRow("subject emailAddress") << "DNS:plc10" << "ceo@evil.org"
+		<< "policy_name_not_allowed";
+	QTest::newRow("only allowed names") << "DNS:plc10" << "" << "";
+}
+
+void test_service_names::otherNameForms()
+{
+	QFETCH(QString, san);
+	QFETCH(QString, email);
+	QFETCH(QString, code);
+	pki_x509 *ca = issue(caSpec("Policy CA", nullptr));
+	IssuanceSpec spec = leafSpec(san, ca);
+	if (!email.isEmpty()) {
+		x509name n = dn("leaf");
+		n.addEntryByNid(NID_pkcs9_emailAddress, email);
+		spec.subject = n;
+	}
+	spec.policies << policy("ot-lab-names");
+	QCOMPARE(attempt(spec), code);
+}
+
+/* Minors 7 and 8: a URI prefix ends at a boundary, an IPv4-mapped IPv6
+ * address is an IPv4 address */
+void test_service_names::ruleBoundaries_data()
+{
+	QTest::addColumn<QString>("san");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("URI below the prefix") << "URI:https://plc.example.com/opc"
+		<< "";
+	QTest::newRow("URI host continues") << "URI:https://plc.example.com.evil.org/"
+		<< "policy_name_not_allowed";
+	QTest::newRow("URI user part") << "URI:https://plc.example.com@evil.org/"
+		<< "policy_name_not_allowed";
+	QTest::newRow("IPv4") << "IP:192.168.1.5" << "";
+	QTest::newRow("IPv4 denied") << "IP:10.1.2.3" << "policy_name_denied";
+	QTest::newRow("IPv4-mapped denied") << "IP:::ffff:10.1.2.3" << "policy_name_denied";
+}
+
+void test_service_names::ruleBoundaries()
+{
+	QFETCH(QString, san);
+	QFETCH(QString, code);
+	QJsonObject doc {
+		{ "schema", "urn:bxc-pki:schema:policy:v1" },
+		{ "id", "boundaries" },
+		{ "description", "URI prefix and IP rules" },
+		{ "names", QJsonObject{
+			{ "uri", QJsonObject{ { "allow", QJsonArray{ QJsonObject{
+				{ "type", "prefix" },
+				{ "value", "https://plc.example.com" } } } } } },
+			{ "ip", QJsonObject{ { "deny", QJsonArray{ "10.0.0.0/8" } } } },
+		} },
+	};
+	pki_x509 *ca = issue(caSpec("Policy CA", nullptr));
+	IssuanceSpec spec = leafSpec(san, ca);
+	spec.policies << Policy::fromJson(doc);
+	QCOMPARE(attempt(spec), code);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_names)

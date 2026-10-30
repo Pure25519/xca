@@ -217,7 +217,7 @@ void ProfileStore::remove(const ServiceContext &ctx, const QString &kind,
 		} else {
 			/* policies are recorded by name only: any issuance
 			 * under the name keeps every version */
-			SQL_PREPARE(q, "SELECT policies FROM issued_profiles");
+			SQL_PREPARE(q, "SELECT policy_names FROM issued_profiles");
 		}
 		q.exec();
 		throwOnError(q);

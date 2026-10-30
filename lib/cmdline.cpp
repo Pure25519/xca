@@ -312,9 +312,16 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 		try {
-			if (!temp)
+			if (!temp) {
+				AuditParams params;
+				params.set("template", name);
+				AuditLog::appendFailure(ServiceContext::localUser(
+					ServiceContext::cli), "profile.migrate",
+					"profile", QString(), params,
+					"unknown_template");
 				throw serviceError("unknown_template",
 					QString("Template '%1' not found").arg(name));
+			}
 			ProfileStore::Document d = ProfileStore::migrateTemplate(
 				ServiceContext::localUser(ServiceContext::cli),
 				TemplateSpec::fromTemplate(temp), cmd_opts["name"]);

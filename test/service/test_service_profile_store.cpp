@@ -285,7 +285,7 @@ void test_service_profile_store::issuedUnderProfileAndPolicy()
 		QString("ot-lab-names,strict-content"));
 	QCOMPARE(e.params.value("policy_result").toString(), QString("pass"));
 	QSqlQuery q;
-	QVERIFY(q.exec(QString("SELECT profile, version, policies FROM "
+	QVERIFY(q.exec(QString("SELECT profile, version, policy_names FROM "
 		"issued_profiles WHERE item=%1").arg(cert->getSqlItemId().toLongLong())));
 	QVERIFY(q.next());
 	QCOMPARE(q.value(0).toString() + "|" + q.value(1).toString() + "|" +

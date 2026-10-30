@@ -447,7 +447,7 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 		policies << p.id;
 	XSqlQuery q;
 	SQL_PREPARE(q, "INSERT INTO issued_profiles (item, profile, version, "
-		"policies) VALUES (?, ?, ?, ?)");
+		"policy_names) VALUES (?, ?, ?, ?)");
 	q.bindValue(0, cert->getSqlItemId());
 	q.bindValue(1, spec.profile);
 	q.bindValue(2, spec.profileVersion);

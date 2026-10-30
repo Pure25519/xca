@@ -159,8 +159,9 @@ Profile Profile::fromJson(const QJsonObject &doc)
 	QDateTime now = QDateTime::currentDateTimeUtc();
 	QJsonObject validity = doc["validity"].toObject();
 	shifted(now, validity["backdate"].toString("PT0S"), -1);
-	if (shifted(now, validity["default"].toString(), 1) >
-	    shifted(now, validity["max"].toString(), 1))
+	QDateTime byDefault = shifted(now, validity["default"].toString(), 1);
+	if (byDefault <= now || byDefault > shifted(now,
+				validity["max"].toString(), 1))
 		throw invalid("validity");
 	return p;
 }
@@ -215,6 +216,14 @@ QJsonObject Profile::fromTemplate(const TemplateSpec &t, const QString &id)
 		{ "authorityKeyIdentifier", !e.authorityKeyId },
 		{ "ekuDefault", !e.ekuDefault.isEmpty() || !e.ekuAllowed.isEmpty() },
 		{ "midnight", t.midnight },
+		/* merge modes: a profile takes the CSR's SAN by its own rules */
+		{ "reqSan", e.sanMerge != ExtensionSpec::merge_legacy },
+		{ "reqKu", e.kuMerge != ExtensionSpec::merge_legacy },
+		{ "reqEku", e.ekuMerge != ExtensionSpec::merge_legacy },
+		{ "pathLen", e.basicCA == ExtensionSpec::bc_ca &&
+			!e.pathLen.isEmpty() &&
+			!QRegularExpression(QRegularExpression::anchoredPattern(
+				"[0-9]+")).match(e.pathLen).hasMatch() },
 		{ "noWellDefinedExpDate", t.noWellDefinedExpDate },
 	};
 	for (const auto &f : fixed) {
@@ -556,6 +565,10 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			tr("The requested validity '%1' is no ISO 8601 duration")
 			.arg(reg.validity));
 	}
+	if (notAfter <= now)
+		throw serviceError("invalid_validity",
+			tr("The requested validity '%1' ends before it starts")
+			.arg(reg.validity));
 	QDateTime max = shifted(now, validity["max"].toString(), 1);
 	if (notAfter > max) {
 		spec.requestedNotAfter = notAfter;

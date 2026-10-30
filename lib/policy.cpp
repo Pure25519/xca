@@ -13,6 +13,7 @@
 #include <QRegularExpression>
 #include <QUrl>
 
+#include <openssl/err.h>
 #include <openssl/x509v3.h>
 
 #include "exception.h"
@@ -44,6 +45,114 @@ static const QMap<QString, int> &dnAttributes()
 
 static const char *const nameForms[] = { "dns", "ip", "uri", "email", "dn" };
 
+/* An IP network as the schema has it: address/prefix, the prefix in
+ * range for the family */
+static bool cidr(const QString &text, QByteArray *net, int *prefix)
+{
+	if (text.count('/') != 1)
+		return false;
+	bool ok = false;
+	*prefix = text.section('/', 1, 1).toInt(&ok);
+	ASN1_OCTET_STRING *a = a2i_IPADDRESS(CCHAR(text.section('/', 0, 0)));
+	if (!a) {
+		ERR_clear_error();
+		return false;
+	}
+	*net = QByteArray((const char *)ASN1_STRING_get0_data(a),
+			ASN1_STRING_get_length(a));
+	ASN1_OCTET_STRING_free(a);
+	return ok && *prefix >= 0 && *prefix <= 8 * net->size();
+}
+
+static bool fqdn(const QJsonValue &v)
+{
+	static const QRegularExpression re(QRegularExpression::anchoredPattern(
+		"(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?"
+		"(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+"));
+	return v.isString() && re.match(v.toString()).hasMatch();
+}
+
+static bool regex(const QJsonValue &v)
+{
+	return v.isString() && !v.toString().isEmpty() &&
+		QRegularExpression(v.toString()).isValid();
+}
+
+/* One rule of a name form as schemas/policy.schema.json defines it; a
+ * rule that does not fit would admit or deny nothing (review of xca#56) */
+static bool validRule(const QString &form, const QJsonValue &v)
+{
+	if (form == "ip") {
+		QByteArray net;
+		int prefix;
+		return v.isString() && cidr(v.toString(), &net, &prefix);
+	}
+	if (!v.isObject())
+		return false;
+	QJsonObject r = v.toObject();
+	QString type = r["type"].toString();
+	QStringList keys { "type" };
+	bool ok = false;
+	if (form == "dns") {
+		if (type == "exact") {
+			keys << "value";
+			ok = fqdn(r["value"]);
+		} else if (type == "subtree") {
+			keys << "value" << "wildcard";
+			ok = fqdn(r["value"]) &&
+				(!r.contains("wildcard") || r["wildcard"].isBool());
+		} else if (type == "single-label") {
+			keys << "pattern";
+			ok = regex(r["pattern"]);
+		}
+	} else if (form == "uri") {
+		static const QRegularExpression uri(QRegularExpression::anchoredPattern(
+			"[a-z][a-z0-9+.-]*:\\S*"));
+		keys << "value";
+		if (type == "exact" || type == "prefix")
+			ok = r["value"].isString() &&
+				uri.match(r["value"].toString()).hasMatch();
+		else if (type == "host" || type == "host-subtree")
+			ok = fqdn(r["value"]);
+	} else if (form == "email") {
+		keys << "value";
+		QString value = r["value"].toString();
+		if (type == "mailbox")
+			ok = value.count('@') == 1 && !value.startsWith('@') &&
+				fqdn(QJsonValue(value.section('@', 1)));
+		else if (type == "host" || type == "host-subtree")
+			ok = fqdn(r["value"]);
+	} else if (form == "dn") {
+		if (type == "exact") {
+			keys << "value";
+			ok = r["value"].isString() && !r["value"].toString().isEmpty();
+		} else if (type == "pattern") {
+			keys << "pattern";
+			ok = regex(r["pattern"]);
+		}
+	}
+	for (auto k = r.begin(); ok && k != r.end(); ++k)
+		ok = keys.contains(k.key());
+	return ok;
+}
+
+static void validRules(const QString &where, const QString &form,
+			const QJsonObject &rules)
+{
+	for (auto l = rules.begin(); l != rules.end(); ++l) {
+		if (l.key() != "allow" && l.key() != "deny")
+			throw invalid(QString("%1.%2").arg(where, l.key()));
+		if (!l.value().isArray())
+			throw invalid(QString("%1.%2").arg(where, l.key()));
+		for (const QJsonValue &v : l.value().toArray()) {
+			if (!validRule(form, v))
+				throw invalid(QString("%1.%2 rule %3").arg(where,
+					l.key(), QString::fromUtf8(QJsonDocument(
+					QJsonArray{ v }).toJson(QJsonDocument::Compact))));
+		}
+	}
+}
+
 Policy Policy::fromJson(const QJsonObject &doc)
 {
 	Policy p;
@@ -56,36 +165,25 @@ Policy Policy::fromJson(const QJsonObject &doc)
 	if (!doc.contains("names") && !doc.contains("uniqueness") &&
 	    !doc.contains("content") && !doc.contains("issuer"))
 		throw invalid("names");
+	/* every rule as the schema has it: a rule that does not fit would
+	 * admit or deny nothing, an IP rule without prefix everything */
 	QJsonObject names = doc["names"].toObject();
-	for (const char *form : nameForms) {
-		QJsonObject rules = names[form].toObject();
-		if (!strcmp(form, "dn")) {
-			for (auto a = rules.begin(); a != rules.end(); ++a) {
-				if (!dnAttributes().contains(a.key()))
-					throw invalid(QString("names.dn.%1").arg(a.key()));
-			}
+	for (auto f = names.begin(); f != names.end(); ++f) {
+		QStringList forms;
+		for (const char *form : nameForms)
+			forms << form;
+		if (!forms.contains(f.key()) || !f.value().isObject())
+			throw invalid(QString("names.%1").arg(f.key()));
+		QJsonObject rules = f.value().toObject();
+		if (f.key() != "dn") {
+			validRules("names." + f.key(), f.key(), rules);
+			continue;
 		}
-		for (const char *list : { "allow", "deny" }) {
-			if (!rules.contains(list) || form == QString("dn"))
-				continue;
-			if (!rules[list].isArray())
-				throw invalid(QString("names.%1.%2").arg(form, list));
+		for (auto a = rules.begin(); a != rules.end(); ++a) {
+			if (!dnAttributes().contains(a.key()) || !a.value().isObject())
+				throw invalid(QString("names.dn.%1").arg(a.key()));
+			validRules("names.dn." + a.key(), "dn", a.value().toObject());
 		}
-	}
-	/* a pattern that does not compile would admit or deny nothing */
-	QStringList patterns;
-	for (const char *list : { "allow", "deny" }) {
-		for (const QJsonValue &r : names["dns"].toObject()[list].toArray())
-			patterns << r.toObject()["pattern"].toString();
-		QJsonObject dn = names["dn"].toObject();
-		for (auto a = dn.begin(); a != dn.end(); ++a) {
-			for (const QJsonValue &r : a.value().toObject()[list].toArray())
-				patterns << r.toObject()["pattern"].toString();
-		}
-	}
-	for (const QString &pattern : patterns) {
-		if (!pattern.isEmpty() && !QRegularExpression(pattern).isValid())
-			throw invalid(QString("pattern %1").arg(pattern));
 	}
 	QJsonObject u = doc["uniqueness"].toObject();
 	if (doc.contains("uniqueness") &&
@@ -162,8 +260,22 @@ QList<Name> sanNames(X509 *x)
 		case GEN_IPADD: {
 			QByteArray b((const char *)ASN1_STRING_get0_data(gn->d.iPAddress),
 				ASN1_STRING_get_length(gn->d.iPAddress));
+			/* an IPv4-mapped IPv6 address is the IPv4 address */
+			if (b.size() == 16 && b.startsWith(QByteArray(10, 0) +
+						QByteArray(2, (char)0xff)))
+				b = b.mid(12);
 			list << Name{ "ip", ipText(b), b };
 			break;
+		}
+		default: {
+			/* otherName, directoryName, registeredID, x400Address,
+			 * ediPartyName: no rule form of the policy fits them */
+			BIO *bio = BIO_new(BIO_s_mem());
+			GENERAL_NAME_print(bio, gn);
+			char *data;
+			long len = BIO_get_mem_data(bio, &data);
+			list << Name{ "other", QString::fromUtf8(data, len) };
+			BIO_free(bio);
 		}
 		}
 	}
@@ -207,26 +319,27 @@ bool dnsMatch(const QJsonObject &r, const QString &name)
 	return false;
 }
 
-/* For a deny rule a wildcard below a denied subtree is denied, whatever
- * the wildcard flag says */
+/* For a deny rule a wildcard *.B is denied when it lies in a denied
+ * subtree, whatever the wildcard flag says, and when it covers a denied
+ * name: a rule value one label below B (review of xca#56) */
 bool dnsDenied(const QJsonObject &r, const QString &name)
 {
-	if (r["type"].toString() == "subtree" && name.startsWith("*."))
-		return inSubtree(name.mid(2), r["value"].toString().toLower());
-	return dnsMatch(r, name);
+	QString type = r["type"].toString();
+	QString value = r["value"].toString().toLower();
+	if (!name.startsWith("*.") || type == "single-label")
+		return dnsMatch(r, name);
+	QString base = name.mid(2);
+	bool covered = value.section('.', 1) == base;
+	if (type == "subtree")
+		return inSubtree(base, value) || covered;
+	return covered;
 }
 
-bool ipMatch(const QString &cidr, const QByteArray &address)
+bool ipMatch(const QString &rule, const QByteArray &address)
 {
-	QString net = cidr.section('/', 0, 0);
-	int prefix = cidr.section('/', 1, 1).toInt();
-	ASN1_OCTET_STRING *a = a2i_IPADDRESS(CCHAR(net));
-	if (!a)
-		return false;
-	QByteArray n((const char *)ASN1_STRING_get0_data(a),
-			ASN1_STRING_get_length(a));
-	ASN1_OCTET_STRING_free(a);
-	if (n.size() != address.size())
+	QByteArray n;
+	int prefix;
+	if (!cidr(rule, &n, &prefix) || n.size() != address.size())
 		return false;
 	for (int bit = 0; bit < prefix && bit < 8 * n.size(); bit++) {
 		unsigned char m = 0x80 >> (bit % 8);
@@ -247,8 +360,12 @@ bool uriMatch(const QJsonObject &r, const QString &uri)
 	QString value = r["value"].toString();
 	if (type == "exact")
 		return uri == value;
+	/* a prefix ends at a boundary: https://plc.example.com does not
+	 * admit https://plc.example.com.evil.org or ...@evil.org */
 	if (type == "prefix")
-		return uri.startsWith(value);
+		return uri.startsWith(value) && (uri.size() == value.size() ||
+			QString("/:?#").contains(value.back()) ||
+			QString("/?#").contains(uri.at(value.size())));
 	QString host = uriHost(uri);
 	if (host.isEmpty())
 		return false;
@@ -334,21 +451,37 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 	/* names: deny first, then the allow list of the name form */
 	QList<Name> names = sanNames(x);
 	const X509_NAME *subject = X509_get_subject_name(x);
+	QJsonObject policyNames = doc["names"].toObject();
 	for (int i = 0; i < X509_NAME_entry_count(subject); i++) {
 		const X509_NAME_ENTRY *e = X509_NAME_get_entry(subject, i);
 		int nid = OBJ_obj2nid(X509_NAME_ENTRY_get_object(e));
 		QString attr = dnAttributes().key(nid);
-		if (attr.isEmpty())
-			continue;
 		const ASN1_STRING *d = X509_NAME_ENTRY_get_data(e);
 		unsigned char *utf8 = nullptr;
 		int len = ASN1_STRING_to_UTF8(&utf8, d);
-		names << Name{ "dn:" + attr, QString::fromUtf8((char *)utf8,
-					qMax(len, 0)) };
+		QString value = QString::fromUtf8((char *)utf8, qMax(len, 0));
 		OPENSSL_free(utf8);
+		/* the e-mail address of the subject is an e-mail address */
+		if (nid == NID_pkcs9_emailAddress)
+			names << Name{ "email", value };
+		else if (!attr.isEmpty())
+			names << Name{ "dn:" + attr, value };
+		else if (policyNames.contains("dn"))
+			throw serviceError("policy_name_not_allowed",
+				tr("Policy '%1' has no rule for the subject attribute %2 '%3'")
+				.arg(id, OBJ_nid2sn(nid), value));
 	}
-	QJsonObject policyNames = doc["names"].toObject();
 	for (const Name &n : names) {
+		/* a policy that rules on names admits no name it cannot rule on */
+		if (n.form == "other" ||
+		    (n.form == "ip" && n.ip.size() != 4 && n.ip.size() != 16) ||
+		    (n.form == "email" && n.value.count('@') != 1)) {
+			if (policyNames.isEmpty())
+				continue;
+			throw serviceError("policy_name_not_allowed",
+				tr("Policy '%1' has no rule for the name '%2'")
+				.arg(id, n.value));
+		}
 		bool dn = n.form.startsWith("dn:");
 		QString form = dn ? "dn" : n.form;
 		QJsonObject rules = dn ?

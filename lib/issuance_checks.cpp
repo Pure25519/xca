@@ -594,7 +594,15 @@ static QString dnsNameError(const QString &name)
 		return tr("it is empty");
 	if (name.endsWith('.'))
 		return tr("it ends with a dot");
+	if (name.size() > 253)
+		return tr("it is longer than 253 characters");
 	QStringList labels = name.split('.');
+	if (labels.first() == "*" && labels.size() < 3)
+		return tr("a wildcard needs at least two labels after it");
+	static const QRegularExpression numeric(
+		QRegularExpression::anchoredPattern("[0-9]+"));
+	if (numeric.match(labels.last()).hasMatch())
+		return tr("its last label is a number; an IP address belongs into iPAddress");
 	for (int i = 0; i < labels.size(); i++) {
 		const QString &l = labels[i];
 		if (l.isEmpty())
@@ -661,6 +669,9 @@ void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 		if (!nc)
 			continue;
 		int rc = NAME_CONSTRAINTS_check(names, nc);
+		/* a host name in the CN counts when no SAN names one */
+		if (rc == X509_V_OK)
+			rc = NAME_CONSTRAINTS_check_CN(names, nc);
 		NAME_CONSTRAINTS_free(nc);
 		if (rc != X509_V_OK) {
 			X509_free(names);
@@ -681,11 +692,15 @@ void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 		EXTENDED_KEY_USAGE *caEku = (EXTENDED_KEY_USAGE *)
 			X509_get_ext_d2i(ca->getCert(), NID_ext_key_usage,
 					nullptr, nullptr);
+		if (!caEku)
+			continue;
 		QSet<int> allowed;
 		for (int i = 0; i < sk_ASN1_OBJECT_num(caEku); i++)
 			allowed << OBJ_obj2nid(sk_ASN1_OBJECT_value(caEku, i));
 		EXTENDED_KEY_USAGE_free(caEku);
-		if (!caEku || allowed.contains(NID_anyExtendedKeyUsage))
+		/* a certificate without EKU is not limited by this rule; that is
+		 * the reading of RFC 5280 4.2.1.12 the chain check uses as well */
+		if (allowed.contains(NID_anyExtendedKeyUsage))
 			continue;
 		for (int i = 0; i < sk_ASN1_OBJECT_num(eku); i++) {
 			const ASN1_OBJECT *o = sk_ASN1_OBJECT_value(eku, i);

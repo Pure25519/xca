@@ -185,6 +185,9 @@ void test_service_template_migration::notMigratable_data()
 	QTest::newRow("subject") << "subject";
 	QTest::newRow("no key usage") << "keyUsage";
 	QTest::newRow("midnight") << "midnight";
+	QTest::newRow("SAN merge mode") << "reqSan";
+	QTest::newRow("EKU merge mode") << "reqEku";
+	QTest::newRow("pathLen not a number") << "pathLen";
 }
 
 void test_service_template_migration::notMigratable()
@@ -208,6 +211,14 @@ void test_service_template_migration::notMigratable()
 		t.extensions.keyUsage.clear();
 	else if (field == "midnight")
 		t.midnight = true;
+	else if (field == "reqSan")
+		t.extensions.sanMerge = ExtensionSpec::merge_union;
+	else if (field == "reqEku")
+		t.extensions.ekuMerge = ExtensionSpec::merge_request;
+	else if (field == "pathLen") {
+		t.extensions.basicCA = ExtensionSpec::bc_ca;
+		t.extensions.pathLen = "two";
+	}
 	try {
 		Profile::fromTemplate(t);
 		QFAIL("migrated");

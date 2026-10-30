@@ -1058,6 +1058,12 @@ void test_service_profiles::validityMax()
 	QVERIFY(!AuditLog::entries().last().params.value("validity_capped").toBool());
 	reg.validity = "forever";
 	QCOMPARE(issue(p, nullptr, key, reg, ca, &cert), QString("invalid_validity"));
+	/* nothing after the start (review of xca#56, MINOR 13) */
+	for (const char *zero : { "PT0S", "P0D", "PT" }) {
+		reg.validity = zero;
+		QCOMPARE(issue(p, nullptr, key, reg, ca, &cert),
+			QString("invalid_validity"));
+	}
 }
 
 /* opc_certificate_type: the key family of the leaf must have one */
