@@ -313,6 +313,10 @@ void test_service_request::requestRejected_data()
 	QTest::newRow("public key only") << "pubonly" << "no_private_key";
 	QTest::newRow("same request twice") << "duplicate"
 				<< "duplicate_request";
+	/* IA5String names are ASCII (BTD-208) */
+	QTest::newRow("non-ASCII URI") << "uri" << "san_not_ia5";
+	QTest::newRow("non-ASCII e-mail") << "email" << "san_not_ia5";
+	QTest::newRow("non-ASCII DNS name") << "dns" << "san_not_ia5";
 }
 
 void test_service_request::requestRejected()
@@ -326,6 +330,14 @@ void test_service_request::requestRejected()
 		spec.key = publicOnlyKey();
 		QVERIFY(spec.key);
 		QVERIFY(spec.key->isPubKey());
+	} else if (variant == "uri" || variant == "email" ||
+		   variant == "dns") {
+		spec.key = generate("EC:prime256v1", "ec-key");
+		QVERIFY(spec.key);
+		spec.extensions.subjectAltName = QString::fromUtf8(
+			variant == "uri" ? "URI:urn:bxc:gerät-7" :
+			variant == "email" ? "email:jörg@example.org" :
+			"DNS:müller.example");
 	} else if (variant == "duplicate") {
 		/* RSA PKCS#1 v1.5 signatures are deterministic */
 		spec.key = generate("RSA:2048", "rsa-key");
