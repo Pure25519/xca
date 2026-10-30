@@ -80,6 +80,33 @@ Options::Options(QWidget *parent)
 	onlyTokenHashes->hide();
 	tabWidget->removeTab(2);
 #endif
+	loaded = shown();
+}
+
+QMap<QString, QString> Options::shown()
+{
+	auto yesno = [](const QCheckBox *b) {
+		return QString(b->isChecked() ? "yes" : "no");
+	};
+	return QMap<QString, QString> {
+		{ "suppress_messages", yesno(suppress) },
+		{ "no_expire_colors", yesno(noColorize) },
+		{ "translate_dn", yesno(transDnEntries) },
+		{ "only_token_hashes", yesno(onlyTokenHashes) },
+		{ "disable_netscape", yesno(disableNetscape) },
+		{ "adapt_explicit_subj", yesno(adapt_explicit_subj) },
+		{ "default_hash", hashAlgo->current().name() },
+		{ "pkcs12_enc_algo", pkcs12EncAlgo->current().name() },
+		{ "mandatory_dn", getDnString(extDNlist) },
+		{ "explicit_dn", getDnString(expDNlist) },
+		{ "string_opt", string_opts.value(mbstring->currentIndex()) },
+		{ "pkcs11path", pkcs11::libraries.getPkcs11Provider() },
+		{ "cert_expiry", cert_expiry_num->text() +
+			cert_expiry_unit->currentItemData().toString() },
+		{ "ical_expiry", ical_expiry_num->text() +
+			ical_expiry_unit->currentItemData().toString() },
+		{ "serial_len", QString::number(serial_len->value()) },
+	};
 }
 
 Options::~Options()
@@ -145,30 +172,13 @@ int Options::exec()
 	if (!TransBegin())
 		return QDialog::Rejected;
 
-	Settings["suppress_messages"] = suppress->checkState();
-	Settings["no_expire_colors"] = noColorize->checkState();
-	Settings["translate_dn"] = transDnEntries->checkState();
-	Settings["only_token_hashes"] = onlyTokenHashes->checkState();
-	Settings["disable_netscape"] = disableNetscape->checkState();
-
-	/* only a change is stored: an unchanged default stays no choice
-	 * (BTD-52) */
-	if (hashAlgo->current().name() != digest::getDefault().name())
-		Settings["default_hash"] = hashAlgo->current().name();
-	if (pkcs12EncAlgo->current().getEncAlgoNid() !=
-	    encAlgo::getDefault().getEncAlgoNid())
-		Settings["pkcs12_enc_algo"] = pkcs12EncAlgo->current().name();
-	Settings["mandatory_dn"] = getDnString(extDNlist);
-	Settings["explicit_dn"] = getDnString(expDNlist);
-	Settings["string_opt"] = string_opts[mbstring->currentIndex()];
-	Settings["pkcs11path"] = pkcs11::libraries.getPkcs11Provider();
-
-	Settings["cert_expiry"] = cert_expiry_num->text() +
-				cert_expiry_unit->currentItemData().toString();
-	Settings["ical_expiry"] = ical_expiry_num->text() +
-				ical_expiry_unit->currentItemData().toString();
-	Settings["serial_len"] = serial_len->value();
-	Settings["adapt_explicit_subj"] = adapt_explicit_subj->checkState();
+	/* Only what the user changed is stored: a stored setting is a
+	 * choice, not the default the dialog showed (BTD-52, BTD-187) */
+	QMap<QString, QString> now = shown();
+	for (auto i = now.cbegin(); i != now.cend(); ++i) {
+		if (loaded.value(i.key()) != i.value())
+			Settings[i.key()] = i.value();
+	}
 
 	return TransCommit() ? QDialog::Accepted : QDialog::Rejected;
 }

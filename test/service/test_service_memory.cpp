@@ -19,6 +19,7 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 
+#include <openssl/asn1.h>
 #include <openssl/x509.h>
 
 #include "lib/audit.h"
@@ -35,6 +36,9 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_export.h"
 #include "lib/pki_temp.h"
+#include "lib/settings.h"
+#include "lib/digest.h"
+#include "lib/pki_pkcs12.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
 #include "lib/request.h"
@@ -89,6 +93,8 @@ class test_service_memory : public ServiceTestCase
 	void newCrlRollback();
 	void importCompletedKeyAndCrlRollback();
 	void importRollbackWritesNoSql();
+	void settingWithoutStoredValueRollback();
+	void pkcs12MigrationCommitFails();
 };
 
 QString test_service_memory::errorCode(std::function<void()> call)
@@ -448,6 +454,95 @@ void test_service_memory::importRollbackWritesNoSql()
 	QCOMPARE(ee->getParent(), (pki_base *)ca);
 	QCOMPARE(Store.getAll<pki_x509>().size(), 2);
 	QCOMPARE(count("SELECT COUNT(*) FROM certs"), 2);
+}
+
+/* A setting the database did not hold before, written in a transaction
+ * that rolls back: memory goes back to the default, including what
+ * setAction() set outside the settings map (BTD-186). The undo removed
+ * the value and left the OpenSSL string mask of string_opt in place. */
+void test_service_memory::settingWithoutStoredValueRollback()
+{
+	QSqlQuery q;
+	QVERIFY(q.exec("DELETE FROM settings WHERE key_ IN "
+		"('default_hash', 'string_opt')"));
+	q.finish();
+	Settings.clear();
+	QString builtin = digest::getBuiltinDefault().name();
+	QCOMPARE(digest::getDefault().name(), builtin);
+	QString other = builtin == "SHA512" ? "SHA384" : "SHA512";
+	unsigned long mask = ASN1_STRING_get_default_mask();
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		Settings["default_hash"] = other;
+		Settings["string_opt"] = QString("utf8only");
+		QCOMPARE(digest::getDefault().name(), other);
+		QVERIFY(ASN1_STRING_get_default_mask() != mask);
+		TransRollback();
+	}
+	QCOMPARE(digest::getDefault().name(), builtin);
+	QCOMPARE(QString(Settings["default_hash"]), builtin);
+	QCOMPARE(QString(Settings["string_opt"]), QString("MASK:0x2002"));
+	QCOMPARE(ASN1_STRING_get_default_mask(), mask);
+}
+
+/* The PKCS#12 default migration of BTD-52 when its outer COMMIT fails
+ * (a nested commit rolled back, review of xca#48 re-review MINOR 1):
+ * database and memory keep the old algorithm, no marker, no entry */
+void test_service_memory::pkcs12MigrationCommitFails()
+{
+	QSqlQuery q;
+	QVERIFY(q.exec("DELETE FROM settings WHERE key_ IN ('pkcs12_migrated', "
+		"'pkcs12_enc_algo', 'pkcs12_keep_legacy')"));
+	QVERIFY(q.exec("INSERT INTO settings (key_, value) VALUES "
+		"('pkcs12_enc_algo', 'PBE-SHA1-3DES')"));
+	q.finish();
+	int entries = AuditLog::entries().size();
+
+	Database.close();
+	/* the first nested commit of the open is the algorithm of the
+	 * migration: it rolls back, the outer commit fails */
+	DbTransaction::injectNestedRollback();
+	openDatabase();
+	QVERIFY(!DbTransaction::injectionPending());
+
+	/* a query of the new connection */
+	q = QSqlQuery();
+	QVERIFY(q.exec("SELECT value FROM settings WHERE key_='pkcs12_enc_algo'")
+		&& q.next());
+	QCOMPARE(q.value(0).toString(), QString("PBE-SHA1-3DES"));
+	q.finish();
+	QVERIFY(q.exec("SELECT COUNT(*) FROM settings "
+		"WHERE key_='pkcs12_migrated'") && q.next());
+	QCOMPARE(q.value(0).toInt(), 0);
+	q.finish();
+	QVERIFY(encAlgo::getDefault().legacy());
+	QCOMPARE(QString(Settings["pkcs12_enc_algo"]),
+		QString("PBE-SHA1-3DES"));
+	QVERIFY(!Settings["pkcs12_migrated"]);
+	QCOMPARE(AuditLog::entries().size(), entries);
+
+	/* positive control: the next open without the fault migrates,
+	 * so the checks above saw a rolled-back migration, not a skipped
+	 * one (review of xca#77) */
+	q = QSqlQuery();
+	Database.close();
+	warning->expectMessage("PBE-SHA1-3DES");
+	openDatabase();
+	q = QSqlQuery();
+	QVERIFY(q.exec("SELECT value FROM settings WHERE key_='pkcs12_enc_algo'")
+		&& q.next());
+	QCOMPARE(q.value(0).toString(), QString("AES-256-CBC"));
+	q.finish();
+	QVERIFY(q.exec("SELECT value FROM settings "
+		"WHERE key_='pkcs12_migrated'") && q.next());
+	QCOMPARE(q.value(0).toString(), QString("yes"));
+	q.finish();
+	QCOMPARE(encAlgo::getDefault().getEncAlgoNid(), NID_aes_256_cbc);
+	QList<AuditEntry> after = AuditLog::entries();
+	QCOMPARE(after.size(), entries + 1);
+	QCOMPARE(after.last().action, QString(AuditLog::actionSettingsMigrate));
+	QCOMPARE(after.last().result, QString("success"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_memory)
