@@ -424,6 +424,10 @@ QModelIndex db_base::index(int row, int column,
 {
 	pki_base *parentItem = treeview ? treeItem : rootItem;
 
+	/* No index for a column the model does not have: the view's proxy
+	 * maps columns without a bounds check (BTD-227) */
+	if (column < 0 || column >= allHeaders.size())
+		return QModelIndex();
 	if (parent.isValid() && treeview)
 		parentItem = fromIndex(parent);
 
@@ -634,7 +638,7 @@ void db_base::emitDataChanged(pki_base *pki)
 
 	QModelIndex i, j;
 	i = index(pki);
-	j = index(i.row(), allHeaders.size(), i.parent());
+	j = index(i.row(), allHeaders.size() - 1, i.parent());
 	emit dataChanged(i, j);
 	emit pkiChanged(pki);
 	restart_timer();
