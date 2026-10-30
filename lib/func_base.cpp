@@ -239,27 +239,17 @@ bool openssl_bool(const char *value, bool dflt)
 	return dflt;
 }
 
-#undef PRINT_IGNORED_ANYWAY
 bool _ign_openssl_error(const QString &txt, const char *file, int line)
 {
-	// ignore openssl errors
-	QString errtxt;
-#if PRINT_IGNORED_ANYWAY
-	if (!txt.isEmpty() && ERR_peek_error())
-		qDebug() << txt;
-#else
-	(void)txt;
-	(void)file;
-	(void)line;
-#endif
-	while (int i = ERR_get_error() ) {
-		errtxt = ERR_error_string(i, NULL);
-#if PRINT_IGNORED_ANYWAY
-		qDebug() << QString("IGNORED (%1:%2) : %3\n")
-				.arg(file).arg(line).arg(errtxt);
-#endif
-	}
-	return !errtxt.isEmpty();
+	/* Ignored, but in the debug log: the text is taken like in
+	 * take_openssl_errors(), with the data string, never through
+	 * OpenSSL's static buffer that threads would share (BTD-209) */
+	if (!ERR_peek_error())
+		return false;
+	QString errtxt = take_openssl_errors();
+	qDebug().noquote() << QString("IGNORED (%1:%2)%3: %4").arg(file)
+		.arg(line).arg(txt.isEmpty() ? QString() : " " + txt, errtxt);
+	return true;
 }
 
 QString formatHash(const QByteArray &data, QString sep, int width)

@@ -89,6 +89,15 @@ class db_base: public QAbstractItemModel
 		db_base(const char *classname);
 		virtual void updateHeaders();
 		virtual ~db_base();
+		/* A database row that did not decode: left out of the store,
+		 * collected by loadContainer() and reported once for the
+		 * whole load (BTD-209) */
+		struct SkippedRow {
+			QString type, id, reason;
+		};
+		static QList<SkippedRow> takeSkippedRows();
+		/* The message naming each row and its reason */
+		static QString skippedRowsText(const QList<SkippedRow> &rows);
 		virtual pki_base *insertPKI(pki_base *pki);
 		/* Takes an object whose insert was rolled back out of the
 		 * views and the store again; it loses its id (BTD-142).
