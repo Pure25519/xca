@@ -39,8 +39,10 @@ class test_service_dn_bounds : public ServiceTestCase
 	/* a name with one entry of the given string type, without any
 	 * check, as OpenSSL's API or a device builds it */
 	static x509name rawName(int nid, const QString &value);
-	/* a device CSR whose subject holds O=<o>, built without checks */
-	pki_x509req *deviceCsr(const QString &o);
+	/* a device CSR whose subject holds O=<o> and CN=<cn>, built
+	 * without checks */
+	pki_x509req *deviceCsr(const QString &o,
+			const QString &cn = "device.example");
 	template <class F> static QString code(F f, QString *detail = nullptr)
 	{
 		try {
@@ -91,10 +93,11 @@ x509name test_service_dn_bounds::rawName(int nid, const QString &value)
 	return r;
 }
 
-pki_x509req *test_service_dn_bounds::deviceCsr(const QString &o)
+pki_x509req *test_service_dn_bounds::deviceCsr(const QString &o,
+			const QString &cn)
 {
 #ifndef OPENSSL_PROGRAM
-	Q_UNUSED(o);
+	Q_UNUSED(o); Q_UNUSED(cn);
 	return nullptr;
 #else
 	static int n = 0;
@@ -113,8 +116,9 @@ pki_x509req *test_service_dn_bounds::deviceCsr(const QString &o)
 	QByteArray ov = o.toUtf8();
 	X509_NAME_add_entry_by_NID(name, NID_organizationName, V_ASN1_UTF8STRING,
 		(const unsigned char *)ov.constData(), ov.size(), -1, 0);
+	QByteArray cv = cn.toUtf8();
 	X509_NAME_add_entry_by_NID(name, NID_commonName, V_ASN1_UTF8STRING,
-		(const unsigned char *)"device.example", -1, -1, 0);
+		(const unsigned char *)cv.constData(), cv.size(), -1, 0);
 	X509_REQ_set_subject_name(r, name);
 	X509_NAME_free(name);
 	X509_REQ_set_pubkey(r, pkey);
@@ -321,6 +325,24 @@ void test_service_dn_bounds::deviceCsrSubject()
 	s.hashAlgo = digest(NID_sha256);
 	QCOMPARE(code([&]() { Database.model<db_x509>()->newCert(ctx, s); }),
 		QString("invalid_dn_value"));
+	QCOMPARE(Store.getAll<pki_x509>().size(), nCerts);
+
+	/* an empty value: RFC 5280 wants SIZE (1..ub) (review of xca#66).
+	 * A profile that requires CN counts it as missing first; without
+	 * a profile the bounds refuse it */
+	pki_x509req *emptyCn = deviceCsr("BxC", "");
+	QVERIFY(emptyCn);
+	QCOMPARE(emptyCn->getSubject().entryCount(), 2);
+	QCOMPARE(code([&]() {
+		IssuanceSpec spec = p.apply(emptyCn, nullptr, Registration(), issuer);
+		Database.model<db_x509>()->newCert(ctx, spec);
+	}), QString("csr_subject_missing_attribute"));
+	s.request = emptyCn;
+	s.subject = emptyCn->getSubject();
+	QCOMPARE(code([&]() { Database.model<db_x509>()->newCert(ctx, s); },
+		&detail), QString("invalid_dn_value"));
+	QVERIFY2(detail.contains("commonName") && detail.contains("at least 1"),
+		CCHAR(detail));
 	QCOMPARE(Store.getAll<pki_x509>().size(), nCerts);
 
 	QCOMPARE(code([&]() {
