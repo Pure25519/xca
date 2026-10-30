@@ -51,6 +51,9 @@ ServiceTest(test_service_transaction)
 # Memory follows the database after a rollback (BTD-130)
 ServiceTest(test_service_memory)
 
+# A failed SQL write is a typed service error (BTD-50)
+ServiceTest(test_service_sql_errors)
+
 # xca --no-gui: no colour codes off a terminal, no false parser warning
 add_test(NAME test_cli_plain_output
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
