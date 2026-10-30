@@ -61,6 +61,16 @@ QString take_openssl_errors();
  * not matter for the words); anything else or NULL gives dflt */
 bool openssl_bool(const char *value, bool dflt);
 
+/* Test hooks of the OpenSSL encoders (BTD-199), off in production and set
+ * by tests only. bioWrites: BioByteArray::bio() hands out a read-only
+ * memory BIO, so every encoder writing into it fails as OpenSSL does.
+ * i2d: i2d_bytearray() sees an encoder that returns -1. */
+namespace encodeFault
+{
+	extern bool bioWrites;
+	extern bool i2d;
+}
+
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char**), const void*);
 void *d2i_bytearray(void *(*d2i)(void*, unsigned char**, long),
 		QByteArray &ba);

@@ -145,14 +145,23 @@ QString OBJ_obj2QString(const ASN1_OBJECT *a, int no_name)
 	return QString::fromLatin1(buf, len);
 }
 
+namespace encodeFault
+{
+	bool bioWrites = false;
+	bool i2d = false;
+}
+
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char **),
 		const void *data)
 {
 	QByteArray ba;
+	auto encode = [&](unsigned char **p) {
+		return encodeFault::i2d ? -1 : i2d(data, p);
+	};
 
-	ba.resize(i2d(data, NULL));
+	ba.resize(encode(NULL));
 	unsigned char *p = (unsigned char*)ba.data();
-	i2d(data, &p);
+	encode(&p);
 	openssl_error();
 	return ba;
 }
