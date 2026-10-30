@@ -105,16 +105,20 @@ void pki_pkcs7::writeP7(QIODevice &file, bool PEM)
 	}
 	foreach(pki_base *pki, multi) {
 		pki_x509 *x = dynamic_cast<pki_x509*>(pki);
-		if (x)
-			PKCS7_add_certificate(p7, X509_dup(x->getCert()));
+		if (!x)
+			continue;
+		/* PKCS7_add_certificate() takes its own reference */
+		export_check(PKCS7_add_certificate(p7, x->getCert()),
+				"PKCS7_add_certificate", x->what());
 	}
 	BioByteArray b;
 	if (PEM)
-		PEM_write_bio_PKCS7(b, p7);
+		export_check(PEM_write_bio_PKCS7(b, p7), "PEM_write_bio_PKCS7",
+				what());
 	else
-		i2d_PKCS7_bio(b, p7);
+		export_check(i2d_PKCS7_bio(b, p7), "i2d_PKCS7_bio", what());
 	openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_pkcs7::append_certs(PKCS7 *myp7, const QString &name)

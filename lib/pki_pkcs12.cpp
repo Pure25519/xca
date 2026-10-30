@@ -219,16 +219,17 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	 * legacy readers only, else HMAC-SHA256 (BTD-52). Not PBMAC1
 	 * (RFC 9579): Windows, Java and OpenSSL before 3.4 cannot check it */
 	if (encAlgo.legacy())
-		PKCS12_set_mac(pkcs12.get(), pass.constData(), -1, NULL, 0, 1,
-				EVP_sha1());
+		export_check(PKCS12_set_mac(pkcs12.get(), pass.constData(), -1,
+				NULL, 0, 1, EVP_sha1()), "PKCS12_set_mac", what());
 	else
-		PKCS12_set_mac(pkcs12.get(), pass.constData(), -1, NULL, 0,
-				PKCS12_DEFAULT_ITER, EVP_sha256());
+		export_check(PKCS12_set_mac(pkcs12.get(), pass.constData(), -1,
+				NULL, 0, PKCS12_DEFAULT_ITER, EVP_sha256()),
+				"PKCS12_set_mac", what());
 
 	BioByteArray b;
-	i2d_PKCS12_bio(b, pkcs12.get());
+	export_check(i2d_PKCS12_bio(b, pkcs12.get()), "i2d_PKCS12_bio", what());
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 void pki_pkcs12::collect_properties(QMap<QString, QString> &prp) const

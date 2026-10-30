@@ -9,6 +9,7 @@
 #define __FUNC_BASE_H
 
 #include <QByteArray>
+#include <QIODevice>
 #include <QMap>
 
 #include <sys/types.h>
@@ -71,7 +72,18 @@ namespace encodeFault
 	extern bool i2d;
 }
 
+/* The DER of data; throws serviceError encoding_failed with the OpenSSL
+ * reason instead of returning empty or short DER (BTD-199) */
 QByteArray i2d_bytearray(int(*i2d)(const void*, unsigned char**), const void*);
+
+/* The result of an OpenSSL encoder of an export (BTD-199): 1 or more is
+ * success, anything else throws serviceError export_failed naming the
+ * encoder, the object (what) and the OpenSSL reason */
+void export_check(int ok, const char *encoder, const QString &what);
+/* Writes the encoded bytes of an export; empty or short output throws
+ * serviceError export_failed (BTD-199) */
+void export_write(QIODevice &file, const QByteArray &data,
+		const QString &what);
 void *d2i_bytearray(void *(*d2i)(void*, unsigned char**, long),
 		QByteArray &ba);
 

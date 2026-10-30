@@ -256,21 +256,24 @@ void pki_x509req::writeDefault(const QString &dirname) const
 void pki_x509req::writeReq(QIODevice &file, bool pem) const
 {
 	BioByteArray b;
-	if (!request)
-		return;
+	export_check(request != nullptr, "writeReq", what());
 	if (pem) {
 		b += PEM_comment();
-		PEM_write_bio_X509_REQ(b, request);
+		export_check(PEM_write_bio_X509_REQ(b, request),
+				"PEM_write_bio_X509_REQ", what());
 	} else {
-		i2d_X509_REQ_bio(b, request);
+		export_check(i2d_X509_REQ_bio(b, request), "i2d_X509_REQ_bio",
+				what());
 	}
 	pki_openssl_error();
-	file.write(b);
+	export_write(file, b, what());
 }
 
 bool pki_x509req::pem(BioByteArray &b)
 {
-	return PEM_write_bio_X509_REQ(b, request);
+	export_check(PEM_write_bio_X509_REQ(b, request),
+			"PEM_write_bio_X509_REQ", what());
+	return true;
 }
 
 bool pki_x509req::verify() const

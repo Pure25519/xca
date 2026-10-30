@@ -453,14 +453,15 @@ QByteArray pki_temp::toExportData() const
 	header = db::intToData(data.size());
 	header += db::intToData(TMPL_VERSION);
 	header += data;
-	PEM_write_bio(b, PEM_STRING_XCA_TEMPLATE, (char*)"",
-		(unsigned char*)(header.data()), header.size());
+	export_check(PEM_write_bio(b, PEM_STRING_XCA_TEMPLATE, (char*)"",
+		(unsigned char*)(header.data()), header.size()),
+		"PEM_write_bio", what());
 	return b.byteArray();
 }
 
 void pki_temp::writeTemp(QIODevice &file) const
 {
-	file.write(PEM_comment() + toExportData());
+	export_write(file, PEM_comment() + toExportData(), what());
 }
 
 void pki_temp::writeDefault(const QString &dirname) const
