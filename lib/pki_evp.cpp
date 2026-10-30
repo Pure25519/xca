@@ -25,6 +25,13 @@
 #include <openssl/err.h>
 #include <openssl/proverr.h>
 #include <openssl/core_names.h>
+#include <openssl/provider.h>
+#include <QMap>
+#include <QMutex>
+
+static OSSL_LIB_CTX *mlDsaContext(const QString &format);
+static bool mlDsaHasSeed(const EVP_PKEY *pkey);
+static bool opensslDropsSeed();
 
 Passwd pki_evp::passwd;
 
@@ -259,6 +266,13 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 		pki_ign_openssl_error();
 		pkey = PEM_read_bio_PUBKEY(BioByteArray(ba).ro(), NULL, NULL,0);
 	}
+	/* pki_openssl_error() only prints: without this, a key OpenSSL
+	 * refuses (e.g. an ML-DSA seed that does not match its expanded
+	 * key, BTD-16) left an empty key object that crashed the import */
+	if (!pkey) {
+		pki_ign_openssl_error();
+		throw errorEx(tr("The key in '%1' cannot be read").arg(name));
+	}
 	pki_openssl_error();
 	set_EVP_PKEY(pkey, name);
 }
@@ -271,6 +285,18 @@ void pki_evp::set_EVP_PKEY(EVP_PKEY *pkey, QString name)
 		pki_ign_openssl_error();
 		EVP_PKEY_free(pkey);
 		throw errorEx(tr("The key from file '%1' is incomplete or inconsistent.").arg(name));
+	}
+	/* A seed that openssl.cnf made the default provider drop on
+	 * reading is an error here, on import, not on every later
+	 * encryption of a key without seed (BTD-16) */
+	if (EVP_PKEY_isPrivKey(pkey) && isMlDsa(keytype::nid(pkey)) &&
+	    !mlDsaHasSeed(pkey) && opensslDropsSeed()) {
+		EVP_PKEY_free(pkey);
+		throw serviceError("openssl_config",
+			tr("The OpenSSL configuration sets ml-dsa.retain_seed or "
+			   "ml-dsa.prefer_seed to no: the seed of the ML-DSA key "
+			   "in '%1' may be lost. Remove the setting to import "
+			   "ML-DSA keys").arg(name));
 	}
 	if (key)
 		EVP_PKEY_free(key);
@@ -480,7 +506,12 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 		PKCS8_PRIV_KEY_INFO *p8inf = PKCS8_decrypt(p8,
 				ownPassBuf.constData(), ownPassBuf.size());
 		if (p8inf) {
-			priv = EVP_PKCS82PKEY(p8inf);
+			/* ML-DSA in a context that openssl.cnf does not
+			 * reach (mlDsaContext()) */
+			priv = isMlDsa(getKeyType()) ?
+				EVP_PKCS82PKEY_ex(p8inf, mlDsaContext("both"),
+						nullptr) :
+				EVP_PKCS82PKEY(p8inf);
 			PKCS8_PRIV_KEY_INFO_free(p8inf);
 		}
 		X509_SIG_free(p8);
@@ -488,6 +519,13 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 			pki_ign_openssl_error();
 			throw errorEx(tr("Decryption of private key '%1' failed")
 							.arg(getIntName()));
+		}
+		/* Decrypted, but OpenSSL refuses the key: an error, not a
+		 * NULL that decryptKey() retries and callers use (BTD-16) */
+		if (!priv) {
+			pki_ign_openssl_error();
+			throw errorEx(tr("The private key '%1' in the database "
+				"cannot be read").arg(getIntName()));
 		}
 	} else {
 		pki_ign_openssl_error();
@@ -574,6 +612,163 @@ bool pki_evp::updateLegacyEncryption()
 	return false;
 }
 
+const QStringList pki_evp::mlDsaFormats { "both", "seed", "expanded" };
+/* Like encAlgo::exportName (BTD-52): an export runs on one thread at a
+ * time; a REST server with parallel exports needs a per-call value */
+static QString mlDsaExportFormat;
+/* The ML-DSA encodings that decryptKeyForExport() wrote while the
+ * scope runs, per key: what the audit entries name */
+static QMap<const pki_evp *, QString> mlDsaWritten;
+
+pki_evp::MlDsaFormatScope::MlDsaFormatScope(const QString &format)
+	: saved(mlDsaExportFormat)
+{
+	mlDsaExportFormat = format;
+	mlDsaWritten.clear();
+}
+
+pki_evp::MlDsaFormatScope::~MlDsaFormatScope()
+{
+	mlDsaExportFormat = saved;
+	mlDsaWritten.clear();
+}
+
+QString pki_evp::MlDsaFormatScope::written(const pki_key *key)
+{
+	return mlDsaWritten.value(dynamic_cast<const pki_evp *>(key));
+}
+
+bool pki_evp::isMlDsa(int keytype)
+{
+#ifdef EVP_PKEY_ML_DSA_44
+	return keytype == EVP_PKEY_ML_DSA_44 || keytype == EVP_PKEY_ML_DSA_65 ||
+		keytype == EVP_PKEY_ML_DSA_87;
+#else
+	(void)keytype;
+	return false;
+#endif
+}
+
+/* OpenSSL chooses the ML-DSA private key encoding per provider
+ * ("ml-dsa.output_formats"), not per key or call. Each encoding gets a
+ * library context of its own whose default provider writes only that
+ * one; a key is moved there to be written. These contexts read no
+ * openssl.cnf: storing and loading keys in the database uses them too,
+ * so a configuration of the default provider (output_formats,
+ * prefer_seed) cannot drop a seed or let a seed that does not match the
+ * expanded key pass (BTD-16). They live as long as the process. */
+static OSSL_LIB_CTX *mlDsaContext(const QString &format)
+{
+	static QMap<QString, OSSL_LIB_CTX *> contexts;
+	static QMutex lock;
+	QMutexLocker locker(&lock);
+
+	if (contexts.contains(format))
+		return contexts[format];
+	const char *openssl = format == "seed" ? "seed-only" :
+			format == "expanded" ? "priv-only" : "seed-priv";
+	OSSL_LIB_CTX *ctx = OSSL_LIB_CTX_new();
+	OSSL_PROVIDER *prov = ctx ? OSSL_PROVIDER_load(ctx, "default") : nullptr;
+	if (!prov || OSSL_PROVIDER_add_conf_parameter(prov,
+			OSSL_PKEY_PARAM_ML_DSA_OUTPUT_FORMATS, openssl) != 1) {
+		OSSL_PROVIDER_unload(prov);
+		OSSL_LIB_CTX_free(ctx);
+		return nullptr;
+	}
+	contexts[format] = ctx;
+	return ctx;
+}
+
+static bool mlDsaHasSeed(const EVP_PKEY *pkey)
+{
+	size_t len = 0;
+	bool seed = EVP_PKEY_get_octet_string_param(pkey,
+			OSSL_PKEY_PARAM_ML_DSA_SEED, nullptr, 0, &len) && len > 0;
+	ign_openssl_error();
+	return seed;
+}
+
+/* A copy of the key in the context of the encoding. The key material
+ * goes over as parameters, not through the encoder of the key's own
+ * context, which openssl.cnf configures; the import checks that seed
+ * and expanded key belong together. */
+static EVP_PKEY *mlDsaMove(const EVP_PKEY *pkey, const QString &format,
+				const QString &name)
+{
+	OSSL_LIB_CTX *ctx = mlDsaContext(format);
+	OSSL_PARAM *params = nullptr;
+	EVP_PKEY_CTX *pctx = ctx ? EVP_PKEY_CTX_new_from_name(ctx,
+				EVP_PKEY_get0_type_name(pkey), nullptr) : nullptr;
+	EVP_PKEY *moved = nullptr;
+	if (pctx && EVP_PKEY_todata(pkey, EVP_PKEY_KEYPAIR, &params) == 1 &&
+	    EVP_PKEY_fromdata_init(pctx) == 1)
+		EVP_PKEY_fromdata(pctx, &moved, EVP_PKEY_KEYPAIR, params);
+	OSSL_PARAM_clear_free(params);
+	EVP_PKEY_CTX_free(pctx);
+	if (!moved) {
+		ign_openssl_error();
+		throw serviceError("invalid_ml_dsa_key",
+			QObject::tr("The ML-DSA key '%1' is invalid: its seed and "
+			   "expanded key do not belong together").arg(name));
+	}
+	return moved;
+}
+
+/* openssl.cnf with ml-dsa.retain_seed = no or ml-dsa.prefer_seed = no
+ * makes the default provider drop the seed when it reads a key: XCA
+ * cannot tell such a key from one imported without seed */
+static bool opensslDropsSeed()
+{
+	OSSL_PROVIDER *prov = OSSL_PROVIDER_load(nullptr, "default");
+	const char *retain = nullptr, *prefer = nullptr;
+	OSSL_PARAM params[] = {
+		OSSL_PARAM_utf8_ptr(OSSL_PKEY_PARAM_ML_DSA_RETAIN_SEED,
+					(char **)&retain, 0),
+		OSSL_PARAM_utf8_ptr(OSSL_PKEY_PARAM_ML_DSA_PREFER_SEED,
+					(char **)&prefer, 0),
+		OSSL_PARAM_END
+	};
+	bool read = prov && OSSL_PROVIDER_get_conf_parameters(prov, params);
+	auto no = [](const OSSL_PARAM *p, const char *v) {
+		return OSSL_PARAM_modified(p) && v &&
+			QString(v).compare("no", Qt::CaseInsensitive) == 0;
+	};
+	bool drops = read && (no(&params[0], retain) || no(&params[1], prefer));
+	OSSL_PROVIDER_unload(prov);
+	ign_openssl_error();
+	return drops;
+}
+
+EVP_PKEY *pki_evp::decryptKeyForExport() const
+{
+	EVP_PKEY *pkey = decryptKey();
+	if (!pkey || !isMlDsa(getKeyType()))
+		return pkey;
+
+	/* A key imported as expanded key only has no seed */
+	bool seed = mlDsaHasSeed(pkey);
+	QString format = mlDsaExportFormat;
+	if (format.isEmpty())
+		format = seed ? "both" : "expanded";
+	if (!seed && format != "expanded") {
+		EVP_PKEY_free(pkey);
+		throw serviceError("seed_unavailable",
+			tr("The ML-DSA key '%1' has no seed, it was imported "
+			   "without one: only the expanded key can be exported")
+			.arg(getIntName()));
+	}
+	EVP_PKEY *moved = nullptr;
+	try {
+		moved = mlDsaMove(pkey, format, getIntName());
+	} catch (...) {
+		EVP_PKEY_free(pkey);
+		throw;
+	}
+	EVP_PKEY_free(pkey);
+	mlDsaWritten[this] = format;
+	return moved;
+}
+
 EVP_PKEY *pki_evp::decryptKey() const
 {
 	EVP_PKEY *priv = nullptr;
@@ -645,18 +840,34 @@ void pki_evp::encryptKey(const char *password)
 		}
 	}
 
+	/* ML-DSA: seed and expanded key, or the expanded key of a key
+	 * imported without seed, whatever openssl.cnf sets for writing
+	 * (BTD-16). The copy stays local: key belongs to the caller until
+	 * the encrypted form is complete (setOwnPass() restores it) */
+	EVP_PKEY *moved = nullptr;
+	if (isMlDsa(getKeyType()))
+		moved = mlDsaMove(key, mlDsaHasSeed(key) ? "both" : "expanded",
+					getIntName());
+	EVP_PKEY *write = moved ? moved : key;
+
 	/* Convert private key to DER(PKCS8-aes) */
 	BioByteArray bba;
-	i2d_PKCS8PrivateKey_bio(bba, key, EVP_aes_256_cbc(),
-		ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
-	pki_openssl_error();
+	try {
+		i2d_PKCS8PrivateKey_bio(bba, write, EVP_aes_256_cbc(),
+			ownPassBuf.data(), ownPassBuf.size(), NULL, 0);
+		pki_openssl_error();
+	} catch (...) {
+		EVP_PKEY_free(moved);
+		throw;
+	}
 	encKey = bba;
 
 	/* Replace private key by public key and
 	   have the encrypted private in "encKey"
 	 */
-	EVP_PKEY *pkey1 = priv2pub(key);
+	EVP_PKEY *pkey1 = priv2pub(write);
 	Q_CHECK_PTR(pkey1);
+	EVP_PKEY_free(moved);
 	EVP_PKEY_free(key);
 	key = pkey1;
 	pki_openssl_error();
@@ -757,14 +968,14 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport)
 	EVP_PKEY *pkey;
 
 	if (xport->match_all(F_PEM | F_PRIVATE)) {
-		pkey = decryptKey();
+		pkey = decryptKeyForExport();
 		PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
 						nullptr, 0, nullptr, nullptr);
 		EVP_PKEY_free(pkey);
 	} else if (xport->match_all(F_PKCS8 | F_PRIVATE)) {
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
-		pkey = decryptKey();
+		pkey = decryptKeyForExport();
         PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
@@ -805,7 +1016,7 @@ void pki_evp::fillJWK(QJsonObject &json, const pki_export *xport) const
 void pki_evp::writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
 		const Passwd &pass, bool pem) const
 {
-	EVP_PKEY *pkey = decryptKey();
+	EVP_PKEY *pkey = decryptKeyForExport();
 	if (!pkey) {
 		pki_openssl_error();
 		return;
@@ -868,7 +1079,7 @@ void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,
 		writePublic(file, pem);
 		return;
 	}
-	EVP_PKEY *pkey = key ? decryptKey() : NULL;
+	EVP_PKEY *pkey = key ? decryptKeyForExport() : NULL;
 	if (!pkey) {
 		pki_openssl_error();
 		return;

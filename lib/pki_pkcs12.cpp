@@ -149,6 +149,10 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	if (cert == NULL || key == NULL)
 		my_error(tr("No key or no Cert and no pkcs12"));
 
+	/* First the key: decryptKeyForExport() may throw (BTD-16) */
+	pki_evp *evp = dynamic_cast<pki_evp *>(key);
+	EVP_PKEY *pkey = evp ? evp->decryptKeyForExport() : key->decryptKey();
+
 	STACK_OF(X509) *certstack = sk_X509_new_null();
 	foreach(pki_base *pki, multi) {
 		pki_x509 *x = dynamic_cast<pki_x509*>(pki);
@@ -163,7 +167,6 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	if (keyAlgoNid == NID_pbe_WithSHA1And40BitRC2_CBC)
 		keyAlgoNid = NID_pbe_WithSHA1And3_Key_TripleDES_CBC;
 
-	EVP_PKEY *pkey = key->decryptKey();
 	for (const QString &line : key->getComment().split('\n')) {
 		QStringList kv = line.split(":");
 		qDebug() << line << kv;

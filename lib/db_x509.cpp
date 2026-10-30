@@ -835,8 +835,18 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 
 	// STEP 4 handle extensions
 
-	// apply all extensions to the subject cert in the context
-	spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
+	// apply all extensions to the subject cert in the context; under a
+	// profile without CSR only the registration's SAN is free input, so
+	// a failure is that SAN's (BTD-191)
+	try {
+		spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
+	} catch (errorEx &err) {
+		if (!spec.csrPolicy.profile || spec.request)
+			throw;
+		throw serviceError("registration_san_invalid",
+			tr("The subject alternative name of the registration of '%1' cannot be built: %2")
+			.arg(spec.name, err.getString()));
+	}
 
 	// apply extensions from CSR if requested; a profile takes only
 	// the SAN (BTD-65), SAN, KU and EKU follow their merge mode (BTD-54)

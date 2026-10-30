@@ -413,9 +413,9 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 				tr("The profile '%1' needs the registered ApplicationUri").arg(id));
 	}
 	policy.dnsFromCn = san["dns_from_cn"].toBool();
-	/* a CSR's SAN is checked by IssuanceChecks::request() against these
-	 * rules (BTD-65, mr-processor review of xca#44); the registration's
-	 * SAN of a server-side key is counted here */
+	/* the SAN, a CSR's or the registration's of a server-side key, is
+	 * checked by IssuanceChecks::request() against these rules (BTD-65,
+	 * BTD-191) */
 	auto range = [&](const char *type) {
 		QJsonObject c = san[type].toObject();
 		return qMakePair(c["min"].toInt(), c["max"].toInt());
@@ -435,20 +435,8 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			e.subjectAltName = "URI:" + policy.registeredUri +
 				(reg.subjectAltName.isEmpty() ? QString() :
 					", " + reg.subjectAltName);
-		int dns = reg.subjectAltName.count("DNS:");
-		int ip = reg.subjectAltName.count("IP:");
-		int email = reg.subjectAltName.count("email:");
-		if (dns < range("dns").first || dns > range("dns").second ||
-		    ip < range("ip").first || ip > range("ip").second ||
-		    dns + ip < policy.dnsOrIpMin)
-			throw serviceError("csr_san_count",
-				tr("The profile '%1' does not allow %2 DNS names and %3 IP addresses")
-				.arg(id).arg(dns).arg(ip));
-		if (family == "generic" && (email < range("email").first ||
-					    email > range("email").second))
-			throw serviceError("csr_san_count",
-				tr("The profile '%1' does not allow %2 e-mail addresses")
-				.arg(id).arg(email));
+		if (policy.sanCritical && !e.subjectAltName.isEmpty())
+			e.subjectAltName = "critical, " + e.subjectAltName;
 	}
 
 	/* the CSR rules of BTD-65, the chain rules of BTD-55 */

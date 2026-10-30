@@ -1,0 +1,13 @@
+# OpenSSL configuration for test_service_importexport_cnf_output (BTD-16):
+# the default provider with ml-dsa.output_formats = priv-only
+openssl_conf = openssl_init
+
+[openssl_init]
+providers = provider_sect
+
+[provider_sect]
+default = default_sect
+
+[default_sect]
+activate = 1
+ml-dsa.output_formats = priv-only

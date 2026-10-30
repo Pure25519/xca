@@ -99,14 +99,18 @@ class keytype
 	}
 	/* The NID of the key type. EVP_PKEY_get_id() is -1 for keys that
 	 * OpenSSL knows only through a provider (ML-DSA, SLH-DSA); they are
-	 * found by their algorithm name (BTD-16) */
+	 * found by their algorithm name (BTD-16). A key generated from its
+	 * NID carries the NID, but EVP_PKEY_type() knows only the legacy
+	 * types and gives NID_undef for it */
 	static int nid(const EVP_PKEY *pkey)
 	{
 		if (!pkey)
 			return NID_undef;
 		int id = EVP_PKEY_get_id(pkey);
-		if (id > 0)
-			return EVP_PKEY_type(id);
+		if (id > 0) {
+			int legacy = EVP_PKEY_type(id);
+			return legacy != NID_undef ? legacy : id;
+		}
 		const char *name = EVP_PKEY_get0_type_name(pkey);
 		return name ? OBJ_ln2nid(name) : NID_undef;
 	}

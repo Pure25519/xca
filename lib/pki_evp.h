@@ -55,11 +55,31 @@ class pki_evp: public pki_key
 		void bogusEncryptKey();
 		bool updateLegacyEncryption();
 		EVP_PKEY *decryptKey() const;
+		/* decryptKey() in the ML-DSA private key encoding of the
+		 * export that runs (MlDsaFormatScope); other keys as they are */
+		EVP_PKEY *decryptKeyForExport() const;
 		EVP_PKEY *tryDecryptKey() const;
 		EVP_PKEY *legacyDecryptKey(QByteArray &myencKey,
 					Passwd &ownPassBuf) const;
 		EVP_PKEY *priv2pub(EVP_PKEY* key);
 		static QString removeTypeFromIntName(QString n);
+
+		/* ML-DSA private key encodings of RFC 9881 (BTD-16): "both"
+		 * (seed and expanded key), "seed", "expanded" */
+		static const QStringList mlDsaFormats;
+		/* The encoding of the export that runs; empty: OpenSSL's
+		 * default (both, or expanded for a key without seed) */
+		class MlDsaFormatScope
+		{
+			QString saved{};
+		  public:
+			MlDsaFormatScope(const QString &format);
+			~MlDsaFormatScope();
+			/* The encoding the export wrote for the key; empty
+			 * for other keys */
+			static QString written(const pki_key *key);
+		};
+		static bool isMlDsa(int keytype);
 		void fromPEMbyteArray(const QByteArray &ba, const QString &name);
 		void fromBytes(const QByteArray &ba, const QString &fname);
 		virtual bool pem(BioByteArray &b, const pki_export *xport);

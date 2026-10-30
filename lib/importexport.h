@@ -84,6 +84,11 @@ class ExportSpec
 	 * PBE-SHA1-3DES for a legacy reader. Empty: the setting
 	 * pkcs12_enc_algo, by default AES-256-CBC (BTD-52) */
 	QString pkcs12Algorithm{};
+	/* Encoding of ML-DSA private keys (RFC 9881): "both" (seed and
+	 * expanded key), "seed" or "expanded", e.g. expanded for a reader
+	 * without seed support. Empty: OpenSSL's default, both, or the
+	 * expanded key of a key imported without seed (BTD-16) */
+	QString privateKeyFormat{};
 };
 
 /* "certificate", "key", "request", "crl", "template": the audit object
