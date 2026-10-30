@@ -153,6 +153,11 @@ after a failure checks the OpenSSL result itself:
   key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or
   `audit_signing_failed` instead of storing an empty key or signature; a checkpoint signs before
   its first write, so a failure writes nothing.
+- Extension input that OpenSSL cannot encode is `invalid_extension`: `x509v3ext::create()`
+  (every caller, the GUI dialogs included), the advanced block (a CONF error names the line), the
+  request's extensions, the merge and order paths of the issuance; an extension of a request that
+  does not decode is `invalid_request_extension` with its name, not taken for absent (BTD-197).
+  Before, the object was signed without the extension and audited as success.
 - A value that a subject entry or request attribute cannot hold is `invalid_string`
   (`QStringToAsn1()`, `throwInvalidString()`); before, the NULL string crashed the caller.
 - `take_openssl_errors()` builds the message text: the reasons with their data strings, one per
