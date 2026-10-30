@@ -69,9 +69,13 @@ class secretError: public errorEx
 			rejected	/* the secret from the source was wrong */
 		};
 		enum reason why;
+		/* pass_info::purpose of the request, -1 if unknown; lets a
+		 * command line name the option that supplies it (BTD-41) */
+		int purpose{ -1 };
 
-		secretError(enum reason r = missing, QString txt = "")
-			: errorEx(txt), why(r)
+		secretError(enum reason r = missing, QString txt = "",
+				int p = -1)
+			: errorEx(txt), why(r), purpose(p)
 		{
 		}
 };

@@ -116,6 +116,8 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 	}
 	if (mykey) {
 		key = new pki_evp(mykey);
+		/* the file's own protection for JSON (BTD-41) */
+		key->setFileEncrypted(pass.size() > 0);
 		key->setIntName(alias + "_key");
 		key->pkiSource = imported;
 		inheritFilename(key);
