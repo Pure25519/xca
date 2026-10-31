@@ -96,6 +96,9 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
+		/* what secret.export wrote, e.g. openvpn_tls_auth, never
+		 * the secret (BTD-90) */
+		"kind",
 		"key_size", "key_type", "legacy", "ml_dsa_encoding", "name",
 		"next_update",
 		"not_after",
