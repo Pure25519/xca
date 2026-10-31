@@ -74,6 +74,8 @@ class test_service_audit : public ServiceTestCase
 	void upgradeProfileTables();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
+	void baselineRecordsUnlock_data();
+	void baselineRecordsUnlock();
 	void canonicalJson();
 	void chainHashVector();
 	void chainValid();
@@ -404,6 +406,45 @@ void test_service_audit::upgradeWaitsForPassword()
 	QVERIFY(rejected);
 	QVERIFY(!Database.isOpen());
 	QCOMPARE(fileRows(), before);
+}
+
+void test_service_audit::baselineRecordsUnlock_data()
+{
+	QTest::addColumn<bool>("withPassword");
+
+	QTest::newRow("password") << true;
+	QTest::newRow("no password") << false;
+}
+
+void test_service_audit::baselineRecordsUnlock()
+{
+	/* BTD-135: the baseline of an upgraded database records whether its
+	 * password was checked, like every entry append() writes */
+	QFETCH(bool, withPassword);
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
+
+	if (withPassword) {
+		openDatabase();
+	} else {
+		/* xca --no-gui without a password source opens unchecked */
+		database_model::open_without_password = true;
+		Database.open(dbFile);
+		QVERIFY(Database.isOpen());
+	}
+	QCOMPARE(ServiceContext::processPasswordVerified, withPassword);
+	QList<AuditEntry> baseline = AuditLog::entries();
+	QCOMPARE(baseline.size(), 2);
+	QCOMPARE(baseline[0].action, QString(AuditLog::actionRevocationBaseline));
+	QCOMPARE(baseline[1].action, QString(AuditLog::actionInit));
+	for (const AuditEntry &e : baseline) {
+		QVERIFY2(e.params.contains("db_unlock_verified"),
+			CCHAR(e.action));
+		QCOMPARE(e.params.value("db_unlock_verified"),
+			QVariant(withPassword));
+	}
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
 }
 
 void test_service_audit::canonicalJson()
