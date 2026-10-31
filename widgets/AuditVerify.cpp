@@ -107,7 +107,7 @@ static QString seqText(qint64 seq)
 	return seq ? QString::number(seq) : QObject::tr("none");
 }
 
-void AuditVerify::show(const AuditVerifyResult &r)
+void AuditVerify::display(const AuditVerifyResult &r)
 {
 	result = r;
 	values["ok"]->setText(r.ok() ? tr("OK") : tr("Failed"));
@@ -143,7 +143,7 @@ void AuditVerify::verify()
 		k = k.trimmed();
 	pins.minCheckpoint = minCheckpoint->text().trimmed().toLongLong();
 	try {
-		show(AuditLog::verify(pins));
+		display(AuditLog::verify(pins));
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}

@@ -12,11 +12,11 @@
 #include <QDialog>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMessageBox>
 #include <QSqlQuery>
 
 #include "widgets/MainWindow.h"
 #include "widgets/XcaWarning.h"
+#include "lib/XcaWarningCore.h"
 #include "lib/audit.h"
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
@@ -74,6 +74,9 @@ void test_main::auditVerifyIntactAndBroken()
 
 		/* The newest entry changed behind XCA's back */
 		QSqlQuery q;
+		QVERIFY(q.exec("SELECT actor FROM audit_log WHERE "
+			"seq=(SELECT MAX(seq) FROM audit_log)") && q.next());
+		QString actor = q.value(0).toString();
 		QVERIFY(q.exec("UPDATE audit_log SET actor='os:mallory' WHERE "
 			"seq=(SELECT MAX(seq) FROM audit_log)"));
 		press(dlg, "btn_verify");
@@ -84,9 +87,11 @@ void test_main::auditVerifyIntactAndBroken()
 		QCOMPARE(value(dlg, "firstBrokenSeq"),
 			QString::number(r.firstBrokenSeq));
 
-		/* A pinned key that is not the log's (BTD-101) */
-		QVERIFY(q.exec("UPDATE audit_log SET actor='os:test' WHERE "
-			"seq=(SELECT MAX(seq) FROM audit_log)"));
+		/* Repaired, but a pinned key that is not the log's (BTD-101) */
+		q.prepare("UPDATE audit_log SET actor=? WHERE "
+			"seq=(SELECT MAX(seq) FROM audit_log)");
+		q.addBindValue(actor);
+		QVERIFY(q.exec());
 		QLineEdit *pin = dlg->findChild<QLineEdit *>(
 					"dlg_auditVerify_pinKeys");
 		QVERIFY(pin);
@@ -94,19 +99,24 @@ void test_main::auditVerifyIntactAndBroken()
 		press(dlg, "btn_verify");
 		QCOMPARE(value(dlg, "reason"), QString("untrusted_key"));
 		press(dlg, "btn_close");
-	} catch (...) {
-		QVERIFY2(false, "Exception thrown");
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
 	}
 }
 
-/* Answers the adoption question with Yes; runs in the box's event loop
- * (whenShown(), BTD-180) */
-static QString adoptQuestion;
-static void answerAdopt(xcaWarningBox *box)
+/* Answers the adoption question with "yes" and notes its id and text:
+ * testxca runs with the headless xcaWarningCore */
+static QString adoptQuestion, adoptId;
+class adoptWarnings : public xcaWarningCore
 {
-	adoptQuestion = box->text();
-	box->button(QMessageBox::Yes)->click();
-}
+  public:
+	bool yesno(const QString &id, const QString &msg) override
+	{
+		adoptId = id;
+		adoptQuestion = msg;
+		return true;
+	}
+};
 
 void test_main::auditVerifyAdopt()
 {
@@ -132,8 +142,10 @@ void test_main::auditVerifyAdopt()
 		int unanchored = AuditLog::verify().unanchoredEntries;
 
 		adoptQuestion.clear();
-		whenShown<xcaWarningBox>("dlg_warning", answerAdopt);
+		xcaWarning::setGui(new adoptWarnings());
 		adopt->click();
+		xcaWarning::setGui(new xcaWarningCore());
+		QCOMPARE(adoptId, QString("audit.adopt"));
 		QVERIFY2(adoptQuestion.contains(QString::number(unanchored)),
 			CCHAR(adoptQuestion));
 		AuditVerifyResult r = AuditLog::verify();
@@ -144,7 +156,7 @@ void test_main::auditVerifyAdopt()
 		QVERIFY(r.adoptedEntries > 0);
 		QVERIFY(!adopt->isVisible());
 		press(dlg, "btn_close");
-	} catch (...) {
-		QVERIFY2(false, "Exception thrown");
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
 	}
 }

@@ -29,7 +29,7 @@ class AuditVerify: public QDialog
 	QPushButton *adoptButton{};
 	AuditVerifyResult result{};
 
-	void show(const AuditVerifyResult &r);
+	void display(const AuditVerifyResult &r);
 
   public:
 	AuditVerify(QWidget *parent);
