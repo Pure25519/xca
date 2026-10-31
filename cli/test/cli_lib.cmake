@@ -23,6 +23,17 @@ set(ENV{BXC_DB_PW} "${DB_PW}")
 set(PW --password env:BXC_DB_PW)
 set(TRANSCRIPT "${WORK}/transcript.log")
 
+# Time factor for slow builds (BTD-230): the AddressSanitizer run of
+# bxc-pki (dev.py asan) sets BXC_TEST_TIME_FACTOR, so that a process
+# timeout or a timed terminal dialogue scales with the slower binaries
+# under parallel load instead of every limit being raised for all runs.
+set(TIME_FACTOR 1)
+if(DEFINED ENV{BXC_TEST_TIME_FACTOR} AND "$ENV{BXC_TEST_TIME_FACTOR}" MATCHES "^[1-9][0-9]*$")
+  set(TIME_FACTOR "$ENV{BXC_TEST_TIME_FACTOR}")
+endif()
+math(EXPR T60 "60 * ${TIME_FACTOR}")
+math(EXPR T120 "120 * ${TIME_FACTOR}")
+
 function(fail msg)
   message(FATAL_ERROR "${msg}\n(transcript: ${TRANSCRIPT})")
 endfunction()
@@ -34,7 +45,7 @@ endfunction()
 function(bxc label code)
   execute_process(COMMAND "${BXC_PKI}" ${ARGN}
     WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   string(REPLACE ";" " " cmd "${ARGN}")
   file(APPEND "${TRANSCRIPT}"
     "### ${label}\n$ bxc-pki ${cmd}\nexit ${r}\n--- stdout\n${o}--- stderr\n${e}\n")
@@ -53,7 +64,7 @@ function(fx label code fault)
   set(ENV{BXC_PKI_FAULT} "${fault}")
   execute_process(COMMAND "${BXC_PKI_FAULTS}" ${ARGN}
     WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   unset(ENV{BXC_PKI_FAULT})
   string(REPLACE ";" " " cmd "${ARGN}")
   file(APPEND "${TRANSCRIPT}"
@@ -77,7 +88,7 @@ endfunction()
 function(xca_run label code)
   execute_process(COMMAND "${XCA}" --no-gui ${ARGN}
     WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   string(REPLACE ";" " " cmd "${ARGN}")
   file(APPEND "${TRANSCRIPT}"
     "### ${label}\n$ xca --no-gui ${cmd}\nexit ${r}\n--- stdout\n${o}--- stderr\n${e}\n")
@@ -249,7 +260,7 @@ endif()
 function(fixture label)
   execute_process(COMMAND "${FIXTURE}" "${DB}" env:BXC_DB_PW ${ARGN}
     WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 120)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T120})
   string(REPLACE ";" " " cmd "${ARGN}")
   file(APPEND "${TRANSCRIPT}"
     "### ${label}\n$ cli_fixture ${cmd}\nexit ${r}\n${o}${e}\n")
@@ -263,7 +274,7 @@ endfunction()
 # rows in ${out}
 function(sql label statement)
   execute_process(COMMAND "${SQL_EXEC}" "${DB}" -c "${statement}"
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   file(APPEND "${TRANSCRIPT}"
     "### ${label}\n$ sql_exec ${statement}\nexit ${r}\n${o}${e}\n")
   if(NOT r EQUAL 0)

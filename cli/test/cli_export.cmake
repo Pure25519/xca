@@ -91,16 +91,20 @@ if(SCRIPT)
   # line per prompt, sent after a pause (readPass() flushes input typed
   # ahead when it switches the terminal mode); "-" is an empty line
   function(tty label code)
+    # the pause scales with TIME_FACTOR: a line sent before the prompt
+    # is flushed, and the export then waits for input until the timeout
+    # (BTD-230: under ASan with parallel load the start took longer)
+    math(EXPR pause "2 * ${TIME_FACTOR}")
     set(feed "")
     foreach(line IN LISTS ARGN)
       if(line STREQUAL "-")
         set(line "")
       endif()
-      string(APPEND feed "sleep 2; printf '%s\\n' '${line}'; ")
+      string(APPEND feed "sleep ${pause}; printf '%s\\n' '${line}'; ")
     endforeach()
-    execute_process(COMMAND sh -c "(${feed}sleep 2) | '${SCRIPT}' -qec \"'${BXC_PKI}' export dev --db '${DB}' --password env:BXC_DB_PW --type certificate --format p12 --out x --layout certstrap --force --interactive\" /dev/null"
+    execute_process(COMMAND sh -c "(${feed}sleep ${pause}) | '${SCRIPT}' -qec \"'${BXC_PKI}' export dev --db '${DB}' --password env:BXC_DB_PW --type certificate --format p12 --out x --layout certstrap --force --interactive\" /dev/null"
       WORKING_DIRECTORY "${WORK}"
-      RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+      RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
     file(APPEND "${TRANSCRIPT}" "### ${label}\nexit ${r}\n${o}${e}\n")
     if(NOT o MATCHES "\"code\": *\"${code}\"")
       fail("${label}: expected ${code} (exit ${r}):\n${o}${e}")
