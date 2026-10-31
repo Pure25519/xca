@@ -127,6 +127,9 @@ class test_service_checkpoint : public ServiceTestCase
 	void automaticCheckpointNeverAsks();
 	void neverSignsBrokenTail();
 	void keyRotation();
+	void pinRewrittenLog();
+	void pinFollowsRotation();
+	void pinMinCheckpoint();
 	void passwordChange();
 	void reservedActions();
 	void opensslCli();
@@ -1277,6 +1280,93 @@ void test_service_checkpoint::neverSignsBrokenTail()
 	QCOMPARE(r.firstBrokenSeq, qint64(7));
 	QCOMPARE(r.reason, QString("hash"));
 	QCOMPARE(r.lastCheckpointSeq, qint64(5));
+}
+
+/* BTD-101: a log rewritten from scratch with a new audit key passes
+ * verify on its own (trust on first use); the key id pinned from an
+ * earlier export reveals it */
+void test_service_checkpoint::pinRewrittenLog()
+{
+	Settings["audit_checkpoint_interval"] = 3;
+	appendSample(3);
+	QString oldKey = AuditKey::current();
+	QVERIFY(!oldKey.isEmpty());
+
+	/* the attacker deletes log and keys and writes a new history */
+	sql("DELETE FROM audit_log");
+	sql("DELETE FROM audit_keys");
+	appendSample(3);
+	QString newKey = AuditKey::current();
+	QVERIFY(!newKey.isEmpty() && newKey != oldKey);
+
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+
+	AuditVerifyPins pins;
+	pins.keys << oldKey;
+	r = AuditLog::verify(pins);
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("untrusted_key"));
+	QCOMPARE(r.toMap().value("pinned_keys").toStringList(),
+		QStringList() << oldKey);
+	QCOMPARE(r.toMap().value("audit_keys").toStringList(),
+		QStringList() << newKey);
+
+	/* the right pin passes */
+	pins.keys = QStringList() << newKey;
+	r = AuditLog::verify(pins);
+	QVERIFY2(r.ok(), r.toJson().constData());
+}
+
+void test_service_checkpoint::pinFollowsRotation()
+{
+	/* the first key pinned: every rotation leads from it */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	QString firstKey = AuditKey::current();
+	AuditLog::rotateKey(ctx);
+	QString secondKey = AuditKey::current();
+	appendSample(5);
+
+	AuditVerifyPins pins;
+	pins.keys << firstKey;
+	AuditVerifyResult r = AuditLog::verify(pins);
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.auditKeys, QStringList() << firstKey << secondKey);
+
+	/* only the second key pinned: the log does not start with it */
+	pins.keys = QStringList() << secondKey;
+	r = AuditLog::verify(pins);
+	QCOMPARE(r.reason, QString("untrusted_key"));
+}
+
+void test_service_checkpoint::pinMinCheckpoint()
+{
+	/* the newest entries cut off together with their checkpoints pass
+	 * verify on their own; the checkpoint seq of an earlier export
+	 * reveals it */
+	Settings["audit_checkpoint_interval"] = 3;
+	appendSample(9);
+	AuditVerifyResult full = AuditLog::verify();
+	QVERIFY2(full.ok(), full.toJson().constData());
+	qint64 newest = full.lastCheckpointSeq;
+	QVERIFY(newest > 0);
+	QList<AuditEntry> cps = byAction(AuditLog::actionCheckpoint);
+	QVERIFY(cps.size() >= 2);
+	qint64 cut = cps[cps.size() - 2].seq;
+	sql(QString("DELETE FROM audit_log WHERE seq > %1").arg(cut));
+
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	AuditVerifyPins pins;
+	pins.minCheckpoint = newest;
+	r = AuditLog::verify(pins);
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_truncated"));
+
+	pins.minCheckpoint = cut;
+	r = AuditLog::verify(pins);
+	QVERIFY2(r.ok(), r.toJson().constData());
 }
 
 void test_service_checkpoint::keyRotation()
