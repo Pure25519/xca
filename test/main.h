@@ -111,6 +111,9 @@ class test_main: public QObject
 	void renewalThroughService();
 	void renewalAllOrNothing();
 
+	/* staleReload.cpp */
+	void staleReloadInDelete();
+
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();
 
