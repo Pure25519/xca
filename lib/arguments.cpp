@@ -9,6 +9,7 @@
 #include <QDebug>
 
 #include "arguments.h"
+#include "Passwd.h"
 
 #include <stdio.h>
 #include <QCommandLineParser>
@@ -307,36 +308,40 @@ int arguments::parse(int argc, char *argv[])
 	files.clear();
 	need_db = false;
 
-	QCommandLineParser parser;
-	foreach(const arg_option &opt, opts)
-		parser.addOption(opt.getCmdOption());
-
-	/* Parse cmdline options argv */
+	/* Parse cmdline options argv. The copies may hold a --password
+	 * value: they are wiped once the parser is gone (BTD-74) */
 	QStringList args;
 	for (int i =0; i < argc; i++)
 		args << QString::fromUtf8(argv[i]);
-	parser.process(args);
+	{
+		QCommandLineParser parser;
+		foreach(const arg_option &opt, opts)
+			parser.addOption(opt.getCmdOption());
+		parser.process(args);
 
-	QStringList found = parser.optionNames();
-	foreach(const arg_option &opt, opts) {
-		if (found.contains(opt.long_opt)) {
-			/* value() of a flag warns "option not expecting values" */
-			found_options[opt.long_opt] = opt.arg_type == no_argument ?
-				QString() : parser.value(opt.long_opt);
-			if (opt.need_db)
-				need_db = true;
+		QStringList found = parser.optionNames();
+		foreach(const arg_option &opt, opts) {
+			if (found.contains(opt.long_opt)) {
+				/* value() of a flag warns "option not expecting values" */
+				found_options[opt.long_opt] = opt.arg_type == no_argument ?
+					QString() : parser.value(opt.long_opt);
+				if (opt.need_db)
+					need_db = true;
+			}
+		}
+		foreach(const QString &file, parser.positionalArguments()) {
+			if (!has("database") && file.endsWith(".xdb")) {
+				/* No database given, but here is an xdb file
+				 * Try to be clever.
+				 */
+				found_options["database"] = file;
+			} else {
+				files << file;
+			}
 		}
 	}
-	foreach(const QString &file, parser.positionalArguments()) {
-		if (!has("database") && file.endsWith(".xdb")) {
-			/* No database given, but here is an xdb file
-			 * Try to be clever.
-			 */
-			found_options["database"] = file;
-		} else {
-			files << file;
-		}
-	}
+	for (QString &arg : args)
+		secretCleanse(arg);
 	return result;
 }
 
@@ -348,6 +353,20 @@ arguments::arguments(int argc, char *argv[])
 arguments::arguments(const arguments &a)
 {
 	*this = a;
+}
+
+arguments::~arguments()
+{
+	forgetSecrets();
+}
+
+void arguments::forgetSecrets()
+{
+	for (const QString &opt : secret_opts) {
+		auto it = found_options.find(opt);
+		if (it != found_options.end())
+			secretCleanse(*it);
+	}
 }
 
 arguments &arguments::operator = (const arguments &a)

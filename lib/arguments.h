@@ -57,6 +57,10 @@ class arguments
 
 	arguments(int argc, char *argv[]);
 	arguments(const arguments &a);
+	~arguments();
+	/* Wipe the values of the secret options (BTD-74): call once the
+	 * password sources are set; the options stay known to has() */
+	void forgetSecrets();
 
 	QString operator [] (const QString &) const;
 	arguments &operator = (const arguments &);

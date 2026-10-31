@@ -45,12 +45,18 @@ class PwDialogUI_i
  * read once anyway. */
 class PwDialogHeadless: public PwDialogUI_i
 {
+	/* name is the source, for pass: the secret itself: it gets a
+	 * buffer of its own and is wiped with the entry (BTD-74) */
 	class entry
 	{
 	  public:
 		QString name{};
 		Passwd secret{};
 		bool read{};
+		entry() = default;
+		entry(const entry &other);
+		entry &operator=(const entry &other);
+		~entry();
 	};
 	QMap<enum pass_info::purpose, entry> sources{};
 	bool interactive{};

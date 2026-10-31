@@ -112,6 +112,16 @@ Import and export (BTD-34):
   (`lib/PwDialogCore.h`), whatever GUI or headless configuration is set; without it
   `PwDialogCore` asks as before. The export writers no longer prompt: they take the password
   (`pki_evp::writeKey`/`writePKCS8`, `pki_pkcs12::writePKCS12`).
+- Secrets in memory (BTD-74): a `Passwd` owns its bytes (copies never share the buffer), so its
+  destructor and `cleanse()` zero the bytes it used, with `OPENSSL_cleanse`. `secretWipe()` and
+  `secretCleanse()` (`lib/Passwd.h`) zero a `QByteArray` or `QString` in place; a buffer shared
+  with another array is detached first, so every holder wipes its own copy. The headless sources
+  keep their own copy of the source string (for `pass:` the secret) and wipe it with the entry;
+  `readSource()` copies the secret straight into the `Passwd`. The parsed command line wipes the
+  values of `--password`/`--sqlpass` once the sources are set (`arguments::forgetSecrets()`), the
+  `bxc-pki` options wipe theirs on destruction. Not covered: the process arguments and
+  environment, the internals of `QCommandLineParser`, swap (no `mlock`), and the database password
+  `pki_evp::passwd`, which is kept for the session by design.
 - Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
   audit entries, then writes the file and commits: no file without its entries, no entries
   without the file (the file is removed when the commit fails).
