@@ -57,11 +57,12 @@ class test_service_audit : public ServiceTestCase
 		return QDateTime::fromString(iso, Qt::ISODate);
 	}
 	void insertRevocation();
-	/* The empty tables of bxc_schema 4 (BTD-167), taken out of rows */
+	/* The empty tables of bxc_schema 4 (BTD-167) and 5 (BTD-56),
+	 * taken out of rows */
 	static void takeStoreTables(QMap<QString, QStringList> *rows)
 	{
 		for (const char *t : { "profiles", "policies", "assignments",
-				"issued_profiles" }) {
+				"issued_profiles", "renewals" }) {
 			QVERIFY2(rows->contains(t), t);
 			QCOMPARE(rows->take(t), QStringList());
 		}
@@ -74,6 +75,8 @@ class test_service_audit : public ServiceTestCase
 	void upgradeProfileTables();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
+	void baselineRecordsUnlock_data();
+	void baselineRecordsUnlock();
 	void canonicalJson();
 	void chainHashVector();
 	void chainValid();
@@ -194,7 +197,7 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='schema'")
 			.toString(), QString("8"));
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("4"));
+			.toString(), QString("5"));
 
 	/* Every row is unchanged. settings only gains bxc_schema, the
 	 * option the harness sets on each open and the marker of the
@@ -208,7 +211,7 @@ void test_service_audit::upgradeForkDatabase()
 	QCOMPARE(after, before);
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
-			s == "bxc_schema|4" || s == "pkcs12_migrated|yes";
+			s == "bxc_schema|5" || s == "pkcs12_migrated|yes";
 	});
 	QCOMPARE(settingsAfter, settingsBefore);
 
@@ -281,7 +284,7 @@ void test_service_audit::upgradeKeyTypeColumn()
 
 	openDatabase();
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("4"));
+			.toString(), QString("5"));
 	QVERIFY(sqlValue("SELECT sql FROM sqlite_master WHERE type='table' "
 		"AND name='public_keys'").toString().contains("type VARCHAR(32)"));
 	QCOMPARE(sqlValue("SELECT count(*) FROM sqlite_master WHERE "
@@ -311,7 +314,7 @@ void test_service_audit::upgradeKeyTypeColumn()
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
-	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|4");
+	settingsBefore.replaceInStrings("bxc_schema|2", "bxc_schema|5");
 	settingsAfter.removeIf([](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
 			s == "pkcs12_migrated|yes";
@@ -346,13 +349,13 @@ void test_service_audit::upgradeProfileTables()
 
 	openDatabase();
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='bxc_schema'")
-			.toString(), QString("4"));
+			.toString(), QString("5"));
 	QMap<QString, QStringList> after = tableRows(QSqlDatabase::database());
 	takeStoreTables(&after);
 	QStringList settingsBefore = before.take("settings");
 	QStringList settingsAfter = after.take("settings");
 	QCOMPARE(after, before);
-	settingsBefore.replaceInStrings("bxc_schema|3", "bxc_schema|4");
+	settingsBefore.replaceInStrings("bxc_schema|3", "bxc_schema|5");
 	/* the dump was made by a build that sets both already */
 	auto harness = [](const QString &s) {
 		return s.startsWith("suppress_messages|") ||
@@ -370,6 +373,12 @@ void test_service_audit::upgradeProfileTables()
 			"VALUES ('p', 1, '{}', 'now')"));
 	QVERIFY2(!q.exec("INSERT INTO profiles (name, version, document, created) "
 			"VALUES ('p', 1, '{}', 'now')"), "name and version are unique");
+	/* bxc_schema 5: one predecessor per renewed certificate (BTD-56) */
+	QVERIFY(q.exec("INSERT INTO renewals (item, predecessor, "
+			"predecessor_serial, rekey) SELECT min(id), 3, '0A', 0 FROM items"));
+	QVERIFY2(!q.exec("INSERT INTO renewals (item, predecessor, "
+			"predecessor_serial, rekey) SELECT min(id), 4, '0B', 1 FROM items"),
+			"one predecessor per certificate");
 }
 
 void test_service_audit::upgradeWaitsForPassword_data()
@@ -404,6 +413,45 @@ void test_service_audit::upgradeWaitsForPassword()
 	QVERIFY(rejected);
 	QVERIFY(!Database.isOpen());
 	QCOMPARE(fileRows(), before);
+}
+
+void test_service_audit::baselineRecordsUnlock_data()
+{
+	QTest::addColumn<bool>("withPassword");
+
+	QTest::newRow("password") << true;
+	QTest::newRow("no password") << false;
+}
+
+void test_service_audit::baselineRecordsUnlock()
+{
+	/* BTD-135: the baseline of an upgraded database records whether its
+	 * password was checked, like every entry append() writes */
+	QFETCH(bool, withPassword);
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
+
+	if (withPassword) {
+		openDatabase();
+	} else {
+		/* xca --no-gui without a password source opens unchecked */
+		database_model::open_without_password = true;
+		Database.open(dbFile);
+		QVERIFY(Database.isOpen());
+	}
+	QCOMPARE(ServiceContext::processPasswordVerified, withPassword);
+	QList<AuditEntry> baseline = AuditLog::entries();
+	QCOMPARE(baseline.size(), 2);
+	QCOMPARE(baseline[0].action, QString(AuditLog::actionRevocationBaseline));
+	QCOMPARE(baseline[1].action, QString(AuditLog::actionInit));
+	for (const AuditEntry &e : baseline) {
+		QVERIFY2(e.params.contains("db_unlock_verified"),
+			CCHAR(e.action));
+		QCOMPARE(e.params.value("db_unlock_verified"),
+			QVariant(withPassword));
+	}
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
 }
 
 void test_service_audit::canonicalJson()

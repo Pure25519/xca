@@ -4,11 +4,13 @@
 # one JSON file; errors are an error object on stderr with exit code 1.
 # No output names private key material or a password: the database holds
 # keys encrypted with the database password and one with its own password.
-# cmake -DXCA=<xca> -DDATA=<data/json> [-DOPENSSL=<openssl>]
+# cmake -DXCA=<xca> -DDATA=<test/service/data> [-DOPENSSL=<openssl>]
 #       [-DSQL_EXEC=<sql_exec>] -DWORK=<scratch dir> -P cli_json_output.cmake
 
 cmake_minimum_required(VERSION 3.19)   # string(JSON)
 
+# the fixtures of the JSON tests (BTD-256: DATA is the common data directory)
+set(DATA "${DATA}/json")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")

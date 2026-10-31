@@ -148,8 +148,24 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (cmd_opts.has("no-native-dialogs"))
 		QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
 
-	if (cmd_opts.has("database"))
-		Database.open(cmd_opts["database"], sqlpw);
+	/* an audit check reports an older schema instead of migrating
+	 * the database it checks (BTD-70) */
+	bool auditCheck = cmd_opts.has("audit-verify") ||
+			  cmd_opts.has("audit-export");
+	database_model::refuse_schema_upgrade = auditCheck;
+	if (cmd_opts.has("database")) {
+		try {
+			Database.open(cmd_opts["database"], sqlpw);
+		} catch (serviceError &err) {
+			if (!auditCheck || err.code != "schema_upgrade_required")
+				throw;
+			QVariantMap m { { "ok", false },
+					{ "schema_upgrade_required", true },
+					{ "error", err.getString() } };
+			console_write(stdout, AuditLog::canonicalJson(m) + '\n');
+			return EXIT_FAILURE;
+		}
+	}
 
 	*_cmdline_items = cmdline_items = new pki_multi();
 

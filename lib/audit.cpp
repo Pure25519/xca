@@ -32,6 +32,7 @@ const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
 const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
+const char AuditLog::actionSettingsUpdate[] = "settings.update";
 const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
@@ -96,6 +97,9 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
+		/* what secret.export wrote, e.g. openvpn_tls_auth, never
+		 * the secret (BTD-90) */
+		"kind",
 		"key_size", "key_type", "legacy", "ml_dsa_encoding", "name",
 		"next_update",
 		"not_after",
@@ -133,6 +137,18 @@ const QStringList &AuditParams::allowList()
 		 * (trustlist.export) */
 		"crl_validity", "reissue_fraction", "size_budget",
 		"trigger", "trust_list_budget",
+		/* renewal and re-key (BTD-56) */
+		"predecessor_id", "predecessor_serial", "rekey",
+		"serial_kept",
+		/* bxc-pki bootstrap (BTD-166), action bootstrap.apply: the
+		 * SHA-256 of the file, its schema id and the number of
+		 * objects created, kept, updated and elements skipped */
+		"file_sha256", "schema", "created", "kept", "updated",
+		"skipped",
+		/* settings.update (BTD-224): the setting, and its values
+		 * only for the options of the Options dialog, otherwise
+		 * redacted */
+		"setting", "old_value", "new_value", "redacted",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
@@ -974,12 +990,17 @@ void AuditLog::writeBaseline()
 	}
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
-	/* No checkpoint here: the database may be open without its password */
-	for (const AuditParams &p : rows)
+	/* No checkpoint here: the database may be open without its password.
+	 * Whether it was checked is recorded as by append() (BTD-135). */
+	bool verified = ctx.passwordVerified();
+	for (AuditParams &p : rows) {
+		p.set("db_unlock_verified", verified);
 		insertEntry(ctx, actionRevocationBaseline, "cert",
 			p.getValues().value("serial").toString(), p);
+	}
 	insertEntry(ctx, actionInit, "database", QString(),
-		AuditParams().set("count", (qint64)rows.size()));
+		AuditParams().set("count", (qint64)rows.size())
+			.set("db_unlock_verified", verified));
 	if (!TransCommit())
 		throw errorEx(QObject::tr("Database error: %1")
 			.arg("the audit baseline was not committed"));
