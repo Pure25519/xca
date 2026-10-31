@@ -142,6 +142,10 @@ QSqlError pki_x509::deleteSqlData()
 {
 	XSqlQuery q;
 	QSqlError e = pki_x509super::deleteSqlData();
+	/* the loop below reuses e: a failed x509super delete must not be
+	 * overwritten by the next statement's success (BTD-129) */
+	if (e.isValid())
+		return e;
 	QStringList tasks; tasks
 		<< "DELETE FROM certs WHERE item=?"
 		<< "DELETE FROM authority WHERE item=?"
@@ -150,6 +154,7 @@ QSqlError pki_x509::deleteSqlData()
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
 		<< "DELETE FROM issued_profiles WHERE item=?"
+		<< "DELETE FROM renewals WHERE item=?"
 		;
 	foreach(QString task, tasks) {
 		SQL_PREPARE(q, task);

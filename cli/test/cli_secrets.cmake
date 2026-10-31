@@ -48,7 +48,7 @@ foreach(src fd:0 stdin)
   execute_process(COMMAND "${BXC_PKI}" request-cert --db "${DB}"
       --password ${src} --cn "pw-${src}"
     INPUT_FILE "${WORK}/pw.txt" WORKING_DIRECTORY "${WORK}"
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   file(APPEND "${TRANSCRIPT}" "### --password ${src}\nexit ${r}\n${o}${e}\n")
   if(NOT r EQUAL 0)
     fail("--password ${src}: ${r} ${e}")
@@ -90,7 +90,7 @@ foreach(o sqlpass import-pass export-pass)
     execute_process(COMMAND "${BXC_PKI}" list --db "${DB}" ${PW}
         --${o} ${src}
       INPUT_FILE "${WORK}/other.txt" WORKING_DIRECTORY "${WORK}"
-      RESULT_VARIABLE r OUTPUT_VARIABLE o2 ERROR_VARIABLE e TIMEOUT 60)
+      RESULT_VARIABLE r OUTPUT_VARIABLE o2 ERROR_VARIABLE e TIMEOUT ${T60})
     if(NOT r EQUAL 0)
       fail("--${o} ${src}: ${r} ${e}")
     endif()
@@ -115,7 +115,7 @@ endforeach()
 foreach(src fd:0 stdin)
   execute_process(COMMAND "${BXC_PKI}" show --file enc.pem --import-pass ${src}
     INPUT_FILE "${WORK}/other.txt" WORKING_DIRECTORY "${WORK}"
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   if(NOT r EQUAL 0)
     fail("--import-pass ${src}: ${r} ${e}")
   endif()
@@ -146,12 +146,14 @@ expect_error("interactive without tty, key" missing_password)
 
 # --- --interactive: prompt on stderr (the terminal), stdout JSON -----------
 if(SCRIPT AND EXISTS "${SCRIPT}")
-  file(WRITE "${WORK}/answer.txt" "${DB_PW}\n")
-  # the answer comes late: the prompt flushes earlier terminal input
+  # the answer comes after the prompt, which goes to interactive.err: the
+  # prompt flushes earlier terminal input (tty_feed, BTD-230)
+  file(REMOVE "${WORK}/interactive.err")
+  tty_feed(feed "${WORK}/interactive.err" "${DB_PW}")
   execute_process(COMMAND sh -c
-      "(sleep 2; cat '${WORK}/answer.txt') | '${SCRIPT}' -qec \"'${BXC_PKI}' list --db '${DB}' --interactive > '${WORK}/interactive.json' 2> '${WORK}/interactive.err'\" /dev/null"
+      "(${feed}) | '${SCRIPT}' -qec \"'${BXC_PKI}' list --db '${DB}' --interactive > '${WORK}/interactive.json' 2> '${WORK}/interactive.err'\" /dev/null"
     WORKING_DIRECTORY "${WORK}"
-    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 60)
+    RESULT_VARIABLE r OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT ${T60})
   file(READ "${WORK}/interactive.json" ij)
   file(READ "${WORK}/interactive.err" ie)
   file(APPEND "${TRANSCRIPT}" "### interactive\nexit ${r}\n--- stdout\n${ij}--- stderr\n${ie}\n--- tty\n${o}${e}\n")

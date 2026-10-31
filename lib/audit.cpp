@@ -136,6 +136,9 @@ const QStringList &AuditParams::allowList()
 		 * (trustlist.export) */
 		"crl_validity", "reissue_fraction", "size_budget",
 		"trigger", "trust_list_budget",
+		/* renewal and re-key (BTD-56) */
+		"predecessor_id", "predecessor_serial", "rekey",
+		"serial_kept",
 		/* bxc-pki bootstrap (BTD-166), action bootstrap.apply: the
 		 * SHA-256 of the file, its schema id and the number of
 		 * objects created, kept, updated and elements skipped */

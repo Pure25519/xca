@@ -440,6 +440,28 @@ QStringList supportedKeyTypes()
 	return l;
 }
 
+QString keyTypeOf(const EVP_PKEY *pkey)
+{
+	QString job;
+	char group[80];
+	size_t len = 0;
+	switch (EVP_PKEY_get_base_id(pkey)) {
+	case EVP_PKEY_RSA:
+		job = QString("RSA:%1").arg(EVP_PKEY_get_bits(pkey));
+		break;
+	case EVP_PKEY_EC:
+		if (EVP_PKEY_get_group_name(pkey, group, sizeof group, &len))
+			job = QString("EC:%1").arg(group);
+		break;
+	default:
+		job = EVP_PKEY_get0_type_name(pkey);
+	}
+	for (const auto &t : keyTypeTable)
+		if (job.compare(t.job, Qt::CaseInsensitive) == 0)
+			return t.name;
+	return QString();
+}
+
 QStringList keyTypeNames()
 {
 	QStringList l;

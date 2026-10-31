@@ -51,6 +51,8 @@ class test_main: public QObject
 	void exportPkcs12Mac();
 	void revoke();
 	void renewalSigningFails();
+	void renewalThroughService();
+	void renewalAllOrNothing();
 	void passwordDialogParent();
 	void issueRefusedByPolicy();
 	void testValidity();
