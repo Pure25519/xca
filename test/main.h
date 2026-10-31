@@ -113,6 +113,7 @@ class test_main: public QObject
 
 	/* staleReload.cpp */
 	void staleReloadInDelete();
+	void reloadProxyRows();
 
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();

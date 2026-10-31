@@ -111,3 +111,25 @@ void test_main::staleReloadInDelete()
 		QVERIFY2(false, CCHAR(err.getString()));
 	}
 }
+
+/* BTD-239: right after a reload the view's proxy shows every row of the
+ * model, without waiting for the throttled invalidate of XcaTreeView */
+void test_main::reloadProxyRows()
+{
+	try {
+		openDB();
+		db_x509 *certs = Database.model<db_x509>();
+		QVERIFY(srCert("proxy A") && srCert("proxy B"));
+		QAbstractItemModel *proxy = mainwin->certView->model();
+		QTRY_COMPARE_WITH_TIMEOUT(proxy->rowCount(),
+			certs->rowCount(QModelIndex()), 2000);
+		int rows = certs->rowCount(QModelIndex());
+		QVERIFY(rows >= 2);
+
+		certs->reloadContainer({ x509 });
+		QCOMPARE(certs->rowCount(QModelIndex()), rows);
+		QCOMPARE(proxy->rowCount(), rows);
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}

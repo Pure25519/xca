@@ -214,17 +214,18 @@ void db_base::reloadContainer(const QList<enum pki_type> &typelist)
 		return;
 	qDebug() << "RELOAD" << class_name << all_types << typelist;
 	QList<pki_base *> before = rootItem->getChildItems();
+	/* the rows load inside the reset bracket: views and proxies read
+	 * the new rows at modelReset (BTD-239) */
 	beginResetModel();
 	rootItem->clear();
 	treeItem->clear();
-	endResetModel();
-
 	loadContainer();
 	/* the objects whose row is gone: out of the Store and the model */
 	for (pki_base *pki : before)
 		if (rootItem->indexOf(pki) == -1 &&
 		    Store.find(pki->getSqlItemId().toULongLong()) == pki)
 			retire(pki);
+	endResetModel();
 	QList<SkippedRow> rows = takeSkippedRows();
 	if (!rows.isEmpty())
 		XCA_WARN(skippedRowsText(rows));
