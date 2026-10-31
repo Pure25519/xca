@@ -17,7 +17,7 @@
       "id": "ot-rsa-issuing",
       "parent": "ot-rsa-root",
       "dn": [
-        [{ "type": "DC", "value": "de" }],
+        [{ "type": "DC", "value": "org" }],
         [{ "type": "DC", "value": "example" }],
         [{ "type": "C", "value": "DE" }],
         [{ "type": "O", "value": "BxC Security" }],
