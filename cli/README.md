@@ -437,7 +437,12 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
 - **--plan**: reads no secret, opens an existing database without its password (public
   objects and settings rows; a missing database is not created) and writes nothing, not even
   `cli.plan`; closing it runs no `VACUUM`, because XCA vacuums only after a run that
-  committed a write (BTD-225): the file stays byte-identical. It lists every object as create, keep, update, skip
+  committed a write (BTD-225): the file stays byte-identical. This differs on purpose from the
+  `--plan` of the other commands, which add one `cli.plan` entry: BTD-166 asks for a plan
+  that leaves the file hash unchanged and needs no password source, and a missing database
+  is not created. An entry written without the password would be unsigned, and repeated
+  plans would grow the unsigned tail past the checkpoint interval (BTD-110), so that the next
+  writer fails with `audit_checkpoint_missing`. It lists every object as create, keep, update, skip
   or error (an error of one object, e.g. `bootstrap_conflict` or `not_supported`, is an entry
   with `error`, exit code 0; an error of the file ends the plan as in the real run) and under
   `unchecked` every check it could not do: the secret references, the private keys and
