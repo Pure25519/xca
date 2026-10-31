@@ -13,6 +13,7 @@
 #include "lib/base.h"
 #include "lib/database_model.h"
 #include "lib/pki_pkcs12.h"
+#include "lib/settings.h"
 
 #include <QComboBox>
 #include <QLineEdit>
@@ -40,6 +41,14 @@ ExportDialog::ExportDialog(QWidget *w, const QString &title,
 	mlDsaFormat->addItem(tr("Seed and expanded key"), QString("both"));
 	mlDsaFormat->addItem(tr("Seed only"), QString("seed"));
 	mlDsaFormat->addItem(tr("Expanded key only"), QString("expanded"));
+	/* The values of ExportSpec::pkcs12Mac; empty: the default. The
+	 * iteration count starts at the setting, which is the default */
+	pkcs12Mac->addItem(tr("HMAC-SHA256 (default)"), QString());
+	pkcs12Mac->addItem(tr("PBMAC1 (RFC 9579)"), QString("pbmac1"));
+	pkcs12Iterations->setRange(pki_pkcs12::minIterations,
+				pki_pkcs12::maxIterations);
+	pkcs12Iterations->setValue(
+		((QString)Settings["pkcs12_iterations"]).toInt());
 	if (indexes.size() == 1) {
 		pki_base *pki = db_base::fromIndex(indexes[0]);
 		if (pki) {
@@ -210,7 +219,20 @@ ExportSpec ExportDialog::exportSpec(const QList<pki_base *> &items) const
 	spec.fileName = filename->text();
 	if (mlDsaApplies(items, spec.format))
 		spec.privateKeyFormat = mlDsaFormat->currentData().toString();
+	if (pkcs12OptionsApply(spec.format)) {
+		spec.pkcs12Mac = pkcs12Mac->currentData().toString();
+		/* the setting is the default: sent only when changed */
+		if (pkcs12Iterations->value() !=
+		    ((QString)Settings["pkcs12_iterations"]).toInt())
+			spec.pkcs12Iterations = pkcs12Iterations->value();
+	}
 	return spec;
+}
+
+bool ExportDialog::pkcs12OptionsApply(const pki_export *xport)
+{
+	return xport && xport->match_all(F_PKCS12) &&
+		!encAlgo::forExport().legacy();
 }
 
 bool ExportDialog::mlDsaApplies(const QList<pki_base *> &items,
@@ -229,12 +251,22 @@ void ExportDialog::on_exportFormat_highlighted(int index)
 	bool mlDsa = mlDsaApplies(pkis, x);
 	mlDsaLabel->setHidden(!mlDsa);
 	mlDsaFormat->setHidden(!mlDsa);
+	bool p12 = pkcs12OptionsApply(x);
+	pkcs12MacLabel->setHidden(!p12);
+	pkcs12Mac->setHidden(!p12);
+	pkcs12IterationsLabel->setHidden(!p12);
+	pkcs12Iterations->setHidden(!p12);
 	pemComment->setEnabled(x->flags & F_PEM);
 	samePassword->setEnabled(x->flags & F_CRYPT);
 	mlDsaHelp(x);
 }
 
 void ExportDialog::on_mlDsaFormat_currentIndexChanged(int)
+{
+	mlDsaHelp(export_type());
+}
+
+void ExportDialog::on_pkcs12Mac_currentIndexChanged(int)
 {
 	mlDsaHelp(export_type());
 }
@@ -247,6 +279,11 @@ void ExportDialog::mlDsaHelp(const pki_export *x)
 	QString help = x->help;
 	if (x->flags & F_PKCS12)
 		help += QString("\n") + encAlgo::forExport().description();
+	if (!pkcs12Mac->isHidden() &&
+	    pkcs12Mac->currentData().toString() == "pbmac1")
+		help += "\n" + tr("The MAC is PBMAC1 (RFC 9579) instead of "
+			"HMAC-SHA256. OpenSSL 3.4 and newer read it; older "
+			"OpenSSL, Windows, Java and many devices do not.");
 	if (!mlDsaFormat->isHidden()) {
 		QString format = mlDsaFormat->currentData().toString();
 		help += "\n";

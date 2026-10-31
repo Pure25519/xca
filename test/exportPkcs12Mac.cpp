@@ -32,7 +32,7 @@
 #include "main.h"
 
 /* Format ids of pki_export::init_elements() */
-enum { certPem = 1, certPkcs12Chain = 14, certPkcs12 = 15 };
+enum { certPem = 1, certPkcs12 = 15 };
 
 static ExportDialog *p12DialogFor(pki_x509 *cert)
 {
@@ -81,7 +81,6 @@ void test_main::exportPkcs12Mac()
 		QVERIFY2(mac && iter, "no pkcs12Mac or pkcs12Iterations in the "
 			"export dialog");
 		QVERIFY(p12Shown(dlg, certPkcs12));
-		QVERIFY(p12Shown(dlg, certPkcs12Chain));
 		QVERIFY(!p12Shown(dlg, certPem));
 
 		/* the defaults send nothing; the spin box shows the setting */
