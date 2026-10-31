@@ -404,3 +404,6 @@ set_tests_properties(test_cli_skipped_rows_readonly PROPERTIES LABELS service)
 
 # model signals of the insert path (BTD-231)
 ServiceTest(test_service_model_signals)
+
+# the reload keeps the object of each row (BTD-238)
+ServiceTest(test_service_reload)
