@@ -131,6 +131,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!sqlpass.isEmpty())
 			sqlpw = PwDialogHeadless::readSource(sqlpass);
 	}
+	/* The sources are set: the parsed values are no longer needed, a
+	 * pass: value is the secret itself (BTD-74) */
+	bool dbPassGiven = !dbpass.isEmpty();
+	secretCleanse(dbpass);
+	secretCleanse(sqlpass);
+	cmd_opts.forgetSecrets();
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];
@@ -140,7 +146,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		/* A given database password is checked on open, a wrong one
 		 * ends the command; without one, the public objects can
 		 * still be listed as upstream allows (BTD-78) */
-		database_model::open_without_password = dbpass.isEmpty();
+		database_model::open_without_password = !dbPassGiven;
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 

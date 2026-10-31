@@ -11,6 +11,7 @@
 #include "lib/exception.h"
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
+#include <openssl/crypto.h>
 #include <QFile>
 #include <QTextStream>
 #include <QThread>
@@ -125,6 +126,33 @@ void PwDialogCore::setGui(PwDialogUI_i *p)
 	pwdialog = p;
 }
 
+/* A deep copy of a string: the result never shares the caller's buffer */
+static QString ownCopy(const QString &s)
+{
+	return QString(s.constData(), s.size());
+}
+
+PwDialogHeadless::entry::entry(const entry &other)
+	: name(ownCopy(other.name)), secret(other.secret), read(other.read)
+{
+}
+
+PwDialogHeadless::entry &PwDialogHeadless::entry::operator=(const entry &other)
+{
+	if (this != &other) {
+		secretCleanse(name);
+		name = ownCopy(other.name);
+		secret = other.secret;
+		read = other.read;
+	}
+	return *this;
+}
+
+PwDialogHeadless::entry::~entry()
+{
+	secretCleanse(name);
+}
+
 void PwDialogHeadless::setSource(enum pass_info::purpose purpose,
 				const QString &name)
 {
@@ -133,7 +161,7 @@ void PwDialogHeadless::setSource(enum pass_info::purpose purpose,
 		return;
 	}
 	entry s;
-	s.name = name;
+	s.name = ownCopy(name);
 	sources[purpose] = s;
 }
 
@@ -196,9 +224,10 @@ static Passwd readFirstLine(QFile &f, const QString &source)
 	char buf[PwDialogHeadless::maxLength + 3];
 	qint64 len = f.readLine(buf, sizeof buf);
 	Passwd pass;
+	/* straight into the Passwd, no temporary QByteArray (BTD-74) */
 	if (len > 0)
-		pass = QByteArray(buf, len);
-	memset(buf, 0, sizeof buf);
+		pass.append(buf, len);
+	OPENSSL_cleanse(buf, sizeof buf);
 	chompLine(pass);
 	return pass;
 }
@@ -208,7 +237,11 @@ Passwd PwDialogHeadless::readSource(const QString &source)
 	Passwd pass;
 
 	if (source.startsWith("pass:")) {
-		pass = source.mid(5).toLatin1();
+		/* no QString copy of the secret; the Latin-1 bytes are
+		 * wiped once they are in the Passwd (BTD-74) */
+		QByteArray latin = source.toLatin1();
+		pass.append(latin.constData() + 5, latin.size() - 5);
+		secretCleanse(latin);
 	} else if (source.startsWith("env:")) {
 		QString var = source.mid(4);
 		const char *value = getenv(var.toLocal8Bit());
@@ -216,7 +249,9 @@ Passwd PwDialogHeadless::readSource(const QString &source)
 			throw secretError(secretError::unreadable,
 				QObject::tr("The environment variable '%1' is not set")
 					.arg(var));
-		pass = value;
+		/* the environment itself keeps the value; it belongs to
+		 * the process and its children */
+		pass.append(value);
 		chompLine(pass);
 	} else if (source.startsWith("file:")) {
 		QFile f(source.mid(5));
