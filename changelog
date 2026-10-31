@@ -1,6 +1,24 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-123: CRL numbers up to 2^53-1 (the JSON-safe range of the audit
+   parameters, RFC 8785) are adopted on import and continued by the CRL
+   generation; before, 2^32-1 was the limit and a larger imported number
+   was dropped silently, so the next CRL could go below it. A larger
+   number is imported, the CA keeps its CRL number, the import shows a
+   warning naming the limit and audits warning crl_number_out_of_range;
+   the generation refuses it with invalid_crl_number. authority.crlNo and
+   the CRL number of a revocation are read and written as 64 bit; no
+   migration.
+ * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
+   and a code RFC 5280 does not name apart. Without a reason the JSON
+   reports null and the GUI shows nothing (before: unspecified); an
+   unknown code is shown and written again as its number (before:
+   unspecified, written without the extension). An explicit unspecified
+   read from a CRL is shown as such in the CRL, but becomes "no reason"
+   when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
+   XCA generates never carry reasonCode unspecified. The stored value is
+   unchanged (0 without a reason), no migration.
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,

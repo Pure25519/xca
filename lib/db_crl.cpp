@@ -227,7 +227,7 @@ static a1int storedCrlNumber(pki_x509 *ca)
 	q.bindValue(0, ca->getSqlItemId());
 	execOrThrow(q);
 	if (q.first())
-		num.set(q.value(0).toUInt());
+		num.setDec(QString::number(q.value(0).toLongLong()));
 	return num;
 }
 
@@ -241,7 +241,7 @@ static a1int lastCrlNumber(pki_x509 *ca)
 	return last;
 }
 
-static void storeCrlNumber(pki_x509 *ca, uint number, const a1time &expire)
+static void storeCrlNumber(pki_x509 *ca, qint64 number, const a1time &expire)
 {
 	XSqlQuery q;
 
@@ -253,21 +253,35 @@ static void storeCrlNumber(pki_x509 *ca, uint number, const a1time &expire)
 	execOrThrow(q);
 }
 
-bool db_crl::raiseCrlNumber(pki_crl *crl)
+bool db_crl::crlNumberValue(const a1int &num, qint64 *number)
+{
+	bool numeric;
+	qint64 n = num.toDec().toLongLong(&numeric);
+	if (!numeric || n < 0 || n > maxCrlNumber)
+		return false;
+	if (number)
+		*number = n;
+	return true;
+}
+
+bool db_crl::raiseCrlNumber(pki_crl *crl, bool *outOfRange)
 {
 	pki_x509 *ca = crl ? crl->getIssuer() : nullptr;
 	a1int num;
 
+	if (outOfRange)
+		*outOfRange = false;
 	if (!ca || !ca->getSqlItemId().isValid() || !crl->getCrlNumber(&num))
 		return false;
 	if (!(num > lastCrlNumber(ca)))
 		return false;
-	/* the authority table keeps the number as unsigned 32 bit */
-	bool numeric;
-	qint64 number = num.toDec().toLongLong(&numeric);
-	if (!numeric || number > UINT_MAX)
+	qint64 number;
+	if (!crlNumberValue(num, &number)) {
+		if (outOfRange)
+			*outOfRange = true;
 		return false;
-	storeCrlNumber(ca, (uint)number, crl->getNextUpdate());
+	}
+	storeCrlNumber(ca, number, crl->getNextUpdate());
 	return true;
 }
 
@@ -282,8 +296,9 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 		params.set("ca_id", cert->getSqlItemId().toLongLong());
 		params.set("issuer", cert->getSubject().oneLine());
 	}
-	bool numeric;
-	qint64 number = task.crlNumber.toDec().toLongLong(&numeric);
+	qint64 number = 0;
+	bool numeric = crlNumberValue(task.crlNumber, &number);
+	/* only a JSON-safe number goes into the audit entry (BTD-123) */
 	if (numeric)
 		params.set("crl_number", number);
 	params.set("this_update", (QDateTime)task.lastUpdate);
@@ -323,11 +338,11 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 					tr("The CRL number %1 does not exceed the last CRL number %2 of '%3'")
 						.arg(task.crlNumber.toDec(), last.toDec(),
 							cert->getIntName()));
-			/* the authority table keeps the number as unsigned 32 bit */
-			if (!numeric || number > UINT_MAX)
+			if (!numeric)
 				throw serviceError("invalid_crl_number",
-					tr("The CRL number %1 is too large")
-						.arg(task.crlNumber.toDec()));
+					tr("The CRL number %1 is above the limit %2")
+						.arg(task.crlNumber.toDec())
+						.arg(maxCrlNumber));
 
 			X509V3_set_ctx(&ext_ctx, cert->getCert(), NULL, NULL, NULL, 0);
 			X509V3_set_ctx_nodb(&ext_ctx);
@@ -367,10 +382,10 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 				params.set("signature_algorithm", OBJ_nid2ln(
 					X509_CRL_get_signature_nid(crl->getCrl())));
 
-				storeCrlNumber(cert, (uint)number, task.nextUpdate);
+				storeCrlNumber(cert, number, task.nextUpdate);
 				SQL_PREPARE(q, "UPDATE revocations set crlNo=? "
 						"WHERE crlNo IS NULL AND caId=?");
-				q.bindValue(0, (uint)number);
+				q.bindValue(0, number);
 				q.bindValue(1, cert->getSqlItemId());
 				execOrThrow(q);
 				params.set("this_update", (QDateTime)crl->getLastUpdate());

@@ -242,6 +242,8 @@ pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
 			ServiceContext::localUser(ServiceContext::gui), spec);
 		foreach(pki_base *existing, result.existing)
 			XCA_INFO(importExistsMessage(existing));
+		foreach(const QString &w, result.warnings)
+			XCA_WARN(w);
 		stored = result.created.value(0);
 	} catch (serviceError &err) {
 		*code = err.code;
@@ -264,6 +266,8 @@ QList<pki_base *> ImportMulti::importItems(QList<pki_base *> items)
 			ServiceContext::localUser(ServiceContext::gui), spec);
 		foreach(pki_base *pki, result.existing)
 			XCA_INFO(importExistsMessage(pki));
+		foreach(const QString &w, result.warnings)
+			XCA_WARN(w);
 		return result.created;
 	} catch (serviceError &err) {
 		if (err.code != "cancelled")

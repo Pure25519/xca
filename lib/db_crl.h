@@ -52,8 +52,15 @@ class db_crl: public db_x509name
 		 * database only; the caller raises the CA object after the
 		 * commit (pki_x509::setCrlNumber, setCrlExpire). Returns
 		 * whether it did; throws serviceError (database_error).
-		 * Call it inside a transaction. */
-		bool raiseCrlNumber(pki_crl *crl);
+		 * Call it inside a transaction. A number above
+		 * maxCrlNumber is never adopted; outOfRange tells (BTD-123). */
+		bool raiseCrlNumber(pki_crl *crl, bool *outOfRange = nullptr);
+		/* The highest CRL number import and newCrl() keep: the audit
+		 * parameters are JSON integers within the safe range of RFC
+		 * 8785 (BTD-123); authority.crlNo is 64 bit */
+		static const qint64 maxCrlNumber = (Q_INT64_C(1) << 53) - 1;
+		/* The number as qint64 if it is within 0..maxCrlNumber */
+		static bool crlNumberValue(const a1int &num, qint64 *number);
 		void writeItems(const QList<pki_base *> &items,
 			const pki_export *xport, QIODevice &file,
 			const Passwd &pass, const ExportOptions &opts) const;
