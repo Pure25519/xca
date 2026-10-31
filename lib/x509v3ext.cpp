@@ -777,7 +777,9 @@ bool x509v3ext::parse_Crldp(QString *single, QString *adv) const
 		}
 		if (point->CRLissuer) {
 			QString ret;
-			if (genNameStack2conf(point->CRLissuer,
+			/* failure, not success, is unparsable: inverted, a
+			 * readable cRLIssuer dropped the CRLDP (BTD-229) */
+			if (!genNameStack2conf(point->CRLissuer,
 					tag +"_crlissuer", &ret, &othersect))
 				goto could_not_parse;
 			crldpsect += "CRLissuer=" + ret + "\n";

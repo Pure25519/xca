@@ -1,0 +1,62 @@
+{
+  "schema": "urn:bxc-pki:schema:policy:v1",
+  "id": "web-names",
+  "description": "Second policy of the bootstrap test (BTD-166), included through a directory entry, from the example policy web-wildcard.",
+  "names": {
+    "dns": {
+      "allow": [
+        {
+          "type": "subtree",
+          "value": "example.com",
+          "wildcard": true
+        }
+      ],
+      "deny": [
+        {
+          "type": "subtree",
+          "value": "internal.example.com"
+        }
+      ]
+    },
+    "ip": {
+      "allow": [
+        "2001:db8::/32"
+      ],
+      "deny": [
+        "2001:db8:ffff::/48"
+      ]
+    },
+    "uri": {
+      "allow": [
+        {
+          "type": "host-subtree",
+          "value": "example.com"
+        }
+      ]
+    },
+    "email": {
+      "allow": [
+        {
+          "type": "host",
+          "value": "example.com"
+        }
+      ],
+      "deny": [
+        {
+          "type": "mailbox",
+          "value": "root@example.com"
+        }
+      ]
+    },
+    "dn": {
+      "CN": {
+        "deny": [
+          {
+            "type": "pattern",
+            "pattern": ".*[/=].*"
+          }
+        ]
+      }
+    }
+  }
+}
