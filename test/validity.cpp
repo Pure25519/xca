@@ -311,3 +311,81 @@ void test_main::issueBelowExpiredCa()
 		QVERIFY2(false, CCHAR(err.getString()));
 	}
 }
+
+static QStringList signerBoxButtons;
+
+/* Notes the buttons of the warning and answers "Adjust date and
+ * continue" (Yes); runs in the box's event loop (whenShown(), BTD-180) */
+static void adjustAndContinue(xcaWarningBox *box)
+{
+	warningText = box->text();
+	signerBoxButtons.clear();
+	for (QAbstractButton *b : box->buttons())
+		signerBoxButtons << b->text();
+	box->button(QMessageBox::Yes)->click();
+}
+
+/* BTD-107: a leaf longer valid than its CA. The warning offers no
+ * "Continue rollout" any more: issuance caps the end anyway (BTD-51), so
+ * that button promised an uncapped certificate that is never issued;
+ * "Adjust date and continue" issues with the CA's end */
+void test_main::signerCapWithoutContinue()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		db_key *keys = Database.model<db_key>();
+		pki_key *caKey = keys->newKey(keyjob("EC:prime256v1"), "Short CA");
+		pki_key *eeKey = keys->newKey(keyjob("EC:prime256v1"), "EE");
+		x509name n;
+		n.addEntryByNid(NID_commonName, "Short CA");
+		IssuanceSpec spec;
+		spec.name = "Short CA";
+		spec.subject = n;
+		spec.key = caKey;
+		spec.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(-1));
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addYears(1));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY(ca);
+
+		NewX509 *dlg = new NewX509(mainwin);
+		dlg->setCert();
+		dlg->defineSigner(ca, false);
+		dlg->keyList->setCurrentPkiItem(eeKey);
+		x509name en;
+		en.addEntryByNid(NID_commonName, "long.example");
+		dlg->setX509name(en);
+		dlg->description->setText("longer than the CA");
+		dlg->basicCA->setCurrentIndex(2);
+		dlg->notBefore->setDate(a1time());
+		dlg->notAfter->setDate(a1time(
+			QDateTime::currentDateTimeUtc().addYears(3)));
+
+		warningText.clear();
+		whenShown<xcaWarningBox>("dlg_warning", adjustAndContinue);
+		dlg->accept();
+		QVERIFY2(warningText.contains("longer valid than the signer"),
+			CCHAR(warningText));
+		QVERIFY2(!signerBoxButtons.contains("Continue rollout"),
+			CCHAR(signerBoxButtons.join(", ")));
+		QCOMPARE(signerBoxButtons, (QStringList{ "Edit dates",
+			"Abort rollout", "Adjust date and continue" }));
+		QCOMPARE(dlg->result(), (int)QDialog::Accepted);
+		pki_x509 *cert = Database.model<db_x509>()->newCert(
+			ServiceContext::localUser(ServiceContext::gui),
+			dlg->getIssuanceSpec());
+		QVERIFY(cert);
+		/* the dialog's dates have whole minutes: the CA's end,
+		 * at most a minute earlier, never later */
+		QDateTime end = cert->getNotAfter(), caEnd = ca->getNotAfter();
+		QVERIFY2(end <= caEnd && end.secsTo(caEnd) < 60,
+			CCHAR(cert->getNotAfter().toPlain() + " / " +
+				ca->getNotAfter().toPlain()));
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}

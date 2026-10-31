@@ -1,0 +1,152 @@
+{
+  "schema": "urn:bxc-pki:schema:bootstrap:v1",
+  "database": { "type": "sqlite", "path": "lab.xdb", "password": "env:BXC_DB_PW" },
+  "cas": [
+    {
+      "id": "ot-rsa-root",
+      "cn": "BxC OT RSA Root CA",
+      "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
+      "key": "rsa-4096",
+      "hash": "sha384",
+      "validity": "P20Y",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-root.crl"] }
+    },
+    {
+      "id": "ot-rsa-issuing",
+      "parent": "ot-rsa-root",
+      "dn": [
+        [{ "type": "DC", "value": "de" }],
+        [{ "type": "DC", "value": "bxc-technology" }],
+        [{ "type": "C", "value": "DE" }],
+        [{ "type": "O", "value": "BxC Security" }],
+        [{ "type": "OU", "value": "OT Lab" }, { "type": "OU", "value": "OPC UA" }],
+        [{ "type": "CN", "value": "BxC OT RSA Issuing CA" }]
+      ],
+      "key": "rsa-3072",
+      "hash": "sha256",
+      "rsa_padding": "pkcs1v15",
+      "path_len": 0,
+      "name_constraints": {
+        "critical": true,
+        "permitted": { "dns": [".lab.bxc-technology.de"], "ip": ["192.168.0.0/24", "10.10.10.0/24", "127.0.0.1/32"] }
+      },
+      "validity": "P10Y",
+      "issued_with": "issuing-ca",
+      "profiles": ["tls-server"],
+      "policies": ["lab-names"],
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-issuing.crl"] },
+      "rollover": { "before": "P1Y", "switch_after": "P30D" }
+    },
+    {
+      "id": "ot-p256-root",
+      "cn": "BxC OT P-256 Root CA",
+      "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
+      "key": "ec-p384",
+      "hash": "sha384",
+      "validity": "P20Y",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-root.crl"] }
+    },
+    {
+      "id": "ot-p256-issuing",
+      "parent": "ot-p256-root",
+      "cn": "BxC OT P-256 Issuing CA",
+      "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
+      "key": "ec-p256",
+      "hash": "sha256",
+      "validity": "P10Y",
+      "issued_with": "issuing-ca",
+      "profiles": ["tls-server"],
+      "policies": ["lab-names"],
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-issuing.crl"] }
+    },
+    {
+      "id": "pqc-root",
+      "cn": "BxC PQC Root CA",
+      "subject": { "O": "BxC Security", "C": "DE" },
+      "key": "ml-dsa-87",
+      "validity": "P20Y",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
+      "crl": { "validity": "P30D", "size_budget": 32768 }
+    },
+    {
+      "id": "pqc-issuing",
+      "parent": "pqc-root",
+      "cn": "BxC PQC Issuing CA",
+      "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
+      "key": "ml-dsa-65",
+      "validity": "P10Y",
+      "issued_with": "issuing-ca",
+      "policies": ["lab-names"],
+      "crl": { "validity": "P7D" }
+    }
+  ],
+  "profiles": [
+    "profiles/root-ca.json",
+    "profiles/issuing-ca.json",
+    "profiles/tls-server.json"
+  ],
+  "policies": ["policies/lab-names.json"],
+  "ocsp": { "ca": ["ot-rsa-issuing", "ot-p256-issuing", "pqc-issuing"], "signer_validity": "P1Y", "url": "http://pki.lab.bxc-technology.de/ocsp" },
+  "publishers": [
+    {
+      "type": "file",
+      "path": "/srv/crl",
+      "objects": ["crl", "ca-certificates"],
+      "trust_list": {
+        "crl_size_budget": 4096,
+        "trust_list_budget": 65535,
+        "on_budget_exceeded": "warning",
+        "trustlist_update_frequency": "P1D",
+        "maintenance_window_gap": "P3D"
+      }
+    }
+  ],
+  "server": {
+    "listen": "0.0.0.0:8443",
+    "tls_cert": {
+      "ca": "ot-rsa-issuing",
+      "profile": "tls-server",
+      "dns": ["pki.lab.bxc-technology.de"],
+      "ip": ["127.0.0.1"],
+      "uri": ["urn:bxc:pki:server"]
+    }
+  },
+  "enrollment": [
+    {
+      "protocol": "est",
+      "label": "opcua-server",
+      "ca": { "rsa": "ot-rsa-issuing", "ec-p256": "ot-p256-issuing" },
+      "profile": "tls-server",
+      "auth": "basic",
+      "registrations": [
+        {
+          "name": "idial",
+          "secret": "env:BXC_PKI_EST_IDIAL_SECRET",
+          "allowed_names": ["*.lab.bxc-technology.de", "192.168.0.*"],
+          "application_uri": { "pattern": "^urn:bxc:[a-z0-9-]+$" },
+          "reusable": true
+        }
+      ]
+    },
+    {
+      "protocol": "cmp",
+      "label": "devices",
+      "ca": "ot-rsa-issuing",
+      "profile": "tls-server",
+      "auth": "pbm",
+      "path_alias": "/pkix/",
+      "registrations": [
+        { "name": "idial-cmp", "secret": "op://BxC-Lab/bxc-pki-cmp-idial/password" }
+      ]
+    }
+  ],
+  "roles": [
+    { "name": "ca-admin", "api_keys": ["env:BXC_PKI_ADMIN_KEY"] },
+    { "name": "reader", "client_cert_subjects": ["CN=idial,O=BxC Security,C=DE"] }
+  ]
+}
