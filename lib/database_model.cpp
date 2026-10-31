@@ -377,6 +377,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 	} while (1);
 	if (!isRemoteDB(dbName))
 		openChangeCounter = fileChangeCounter(dbName);
+	AuditLog::resetCheckpointNotices();
 
 	/* A failed schema update stops the open (BTD-142) */
 	auto initSchema = [this]() {

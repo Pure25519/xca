@@ -51,6 +51,22 @@ on request, after it was checked:
 xca --no-gui --database pki.xdb --password file:db.pass --audit-adopt --audit-verify
 ```
 
+A skipped automatic checkpoint is reported to the user (BTD-148), once per error code and open
+database: the GUI shows it in the status bar (no dialog, the work goes on), `xca --no-gui` prints
+one `Notice:` line on stderr per command. The notice names the code and the next step:
+
+| Code | Next step named in the notice |
+|---|---|
+| `audit_key_unavailable` | open the database with its password |
+| `audit_password_rejected` | check the password source |
+| `audit_checkpoint_missing` | check the log with `--audit-verify`, then sign it with `--audit-adopt` |
+| `audit_key_missing` | run `--audit-verify`; restore the audit key from a backup of the database |
+| `audit_signing_failed`, `audit_key_failed`, any other | run `--audit-verify`; the message carries the OpenSSL reason |
+
+The exit code of the command stays 0: its own operation succeeded and its entry is stored. Scripts
+that must not go on with an unsigned tail run `--audit-verify`. The log line
+(`No audit checkpoint after entry`) remains and carries the code as well.
+
 `--audit-adopt` (`AuditLog::adoptUnanchored()`) announces the first key with `adopted_entries`,
 the number of entries it takes over without proof, and signs. The announcement is covered by the
 checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it as

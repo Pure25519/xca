@@ -125,6 +125,9 @@ class test_service_checkpoint : public ServiceTestCase
 	void exportCheckpointWriteFails();
 	void unusableKeyKeepsChange();
 	void automaticCheckpointNeverAsks();
+	void skippedCheckpointNotice();
+	void skippedCheckpointNoticeMissingKey();
+	void skippedCheckpointNoticeSigning();
 	void neverSignsBrokenTail();
 	void keyRotation();
 	void pinRewrittenLog();
@@ -988,6 +991,78 @@ void test_service_checkpoint::baselineException()
 	QCOMPARE(r.reason, reason);
 	QCOMPARE(r.unanchoredEntries, qint64(9));
 	QVERIFY(r.mismatches.isEmpty());
+}
+
+/* BTD-148: a skipped automatic checkpoint reaches the user, once per
+ * error code and open database, with the code and the next step; the
+ * entries stay. On 6b1110da only a qWarning said so. */
+void test_service_checkpoint::skippedCheckpointNotice()
+{
+	Settings["audit_checkpoint_interval"] = 2;
+	Passwd pass = pki_evp::passwd;
+	pki_evp::passwd.cleanse();
+	appendSample(5);
+	QStringList n = warning->takeNotices();
+	QCOMPARE(n.size(), 1);
+	QVERIFY2(n[0].contains("audit_key_unavailable"), CCHAR(n[0]));
+
+	/* With the password the unsigned tail is too long: a new code */
+	pki_evp::passwd = pass;
+	appendSample(3);
+	n = warning->takeNotices();
+	QCOMPARE(n.size(), 1);
+	QVERIFY2(n[0].contains("audit_checkpoint_missing") &&
+		n[0].contains("--audit-adopt"), CCHAR(n[0]));
+	QCOMPARE(AuditLog::entries().size(), 8);
+
+	/* Once per open database: the next open reports it again */
+	reopenDatabase();
+	appendSample(1);
+	n = warning->takeNotices();
+	QCOMPARE(n.size(), 1);
+	QVERIFY2(n[0].contains("audit_checkpoint_missing"), CCHAR(n[0]));
+}
+
+void test_service_checkpoint::skippedCheckpointNoticeMissingKey()
+{
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	QVERIFY(warning->takeNotices().isEmpty());
+	sql("DELETE FROM audit_keys");
+	appendSample(10);
+	QStringList n = warning->takeNotices();
+	QCOMPARE(n.size(), 1);
+	QVERIFY2(n[0].contains("audit_key_missing") &&
+		n[0].contains("--audit-verify"), CCHAR(n[0]));
+}
+
+void test_service_checkpoint::skippedCheckpointNoticeSigning()
+{
+	/* An audit key that decrypts but cannot sign (X25519): reported
+	 * with its code and the OpenSSL reason before verify() would
+	 * report checkpoint_missing (review of xca#59, MINOR 9) */
+	Settings["audit_checkpoint_interval"] = 3;
+	appendSample(3);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	EVP_PKEY *x25519 = EVP_PKEY_Q_keygen(nullptr, nullptr, "X25519");
+	QVERIFY(x25519);
+	BioByteArray der;
+	QVERIFY(i2d_PKCS8PrivateKey_bio(der, x25519, EVP_aes_256_cbc(),
+		(char *)pki_evp::passwd.constData(), pki_evp::passwd.size(),
+		nullptr, nullptr) > 0);
+	EVP_PKEY_free(x25519);
+	sql(QString("UPDATE audit_keys SET private='%1'")
+		.arg(QString::fromLatin1(der.byteArray().toBase64())));
+
+	appendSample(3);
+	QStringList n = warning->takeNotices();
+	QCOMPARE(n.size(), 1);
+	QVERIFY2(n[0].contains("audit_signing_failed") &&
+		n[0].contains("Failed to sign the audit checkpoint"),
+		CCHAR(n[0]));
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
 }
 
 void test_service_checkpoint::missingCurrentKey_data()

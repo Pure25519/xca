@@ -9,6 +9,7 @@
 #include "exception.h"
 #include "settings.h"
 #include "sql.h"
+#include "XcaWarningCore.h"
 
 #include <QCryptographicHash>
 #include <QJsonDocument>
@@ -591,6 +592,46 @@ int AuditLog::checkpointInterval()
 			defaultCheckpointInterval;
 }
 
+static QSet<QString> checkpointNotices;
+
+void AuditLog::resetCheckpointNotices()
+{
+	checkpointNotices.clear();
+}
+
+/* The next step for a skipped automatic checkpoint (BTD-148) */
+static QString checkpointRemedy(const QString &code)
+{
+	if (code == "audit_key_unavailable")
+		return QObject::tr("Open the database with its password; "
+			"the next entry is signed then.");
+	if (code == "audit_password_rejected")
+		return QObject::tr("Check the password source.");
+	if (code == "audit_checkpoint_missing")
+		return QObject::tr("Check the log with --audit-verify, then "
+			"sign it with --audit-adopt.");
+	if (code == "audit_key_missing")
+		return QObject::tr("Run --audit-verify and restore the audit "
+			"key from a backup of the database.");
+	return QObject::tr("Run --audit-verify.");
+}
+
+/* A skipped automatic checkpoint: the log line with the code (BTD-144)
+ * and, once per code and open database, a notice to the user that does
+ * not interrupt the work (BTD-148) */
+static void reportSkippedCheckpoint(qint64 seq, const errorEx &err)
+{
+	const serviceError *se = dynamic_cast<const serviceError *>(&err);
+	QString code = se ? se->code : QString("audit_checkpoint_failed");
+	qWarning() << "No audit checkpoint after entry" << seq << code
+		<< err.getString();
+	if (checkpointNotices.contains(code))
+		return;
+	checkpointNotices << code;
+	xcaWarning::notice(QObject::tr("Audit checkpoint skipped (%1): %2 %3")
+		.arg(code, checkpointRemedy(code), err.getString()));
+}
+
 AuditEntry AuditLog::append(const ServiceContext &ctx,
 		const QString &action, const QString &objectType,
 		const QString &objectId, const AuditParams &params,
@@ -631,8 +672,7 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 		 * error and the next append() tries again (BTD-143) */
 		if (writing && callerTransaction)
 			throw;
-		qWarning() << "No audit checkpoint after entry" << e.seq
-			<< err.getString();
+		reportSkippedCheckpoint(e.seq, err);
 	}
 	return e;
 }
