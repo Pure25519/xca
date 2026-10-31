@@ -582,8 +582,17 @@ static qint64 lastCheckpointSeq()
 void AuditLog::setCheckpointInterval(const ServiceContext &ctx,
 				int interval)
 {
-	(void)ctx;
-	(void)interval;
+	if (interval < 1 || interval > maxCheckpointInterval)
+		throw serviceError("invalid_value", QObject::tr(
+			"The audit checkpoint interval must be between 1 and %1, "
+			"not %2").arg(maxCheckpointInterval).arg(interval));
+	/* Writes only after a verified unlock (BTD-137) */
+	if (!ServiceContext::processPasswordVerified)
+		throw serviceError("missing_password", QObject::tr(
+			"Changing the audit checkpoint interval needs the "
+			"database password (--password)"));
+	Settings.update(ctx, { { "audit_checkpoint_interval",
+				QString::number(interval) } });
 }
 
 int AuditLog::checkpointInterval()

@@ -231,14 +231,17 @@ void settings::set(QString key, QString value)
 	});
 }
 
-/* The options of the Options dialog (the keys of its shown()):
- * their values go into the audit log in clear (BTD-224) */
+/* The options of the Options dialog (the keys of its shown()) and the
+ * audit checkpoint interval: their values go into the audit log in
+ * clear (BTD-224) */
 static const QStringList clearSettings {
 	"adapt_explicit_subj", "cert_expiry", "default_hash",
 	"disable_netscape", "explicit_dn", "ical_expiry", "mandatory_dn",
 	"no_expire_colors", "only_token_hashes", "pkcs11path",
 	"pkcs12_enc_algo", "serial_len", "string_opt", "suppress_messages",
 	"translate_dn",
+	/* not in the dialog, but no secret either (BTD-100) */
+	"audit_checkpoint_interval",
 };
 
 static bool clearSetting(const QString &key)
