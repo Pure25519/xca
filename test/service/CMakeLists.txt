@@ -410,3 +410,6 @@ set_tests_properties(test_private_refs PROPERTIES LABELS service)
 
 # model signals of the insert path (BTD-231)
 ServiceTest(test_service_model_signals)
+
+# a string literal assigned to a setting is stored as its text (BTD-173)
+ServiceTest(test_service_settings)
