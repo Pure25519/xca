@@ -205,7 +205,7 @@ void settings::set(QString key, QString value)
 	});
 }
 
-/* The options of the Options dialog (widgets/Options.cpp, shown()):
+/* The options of the Options dialog (the keys of its shown()):
  * their values go into the audit log in clear (BTD-224) */
 static const QStringList clearSettings {
 	"adapt_explicit_subj", "cert_expiry", "default_hash",
