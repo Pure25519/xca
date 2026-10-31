@@ -982,12 +982,17 @@ void AuditLog::writeBaseline()
 	}
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
-	/* No checkpoint here: the database may be open without its password */
-	for (const AuditParams &p : rows)
+	/* No checkpoint here: the database may be open without its password.
+	 * Whether it was checked is recorded as by append() (BTD-135). */
+	bool verified = ctx.passwordVerified();
+	for (AuditParams &p : rows) {
+		p.set("db_unlock_verified", verified);
 		insertEntry(ctx, actionRevocationBaseline, "cert",
 			p.getValues().value("serial").toString(), p);
+	}
 	insertEntry(ctx, actionInit, "database", QString(),
-		AuditParams().set("count", (qint64)rows.size()));
+		AuditParams().set("count", (qint64)rows.size())
+			.set("db_unlock_verified", verified));
 	if (!TransCommit())
 		throw errorEx(QObject::tr("Database error: %1")
 			.arg("the audit baseline was not committed"));
