@@ -48,6 +48,7 @@ class test_main: public QObject
 	void tokenDialogClosedDatabase();
 	void exportFormat();
 	void exportMlDsaEncoding();
+	void exportPkcs12Mac();
 	void revoke();
 	void renewalSigningFails();
 	void issueRefusedByPolicy();
