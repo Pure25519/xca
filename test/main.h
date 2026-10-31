@@ -53,6 +53,7 @@ class test_main: public QObject
 	void renewalThroughService();
 	void renewalAllOrNothing();
 	void passwordDialogParent();
+	void helpWithoutCollection();
 	void issueRefusedByPolicy();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
