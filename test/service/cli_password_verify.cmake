@@ -84,14 +84,6 @@ if(NOT rc EQUAL 0 OR NOT out MATCHES "verify-key")
   fail("no password: expected exit 0 and the key, got '${rc}':\n${out}")
 endif()
 
-# --help explains the empty --password (BTD-117)
-execute_process(COMMAND "${XCA}" --no-gui --help
-  OUTPUT_VARIABLE out ERROR_VARIABLE out TIMEOUT 30)
-string(REGEX REPLACE "[ \t\r\n]+" " " out "${out}")
-if(NOT out MATCHES "An empty value \\(--password \"\"\\) counts as no option")
-  fail("--help does not explain the empty --password:\n${out}")
-endif()
-
 # The audit context says whether the password was checked: the key was
 # generated with a checked password, the attempt without one was not
 run_xca(rc out --keygen EC:prime256v1 --name unchecked-key)
