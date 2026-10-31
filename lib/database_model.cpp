@@ -524,6 +524,7 @@ database_model::~database_model()
 	qDeleteAll(models);
 	models.clear();
 	Store.flush();
+	pki_base::freeUnstored();
 
 	/* VACUUM only after a run that committed a write (BTD-225): every
 	 * close rewrote the whole file, also after read-only commands such

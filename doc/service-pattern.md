@@ -77,6 +77,20 @@ database. A change that removes or replaces memory (freeing a deleted object) wa
 `db_base::removeItem()` do this for every insert and delete; a service function frees an object
 whose insert was rolled back (`!isStored()`).
 
+Who owns an object that a rollback took out of the store (BTD-228): the undo of
+`storeInMemory()` (`db_base::unstore()`) puts it on the list of unstored objects
+(`pki_base::addUnstored()`). It is the database's until someone deletes or claims it:
+
+- A service function whose own transaction rolled back deletes it in its catch (`!isStored()`),
+  as before; the destructor takes it off the list, so nothing is freed twice.
+- A caller that keeps it takes it off the list with `pki_base::claimUnstored()`. Today that is
+  only `ImportSpec::unstored`, the hand-back to the import dialog (BTD-114).
+- The rest is what a later step of an outer transaction rolled back after the storing function
+  had returned (bxc-pki `runInTransaction`): `pki_base::freeUnstored()` frees it where no caller
+  holds one, at the start of the next request (`runInTransaction`, later each request of the
+  server of BTD-154) and when the database closes. Not at the next transaction: the failure entry
+  of `auditedTransaction()` is one, written before the caller's catch block deletes its object.
+
 ## Service functions so far
 
 | Ticket | Service function | Value object | Audit action | Error codes |

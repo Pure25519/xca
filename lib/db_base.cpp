@@ -322,6 +322,11 @@ void db_base::unstore(pki_base *pki)
 	remFromCont(pki);
 	Store.remove(pki->getSqlItemId());
 	pki->clearSqlItemId();
+	/* the database's until the caller deletes or claims it, freed at
+	 * the next request or on close (BTD-228): nobody freed an object
+	 * of an outer transaction that a later step rolled back (bxc-pki
+	 * runInTransaction) */
+	pki_base::addUnstored(pki);
 }
 
 void db_base::insertChild(pki_base *child, pki_base *parent)
