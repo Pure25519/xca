@@ -7,6 +7,11 @@
 # object; --plan writes nothing, also without any password source; a file
 # with one more CA creates only that CA; changed CRL settings and a
 # changed profile are updates. Elements of later phases are skipped.
+# issued_with is recorded and compared (a different one is
+# bootstrap_conflict); profiles and policies are assigned to the CA and a
+# change of them is an update (assign, unassign). --text prints one line
+# per object (kind, bootstrap id, action, database id) and the unchecked
+# steps.
 
 include("${LIB}")
 include("${CMAKE_CURRENT_LIST_DIR}/cli_bootstrap_lib.cmake")
@@ -33,6 +38,20 @@ endforeach()
 jlen(nu "${r}" bootstrap unchecked)
 if(nu EQUAL 0)
   fail("plan fresh: no unchecked list (a plan never reports a silent all-ok):\n${r}")
+endif()
+
+# --text: one line per object and the unchecked steps
+bxc("plan fresh text" 0 bootstrap --file "${LAB}" --db "${DB}" --plan --text)
+foreach(line "ca ot-rsa-root: create, id -" "ca pqc-issuing: create, id -"
+    "profile root-ca: create, version -" "policy lab-names: create, version -"
+    "skipped /server: " "unchecked database: ")
+  string(FIND "${out}" "${line}" pos)
+  if(pos LESS 0)
+    fail("plan fresh text: no line '${line}':\n${out}")
+  endif()
+endforeach()
+if(out MATCHES "^{")
+  fail("plan fresh text: JSON instead of text:\n${out}")
 endif()
 
 # --- the run on an empty database ------------------------------------------
@@ -164,9 +183,38 @@ sql("mapping rows" "SELECT COUNT(*) FROM settings WHERE key_ LIKE 'bootstrap_%'"
 if(NOT out MATCHES "^10")
   fail("expected 10 bootstrap mapping rows, got '${out}'")
 endif()
-sql("profile assigned" "SELECT name FROM assignments WHERE owner_type='ca' AND owner='${ot-rsa-issuing_id}' AND kind='profile'")
-if(NOT out MATCHES "issuing-ca")
-  fail("ot-rsa-issuing: profile issuing-ca not assigned: '${out}'")
+# profiles and policies assigned per CA (BTD-167 assignments); issued_with
+# is recorded in the mapping row, never assigned
+function(assigned ca kind want)
+  sql("${ca} ${kind}s" "SELECT name FROM assignments WHERE owner_type='ca' AND owner='${${ca}_id}' AND kind='${kind}' ORDER BY name")
+  string(STRIP "${out}" got)
+  string(REPLACE "\n" "," got "${got}")
+  if(NOT got STREQUAL "${want}")
+    fail("${ca}: ${kind}s assigned '${got}', expected '${want}'")
+  endif()
+endfunction()
+foreach(ca ot-rsa-root ot-p256-root pqc-root)
+  assigned(${ca} profile "issuing-ca")
+  assigned(${ca} policy "")
+endforeach()
+assigned(ot-rsa-issuing profile "tls-server")
+assigned(ot-p256-issuing profile "tls-server")
+assigned(pqc-issuing profile "")
+foreach(ca ot-rsa-issuing ot-p256-issuing pqc-issuing)
+  assigned(${ca} policy "lab-names")
+endforeach()
+bs_entry("${r1}" ca ot-rsa-issuing e)
+jget(iw "${e}" issued_with)
+string(JSON pr ERROR_VARIABLE je GET "${e}" profiles)
+string(JSON po ERROR_VARIABLE je GET "${e}" policies)
+string(JSON hasold ERROR_VARIABLE je GET "${e}" profile)
+if(NOT iw STREQUAL "issuing-ca" OR NOT pr MATCHES "\"tls-server\"" OR
+   NOT po MATCHES "\"lab-names\"" OR NOT hasold MATCHES "NOTFOUND")
+  fail("apply lab: ot-rsa-issuing issued_with '${iw}', profiles '${pr}', policies '${po}', profile '${hasold}':\n${e}")
+endif()
+sql("issued_with row" "SELECT value FROM settings WHERE value LIKE '%\"bootstrap_id\":\"ot-rsa-issuing\"%'")
+if(NOT out MATCHES "\"issued_with\":\"issuing-ca\"")
+  fail("ot-rsa-issuing: issued_with not recorded in the mapping row: '${out}'")
 endif()
 
 # --- audit: seq 1 is bootstrap.apply with the file hash ----------------------
@@ -188,6 +236,7 @@ audit_has("${a}" "\"action\":\"ca\\.crl_settings\".*\"crl_validity\":\"P30D\"" "
 audit_has("${a}" "\"action\":\"profile\\.create\"" "profile.create")
 audit_has("${a}" "\"action\":\"policy\\.create\"" "policy.create")
 audit_has("${a}" "\"action\":\"profile\\.assign\"" "profile.assign")
+audit_has("${a}" "\"action\":\"policy\\.assign\"" "policy.assign")
 audit_has("${a}" "\"action\":\"crl\\.generate\"" "crl.generate")
 audit_count(n_audit)
 
@@ -324,3 +373,79 @@ audit_has("${a}" "\"action\":\"profile\\.update\".*\"version\":2" "profile.updat
 bxc("apply lab-update again" 0 bootstrap --file "${UPD}" --db "${DB}")
 one_doc("apply lab-update again" "${out}" cli-result r5)
 bs_counts("apply lab-update again" "${r5}" 0 12 0 6)
+
+# --- changed profiles and policies are updates: unassign, assign ----------------
+# ot-p256-issuing (/cas/3): tls-server and lab-names were assigned by
+# bootstrap and are taken back; root-ca is assigned instead
+string(JSON asg SET "${upd}" cas 3 profiles [=[["root-ca"]]=])
+string(JSON asg SET "${asg}" cas 3 policies "[]")
+bs_write(lab-assign.json "${asg}")
+set(ASG "${file}")
+bxc("apply lab-assign" 0 bootstrap --file "${ASG}" --db "${DB}")
+one_doc("apply lab-assign" "${out}" cli-result r6)
+bs_counts("apply lab-assign" "${r6}" 0 11 1 6)
+bs_entry("${r6}" ca ot-p256-issuing e)
+jget(act "${e}" action)
+string(JSON ch ERROR_VARIABLE je GET "${e}" changed)
+if(NOT act STREQUAL "update" OR NOT ch MATCHES "\"profiles\"" OR
+   NOT ch MATCHES "\"policies\"")
+  fail("apply lab-assign: ot-p256-issuing '${act}', changed '${ch}':\n${e}")
+endif()
+assigned(ot-p256-issuing profile "root-ca")
+assigned(ot-p256-issuing policy "")
+assigned(ot-rsa-issuing profile "tls-server")
+assigned(ot-rsa-issuing policy "lab-names")
+count_items(certificate nc4)
+if(NOT nc4 EQUAL nc2)
+  fail("apply lab-assign: a certificate was issued (${nc2} -> ${nc4})")
+endif()
+audit_entries(a)
+audit_has("${a}" "\"action\":\"profile\.unassign\".*\"name\":\"tls-server\"" "profile.unassign")
+audit_has("${a}" "\"action\":\"policy\.unassign\".*\"name\":\"lab-names\"" "policy.unassign")
+bxc("apply lab-assign again" 0 bootstrap --file "${ASG}" --db "${DB}")
+one_doc("apply lab-assign again" "${out}" cli-result r7)
+bs_counts("apply lab-assign again" "${r7}" 0 12 0 6)
+
+# --- a different issued_with is bootstrap_conflict (the CA certificate was
+# issued with the recorded one) ---------------------------------------------------
+string(JSON iw SET "${asg}" cas 3 issued_with [=["root-ca"]=])
+bs_write(lab-issued-with.json "${iw}")
+db_state(before)
+bxc("issued_with changed" 1 bootstrap --file "${file}" --db "${DB}")
+expect_error("issued_with changed" bootstrap_conflict)
+string(FIND "${detail}" "/cas/3/issued_with: " pos)
+if(NOT pos EQUAL 0 OR NOT detail MATCHES "ot-p256-issuing" OR
+   NOT detail MATCHES "issuing-ca" OR NOT detail MATCHES "root-ca")
+  fail("issued_with changed: detail '${detail}'")
+endif()
+db_state(after)
+if(NOT before STREQUAL after)
+  fail("issued_with changed: the database changed:\n${before}\n---\n${after}")
+endif()
+bxc("issued_with changed, plan" 0 bootstrap --file "${file}" --db "${DB}" --plan)
+one_doc("issued_with changed, plan" "${out}" cli-result r)
+bs_entry("${r}" ca ot-p256-issuing e)
+jget(act "${e}" action)
+jget(code "${e}" error code)
+if(NOT act STREQUAL "error" OR NOT code STREQUAL "bootstrap_conflict")
+  fail("issued_with changed, plan: '${act}' '${code}':\n${e}")
+endif()
+
+# --- --text of a real run: every object kept, with its database id --------------
+bxc("apply text" 0 bootstrap --file "${ASG}" --db "${DB}" --text)
+if(out MATCHES "^{")
+  fail("apply text: JSON instead of text:\n${out}")
+endif()
+foreach(line "ca ot-rsa-root: keep, id ${ot-rsa-root_id}"
+    "ca pqc-issuing: keep, id ${pqc-issuing_id}"
+    "profile tls-server: keep, version 2" "policy lab-names: keep, version 1"
+    "skipped /cas/1/rollover: ")
+  string(FIND "${out}" "${line}" pos)
+  if(pos LESS 0)
+    fail("apply text: no line '${line}':\n${out}")
+  endif()
+endforeach()
+if(out MATCHES "unchecked")
+  fail("apply text: unchecked steps without --plan:\n${out}")
+endif()
+message(STATUS "bxc-pki bootstrap ok")

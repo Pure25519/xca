@@ -9,7 +9,8 @@
       "key": "rsa-4096",
       "hash": "sha384",
       "validity": "P20Y",
-      "profile": "root-ca",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
       "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-root.crl"] }
     },
     {
@@ -32,7 +33,9 @@
         "permitted": { "dns": [".lab.bxc-technology.de"], "ip": ["192.168.0.0/24", "10.10.10.0/24", "127.0.0.1/32"] }
       },
       "validity": "P10Y",
-      "profile": "issuing-ca",
+      "issued_with": "issuing-ca",
+      "profiles": ["tls-server"],
+      "policies": ["lab-names"],
       "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-issuing.crl"] },
       "rollover": { "before": "P1Y", "switch_after": "P30D" }
     },
@@ -43,7 +46,8 @@
       "key": "ec-p384",
       "hash": "sha384",
       "validity": "P20Y",
-      "profile": "root-ca",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
       "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-root.crl"] }
     },
     {
@@ -54,7 +58,9 @@
       "key": "ec-p256",
       "hash": "sha256",
       "validity": "P10Y",
-      "profile": "issuing-ca",
+      "issued_with": "issuing-ca",
+      "profiles": ["tls-server"],
+      "policies": ["lab-names"],
       "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-issuing.crl"] }
     },
     {
@@ -63,7 +69,8 @@
       "subject": { "O": "BxC Security", "C": "DE" },
       "key": "ml-dsa-87",
       "validity": "P20Y",
-      "profile": "root-ca",
+      "issued_with": "root-ca",
+      "profiles": ["issuing-ca"],
       "crl": { "validity": "P30D", "size_budget": 32768 }
     },
     {
@@ -73,7 +80,8 @@
       "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
       "key": "ml-dsa-65",
       "validity": "P10Y",
-      "profile": "issuing-ca",
+      "issued_with": "issuing-ca",
+      "policies": ["lab-names"],
       "crl": { "validity": "P7D" }
     }
   ],
