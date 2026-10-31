@@ -59,6 +59,8 @@ class test_main: public QObject
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
+	void renewalCapWithoutContinue();
+	void undefinedEndUnderFiniteCa();
 	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();

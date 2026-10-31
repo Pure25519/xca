@@ -955,7 +955,19 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	// set the issuers name
 	cert->setIssuer(signcert->getSubject());
 
-	// Step 3 - Choose the Date, capped at the issuer chain
+	// Step 3 - Choose the Date, capped at the issuer chain; a CA whose
+	// end is no valid time would cap nothing (BTD-118)
+	QList<const pki_x509 *> chainSeen;
+	for (const pki_x509 *ca = spec.signer; ca && !chainSeen.contains(ca);
+	     ca = ca->getSigner()) {
+		chainSeen << ca;
+		a1time caEnd = ca->getNotAfter();
+		/* isUndefined() is true for an invalid time as well */
+		if (!caEnd.isValid())
+			throw serviceError("invalid_validity",
+				tr("The certificate of the CA '%1' has no valid end date")
+				.arg(ca->getIntName()));
+	}
 	bool capped;
 	a1time notAfter = spec.effectiveNotAfter(&capped);
 	if (capped && notAfter <= spec.notBefore)

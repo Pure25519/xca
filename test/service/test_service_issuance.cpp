@@ -78,6 +78,7 @@ class test_service_issuance : public ServiceTestCase
 	void akiOnSelfSignedRoot();
 	void edwardsSelfSigned_data();
 	void edwardsSelfSigned();
+	void invalidCaNotAfter();
 };
 
 IssuanceSpec test_service_issuance::caSpec(const QString &cn, pki_key *key,
@@ -532,6 +533,41 @@ void test_service_issuance::edwardsSelfSigned()
 	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
 	QVERIFY(crl);
 	QCOMPARE(X509_CRL_verify(const_cast<X509_CRL *>(crl->getCrl()), pub), 1);
+}
+
+/* BTD-118: a CA whose notAfter is no valid time caps nothing, so the
+ * issuance below it is refused with a typed error naming the CA instead
+ * of issuing an uncapped certificate; one failure entry */
+void test_service_issuance::invalidCaNotAfter()
+{
+	pki_x509 *ca = issue(caSpec("Broken End CA", newKey("broken-ca-key"),
+				nullptr, 365));
+	QVERIFY(ca);
+	/* month 13 in the UTCTime of the end: no valid time, as a damaged
+	 * or foreign row could hold */
+	ASN1_TIME *end = X509_getm_notAfter(ca->getCert());
+	QCOMPARE(ASN1_STRING_type(end), V_ASN1_UTCTIME);
+	static const char broken[] = "271340000000Z";
+	QVERIFY(ASN1_STRING_set1_data(end,
+		(const uint8_t *)broken, sizeof broken - 1));
+	QVERIFY(!ca->getNotAfter().isValid());
+
+	IssuanceSpec spec = caSpec("below broken", newKey("below-key"), ca, 30);
+	spec.extensions.basicCA = ExtensionSpec::bc_not_ca;
+	spec.extensions.keyUsage = QStringList() << "digitalSignature";
+	int before = AuditLog::entries().size();
+	QString code = "<issued>";
+	try {
+		Database.model<db_x509>()->newCert(ctx, spec);
+	} catch (serviceError &err) {
+		code = err.code;
+		QVERIFY2(err.getString().contains("Broken End CA"),
+			CCHAR(err.getString()));
+	}
+	QCOMPARE(code, QString("invalid_validity"));
+	QList<AuditEntry> added = AuditLog::entries().mid(before);
+	QCOMPARE(added.size(), 1);
+	QCOMPARE(added[0].result, QString("failure"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_issuance)

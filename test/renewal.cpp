@@ -9,6 +9,7 @@
 #include <QThread>
 #include <QDialog>
 #include <QCheckBox>
+#include <QPushButton>
 
 #include "widgets/MainWindow.h"
 #include "ui_MainWindow.h"
@@ -63,6 +64,11 @@ static void renew_del_keep_serial(CertExtend *dlg)
 	dlg->revoke->setCheckState(Qt::Unchecked);
 	dlg->noWellDefinedExpDate->setCheckState(Qt::Checked);
 	dlg->keepSerial->setCheckState(Qt::Checked);
+	/* the undefined end outlives the finite Root CA: the dialog warns
+	 * since BTD-118; "Adjust date and continue" takes the CA's end */
+	whenShown<xcaWarningBox>("dlg_warning", [](xcaWarningBox *box) {
+		box->button(QMessageBox::Yes)->click();
+	});
 	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
 }
 
