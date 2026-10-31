@@ -1004,7 +1004,8 @@ bool pki_x509::isRevoked() const
 
 void pki_x509::setRevoked(const x509rev &revok)
 {
-	revocation = revok;
+	/* as stored: an explicit unspecified is no reason (BTD-170) */
+	revocation = revok.adopted();
 }
 
 bool pki_x509::caAndPathLen(bool *ca, a1int *pathlen, bool *hasLen) const

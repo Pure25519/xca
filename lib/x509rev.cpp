@@ -50,24 +50,35 @@ QStringList x509rev::crlreasons()
 
 QString x509rev::getReason() const
 {
-	return crl_reasons[reason_idx].lname;
+	if (reason == noReason)
+		return QString();
+	for (int i=0; crl_reasons[i].lname; i++) {
+		if (reason == crl_reasons[i].bitnum)
+			return crl_reasons[i].lname;
+	}
+	return QString::number(reason);
 }
 
 int x509rev::getReasonBit() const
 {
-	if (reason_idx < 0 || reason_idx >= crlreasons().size())
+	if (reasonInvalid)
 		return -1;
-	return crl_reasons[reason_idx].bitnum;
+	return reason == noReason ? 0 : reason;
 }
 
-static int reasonBit2Idx(int bit)
+void x509rev::setReason(const QString &name)
 {
-	for (int i=0; crl_reasons[i].lname; i++) {
-		if (bit == crl_reasons[i].bitnum) {
-			return i;
-		}
-	}
-	return 0;
+	int i = crlreasons().indexOf(name);
+	reasonInvalid = i < 0;
+	reason = i <= 0 ? noReason : crl_reasons[i].bitnum;
+}
+
+x509rev x509rev::adopted() const
+{
+	x509rev r(*this);
+	if (r.reason == CRL_REASON_UNSPECIFIED)
+		r.reason = noReason;
+	return r;
 }
 
 void x509rev::fromREVOKED(const X509_REVOKED *rev)
@@ -84,11 +95,14 @@ void x509rev::fromREVOKED(const X509_REVOKED *rev)
 	reason = (ASN1_ENUMERATED *)X509_REVOKED_get_ext_d2i(
 			(X509_REVOKED *)rev, NID_crl_reason, &j, NULL);
 	openssl_error();
-	reason_idx = 0;
+	/* absent, an explicit unspecified and an unknown code are kept
+	 * apart (BTD-170) */
+	this->reason = noReason;
+	reasonInvalid = false;
 	if (reason) {
 		r = ASN1_ENUMERATED_get(reason);
 		openssl_error();
-		reason_idx = reasonBit2Idx(r);
+		this->reason = r;
 		ASN1_ENUMERATED_free(reason);
 	}
 	ivalDate.setUndefined();
@@ -143,11 +157,12 @@ X509_REVOKED *x509rev::toREVOKED(bool withReason) const
 				(ASN1_TIME*)ivalDate.get(), 0, 0) != 1))
 		fail("invalidity_date");
 
-	/* RFC says to not add the extension if it is "unspecified" */
-	if (reason_idx != 0 && withReason) {
+	/* no extension without a reason (RFC 5280 5.3.1); an explicit or
+	 * unknown code read from a CRL is written as it was (BTD-170) */
+	if (reason != noReason && withReason) {
 		ASN1_ENUMERATED *a = ASN1_ENUMERATED_new();
 		ok = !crlBuild::fail("reason") && a &&
-			ASN1_ENUMERATED_set(a, crl_reasons[reason_idx].bitnum) &&
+			ASN1_ENUMERATED_set(a, reason) &&
 			X509_REVOKED_add1_ext_i2d(rev, NID_crl_reason, a,
 						0, 0) == 1;
 		ASN1_ENUMERATED_free(a);
@@ -183,7 +198,8 @@ void x509rev::set(const x509rev &x)
 	serial = x.serial;
 	date = x.date;
 	ivalDate = x.ivalDate;
-	reason_idx = x.reason_idx;
+	reason = x.reason;
+	reasonInvalid = x.reasonInvalid;
 	crlNo = x.crlNo;
 }
 
@@ -192,14 +208,14 @@ bool x509rev::identical(const x509rev &x) const
 	return	serial == x.serial &&
 		date == x.date &&
 		ivalDate == x.ivalDate &&
-		reason_idx == x.reason_idx;
+		reason == x.reason;
 }
 
 x509rev::operator QString() const
 {
 	return QString("Rev: %1 D:%2 I:%3 Reason: %4 '%5'\n")
 		.arg(serial.toHex(), date.toSortable(), ivalDate.toSortable())
-		.arg(reason_idx).arg(crl_reasons[reason_idx].lname);
+		.arg(reason).arg(getReason());
 }
 
 x509rev::x509rev(QSqlRecord rec, int offset)
@@ -208,7 +224,11 @@ x509rev::x509rev(QSqlRecord rec, int offset)
 	date.fromPlain(rec.value(offset +1).toString());
 	ivalDate.fromPlain(rec.value(offset +2).toString());
 	crlNo = rec.value(offset +3).toInt();
-	reason_idx = reasonBit2Idx(rec.value(offset +4).toInt());
+	/* a stored 0 (or NULL) is no reason: XCA never stores an explicit
+	 * unspecified (adopted()), and rows older than BTD-170 used 0 for
+	 * it; an unknown code is kept */
+	int bit = rec.value(offset +4).toInt();
+	reason = bit == 0 ? noReason : bit;
 	qDebug() << *this;
 }
 
@@ -219,7 +239,7 @@ void x509rev::executeQuery(XSqlQuery &q)
 	q.bindValue(2, date.toPlain());
 	q.bindValue(3, ivalDate.toPlain());
 	q.bindValue(4, crlNo ? QVariant(crlNo) : QVariant());
-	q.bindValue(5, crl_reasons[reason_idx].bitnum);
+	q.bindValue(5, getReasonBit());
 	q.exec();
 }
 

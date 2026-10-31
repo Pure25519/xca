@@ -81,8 +81,12 @@ QJsonValue JsonReport::revocationReason(int code)
 		"certificateHold", nullptr /* 7 is not used */,
 		"removeFromCRL", "privilegeWithdrawn", "aACompromise",
 	};
-	if (code < 0 || code >= (int)ARRAY_SIZE(names) || !names[code])
+	/* no reason: null; a code RFC 5280 does not name: its number
+	 * (BTD-170) */
+	if (code < 0)
 		return QJsonValue();
+	if (code >= (int)ARRAY_SIZE(names) || !names[code])
+		return code;
 	return QString(names[code]);
 }
 
@@ -276,7 +280,7 @@ QJsonObject JsonReport::certificate(const pki_x509 *cert)
 		x509rev rev = cert->getRevocation();
 		QJsonObject r;
 		r["date"] = timestamp(rev.getDate());
-		r["reason"] = revocationReason(rev.getReasonBit());
+		r["reason"] = revocationReason(rev.getReasonCode());
 		r["invalidity_date"] = optionalTimestamp(rev.getInvalDate());
 		revocation = r;
 	}
@@ -535,7 +539,7 @@ static QJsonObject indexEntry(pki_x509 *cert)
 	o["revocation_date"] = revoked ?
 			JsonReport::timestamp(rev.getDate()) : QJsonValue();
 	o["reason"] = revoked ?
-			JsonReport::revocationReason(rev.getReasonBit()) :
+			JsonReport::revocationReason(rev.getReasonCode()) :
 			QJsonValue();
 	o["serial"] = JsonReport::serial(cert->getSerial());
 	o["subject"] = JsonReport::dn(cert->getSubject()).value("rfc4514");

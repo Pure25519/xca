@@ -1,6 +1,15 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
+   and a code RFC 5280 does not name apart. Without a reason the JSON
+   reports null and the GUI shows nothing (before: unspecified); an
+   unknown code is shown and written again as its number (before:
+   unspecified, written without the extension). An explicit unspecified
+   read from a CRL is shown as such in the CRL, but becomes "no reason"
+   when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
+   XCA generates never carry reasonCode unspecified. The stored value is
+   unchanged (0 without a reason), no migration.
  * BTD-166: bxc-pki bootstrap --file <file> [--db <db>] [--plan] sets up
    the database, CAs, profiles and policies of a bootstrap file
    (urn:bxc-pki:schema:bootstrap:v1) in one transaction. A strict reader
