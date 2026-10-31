@@ -2489,7 +2489,7 @@ void test_service_importexport::tlsAuthExportAudit()
 	QCOMPARE(e.result, QString("success"));
 	QCOMPARE(e.objectType, QString("certificate"));
 	QCOMPARE(e.objectId, ca->getSqlItemId().toString());
-	QCOMPARE(e.params.value("secret_type").toString(),
+	QCOMPARE(e.params.value("kind").toString(),
 		QString("openvpn_tls_auth"));
 	QCOMPARE(e.params.value("format").toLongLong(), (qint64)format);
 	QCOMPARE(e.params.value("file").toString(), out);

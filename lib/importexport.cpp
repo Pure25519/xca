@@ -561,13 +561,28 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}
+		/* symmetric secrets, never the secret itself (BTD-90); the
+		 * clipboard text holds none */
+		QList<pki_base *> secrets;
+		if (!spec.clipboard)
+			secrets = exportedSecrets(spec.items, xport);
+		foreach(pki_base *owner, secrets) {
+			AuditParams p = params;
+			p.set("name", owner->getIntName());
+			p.set("kind", "openvpn_tls_auth");
+			p.set("encrypted", encrypted && !pass.isEmpty());
+			AuditLog::append(ctx, "secret.export",
+				auditObjectType(owner), itemId(owner), p);
+		}
 		if (!spec.fileName.isEmpty()) {
 			if (!file.open(QIODevice::WriteOnly))
 				throw serviceError("write_failed",
 					tr("Error opening file: '%1': %2")
 					.arg(spec.fileName).arg(file.errorString()));
-			/* a new key file and a replaced one: owner only */
-			if (xport && xport->match_all(F_PRIVATE))
+			/* a new key or secret file and a replaced one: owner
+			 * only (BTD-90) */
+			if (xport && (xport->match_all(F_PRIVATE) ||
+				      !secrets.isEmpty()))
 				file.setPermissions(QFile::ReadOwner |
 						QFile::WriteOwner);
 			if (file.write(out) != out.size())
@@ -622,6 +637,12 @@ QList<pki_key *> db_base::exportedPrivateKeys(const QList<pki_base *> &items,
 			keys << key;
 	}
 	return keys;
+}
+
+QList<pki_base *> db_base::exportedSecrets(const QList<pki_base *> &,
+			const pki_export *) const
+{
+	return QList<pki_base *>();
 }
 
 bool db_base::exportsMlDsaPrivateKey(const QList<pki_base *> &items,

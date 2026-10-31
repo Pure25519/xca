@@ -1074,7 +1074,8 @@ static QList<pki_base *> certChain(pki_x509 *crt)
 }
 
 /* The certificates a format writes: the chain of the first item, all
- * certificates of the database, or the items */
+ * certificates of the database, the chain of every item in x5c, the
+ * objects of the CA vCalendar, or the items */
 QList<pki_base *> db_x509::exportedObjects(const QList<pki_base *> &items,
 			const pki_export *xport) const
 {
@@ -1083,6 +1084,18 @@ QList<pki_base *> db_x509::exportedObjects(const QList<pki_base *> &items,
 	if (xport->match_all(F_CHAIN)) {
 		certs = certChain(items.isEmpty() ? nullptr :
 				dynamic_cast<pki_x509 *>(items[0]));
+	} else if (xport->match_all(F_JWK_X5C) ||
+		   xport->match_all(F_CAL | F_CA)) {
+		foreach(pki_base *pki, items) {
+			pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
+			if (!crt)
+				continue;
+			foreach(pki_base *obj, xport->match_all(F_JWK_X5C) ?
+					certChain(crt) : crt->vcalendarObjects()) {
+				if (!certs.contains(obj))
+					certs << obj;
+			}
+		}
 	} else if (xport->flags & (F_UNREVOKED | F_ALL | F_UNUSABLE)) {
 		foreach(pki_x509 *pki, Store.getAll<pki_x509>()) {
 			if (xport->match_all(F_UNUSABLE) ? pki->unusable() :
@@ -1115,6 +1128,28 @@ QList<pki_key *> db_x509::exportedPrivateKeys(const QList<pki_base *> &items,
 			keys << key;
 	}
 	return keys;
+}
+
+/* The tls-auth key: format 39 writes the one of the item, format 4 the
+ * one of the last certificate of the chain, as writeItems() does */
+QList<pki_base *> db_x509::exportedSecrets(const QList<pki_base *> &items,
+			const pki_export *xport) const
+{
+	QList<pki_base *> owners;
+	pki_x509 *crt = nullptr;
+
+	if (!xport || items.isEmpty())
+		return owners;
+	if (xport->match_all(F_TAKEY)) {
+		crt = dynamic_cast<pki_x509 *>(items[0]);
+	} else if (xport->match_all(F_OVPN)) {
+		QList<pki_base *> chain = exportedObjects(items, xport);
+		if (!chain.isEmpty())
+			crt = static_cast<pki_x509 *>(chain.last());
+	}
+	if (crt)
+		owners << crt->taKeyOwner();
+	return owners;
 }
 
 void db_x509::writeTaggedPEM(const BioByteArray &b, const QString &tag, QIODevice &file)
