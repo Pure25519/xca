@@ -16,6 +16,7 @@
  */
 
 #include <QFile>
+#include <algorithm>
 #include <QRandomGenerator>
 #include <QSqlQuery>
 
@@ -69,6 +70,7 @@ class test_service_loaders : public ServiceTestCase
 	void requestAttributeRefused();
 	void ignoredErrorText();
 	void skippedRowsAudited();
+	void skippedRowsOncePerChange();
 	void skippedRowsDatabaseLocked();
 };
 
@@ -696,6 +698,100 @@ void test_service_loaders::skippedRowsAudited()
 		qPrintable(items));
 	QCOMPARE(skipped[0].params.value("warning").toString(),
 		QString("rows_skipped"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* One database.rows_skipped entry per change of the skipped set, not
+ * per open (BTD-221): every open appended an identical entry, also the
+ * read-only ones of --list-items or --print */
+void test_service_loaders::skippedRowsOncePerChange()
+{
+	ImportSpec spec;
+	for (int i = 0; i < 2; i++) {
+		EVP_PKEY *key = ecKey();
+		spec.data = PEM(PEM_write_bio_PUBKEY, key);
+		EVP_PKEY_free(key);
+		spec.dataName = QString("btd221-key%1").arg(i);
+		QCOMPARE(Database.importItems(ctx, spec).created.size(), 1);
+	}
+	QList<pki_key *> keys = Store.getAll<pki_key>();
+	QCOMPARE(keys.size(), 2);
+	QString id0 = keys[0]->getSqlItemId().toString();
+	QString id1 = keys[1]->getSqlItemId().toString();
+	QMap<QString, QString> good;
+	QSqlQuery q;
+	QVERIFY(q.exec("SELECT item, \"public\" FROM public_keys"));
+	while (q.next())
+		good[q.value(0).toString()] = q.value(1).toString();
+	auto setPublic = [&](const QString &id, const QString &value) {
+		QSqlQuery u;
+		u.prepare("UPDATE public_keys SET \"public\"=? WHERE item=?");
+		u.addBindValue(value);
+		u.addBindValue(id);
+		QVERIFY(u.exec());
+	};
+	/* the skipped_items of every entry from first on, in order */
+	auto skippedEntries = [](int first) {
+		QStringList list;
+		QList<AuditEntry> entries = AuditLog::entries();
+		for (int i = first; i < entries.size(); i++)
+			if (entries[i].action == "database.rows_skipped")
+				list << QString("%1:%2").arg(entries[i].params
+					.value("count").toLongLong()).arg(entries[i]
+					.params.value("skipped_items").toString());
+		return list;
+	};
+	int audit = AuditLog::entries().size();
+
+	/* one broken row, three opens: one entry */
+	setPublic(id0, "/////w==");
+	for (int i = 0; i < 3; i++) {
+		warning->expectMessage(QString("key %1").arg(id0));
+		reopenDatabase();
+		QVERIFY(AuditLog::verify().ok());
+	}
+	QCOMPARE(skippedEntries(audit), QStringList("1:key:" + id0));
+
+	/* a second broken row changes the set: a new entry */
+	setPublic(id1, "/////w==");
+	warning->expectMessage(QString("key %1").arg(id1));
+	reopenDatabase();
+	QStringList both { "key:" + id0, "key:" + id1 };
+	both.sort();
+	QCOMPARE(skippedEntries(audit).size(), 2);
+	QCOMPARE(skippedEntries(audit).last(), "2:" + both.join(","));
+
+	/* the same set in another order is the same set: an entry written
+	 * in reverse order (as older code could) adds nothing */
+	{
+		Transaction;
+		QVERIFY(TransBegin());
+		std::reverse(both.begin(), both.end());
+		AuditLog::append(ctx, "database.rows_skipped", "database",
+			QString(), AuditParams().set("count", 2LL)
+				.set("skipped_items", both.join(",")));
+		QVERIFY(TransCommit());
+	}
+	int before = skippedEntries(audit).size();
+	warning->expectMessage(QString("key %1").arg(id0));
+	reopenDatabase();
+	QCOMPARE(skippedEntries(audit).size(), before);
+
+	/* one repaired, one still broken: a new entry */
+	setPublic(id0, good[id0]);
+	warning->expectMessage(QString("key %1").arg(id1));
+	reopenDatabase();
+	QCOMPARE(skippedEntries(audit).last(), "1:key:" + id1);
+
+	/* all repaired: one closing entry with count 0, then nothing */
+	setPublic(id1, good[id1]);
+	reopenDatabase();
+	QCOMPARE(skippedEntries(audit).last(), QString("0:"));
+	before = skippedEntries(audit).size();
+	reopenDatabase();
+	reopenDatabase();
+	QCOMPARE(skippedEntries(audit).size(), before);
+	QCOMPARE(storedObjects(), 2);
 	QVERIFY(AuditLog::verify().ok());
 }
 

@@ -1416,7 +1416,9 @@ void NewX509::accept()
 		xcaWarningBox msg(this, text);
 		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
 		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
-		msg.addButton(QMessageBox::Apply, tr("Continue rollout"));
+		/* no "Continue rollout": the issuance caps the end at the
+		 * issuer chain anyway (BTD-51), so it would promise an
+		 * uncapped certificate that is never issued (BTD-107) */
 		msg.addButton(QMessageBox::Yes, tr("Adjust date and continue"));
 		switch (msg.exec())
 		{
@@ -1426,8 +1428,6 @@ void NewX509::accept()
 			case QMessageBox::Close:
 				reject();
 				return;
-			case QMessageBox::Apply:
-				break;
 			case QMessageBox::Yes:
 				noWellDefinedExpDate->setChecked(false);
 				notAfter->setDate(cappedEnd);

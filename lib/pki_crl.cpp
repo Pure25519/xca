@@ -310,7 +310,7 @@ void pki_crl::writeCrl(QIODevice &file, bool pem) const
 	export_write(file, b, what());
 }
 
-bool pki_crl::pem(BioByteArray &b)
+bool pki_crl::pem(BioByteArray &b, const ExportOptions &)
 {
 	export_check(PEM_write_bio_X509_CRL(b, crl), "PEM_write_bio_X509_CRL",
 			what());
