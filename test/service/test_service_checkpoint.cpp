@@ -108,6 +108,9 @@ class test_service_checkpoint : public ServiceTestCase
 	void unannouncedKeyAlone();
 	void forgedDeletionNotSigned();
 	void intervalClamped();
+	void intervalSigned();
+	void raisedIntervalHidesNoDeletion();
+	void intervalChangeKeepsLogValid();
 	void adoptUnanchored_data();
 	void adoptUnanchored();
 	void baselineException_data();
@@ -878,6 +881,79 @@ void test_service_checkpoint::intervalClamped()
 	QVERIFY(!r.ok());
 	QCOMPARE(r.reason, QString("checkpoint_missing"));
 	QCOMPARE(r.unanchoredEntries, qint64(1010));
+}
+
+void test_service_checkpoint::intervalSigned()
+{
+	/* Each checkpoint signs the interval it was written with (BTD-133) */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	QList<AuditEntry> cps = byAction(AuditLog::actionCheckpoint);
+	QCOMPARE(cps.size(), 1);
+	QCOMPARE(cps[0].params.value("checkpoint_interval").toInt(), 5);
+	QVERIFY(AuditLog::checkpointPayload(cps[0].params)
+			.contains("\"checkpoint_interval\":5"));
+	/* a changed value no longer verifies */
+	QVariantMap p = cps[0].params;
+	p["checkpoint_interval"] = 1000;
+	setParams(cps[0].seq, p);
+	recomputeFrom(cps[0].seq);
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_signature"));
+}
+
+void test_service_checkpoint::raisedIntervalHidesNoDeletion()
+{
+	/* Interval 5, the newest checkpoint deleted and the chain
+	 * recomputed: 9 unsigned entries, more than 5 + 1 */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(13);
+	QList<AuditEntry> cps = byAction(AuditLog::actionCheckpoint);
+	QCOMPARE(cps.size(), 2);
+	sql(QString("DELETE FROM audit_log WHERE seq=%1").arg(cps[1].seq));
+	renumber();
+	recomputeFrom(1);
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.unanchoredEntries, qint64(9));
+
+	/* Raising the unsigned setting within the clamp does not hide it:
+	 * the last valid checkpoint signed interval 5 (BTD-133) */
+	Settings["audit_checkpoint_interval"] = 1000;
+	r = AuditLog::verify();
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+}
+
+void test_service_checkpoint::intervalChangeKeepsLogValid()
+{
+	/* Legitimate changes in both directions, each followed by new
+	 * entries: verify stays ok throughout */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(12);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+
+	Settings["audit_checkpoint_interval"] = 20;
+	for (int i = 0; i < 45; i++) {
+		appendSample(1);
+		r = AuditLog::verify();
+		QVERIFY2(r.ok(), CCHAR(QString("raised, entry %1: %2")
+			.arg(i).arg(QString::fromUtf8(r.toJson()))));
+	}
+	/* The raise takes effect after a checkpoint signed it */
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).last()
+		.params.value("checkpoint_interval").toInt(), 20);
+
+	Settings["audit_checkpoint_interval"] = 5;
+	for (int i = 0; i < 15; i++) {
+		appendSample(1);
+		r = AuditLog::verify();
+		QVERIFY2(r.ok(), CCHAR(QString("lowered, entry %1: %2")
+			.arg(i).arg(QString::fromUtf8(r.toJson()))));
+	}
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).last()
+		.params.value("checkpoint_interval").toInt(), 5);
 }
 
 void test_service_checkpoint::adoptUnanchored_data()
