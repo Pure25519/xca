@@ -41,6 +41,8 @@ class test_service_model_signals : public ServiceTestCase
   private slots:
 	void insertPath_data();
 	void insertPath();
+	void reloadPath_data();
+	void reloadPath();
 };
 
 pki_x509 *test_service_model_signals::issue(const QString &cn, pki_key *key,
@@ -118,6 +120,47 @@ void test_service_model_signals::insertPath()
 	model->changeView();
 	model->timerMaintenance();
 	model->changeView();
+}
+
+void test_service_model_signals::reloadPath_data()
+{
+	insertPath_data();
+}
+
+/* BTD-239: the reload after another process wrote loads the rows inside
+ * the reset bracket; rows that appear without a signal fail the tester
+ * at the next change of the model */
+void test_service_model_signals::reloadPath()
+{
+	QFETCH(bool, tree);
+	db_x509 *model = certs();
+	if (model->treeViewMode() != tree)
+		model->changeView();
+	db_key *keys = Database.model<db_key>();
+	pki_x509 *ca = issue("Reload CA", keys->newKey(keyjob("EC:prime256v1"),
+				"reload ca key"), nullptr, 365);
+	QVERIFY(ca);
+	QVERIFY(issue("r.example", keys->newKey(keyjob("EC:prime256v1"),
+			"r key"), ca, 90));
+	QAbstractItemModelTester tester(model,
+		QAbstractItemModelTester::FailureReportingMode::QtTest);
+	int rows = model->rowCount(QModelIndex());
+	QVERIFY(rows > 0);
+
+	/* what a view or proxy sees at the end of the reset */
+	int atReset = -1;
+	QMetaObject::Connection c = connect(model,
+		&QAbstractItemModel::modelReset, this, [&]() {
+			atReset = model->rowCount(QModelIndex());
+		});
+	model->reloadContainer({ x509 });
+	disconnect(c);
+	QCOMPARE(atReset, rows);
+	QCOMPARE(model->rowCount(QModelIndex()), rows);
+	model->timerMaintenance();
+	QVERIFY(issue("s.example", keys->newKey(keyjob("EC:prime256v1"),
+			"s key"), ca, 90));
+	model->timerMaintenance();
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_model_signals)

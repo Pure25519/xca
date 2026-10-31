@@ -225,7 +225,7 @@ QString ia5(const ASN1_IA5STRING *s)
 				ASN1_STRING_get_length(s));
 }
 
-/* 192.168.0.10 or 2001:db8:0:0:0:0:0:1, for messages only */
+/* 192.0.2.10 or 2001:db8:0:0:0:0:0:1, for messages only */
 QString ipText(const QByteArray &b)
 {
 	QStringList parts;

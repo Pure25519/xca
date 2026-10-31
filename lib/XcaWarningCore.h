@@ -37,6 +37,10 @@ class xcaWarning_i
 	virtual bool okcancel(const QString &id, const QString &msg) = 0;
 	virtual void sqlerror(QSqlError err) = 0;
 	virtual void error(const QString &msg) = 0;
+	/* A message that needs no answer and must not stop the work, e.g.
+	 * a skipped automatic audit checkpoint (BTD-148): the GUI shows it
+	 * in the status bar, the command line prints it */
+	virtual void notice(const QString &msg) = 0;
 	/* Who answered question id with "yes", for the audit entry */
 	virtual QString answerSource(const QString &id) const
 	{
@@ -72,6 +76,7 @@ class xcaWarningCore : public QObject, public xcaWarning_i
 	void sqlerror(QSqlError err);
 	void warningv3(const QString &msg, const extList &el);
 	void error(const QString &msg);
+	void notice(const QString &msg);
 	QString answerSource(const QString &id) const;
 };
 
@@ -91,6 +96,10 @@ class xcaWarning
 	static void warning(const QString &msg)
 	{
 		gui->warning(msg);
+	}
+	static void notice(const QString &msg)
+	{
+		gui->notice(msg);
 	}
 	static void warningv3(const QString &msg, const extList &el)
 	{

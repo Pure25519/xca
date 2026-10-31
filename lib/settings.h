@@ -37,6 +37,13 @@ class svalue
 		set(val);
 		return val;
 	}
+	/* a literal is its text: without this it took the pointer-to-bool
+	 * conversion and was stored as "yes" (BTD-173) */
+	const char *operator = (const char *val)
+	{
+		set(QString(val));
+		return val;
+	}
 	int operator = (int val)
 	{
 		set(QString("%1").arg(val));
@@ -97,6 +104,9 @@ class settings
 	bool loaded{};
 	QStringList db_keys{}, hostspecific{};
 	QMap<QString, QString> values{};
+	/* The legacy optionflags row, expanded in memory but not yet
+	 * stored as one setting per flag (BTD-137) */
+	QString legacyOptionflags{};
 	void load_settings();
 	QString get(QString key);
 	void set(QString key, QString value);
@@ -107,6 +117,9 @@ class settings
 	settings();
 	void clear();
 	QString defaults(const QString &key);
+	/* Stores the flags of a legacy optionflags row as settings of their
+	 * own and deletes the row. Writes, so only after a verified unlock. */
+	void migrateOptionflags();
 	/* Stores the given settings in one transaction, one audit entry
 	 * settings.update per value that changed (BTD-224). Values are
 	 * logged only for the options of the Options dialog; any other

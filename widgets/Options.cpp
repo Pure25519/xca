@@ -14,6 +14,7 @@
 #include "lib/pki_scard.h"
 #include "lib/oid.h"
 #include "lib/audit.h"
+#include "lib/pki_pkcs12.h"
 #include "lib/settings.h"
 #include <openssl/objects.h>
 #include <QFileDialog>
@@ -73,6 +74,11 @@ Options::Options(QWidget *parent)
 	cert_expiry_num->setText(x);
 
 	serial_len->setValue(Settings["serial_len"]);
+	/* the default of PKCS#12 exports (BTD-175) */
+	pkcs12Iterations->setRange(pki_pkcs12::minIterations,
+				pki_pkcs12::maxIterations);
+	pkcs12Iterations->setValue(
+		((QString)Settings["pkcs12_iterations"]).toInt());
 
 	pkcs11List->setModel(&pkcs11::libraries);
 	pkcs11List->showDropIndicator();
@@ -108,6 +114,8 @@ QMap<QString, QString> Options::shown()
 		{ "ical_expiry", ical_expiry_num->text() +
 			ical_expiry_unit->currentItemData().toString() },
 		{ "serial_len", QString::number(serial_len->value()) },
+		{ "pkcs12_iterations",
+			QString::number(pkcs12Iterations->value()) },
 	};
 }
 

@@ -5,6 +5,7 @@
  * showed. The dialog is driven in the GUI thread (QTimer::singleShot).
  */
 
+#include <QSpinBox>
 #include <QTest>
 #include <QTimer>
 #include <functional>
@@ -103,6 +104,24 @@ void test_main::optionsStoreChangedOnly()
 		}), (int)QDialog::Accepted);
 		QCOMPARE(settingsRows()["default_hash"],
 			digest(NID_sha256).name());
+
+		/* the default PKCS#12 iteration count of the database
+		 * (BTD-175): shown from the setting, stored when changed */
+		QStringList p12;
+		QCOMPARE(runOptions([&p12](Options *o) {
+			QSpinBox *it = o->findChild<QSpinBox *>(
+						"pkcs12Iterations");
+			if (!it) {
+				p12 << "no spin box pkcs12Iterations";
+				return;
+			}
+			if (it->value() != 2048)
+				p12 << QString("shown %1").arg(it->value());
+			it->setValue(4096);
+		}), (int)QDialog::Accepted);
+		QVERIFY2(p12.isEmpty(), CCHAR(p12.join(", ")));
+		QCOMPARE(settingsRows()["pkcs12_iterations"], QString("4096"));
+		QCOMPARE((QString)Settings["pkcs12_iterations"], QString("4096"));
 	} catch (errorEx &err) {
 		QVERIFY2(false, CCHAR(err.getString()));
 	}

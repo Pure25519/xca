@@ -1097,11 +1097,9 @@ void test_service_profiles::profileWarningsAudited()
 	QFile f(SERVICE_TEST_DATA "/profiles/opcua-server-keygen.json");
 	QVERIFY(f.open(QIODevice::ReadOnly));
 	QJsonObject doc = QJsonDocument::fromJson(f.readAll()).object();
-	QJsonObject only = QJsonDocument::fromJson([] {
-		QFile g(SERVICE_TEST_DATA "/profiles/opcua-server-only.json");
-		g.open(QIODevice::ReadOnly);
-		return g.readAll();
-	}()).object();
+	QFile g(SERVICE_TEST_DATA "/profiles/opcua-server-only.json");
+	QVERIFY(g.open(QIODevice::ReadOnly));
+	QJsonObject only = QJsonDocument::fromJson(g.readAll()).object();
 	doc["warnings"] = only["warnings"];
 	Profile p = Profile::fromJson(doc);
 	pki_x509 *ca = issuingCa("EC:prime256v1");
