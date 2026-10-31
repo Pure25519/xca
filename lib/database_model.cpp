@@ -6,6 +6,7 @@
  */
 
 #include <QDir>
+#include <QFile>
 #include <QDebug>
 
 #include "XcaWarningCore.h"
@@ -267,6 +268,21 @@ static void reportSkippedRows(bool unlocked)
 	XCA_WARN(text);
 }
 
+/* The file change counter of an SQLite file (bytes 24 to 27 of its
+ * header): every committed write increments it, a read or a rolled-back
+ * transaction does not. -1 if the file cannot be read. */
+static qint64 fileChangeCounter(const QString &file)
+{
+	QFile f(file);
+	if (!f.open(QIODevice::ReadOnly))
+		return -1;
+	QByteArray h = f.read(28);
+	if (h.size() < 28 || !h.startsWith("SQLite format 3"))
+		return -1;
+	const uchar *p = reinterpret_cast<const uchar *>(h.constData()) + 24;
+	return (qint64(p[0]) << 24) | (p[1] << 16) | (p[2] << 8) | p[3];
+}
+
 database_model::database_model(const QString &name, const Passwd &pass)
 {
 	enum open_result result;
@@ -305,6 +321,8 @@ database_model::database_model(const QString &name, const Passwd &pass)
 				throw result;
 		}
 	} while (1);
+	if (!isRemoteDB(dbName))
+		openChangeCounter = fileChangeCounter(dbName);
 
 	/* A failed schema update stops the open (BTD-142) */
 	auto initSchema = [this]() {
@@ -507,7 +525,24 @@ database_model::~database_model()
 	models.clear();
 	Store.flush();
 
-	XSqlQuery q("VACUUM");
+	/* VACUUM only after a run that committed a write (BTD-225): every
+	 * close rewrote the whole file, also after read-only commands such
+	 * as list, --plan or --audit-verify, so its bytes and mtime changed
+	 * and a read-only file failed the VACUUM unnoticed. A remote
+	 * database keeps the VACUUM it had. Best effort: a failure is
+	 * logged, the close goes on. */
+	bool wrote = true;
+	if (!isRemoteDB(dbName)) {
+		qint64 now = fileChangeCounter(dbName);
+		wrote = openChangeCounter < 0 || now < 0 ||
+			now != openChangeCounter;
+	}
+	if (wrote) {
+		XSqlQuery v;
+		if (!v.exec("VACUUM"))
+			qWarning() << "VACUUM after the writes of this run "
+				"failed:" << v.lastError().text();
+	}
 
 	QSqlDatabase::database().close();
 	pki_evp::passwd.cleanse();
