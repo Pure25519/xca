@@ -78,7 +78,7 @@ pem_file("${crt}" "${WORK}/only.pem")
 openssl_run(v verify -CAfile root.pem only.pem)
 
 # --- the CN never comes from an IP address or URI ------------------------
-bxc("ip only" 0 request-cert --db "${DB}" ${PW} --ip 192.168.0.20
+bxc("ip only" 0 request-cert --db "${DB}" ${PW} --ip 192.0.2.20
     --ip 2001:db8::20 --name ip-only)
 one_doc("ip only" "${out}" cli-result r)
 object_doc("${r}" request csr)
@@ -87,7 +87,7 @@ if(NOT n EQUAL 0)
   fail("a CN was derived from --ip: ${csr}")
 endif()
 extension("${csr}" subjectAltName san)
-if(NOT san MATCHES "IP Address:192.168.0.20" OR NOT san MATCHES "IP Address:2001:DB8:0:0:0:0:0:20")
+if(NOT san MATCHES "IP Address:192.0.2.20" OR NOT san MATCHES "IP Address:2001:DB8:0:0:0:0:0:20")
   fail("IP SAN: ${san}")
 endif()
 bxc("cn and uri" 0 request-cert --db "${DB}" ${PW} --cn device-a
@@ -101,7 +101,7 @@ endif()
 
 # --- strict checks ---------------------------------------------------------
 foreach(case
-    "invalid_ip|--ip;192.168.0.256" "invalid_ip|--ip;1.2.3"
+    "invalid_ip|--ip;192.0.2.256" "invalid_ip|--ip;1.2.3"
     "invalid_ip|--ip;010.1.1.1" "invalid_ip|--ip;fe80::1%eth0"
     "invalid_ip|--ip;10.0.0.0/8" "invalid_ip|--ip;1:2:3:4:5:6:7:8:9"
     "invalid_ip|--ip;plc10.lab"
@@ -109,7 +109,7 @@ foreach(case
     "invalid_uri|--uri;http://" "invalid_uri|--uri;urn:bxc:x y"
     "invalid_uri|--uri;urn:a,DNS:b" "invalid_uri|--uri;urn:bxc:%zz"
     "invalid_uri|--uri;urn:bxc:ü"
-    "invalid_dns|--dns;-bad.lab" "invalid_dns|--dns;192.168.0.1"
+    "invalid_dns|--dns;-bad.lab" "invalid_dns|--dns;192.0.2.1"
     "invalid_dns|--dns;a..b" "invalid_email|--email;no-at.example"
     "invalid_email|--email;a,b@x.example"
     "invalid_subject|--subject;CN" "invalid_subject|--subject;XX=y"

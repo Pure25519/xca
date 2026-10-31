@@ -248,6 +248,28 @@ class AuditStateMismatch
 	QVariantMap toMap() const;
 };
 
+/* The checkpoint an export could not sign (BTD-112): the error code and
+ * its text; an empty code if it signed one or none was due */
+class AuditSkippedCheckpoint {
+  public:
+	QString code{};
+	QString reason{};
+};
+
+/* A trust anchor from outside the database (BTD-101): the audit key ids
+ * of an earlier export and the newest checkpoint seen then */
+class AuditVerifyPins
+{
+  public:
+	QStringList keys{};          // the first key of the log is one of them
+	qint64 minCheckpoint{};      // 0: none; else the log has a valid
+	                             // checkpoint at this seq or later
+	bool isEmpty() const
+	{
+		return keys.isEmpty() && minCheckpoint <= 0;
+	}
+};
+
 class AuditVerifyResult
 {
   public:
@@ -268,6 +290,10 @@ class AuditVerifyResult
 	QList<AuditStateMismatch> mismatches{};
 	qint64 unauditedRevocations{};   // also listed in mismatches
 	qint64 adoptedEntries{};   // unsigned entries the first key adopted
+	/* The trust anchor of the call (BTD-101) and whether the log meets
+	 * it: reason untrusted_key or checkpoint_truncated otherwise */
+	AuditVerifyPins pins{};
+	bool pinsOk{ true };
 
 	bool chainOk() const
 	{
@@ -275,7 +301,7 @@ class AuditVerifyResult
 	}
 	bool ok() const
 	{
-		return chainOk() && mismatches.isEmpty();
+		return chainOk() && mismatches.isEmpty() && pinsOk;
 	}
 	QVariantMap toMap() const;
 	QByteArray toJson() const;
@@ -342,6 +368,13 @@ class AuditLog
 	 * audit log, so that verify() can tell them from rows added later
 	 * without an entry. Called by database_model::initSqlDB(). */
 	static void writeBaseline();
+	/* A skipped automatic checkpoint is shown to the user once per
+	 * error code (BTD-148); a newly opened database shows it again */
+	static void resetCheckpointNotices();
+	/* The next automatic checkpoint is tried again even if the last
+	 * one failed over the same head (BTD-144): after a change of the
+	 * audit keys or the password, and on open */
+	static void retryFailedCheckpoint();
 
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),
@@ -376,19 +409,26 @@ class AuditLog
 	 * table; a row no entry knows is a mismatch. Never throws for a
 	 * tampered entry: an entry without a canonical form is reported as
 	 * broken. */
-	static AuditVerifyResult verify();
+	static AuditVerifyResult verify(const AuditVerifyPins &pins =
+				AuditVerifyPins());
 	/* Signs a checkpoint unless the newest entry is one, then writes
 	 * one canonical JSON object per line, including prev_hash and hash.
 	 * Without a database password source it signs nothing and writes
 	 * nothing to the database (BTD-70); *unsignedEntries receives the
 	 * number of entries after the last checkpoint (0: all covered).
-	 * Throws errorEx for an entry without a canonical form and
-	 * serviceError when a checkpoint is due and cannot be signed
-	 * (audit_password_rejected, audit_chain_broken). */
+	 * A log that no checkpoint may sign (audit_chain_broken,
+	 * audit_key_missing, audit_checkpoint_missing) is exported read-only
+	 * too (BTD-112); *skipped receives the code and its text, also for
+	 * the missing password source (audit_key_unavailable). Throws
+	 * errorEx for an entry without a canonical form and serviceError
+	 * for a wrong password source (audit_password_rejected) or a
+	 * database error. */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
-			qint64 *unsignedEntries = nullptr);
+			qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 	/* The same for the local user on the channel of this process */
-	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);

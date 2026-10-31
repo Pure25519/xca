@@ -101,7 +101,7 @@ TemplateSpec test_service_template::serverTemplate()
 	e.keyUsage << "digitalSignature" << "keyAgreement";
 	e.keyUsageCritical = true;
 	e.extKeyUsage << "serverAuth" << "clientAuth";
-	e.subjectAltName = "DNS:server.lab, IP:10.10.10.10";
+	e.subjectAltName = "DNS:server.lab, IP:198.51.100.10";
 	e.crlDistPoints = "URI:http://pki.lab/ca.crl";
 	e.authInfoAccess = "OCSP;URI:http://pki.lab/ocsp";
 	e.ocspMustStaple = true;
@@ -391,7 +391,7 @@ void test_service_template::fromObject()
 	QCOMPARE(spec.name, cert->getIntName());
 	QCOMPARE(spec.source, transformed);
 	QCOMPARE(spec.extensions.subjectAltName,
-		QString("DNS:server.lab,IP:10.10.10.10"));
+		QString("DNS:server.lab,IP:198.51.100.10"));
 	QCOMPARE(spec.extensions.extKeyUsage,
 		QStringList() << "serverAuth" << "clientAuth");
 	/* pki_temp::fromCert(): 729 days are 24 months */
