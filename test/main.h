@@ -94,6 +94,7 @@ class test_main: public QObject
 
 	/* optionsChanged.cpp */
 	void optionsStoreChangedOnly();
+	void optionsAudited();
 
 	/* policy.cpp */
 	void issueRefusedByPolicy();
