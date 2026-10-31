@@ -52,6 +52,8 @@ class test_main: public QObject
 	void renewalSigningFails();
 	void staleReloadInDelete();
 	void reloadProxyRows();
+	void renewalThroughService();
+	void renewalAllOrNothing();
 	void passwordDialogParent();
 	void issueRefusedByPolicy();
 	void testValidity();
