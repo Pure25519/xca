@@ -99,9 +99,10 @@ Who owns an object that a rollback took out of the store (BTD-228): the undo of
 | BTD-32 | `db_key::newKey(ctx, keyjob, name)` | `keyjob` (`lib/pki_key.h`, already a value) | `key.generate` | `invalid_key_type`, `invalid_key_size`, `invalid_curve`, `duplicate_key`, `database_error` |
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
-| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `invalid_pkcs12_mac`, `invalid_pkcs12_iterations`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
+| BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password), `secret.export` per symmetric secret in the output (BTD-90) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `invalid_pkcs12_mac`, `invalid_pkcs12_iterations`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
 | BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
 | BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
+| BTD-224 | `settings::update(ctx, changes)` (`lib/settings.h`), used by the Options dialog | key/value map | `settings.update` per changed setting: `setting` (a host-specific key with `:<hostId>`), `old_value`/`new_value` only for the 15 Options keys, `redacted` for any other key and never a value for `pwhash` or a key with "pass" | `read_only_database`, `database_error` (neither setting nor entry stored) |
 | BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
 
 Import and export (BTD-34):
@@ -114,6 +115,20 @@ Import and export (BTD-34):
 - Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
   audit entries, then writes the file and commits: no file without its entries, no entries
   without the file (the file is removed when the commit fails).
+- `object.export` names every object in the output, not only the selected items: the chain
+  (`F_CHAIN`, and `F_JWK_X5C` for the `x5c` of format 43), all matching certificates
+  (`F_UNREVOKED`, `F_ALL`, `F_UNUSABLE`), and for format 18 (CA vCalendar) the CA, its issued
+  certificates in the calendar and its latest CRL (object type `crl`), BTD-90.
+- Secrets that are not private keys (BTD-90): `secret.export`, object type `certificate`, object
+  id of the certificate that stores the secret, parameters `kind`, `format`, `file`,
+  `name` (of that certificate) and `encrypted`; never the secret. The only such secret is the
+  OpenVPN tls-auth key (`kind` `openvpn_tls_auth`), stored with a CA and shared by its
+  end-entity certificates (`pki_x509::taKeyOwner()`): format 39 writes it alone, format 4 in
+  its `<tls-auth>` block, the one of the last certificate of the chain. Both are plain text
+  (`encrypted` false). A separate action and not `key.export_private` with a type parameter,
+  because consumers read `key.export_private` (object type `key`, a key fingerprint) as "a
+  private key left". The output file of every export with a private key or a secret in it
+  (`F_PRIVATE` or `exportedSecrets()`) is created owner read/write only.
 - Readers: `pki_base::fromBytes()` parses the content of a file (`fload()` reads the file and
   calls it), `load_base::loadData()` and `pki_multi::probeData()` probe bytes like files.
 - The import dialog (`ImportMulti`) and the detail dialog only read and show objects; storing

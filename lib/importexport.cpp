@@ -334,7 +334,27 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 					tr("The item could not be stored"));
 			/* in memory now: undone if the transaction fails */
 			result.created << stored;
+			/* CRLs stored before their CA are linked to it now
+			 * (db_x509::inToCont()); they get what a CRL of a
+			 * stored CA gets: revocations and CRL number (BTD-122) */
+			QList<pki_crl *> linked;
+			if (pki_x509 *ca = dynamic_cast<pki_x509 *>(stored)) {
+				for (pki_crl *c : Store.getAll<pki_crl>()) {
+					if (c->getIssuer() != ca)
+						continue;
+					model<db_crl>()->revokeCerts(c);
+					linked << c;
+				}
+			}
 			auditRevocationChanges(ctx, before, readRevocations());
+			for (pki_crl *c : linked) {
+				AuditParams lp;
+				lp.set("name", c->getIntName());
+				if (raiseCrlNumber(model<db_crl>(), c, lp))
+					raised << c;
+				AuditLog::append(ctx, "crl.link", auditObjectType(c),
+					itemId(c), lp);
+			}
 			pki_crl *crl = dynamic_cast<pki_crl *>(stored);
 			if (crl && raiseCrlNumber(model<db_crl>(), crl, p))
 				raised << crl;
@@ -625,13 +645,28 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			AuditLog::append(ctx, "key.export_private", "key",
 				itemId(key), p);
 		}
+		/* symmetric secrets, never the secret itself (BTD-90); the
+		 * clipboard text holds none */
+		QList<pki_base *> secrets;
+		if (!spec.clipboard)
+			secrets = exportedSecrets(spec.items, xport);
+		foreach(pki_base *owner, secrets) {
+			AuditParams p = params;
+			p.set("name", owner->getIntName());
+			p.set("kind", "openvpn_tls_auth");
+			p.set("encrypted", encrypted && !pass.isEmpty());
+			AuditLog::append(ctx, "secret.export",
+				auditObjectType(owner), itemId(owner), p);
+		}
 		if (!spec.fileName.isEmpty()) {
 			if (!file.open(QIODevice::WriteOnly))
 				throw serviceError("write_failed",
 					tr("Error opening file: '%1': %2")
 					.arg(spec.fileName).arg(file.errorString()));
-			/* a new key file and a replaced one: owner only */
-			if (xport && xport->match_all(F_PRIVATE))
+			/* a new key or secret file and a replaced one: owner
+			 * only (BTD-90) */
+			if (xport && (xport->match_all(F_PRIVATE) ||
+				      !secrets.isEmpty()))
 				file.setPermissions(QFile::ReadOwner |
 						QFile::WriteOwner);
 			if (file.write(out) != out.size())
@@ -686,6 +721,12 @@ QList<pki_key *> db_base::exportedPrivateKeys(const QList<pki_base *> &items,
 			keys << key;
 	}
 	return keys;
+}
+
+QList<pki_base *> db_base::exportedSecrets(const QList<pki_base *> &,
+			const pki_export *) const
+{
+	return QList<pki_base *>();
 }
 
 bool db_base::exportsMlDsaPrivateKey(const QList<pki_base *> &items,
