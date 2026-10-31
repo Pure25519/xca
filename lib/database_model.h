@@ -32,6 +32,9 @@ class database_model: public QObject
 		int dbTimer{};
 		QString dbName{};
 		QString db_provider{};
+		/* SQLite file change counter at the open, -1 if unknown
+		 * (BTD-225) */
+		qint64 openChangeCounter{-1};
 		void openSqlDB();
 
 		QSqlError initSqlDB();

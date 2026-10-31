@@ -23,6 +23,9 @@
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/template.h"
+#include "lib/x509v3ext.h"
+
+#include "lib/BioByteArray.h"
 
 #include "ServiceTestCase.h"
 
@@ -57,6 +60,8 @@ class test_service_template : public ServiceTestCase
 	void updateTemplate();
 	void updateRejected();
 	void fromObject();
+	void crlIssuerKept();
+	void crlIssuerUnconvertible();
 	void fromIssuanceSpec();
 	void deleteTemplate();
 };
@@ -399,6 +404,96 @@ void test_service_template::fromObject()
 	QCOMPARE(temp->pkiSource, transformed);
 	lastEntry("template.create", "success");
 	verifyChain();
+}
+
+/* The CRL distribution points of a certificate as OpenSSL prints them */
+static QString crldpText(pki_x509 *cert)
+{
+	X509 *x = cert->getCert();
+	int i = X509_get_ext_by_NID(x, NID_crl_distribution_points, -1);
+	if (i < 0)
+		return QString();
+	BioByteArray b;
+	X509V3_EXT_print(b, X509_get_ext(x, i), 0, 0);
+	return QString(b.byteArray());
+}
+
+/* A CRL distribution point with a cRLIssuer (indirect CRL) goes into the
+ * template and comes back out unchanged (BTD-229): the inverted check in
+ * parse_Crldp dropped the whole CRLDP of such a certificate */
+void test_service_template::crlIssuerKept()
+{
+	try {
+		pki_x509 *ca = rootCa("CRLissuer CA");
+		QVERIFY(ca);
+		IssuanceSpec is = issuance(newKey("crlissuer key"), ca);
+		is.extensions.advanced =
+			"crlDistributionPoints=crldp\n"
+			"[crldp]\n"
+			"fullname=URI:http://crl.example/indirect.crl\n"
+			"CRLissuer=dirName:crl_issuer\n"
+			"[crl_issuer]\n"
+			"CN=BTD-229 CRL issuer\n";
+		pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, is);
+		QVERIFY(cert);
+		QString before = crldpText(cert);
+		QVERIFY2(before.contains("CRL Issuer") &&
+			 before.contains("BTD-229 CRL issuer"), CCHAR(before));
+
+		extList notPorted;
+		TemplateSpec spec = TemplateSpec::fromObject(cert, &notPorted);
+		QString conf = spec.extensions.crlDistPoints + "\n" +
+				spec.extensions.advanced;
+		QVERIFY2(conf.contains("fullname") && conf.contains("CRLissuer"),
+			CCHAR(conf));
+
+		IssuanceSpec again = issuance(newKey("crlissuer key 2"), ca);
+		spec.applyTo(again);
+		again.name = "crlissuer round trip";
+		pki_x509 *copy = Database.model<db_x509>()->newCert(ctx, again);
+		QVERIFY(copy);
+		QCOMPARE(crldpText(copy), before);
+	} catch (errorEx &err) {
+		QFAIL(CCHAR(err.getString()));
+	}
+}
+
+/* A cRLIssuer that genNameStack2conf cannot write (an IP address of five
+ * bytes) still makes the conversion fail: no CRLDP with half a line */
+void test_service_template::crlIssuerUnconvertible()
+{
+	CRL_DIST_POINTS *dps = sk_DIST_POINT_new_null();
+	DIST_POINT *dp = DIST_POINT_new();
+	dp->distpoint = DIST_POINT_NAME_new();
+	dp->distpoint->type = 0;
+	dp->distpoint->name.fullname = GENERAL_NAMES_new();
+	GENERAL_NAME *uri = a2i_GENERAL_NAME(nullptr, nullptr, nullptr,
+				GEN_URI, "http://crl.example/x.crl", 0);
+	QVERIFY(uri);
+	sk_GENERAL_NAME_push(dp->distpoint->name.fullname, uri);
+	dp->CRLissuer = GENERAL_NAMES_new();
+	GENERAL_NAME *ip = GENERAL_NAME_new();
+	/* DER of an OCTET STRING of five bytes */
+	static const unsigned char der[] = {
+		0x04, 0x05, 0x0a, 0x00, 0x00, 0x01, 0x05 };
+	const unsigned char *p = der;
+	ASN1_OCTET_STRING *five = d2i_ASN1_OCTET_STRING(nullptr, &p,
+							sizeof der);
+	QVERIFY(five);
+	GENERAL_NAME_set0_value(ip, GEN_IPADD, five);
+	sk_GENERAL_NAME_push(dp->CRLissuer, ip);
+	sk_DIST_POINT_push(dps, dp);
+	X509_EXTENSION *ext = X509V3_EXT_i2d(NID_crl_distribution_points,
+						0, dps);
+	CRL_DIST_POINTS_free(dps);
+	QVERIFY(ext);
+	x509v3ext e;
+	e.set(ext);
+	X509_EXTENSION_free(ext);
+	QString single, adv;
+	QVERIFY(!e.genConf(&single, &adv));
+	QVERIFY2(!adv.contains("CRLissuer") && !single.contains("CRLissuer"),
+		CCHAR(single + adv));
 }
 
 void test_service_template::fromIssuanceSpec()

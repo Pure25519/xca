@@ -48,7 +48,7 @@ class ExtensionSpec
 	                            // 0 is a constraint, never a default
 
 	bool subjectKeyId{};
-	bool authorityKeyId{};      // never added to a self-signed certificate
+	bool authorityKeyId{};      // also on a self-signed certificate (BTD-48)
 	bool authorityKeyIdIssuer{}; // keyid plus issuer and serial, not
 	                             // only the keyid (profile aki.form)
 

@@ -74,6 +74,8 @@ class test_service_issuance : public ServiceTestCase
 	void validityCappedByRoot();
 	void validityEndsBeforeStart_data();
 	void validityEndsBeforeStart();
+	void akiOnSelfSignedRoot_data();
+	void akiOnSelfSignedRoot();
 	void edwardsSelfSigned_data();
 	void edwardsSelfSigned();
 };
@@ -199,6 +201,59 @@ pki_x509req *test_service_issuance::csrFromOpenssl(const QString &dir)
 			Database.model<db_x509req>()->insert(req));
 }
 
+/* The AKI option applies to a self-signed root too (BTD-48): without it
+ * no AKI, with it keyIdentifier = own SKI, in the issuer form also the
+ * issuer and serial; a chain below the root verifies either way */
+void test_service_issuance::akiOnSelfSignedRoot_data()
+{
+	QTest::addColumn<bool>("aki");
+	QTest::addColumn<bool>("issuerForm");
+
+	QTest::newRow("no AKI") << false << false;
+	QTest::newRow("keyIdentifier") << true << false;
+	QTest::newRow("keyIdentifier, issuer and serial") << true << true;
+}
+
+void test_service_issuance::akiOnSelfSignedRoot()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(bool, aki);
+	QFETCH(bool, issuerForm);
+	QTemporaryDir dir;
+	QVERIFY(dir.isValid());
+	IssuanceSpec rs = caSpec("AKI Root", newKey("aki-root-key"), nullptr,
+				3650);
+	rs.extensions.authorityKeyId = aki;
+	rs.extensions.authorityKeyIdIssuer = issuerForm;
+	pki_x509 *root = issue(rs);
+	QVERIFY(root);
+	IssuanceSpec ss = caSpec("AKI Sub", newKey("aki-sub-key"), root, 1825);
+	ss.extensions.authorityKeyIdIssuer = issuerForm;
+	pki_x509 *sub = issue(ss);
+	QVERIFY(sub);
+
+	QString rootAki = extText(root, NID_authority_key_identifier);
+	QString rootSki = extText(root, NID_subject_key_identifier).trimmed();
+	if (!aki) {
+		QVERIFY2(rootAki.isEmpty(), CCHAR(rootAki));
+	} else {
+		QVERIFY2(rootAki.contains(rootSki), CCHAR(rootAki + " / " + rootSki));
+		QCOMPARE(rootAki.contains("DirName:"), issuerForm);
+		QCOMPARE(rootAki.contains("serial:"), issuerForm);
+	}
+
+	writePem(root, dir.path() + "/root.pem");
+	writePem(sub, dir.path() + "/sub.pem");
+	int rc;
+	QString out = openssl({ "verify", "-x509_strict",
+		"-CAfile", dir.path() + "/root.pem",
+		dir.path() + "/sub.pem" }, &rc);
+	QVERIFY2(rc == 0, CCHAR(out));
+#endif
+}
+
 void test_service_issuance::chain()
 {
 #ifndef OPENSSL_PROGRAM
@@ -245,8 +300,9 @@ void test_service_issuance::chain()
 		QString("critical: CA:TRUE, pathlen:0"));
 	QCOMPARE(extText(root, NID_key_usage),
 		QString("critical: Certificate Sign, CRL Sign"));
-	/* Self-signed: no AKI (unchanged XCA behaviour, BTD-48) */
-	QVERIFY(extText(root, NID_authority_key_identifier).isEmpty());
+	/* Self-signed with authorityKeyId: AKI keyid = own SKI (BTD-48) */
+	QVERIFY(extText(root, NID_authority_key_identifier)
+			.contains(extText(root, NID_subject_key_identifier).trimmed()));
 	QVERIFY(!extText(sub, NID_authority_key_identifier).isEmpty());
 	QCOMPARE(extText(ee, NID_basic_constraints), QString("CA:FALSE"));
 	QCOMPARE(extText(ee, NID_key_usage),

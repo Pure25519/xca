@@ -195,9 +195,12 @@ static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 	foreach(pki_base *pki, items) {
 		if (pki->getSqlItemId().isValid())
 			continue;
-		if (spec.unstored && spec.items.contains(pki))
+		if (spec.unstored && spec.items.contains(pki)) {
+			/* the caller's again, not freed with the next
+			 * transaction (BTD-228) */
+			pki_base::claimUnstored(pki);
 			*spec.unstored << pki;
-		else
+		} else
 			delete pki;
 	}
 }
@@ -455,13 +458,18 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 
 	try {
 		checkExportSpec(spec);
-		encAlgo::ExportScope algorithm(spec.pkcs12Algorithm);
-		pki_evp::MlDsaFormatScope keyFormat(spec.privateKeyFormat);
+		/* Resolved once for this export and passed to its writers,
+		 * never through static state (BTD-183) */
+		ExportOptions opts;
+		opts.pkcs12Algorithm = (spec.pkcs12Algorithm.isEmpty() ?
+			encAlgo::forExport() : encAlgo(spec.pkcs12Algorithm))
+			.getEncAlgoNid();
+		opts.mlDsaFormat = spec.privateKeyFormat;
 		/* How the key material is protected, where a legacy method is
 		 * possible: the PKCS#12 algorithm, and the legacy marker for
 		 * it and for RFC 1423 PEM encryption (BTD-52) */
 		if (!spec.clipboard && xport->match_all(F_PKCS12)) {
-			encAlgo used = encAlgo::forExport();
+			encAlgo used = encAlgo::forExport(opts);
 			params.set("pkcs12_algorithm", used.name());
 			if (used.legacy())
 				params.set("legacy", true);
@@ -502,14 +510,14 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		if (spec.clipboard) {
 			BioByteArray bba;
 			foreach(pki_base *pki, spec.items) {
-				pki->pem(bba);
+				pki->pem(bba, opts);
 				openssl_error();
 			}
 			out = bba.byteArray();
 		} else {
 			QBuffer buf(&out);
 			buf.open(QIODevice::WriteOnly);
-			writeItems(spec.items, xport, buf, pass);
+			writeItems(spec.items, xport, buf, pass, opts);
 			buf.close();
 		}
 
@@ -528,8 +536,7 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			p.set("name", pki->getIntName());
 			p.set("count", (qint64)objects.size());
 			/* the ML-DSA encoding as written, only for ML-DSA */
-			QString enc = pki_evp::MlDsaFormatScope::written(
-					dynamic_cast<pki_key *>(pki));
+			QString enc = opts.mlDsaWritten.value(pki);
 			if (!enc.isEmpty())
 				p.set("ml_dsa_encoding", enc);
 			AuditLog::append(ctx, "object.export",
@@ -545,7 +552,7 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			 * a PKCS#12 file with an empty password protects
 			 * nothing */
 			p.set("encrypted", encrypted && !pass.isEmpty());
-			QString enc = pki_evp::MlDsaFormatScope::written(key);
+			QString enc = opts.mlDsaWritten.value(key);
 			if (!enc.isEmpty()) {
 				p.set("ml_dsa_encoding", enc);
 				if (spec.mlDsaWritten)

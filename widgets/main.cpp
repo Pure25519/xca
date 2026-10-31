@@ -185,7 +185,16 @@ int main(int argc, char *argv[])
 				}
 			}
 		} else {
-			ret = read_cmdline(argc, argv, console_only, &cmdline_items);
+			/* also when it throws: the items of a failed command
+			 * line were never freed (BTD-228) */
+			try {
+				ret = read_cmdline(argc, argv, console_only,
+						&cmdline_items);
+			} catch (...) {
+				delete cmdline_items;
+				cmdline_items = nullptr;
+				throw;
+			}
 			delete cmdline_items;
 		}
 	} catch (errorEx &ex) {

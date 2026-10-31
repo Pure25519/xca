@@ -751,14 +751,19 @@ QString pki_x509::getIndexEntry()
 	else
 		flag = "E";
 
+	/* the subject without the get() copy and with the string freed:
+	 * both leaked on every line of --index (BTD-225) */
+	x509name subject = getSubject();
+	char *oneline = X509_NAME_oneline(subject.get0(), NULL, 0);
+	QString name(oneline);
+	OPENSSL_free(oneline);
 	return QString("%1\t%2\t%3\t%4\tunknown\t%5\n").arg(
 		flag, getNotAfter().toPlainUTC(),
 		revoked ? revocation.getDate().toPlainUTC() : "",
-		getSerial(),
-		QString(X509_NAME_oneline(getSubject().get(), NULL, 0)));
+		getSerial(), name);
 }
 
-bool pki_x509::pem(BioByteArray &b)
+bool pki_x509::pem(BioByteArray &b, const ExportOptions &opts)
 {
 	const pki_export *xport = pki_export::by_id(Settings["CertFormat"]);
 
@@ -777,7 +782,7 @@ bool pki_x509::pem(BioByteArray &b)
 			return false;
 		export_check(PEM_write_bio_X509(b, cert),
 				"PEM_write_bio_X509", what());
-		return key->pem(b, xport);
+		return key->pem(b, xport, opts);
 	} else {
 		export_check(PEM_write_bio_X509(b, cert),
 				"PEM_write_bio_X509", what());

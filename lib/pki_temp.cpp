@@ -474,7 +474,7 @@ void pki_temp::writeDefault(const QString &dirname) const
 	writeTemp(file);
 }
 
-bool pki_temp::pem(BioByteArray &b)
+bool pki_temp::pem(BioByteArray &b, const ExportOptions &)
 {
 	b += toExportData();
 	return true;

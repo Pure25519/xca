@@ -71,11 +71,16 @@ x509v3ext ExtensionSpec::authorityKeyIdExt(X509V3_CTX *ctx,
 					bool selfSigned) const
 {
 	x509v3ext ext;
-	if (!authorityKeyId || selfSigned)
+	/* a self-signed certificate too (OPC 10000-6 6.2.4, BTD-48), with
+	 * its own SKI as key identifier: without SKI it has none, as
+	 * before. OpenSSL leaves the AKI of a self-signed certificate out
+	 * unless "always" is given */
+	if (!authorityKeyId || (selfSigned && !subjectKeyId))
 		return ext;
 
 	ext.create(NID_authority_key_identifier, authorityKeyIdIssuer ?
-			"keyid:always,issuer:always" : "keyid,issuer", ctx);
+			"keyid:always,issuer:always" :
+			selfSigned ? "keyid:always" : "keyid,issuer", ctx);
 	return ext;
 }
 

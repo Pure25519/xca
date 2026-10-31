@@ -314,6 +314,9 @@ void runInTransaction(CommandContext &ctx,
 		runPlan(ctx, steps);
 		return;
 	}
+	/* what a rollback of an earlier request left out of the store
+	 * (BTD-228); none of it is used any more */
+	pki_base::freeUnstored();
 	AuditFailureCapture capture;
 	try {
 		Transaction;

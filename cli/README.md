@@ -314,7 +314,7 @@ trust-list management (IDIAL research), device leaf packages are BTD-66.
 - CRL freshness: a missing CRL or one past its re-issue point is renewed with the CA key; with
   `--no-reissue` (or a CA without private key) an expired CRL is `crl_expired`, one past its
   re-issue point `crl_reissue_due`, a missing one `crl_missing`; `--allow-stale-crl` exports
-  them with a warning (an S7 refuses the whole trust list for one expired CRL, SMP-831).
+  them with a warning (an S7 refuses the whole trust list for one expired CRL).
   `--force` only replaces the files; a routine re-export needs it and keeps the CRL check.
 - Budgets: per CRL (`--crl-size-budget`, else the CA's setting, default 4096) and for the whole
   list (`--trust-list-budget`, default 65535; the size is the sum of the DER sizes of the CA
