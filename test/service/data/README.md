@@ -100,11 +100,11 @@ activates the default provider with one ML-DSA setting (`ml-dsa.output_formats =
 
 ## `idial-csr/`
 
-The four certificate signing requests IDIAL recorded from S7-1500 lab units (OPC UA server and
-web server, SHA-1 signatures, keyCertSign with CA:FALSE, CA:TRUE, unusual RDN orders), byte for
-byte. `test_service_csr_acceptance` (BTD-65) issues them under the profiles; source repository,
-commit, SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`. Never edit them:
-their value is that the devices made them.
+The four certificate signing requests recorded from S7-1500 lab units (OPC UA server and web
+server, SHA-1 signatures, keyCertSign with CA:FALSE, CA:TRUE, unusual RDN orders), byte for byte.
+`test_service_csr_acceptance` (BTD-65) issues them under the profiles; licence (BxC-owned, released
+under the XCA licence), SHA-256, device and firmware per file are in `idial-csr/PROVENANCE.json`.
+Never edit them: their value is that the devices made them.
 
 ## `profiles/`
 
