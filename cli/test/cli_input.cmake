@@ -122,6 +122,14 @@ foreach(case
   bxc("${code}: ${args}" 2 request-cert --db "${DB}" ${PW} ${args})
   expect_error("${code}: ${args}" ${code})
 endforeach()
+# a subject error names its source: the option --subject (bootstrap names
+# the JSON pointer instead, cli_bootstrap_errors)
+bxc("subject source" 2 request-cert --db "${DB}" ${PW} --subject "CN=x,C=DEU")
+expect_error("subject source" invalid_subject)
+string(FIND "${detail}" "--subject 'CN=x,C=DEU' is no RFC 4514 distinguished name: " pos)
+if(NOT pos EQUAL 0)
+  fail("subject source: the detail does not start with the option: ${detail}")
+endif()
 # accepted forms
 foreach(case "--dns;*.lab.example" "--ip;::1" "--ip;::ffff:192.0.2.1"
     "--uri;https://plc10.lab:4840/path?x=1#f" "--uri;urn:bxc:a%2Cb"

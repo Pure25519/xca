@@ -160,7 +160,11 @@ QString ResultCollector::text() const
 				.arg(o["requested_not_after"].toString());
 		s += "\n";
 	}
-	if (objects.isEmpty() && extra["files"].toArray().isEmpty())
+	QJsonObject b = extra["bootstrap"].toObject();
+	/* bootstrap reports its objects in its own member, not in objects:
+	 * the generic line would contradict that list (BTD-235) */
+	if (objects.isEmpty() && extra["files"].toArray().isEmpty() &&
+	    b.isEmpty())
 		s += QObject::tr("nothing written") + "\n";
 	for (const QJsonValue &v : extra["files"].toArray()) {
 		QJsonObject f = v.toObject();
@@ -189,6 +193,79 @@ QString ResultCollector::text() const
 			.arg(tl["target_format"].toString())
 			.arg(tl["size"].toVariant().toString())
 			.arg(tl["budget"].toVariant().toString());
+	/* renew (BTD-56): predecessor and successor */
+	QJsonObject rn = extra["renewal"].toObject();
+	if (!rn.isEmpty()) {
+		auto ref = [](const QJsonObject &c) {
+			return QString("certificate %1 '%2' serial %3")
+				.arg(c["id"].toVariant().toString())
+				.arg(c["name"].toString())
+				.arg(c["serial"].toString());
+		};
+		QJsonObject succ = rn["successor"].toObject();
+		s += QObject::tr("renewal of %1").arg(ref(
+				rn["predecessor"].toObject()));
+		if (!succ.isEmpty())
+			s += QObject::tr(" by %1").arg(ref(succ));
+		if (rn["rekey"].toBool())
+			s += QObject::tr(", new key");
+		s += "\n";
+	}
+	for (const QString &w : textWarnings)
+		s += QObject::tr("warning: %1").arg(w) + "\n";
+	if (!b.isEmpty()) {
+		if (plan)
+			s += QObject::tr("plan: nothing written") + "\n";
+		s += bootstrapText(b);
+	}
+	return s;
+}
+
+/* bootstrap (BTD-166): the counts, one line per object (kind, bootstrap
+ * id, action, database id: the item id of a CA, the version of a profile
+ * or policy; "-" while there is none), the skipped elements and, with
+ * --plan, the unchecked steps */
+QString ResultCollector::bootstrapText(const QJsonObject &b)
+{
+	auto text = [](const QJsonValue &v) {
+		return v.isNull() || v.isUndefined() ? QString("-") :
+			v.toVariant().toString();
+	};
+	QJsonObject c = b["counts"].toObject();
+	QString s = QObject::tr("bootstrap %1: created %2, kept %3, updated "
+		"%4, skipped %5, errors %6\n").arg(b["file"].toString())
+		.arg(text(c["created"]), text(c["kept"]), text(c["updated"]),
+			text(c["skipped"]), text(c["errors"]));
+	for (const QJsonValue &v : b["entries"].toArray()) {
+		QJsonObject e = v.toObject();
+		QString kind = e["kind"].toString();
+		s += QString("%1 %2: %3").arg(kind, e["bootstrap_id"].toString(),
+				e["action"].toString());
+		if (kind == "ca")
+			s += QObject::tr(", id %1").arg(text(e["id"]));
+		else if (kind != "secret")
+			s += QObject::tr(", version %1").arg(text(e["version"]));
+		QStringList changed;
+		for (const QJsonValue &m : e["changed"].toArray())
+			changed << m.toString();
+		if (!changed.isEmpty())
+			s += QObject::tr(" (changed: %1)").arg(changed.join(", "));
+		if (e.contains("reason"))
+			s += "; " + e["reason"].toString();
+		QJsonObject err = e["error"].toObject();
+		if (!err.isEmpty())
+			s += QString("; %1: %2").arg(err["code"].toString(),
+					err["detail"].toString());
+		s += "\n";
+	}
+	for (const QJsonValue &v : b["skipped"].toArray())
+		s += QObject::tr("skipped %1: %2\n")
+			.arg(v.toObject()["element"].toString(),
+				v.toObject()["reason"].toString());
+	for (const QJsonValue &v : b["unchecked"].toArray())
+		s += QObject::tr("unchecked %1: %2\n")
+			.arg(v.toObject()["object"].toString(),
+				v.toObject()["check"].toString());
 	return s;
 }
 
