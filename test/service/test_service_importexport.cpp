@@ -13,6 +13,7 @@
 #include <QBuffer>
 #include <QDir>
 #include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
@@ -57,6 +58,8 @@ enum {
 	certPkcs12 = 15,
 	keyPemPublic = 19, keyPemPrivate = 20, keyDerPublic = 24,
 	keyDerPrivate = 25, keyPkcs8Encrypted = 28, keyPkcs8 = 29,
+	certOpenVpn = 4, certVcalendarCa = 18, certTlsAuth = 39,
+	certJwkChain = 43,
 };
 
 class test_service_importexport : public ServiceTestCase
@@ -171,6 +174,12 @@ class test_service_importexport : public ServiceTestCase
 	void keyReadErrorNamesSource();
 	void pkcs12CreateFailureFrees();
 	void keyIncompleteNamesSource();
+	void tlsAuthExportAudit_data();
+	void tlsAuthExportAudit();
+	void tlsAuthFileOwnerOnly_data();
+	void tlsAuthFileOwnerOnly();
+	void vcalendarCaObjects();
+	void jwkChainObjects();
 };
 
 QString test_service_importexport::openssl(const QStringList &args,
@@ -2444,6 +2453,146 @@ void test_service_importexport::keyIncompleteNamesSource()
 	}
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
 	ign_openssl_error();
+}
+
+/* BTD-90: the tls-auth key of OpenVPN is a symmetric secret shared by all
+ * endpoints. Format 39 writes it alone, format 4 in its <tls-auth> block;
+ * both write secret.export for the certificate that stores it (the CA of
+ * an end-entity certificate, the last certificate of the chain for
+ * format 4, which needs a chain), without the secret */
+void test_service_importexport::tlsAuthExportAudit_data()
+{
+	QTest::addColumn<int>("format");
+	QTest::addColumn<bool>("leaf");
+	QTest::newRow("tls-auth key of the CA") << (int)certTlsAuth << false;
+	QTest::newRow("tls-auth key of a leaf") << (int)certTlsAuth << true;
+	QTest::newRow("OpenVPN of a leaf") << (int)certOpenVpn << true;
+}
+
+void test_service_importexport::tlsAuthExportAudit()
+{
+	QFETCH(int, format);
+	QFETCH(bool, leaf);
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *crt = leaf ? certFor(newKey("EC:prime256v1", "vpn"), ca) : ca;
+	QVERIFY(crt);
+	QString out = file("export.ovpn");
+
+	QByteArray bytes = exportTo(Database.model<db_x509>(), crt, format, out);
+	QByteArray takey = ca->getTaKey().toLatin1();
+	QVERIFY(bytes.contains(takey));
+
+	QList<AuditEntry> secrets = entries("secret.export");
+	QCOMPARE(secrets.size(), 1);
+	AuditEntry e = secrets[0];
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.objectType, QString("certificate"));
+	QCOMPARE(e.objectId, ca->getSqlItemId().toString());
+	QCOMPARE(e.params.value("secret_type").toString(),
+		QString("openvpn_tls_auth"));
+	QCOMPARE(e.params.value("format").toLongLong(), (qint64)format);
+	QCOMPARE(e.params.value("file").toString(), out);
+	QCOMPARE(e.params.value("name").toString(), ca->getIntName());
+	QCOMPARE(e.params.value("encrypted").toBool(), false);
+	/* format 4 also carries the private key of the certificate */
+	QCOMPARE(entries("key.export_private").size(),
+		format == certOpenVpn ? 1 : 0);
+	checkNoSecret(takey);
+	/* the hex lines of the key, also split differently */
+	QByteArray hex = takey;
+	hex.replace("\n", "");
+	checkNoSecret(hex.mid(hex.indexOf("-----", 5) + 5, 512));
+}
+
+/* The tls-auth key file is owner read/write only, as private key exports */
+void test_service_importexport::tlsAuthFileOwnerOnly_data()
+{
+	tlsAuthExportAudit_data();
+}
+
+void test_service_importexport::tlsAuthFileOwnerOnly()
+{
+	QFETCH(int, format);
+	QFETCH(bool, leaf);
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *crt = leaf ? certFor(newKey("EC:prime256v1", "vpn"), ca) : ca;
+	QVERIFY(crt);
+	/* a new file: QSaveFile keeps the permissions of an existing one */
+	QString out = file(QString("owner-only-%1-%2.ovpn").arg(format)
+				.arg(leaf ? "leaf" : "ca"));
+	QVERIFY(!QFile::exists(out));
+	exportTo(Database.model<db_x509>(), crt, format, out);
+
+	QFile::Permissions others = QFile::ReadGroup | QFile::WriteGroup |
+		QFile::ExeGroup | QFile::ReadOther | QFile::WriteOther |
+		QFile::ExeOther;
+	QFile::Permissions perm = QFile::permissions(out);
+	QVERIFY2(!(perm & others), CCHAR(QString::number(perm, 16)));
+	QVERIFY(perm & QFile::ReadOwner);
+	QVERIFY(perm & QFile::WriteOwner);
+}
+
+/* The object ids of the object.export entries of the last export */
+static QStringList exportedIds(const QList<AuditEntry> &all, qsizetype from)
+{
+	QStringList ids;
+	for (qsizetype i = from; i < all.size(); i++)
+		ids << all[i].objectType + ":" + all[i].objectId;
+	ids.sort();
+	return ids;
+}
+
+static QString idOf(pki_base *pki, const QString &type)
+{
+	return type + ":" + pki->getSqlItemId().toString();
+}
+
+/* Format 18 writes the CA, its valid issued certificates and its latest
+ * CRL: one object.export per object in the output (review of xca#17) */
+void test_service_importexport::vcalendarCaObjects()
+{
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *a = certFor(newKey("EC:prime256v1", "vcal a"), ca);
+	pki_x509 *b = certFor(newKey("EC:prime256v1", "vcal b"), ca);
+	QVERIFY(a && b);
+	crljob job(ca);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+
+	qsizetype before = entries("object.export").size();
+	QByteArray out = exportTo(Database.model<db_x509>(), ca,
+				certVcalendarCa, file("ca.ics"));
+	QCOMPARE(out.count("BEGIN:VEVENT"), 4);
+	QStringList expected { idOf(ca, "certificate"), idOf(a, "certificate"),
+		idOf(b, "certificate"), idOf(crl, "crl") };
+	expected.sort();
+	QList<AuditEntry> all = entries("object.export");
+	QCOMPARE(exportedIds(all, before), expected);
+	foreach(const AuditEntry &e, all.mid(before))
+		QCOMPARE(e.params.value("count").toLongLong(), (qint64)4);
+}
+
+/* Format 43 writes the chain of the certificate in x5c: one
+ * object.export per certificate of the chain (review of xca#17) */
+void test_service_importexport::jwkChainObjects()
+{
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *leaf = certFor(newKey("EC:prime256v1", "jwk"), ca);
+	QVERIFY(leaf);
+
+	qsizetype before = entries("object.export").size();
+	QByteArray out = exportTo(Database.model<db_x509>(), leaf,
+				certJwkChain, file("leaf.jwk"));
+	QJsonObject jwk = QJsonDocument::fromJson(out).object();
+	QCOMPARE(jwk.value("x5c").toArray().size(), 2);
+	QStringList expected { idOf(leaf, "certificate"),
+		idOf(ca, "certificate") };
+	expected.sort();
+	QCOMPARE(exportedIds(entries("object.export"), before), expected);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_importexport)
