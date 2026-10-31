@@ -81,7 +81,7 @@
   },
   "validity": {
     "default": "P10Y",
-    "max": "P10Y",
+    "max": "P20Y",
     "backdate": "PT0S"
   },
   "csr_sha1": "reject",
