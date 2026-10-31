@@ -558,8 +558,8 @@ void test_service_secrets::callbackSecretTooLong()
 	QVERIFY(key);
 	QString fname = secretDir.filePath("export.pem");
 	{
-		XFile file(fname);
-		file.open_key();
+		QFile file(fname);
+		QVERIFY(file.open(QIODevice::WriteOnly));
 		key->writeKey(file, EVP_aes_256_cbc(), Passwd() = "short", true);
 	}
 	/* Reading it asks in OpenSSL's callback (BTD-34: the export

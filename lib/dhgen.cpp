@@ -10,6 +10,7 @@
 #include "entropy.h"
 #include "xfile.h"
 #include "BioByteArray.h"
+#include "staged_file.h"
 
 #include <openssl/rand.h>
 #include <openssl/pem.h>
@@ -38,7 +39,9 @@ void DHgen::run()
 		err = e;
 		return;
 	}
-	XFile file(fname);
-	file.open_write();
-	file.write(bio);
+	try {
+		StagedFile::writeFile(fname, bio.byteArray(), false, true);
+	} catch (errorEx &e) {
+		err = e;
+	}
 }

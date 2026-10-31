@@ -18,6 +18,7 @@
 #include "pass_info.h"
 #include "audit_key.h"
 #include "XcaPresentation.h"
+#include "staged_file.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -731,9 +732,11 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 
 void pki_x509::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".crt"));
-	file.open_write();
-	writeCert(file, true);
+	/* staged: a failed dump leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".crt"), false, false,
+		[this](QIODevice &file) {
+		writeCert(file, true);
+		});
 }
 
 void pki_x509::writeCert(QIODevice &file, bool PEM) const

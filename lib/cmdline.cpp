@@ -30,6 +30,7 @@
 #include "pki_temp.h"
 #include "profile_store.h"
 #include "template.h"
+#include "staged_file.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -301,12 +302,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
-				XFile f(filename);
-				if (!f.open_write() ||
-				    f.write(lines) != lines.size())
-					throw errorEx(QObject::tr("Failed to write the audit log to '%1'")
-							.arg(filename));
-				f.close();
+				/* staged: a failed write keeps an old
+				 * file (BTD-139) */
+				StagedFile::writeFile(filename, lines, false,
+						true);
 			}
 		} catch (errorEx &err) {
 			report(err);
@@ -469,16 +468,16 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (bbafile.size() > 0)
 	{
 		QString filename = cmd_opts["pem-file"];
-		XFile f(filename);
-		if (f.open_write()) {
-			f.write(bbafile);
-		} else {
+		/* staged: a failed write keeps an old file (BTD-139) */
+		try {
+			StagedFile::writeFile(filename, bbafile.byteArray(),
+					false, true);
+		} catch (errorEx &err) {
 			report(serviceError("write_failed",
-				QObject::tr("Failed to write PEM data to '%1'")
-					.arg(filename)));
+				QObject::tr("Failed to write PEM data to '%1': %2")
+					.arg(filename, err.getString())));
 			exitcode = EXIT_FAILURE;
 		}
-		f.close();
 	}
 	if (cmd_opts.has("import")) {
 		ImportSpec spec;
