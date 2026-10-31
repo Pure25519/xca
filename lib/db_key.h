@@ -57,7 +57,8 @@ class db_key: public db_base
 		static void keyParams(AuditParams &params, pki_key *key);
 		int exportFlags(pki_base *pki) const;
 		void writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &pass) const;
+			QIODevice &file, const Passwd &pass,
+			const ExportOptions &opts) const;
 		const pki_export *clipboardFormat() const;
 		void updateKeyEncryptionScheme();
 		/* The database password becomes pass: re-encrypts the private

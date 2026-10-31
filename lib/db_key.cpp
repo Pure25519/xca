@@ -332,7 +332,8 @@ const pki_export *db_key::clipboardFormat() const
 }
 
 void db_key::writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &pass) const
+			QIODevice &file, const Passwd &pass,
+			const ExportOptions &opts) const
 {
 	const EVP_CIPHER *algo = NULL;
 	pki_key *key = dynamic_cast<pki_key *>(pki);
@@ -344,15 +345,15 @@ void db_key::writeItem(pki_base *pki, const pki_export *xport,
 		algo = EVP_aes_256_cbc();
 
 	if (privkey && xport->match_all(F_DER | F_PRIVATE))
-		privkey->writeKey(file, NULL, pass, false);
+		privkey->writeKey(file, NULL, pass, false, opts);
 	else if (privkey && xport->match_all(F_PEM | F_PRIVATE))
-		privkey->writeKey(file, algo, pass, true);
+		privkey->writeKey(file, algo, pass, true, opts);
 	else if (xport->match_all(F_DER))
 		key->writePublic(file, false);
 	else if (xport->match_all(F_PEM))
 		key->writePublic(file, true);
 	else if (privkey && xport->match_all(F_PKCS8))
-		privkey->writePKCS8(file, algo, pass, true);
+		privkey->writePKCS8(file, algo, pass, true, opts);
 	else if (privkey && xport->match_all(F_SSH2 | F_PRIVATE))
 		privkey->writeSSH2private(file);
 	else if (xport->match_all(F_SSH2))
@@ -360,7 +361,7 @@ void db_key::writeItem(pki_base *pki, const pki_export *xport,
 	else if (privkey && xport->match_all(F_PVK))
 		privkey->writePVKprivate(file);
 	else
-		db_base::writeItem(pki, xport, file, pass);
+		db_base::writeItem(pki, xport, file, pass, opts);
 }
 
 void db_key::updateKeyEncryptionScheme()

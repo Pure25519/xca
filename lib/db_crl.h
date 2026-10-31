@@ -56,6 +56,6 @@ class db_crl: public db_x509name
 		bool raiseCrlNumber(pki_crl *crl);
 		void writeItems(const QList<pki_base *> &items,
 			const pki_export *xport, QIODevice &file,
-			const Passwd &pass) const;
+			const Passwd &pass, const ExportOptions &opts) const;
 };
 #endif
