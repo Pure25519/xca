@@ -32,6 +32,14 @@ class db_token: public db_base
 		{
 			slot = s;
 		}
+		/* Deletes an object on a token only, the database stays
+		 * (Delete from token, the import dialog): one object.delete
+		 * with on_token and object_id the CKA_ID or the fingerprint;
+		 * nothing deleted (declined, not found) is the failure
+		 * nothing_deleted, a token error token_error (BTD-248).
+		 * slot: the slot to use, or the object finds its token. */
+		static void deleteOnToken(const ServiceContext &ctx,
+				pki_base *pki, const slotid *slot = nullptr);
 		void saveHeaderState();
 		void rename_token_in_database(pki_scard *token);
 		/* Tests only (BTD-128): replaces pki_base::renameOnToken() in

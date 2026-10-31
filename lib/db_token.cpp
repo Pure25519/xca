@@ -60,6 +60,41 @@ static QString tokenObjectId(pki_base *pki)
 	return QString();
 }
 
+void db_token::deleteOnToken(const ServiceContext &ctx, pki_base *pki,
+			const slotid *slot)
+{
+	QString objectId = tokenObjectId(pki);
+	AuditParams params;
+
+	params.set("name", pki ? pki->getIntName() : QString());
+	params.set("on_token", true);
+	try {
+		if (!pki)
+			throw serviceError("missing_object",
+				tr("No item selected"));
+		bool deleted;
+		try {
+			deleted = tokenDeleteHook ? tokenDeleteHook(pki) :
+				slot ? pki->deleteFromToken(*slot) :
+				pki->deleteFromToken();
+		} catch (serviceError &) {
+			throw;
+		} catch (errorEx &err) {
+			throw serviceError("token_error", err.getString());
+		}
+		if (!deleted)
+			throw serviceError("nothing_deleted", tr("Nothing was "
+				"deleted on the token: '%1'")
+				.arg(pki->getIntName()));
+	} catch (serviceError &err) {
+		AuditLog::appendFailure(ctx, AuditLog::actionDelete,
+			auditObjectType(pki), objectId, params, err.code);
+		throw;
+	}
+	AuditLog::append(ctx, AuditLog::actionDelete, auditObjectType(pki),
+			objectId, params);
+}
+
 void db_token::rename(const ServiceContext &ctx, pki_base *pki,
 			const QString &name)
 {

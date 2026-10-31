@@ -112,6 +112,9 @@ class test_service_objects : public ServiceTestCase
 	void tokenRenameObjectId();
 	void tokenRenameDatabaseError();
 	void replaceKeyConfirmed();
+	void deleteOnlyOnToken();
+	void deleteOnlyOnTokenNothing();
+	void deleteOnlyOnTokenError();
 	void cleanup();
 };
 
@@ -667,6 +670,66 @@ void test_service_objects::replaceKeyConfirmed()
 	QCOMPARE(e.action, QString("object.delete"));
 	QCOMPARE(e.params.value("confirmed").toString(),
 		QString("token.replace_key:dialog"));
+	verifyChain();
+}
+
+/* BTD-248: Delete from token (certificate context menu) and the import
+ * dialog delete on the token only; db_token::deleteOnToken() audits it.
+ * Before, no entry was written. */
+void test_service_objects::deleteOnlyOnToken()
+{
+	TokenObject obj("only on the token", "beef01");
+	int keyRows = Store.getAll<pki_key>().size();
+	db_base::tokenDeleteHook = [](pki_base *) { return true; };
+	int entries = AuditLog::entries().size();
+	db_token::deleteOnToken(ctx, &obj);
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.objectId, QString("beef01"));
+	QCOMPARE(e.params.value("on_token").toBool(), true);
+	QCOMPARE(e.params.value("name").toString(), QString("only on the token"));
+	/* the database is not touched */
+	QCOMPARE(Store.getAll<pki_key>().size(), keyRows);
+	verifyChain();
+}
+
+void test_service_objects::deleteOnlyOnTokenNothing()
+{
+	/* declined or not found on the token: a failure, no success */
+	TokenObject obj("declined", "beef02");
+	db_base::tokenDeleteHook = [](pki_base *) { return false; };
+	try {
+		db_token::deleteOnToken(ctx, &obj);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("nothing_deleted"));
+	}
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("nothing_deleted"));
+	QCOMPARE(e.objectId, QString("beef02"));
+	verifyChain();
+}
+
+void test_service_objects::deleteOnlyOnTokenError()
+{
+	TokenObject obj("token removed", "beef03");
+	db_base::tokenDeleteHook = [](pki_base *) -> bool {
+		throw errorEx("the token was removed");
+	};
+	try {
+		db_token::deleteOnToken(ctx, &obj);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("token_error"));
+	}
+	AuditEntry e = last();
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("token_error"));
+	QCOMPARE(e.objectId, QString("beef03"));
 	verifyChain();
 }
 

@@ -151,7 +151,12 @@ Templates, rename and delete (BTD-35):
   the `ServiceContext`). With `fromToken` (the GUI's delete) `deleteItems()` also deletes each
   object on its token (`pki_base::deleteFromToken()`, which may ask), after all checks, so a
   rejected call never touches a token (BTD-128). `db_token::rename()` updates the database
-  first and the label on the token last.
+  first and the label on the token last. Deleting on a token only, with the database row kept
+  (Delete from token of a certificate, the import dialog), goes through the static
+  `db_token::deleteOnToken()`: one `object.delete` with `on_token` and the token object as
+  `object_id` (CKA_ID or fingerprint, never a numeric item id, so `verify()` does not replay it
+  as a removed CA); nothing deleted is the failure `nothing_deleted`, a token error
+  `token_error` (BTD-248).
 - `lib/` signatures of the group take `pki_base *`; `db_base::remFromCont(pki_base *)` replaces
   the `QModelIndex` variant and `db_base::removeItem()` the old `deletePKI(QModelIndex)` (no
   audit, used by the import that completes a public key). Only the Qt model override
