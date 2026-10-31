@@ -357,6 +357,34 @@ static QStringList strings(const QJsonValue &v)
 	return list;
 }
 
+QList<QPair<QString, QString> > Profile::caMismatches(const QString &keyType,
+		int pathLen, const QDateTime &notBefore,
+		const QDateTime &notAfter) const
+{
+	QList<QPair<QString, QString> > m;
+	QJsonObject bc = doc["basic_constraints"].toObject();
+	if (!bc["ca"].toBool())
+		m << qMakePair(QString("basic_constraints.ca"),
+			tr("the profile '%1' issues no CA certificates "
+			"(basic_constraints.ca false)").arg(id));
+	else if (bc.contains("path_len") && bc["path_len"].toInt() != pathLen)
+		m << qMakePair(QString("basic_constraints.path_len"),
+			tr("the profile '%1' fixes path_len %2, the CA has %3")
+			.arg(id).arg(bc["path_len"].toInt())
+			.arg(pathLen < 0 ? tr("none") : QString::number(pathLen)));
+	if (!strings(doc["key_types"]).contains(keyType))
+		m << qMakePair(QString("key_types"),
+			tr("the profile '%1' does not allow %2 keys")
+			.arg(id, keyType));
+	QString max = doc["validity"].toObject()["max"].toString();
+	if (notAfter > shifted(notBefore, max, 1))
+		m << qMakePair(QString("validity.max"),
+			tr("the CA is valid until %1, longer than validity.max "
+			"%2 of the profile '%3' allows")
+			.arg(notAfter.toString(Qt::ISODate), max, id));
+	return m;
+}
+
 /* The first value of attribute nid in name, or a null string */
 static QString entry(const x509name &name, int nid)
 {
