@@ -67,6 +67,9 @@ class db_base: public QAbstractItemModel
 		bool treeview{ true };
 		pki_base *rootItem{};
 		pki_base *treeItem{};
+		/* objects of rows another process deleted (BTD-238) */
+		QList<pki_base *> retired{};
+		void retire(pki_base *pki);
 		QVariant selected{};
 
 		void _writePKI(pki_base *pki, bool overwrite);
