@@ -475,10 +475,9 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 	q.bindValue(3, policies.join(","));
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The profile of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The profile of the certificate could not "
+			"be stored"));
 }
 
 /* The predecessor of a renewal (BTD-56); inside the issuing transaction.
@@ -496,10 +495,9 @@ static void recordRenewal(const IssuanceSpec &spec, pki_x509 *cert)
 			X509_get0_pubkey(old->getCert())) == 1 ? 0 : 1);
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The predecessor of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The predecessor of the certificate could "
+			"not be stored"));
 }
 
 /* The extensions of the predecessor in their order (BTD-56). A new key
@@ -1490,9 +1488,8 @@ static void insertRevocation(const QVariant &caId, x509rev rev)
 	q.bindValue(0, caId);
 	rev.executeQuery(q);
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QObject::tr("Database error: %1")
-				.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QObject::tr("The revocation "
+			"could not be stored"));
 }
 
 /* Reason and dates only: the CRL number of the first appearance stays */
