@@ -385,7 +385,12 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   `issued_with` (one id) names the profile the CA's own certificate is issued with. Every id
   must name a profile (`issued_with`, `profiles`) or a policy (`policies`) of the file or of the
   database; otherwise `unknown_reference` at the pointer of the id (`/cas/1/profiles/0: there
-  is no profile 'x' in the file or the database`). `issued_with` is recorded and compared, not
+  is no profile 'x' in the file or the database`). A profile or policy in `profiles` or
+  `policies` that exists only in the database and is retired is refused with
+  `document_retired`, the code of `ProfileStore::assign` (BTD-232): a retired document never
+  takes effect. A retired document that the file defines is stored as a new version first and
+  stays assignable; `issued_with` may name a retired profile, since it only records how the
+  CA was issued. `issued_with` is recorded and compared, not
   applied: the certificate is made from the CA's own members (key, subject, validity,
   `path_len`, `name_constraints`, `key_usage`, the parent's CDP), and bootstrap does not run
   the profile over it, because a CA profile cannot carry name constraints or a CDP, caps the
@@ -497,7 +502,7 @@ unchecked database: '/data/lab.xdb' does not exist: every object would be create
 - **Error codes**: `invalid_bootstrap_file`, `bootstrap_conflict`,
   `unresolved_secret_reference`; from the checks above `invalid_validity`, `invalid_value`,
   `invalid_uri`, `invalid_subject`, `missing_password`, `unknown_reference`,
-  `path_length_exceeded`, `not_supported`, `invalid_profile`, `invalid_policy`, and the codes of
+  `document_retired`, `path_length_exceeded`, `not_supported`, `invalid_profile`, `invalid_policy`, and the codes of
   the services, each with the pointer of the object in front of the detail. A subject that
   `parseDn()` refuses names the pointer of its member (`/cas/2/dn`, `/cas/2/cn`, or
   `/cas/2/subject` for an attribute of `subject`): `/cas/2/subject: 'CN=R,O=' is no RFC 4514
