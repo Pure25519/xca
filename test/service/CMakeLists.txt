@@ -402,6 +402,12 @@ add_test(NAME test_cli_skipped_rows_readonly
 		-P ${SERVICE_TEST_DIR}/cli_skipped_rows_readonly.cmake)
 set_tests_properties(test_cli_skipped_rows_readonly PROPERTIES LABELS service)
 
+# no internal references in the public fork (BTD-236)
+add_test(NAME test_private_refs
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		-P ${SERVICE_TEST_DIR}/private_refs.cmake)
+set_tests_properties(test_private_refs PROPERTIES LABELS service)
+
 # model signals of the insert path (BTD-231)
 ServiceTest(test_service_model_signals)
 
