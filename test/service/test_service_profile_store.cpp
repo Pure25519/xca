@@ -61,6 +61,7 @@ class test_service_profile_store : public ServiceTestCase
 	void invalidImport();
 	void versionInUseIsKept();
 	void assignmentChecksSignature();
+	void retiredIsNotAssigned();
 	void issuedUnderProfileAndPolicy();
 };
 
@@ -255,6 +256,46 @@ void test_service_profile_store::assignmentChecksSignature()
 	QCOMPARE(AuditLog::entries().last().errorCode, QString("profile_not_assigned"));
 	ProfileStore::unassign(ctx, ec, "profile", "tls-server-web");
 	QVERIFY(ProfileStore::assigned(ec, "profile").isEmpty());
+}
+
+/* A retired profile or policy is refused when it is assigned, to a CA or
+ * to a profile: it would never take effect, issue() refuses a retired
+ * profile and policiesFor() leaves a retired policy out (BTD-232) */
+void test_service_profile_store::retiredIsNotAssigned()
+{
+	ProfileStore::importFile(ctx, "profile",
+		SERVICE_TEST_DATA "/profiles/tls-server-web.json");
+	ProfileStore::importFile(ctx, "policy",
+		SERVICE_TEST_DATA "/policies/ot-lab-names.json");
+	ProfileStore::retire(ctx, "profile", "tls-server-web");
+	ProfileStore::retire(ctx, "policy", "ot-lab-names");
+	pki_x509 *c = ca("EC:prime256v1");
+
+	int before = AuditLog::entries().size();
+	QCOMPARE(code([&]() { ProfileStore::assign(ctx, c, "profile", "tls-server-web"); }),
+		QString("document_retired"));
+	QCOMPARE(AuditLog::entries().size(), before + 1);
+	QCOMPARE(AuditLog::entries().last().action, QString("profile.assign"));
+	QCOMPARE(AuditLog::entries().last().result, QString("failure"));
+	QCOMPARE(AuditLog::entries().last().errorCode, QString("document_retired"));
+	QVERIFY(ProfileStore::assigned(c, "profile").isEmpty());
+
+	QCOMPARE(code([&]() { ProfileStore::assign(ctx, c, "policy", "ot-lab-names"); }),
+		QString("document_retired"));
+	QCOMPARE(AuditLog::entries().last().errorCode, QString("document_retired"));
+	QVERIFY(ProfileStore::assigned(c, "policy").isEmpty());
+
+	ProfileStore::importFile(ctx, "profile",
+		SERVICE_TEST_DATA "/profiles/generic/xca-tls-client.json");
+	QCOMPARE(code([&]() { ProfileStore::assignToProfile(ctx, "xca-tls-client",
+				"ot-lab-names"); }),
+		QString("document_retired"));
+
+	/* a new version is not retired: it is assigned again */
+	ProfileStore::update(ctx, "profile",
+		ProfileStore::show("profile", "tls-server-web").document);
+	QCOMPARE(code([&]() { ProfileStore::assign(ctx, c, "profile", "tls-server-web"); }),
+		QString());
 }
 
 /* The audit entry of the certificate names profile, version, policies and

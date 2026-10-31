@@ -156,6 +156,40 @@ refused("policies unknown" unknown_reference "/cas/0/policies/0" "${j}")
 variant(j policies [=[["policies/lab-names.json"]]=])
 string(JSON j SET "${j}" cas 0 profiles [=[["lab-names"]]=])
 refused("policy as profile" unknown_reference "/cas/0/profiles/0" "${j}")
+# a retired profile or policy of the database is refused at the pointer of
+# its id, with the code of assign (BTD-232); bootstrap does not retire, so
+# cli_fixture does
+variant(j profiles [=[["profiles/tls-server.json"]]=])
+string(JSON j SET "${j}" policies [=[["policies/lab-names.json"]]=])
+bs_write(retire-docs.json "${j}")
+bxc("retire: store the documents" 0 bootstrap --file "${file}" --db "${DB}")
+fixture("retire tls-server" retire profile tls-server)
+fixture("retire lab-names" retire policy lab-names)
+variant(j cas 0 profiles [=[["tls-server"]]=])
+refused("profiles retired" document_retired "/cas/0/profiles/0" "${j}")
+if(NOT detail MATCHES "tls-server")
+  fail("profiles retired: the id is not named: ${detail}")
+endif()
+variant(j cas 0 policies [=[["lab-names"]]=])
+refused("policies retired" document_retired "/cas/0/policies/0" "${j}")
+bs_write(retired-plan.json "${j}")
+bxc("policies retired, plan" 0 bootstrap --file "${file}" --db "${DB}" --plan)
+one_doc("policies retired, plan" "${out}" cli-result r)
+bs_entry("${r}" ca err-root e)
+jget(act "${e}" action)
+jget(code "${e}" error code)
+jget(det "${e}" error detail)
+if(NOT act STREQUAL "error" OR NOT code STREQUAL "document_retired" OR
+   NOT det MATCHES "^/cas/0/policies/0: ")
+  fail("policies retired, plan: '${act}' '${code}' '${det}':
+${e}")
+endif()
+# issued_with records how the CA was issued; a profile retired since then
+# stays a valid record
+variant(j cas 0 issued_with [=["tls-server"]=])
+bs_write(retired-issued-with.json "${j}")
+bxc("issued_with retired" 0 bootstrap --file "${file}" --db "${DB}" --plan)
+
 # --plan: an error entry of the CA, exit code 0
 variant(j cas 0 policies [=[["no-such-policy"]]=])
 bs_write(unknown-plan.json "${j}")
