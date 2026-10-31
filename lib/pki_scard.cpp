@@ -630,8 +630,14 @@ pk11_attr_data pki_scard::fixedSlotId(const QString &model,
 	for (const QStringList &item : fixed_ids)
 		items << item[0];
 	int i = PwDialogCore::selectKeySlot(model, items);
-	if (i >= 0 && i < fixed_ids.size())
-		new_id.setULong(fixed_ids[i][1].toULong());
+	/* no valid choice: an empty CKA_ID would reach generateKey() or
+	 * store_token() and land in a slot nobody chose (BTD-176) */
+	if (i < 0 || i >= fixed_ids.size())
+		throw secretError(secretError::rejected,
+			QObject::tr("No key slot of %1 selected: the answer "
+				"must be a slot number 1-%2")
+				.arg(model).arg(fixed_ids.size()));
+	new_id.setULong(fixed_ids[i][1].toULong());
 	return new_id;
 }
 
