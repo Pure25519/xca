@@ -69,6 +69,9 @@ class test_main: public QObject
 	/* exportMlDsa.cpp */
 	void exportMlDsaEncoding();
 
+	/* exportPkcs12Mac.cpp */
+	void exportPkcs12Mac();
+
 	/* importPEM.cpp */
 	void importPEM();
 	void importLockedKeepsItems();
