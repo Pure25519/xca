@@ -290,8 +290,6 @@ class RenewalSpec
   public:
 	pki_x509 *predecessor{};
 	pki_key *newKey{};          // re-key; nullptr: the predecessor's key
-	/* --plan of a re-key: the new key is not made, it counts as one */
-	bool newKeyPlanned{};
 	QString name{};             // internal name; empty: the predecessor's
 	a1time notBefore{};
 	a1time notAfter{};          // may be undefined (99991231235959Z)

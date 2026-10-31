@@ -189,6 +189,26 @@ QString ResultCollector::text() const
 			.arg(tl["target_format"].toString())
 			.arg(tl["size"].toVariant().toString())
 			.arg(tl["budget"].toVariant().toString());
+	/* renew (BTD-56): predecessor and successor */
+	QJsonObject rn = extra["renewal"].toObject();
+	if (!rn.isEmpty()) {
+		auto ref = [](const QJsonObject &c) {
+			return QString("certificate %1 '%2' serial %3")
+				.arg(c["id"].toVariant().toString())
+				.arg(c["name"].toString())
+				.arg(c["serial"].toString());
+		};
+		QJsonObject succ = rn["successor"].toObject();
+		s += QObject::tr("renewal of %1").arg(ref(
+				rn["predecessor"].toObject()));
+		if (!succ.isEmpty())
+			s += QObject::tr(" by %1").arg(ref(succ));
+		if (rn["rekey"].toBool())
+			s += QObject::tr(", new key");
+		s += "\n";
+	}
+	for (const QString &w : textWarnings)
+		s += QObject::tr("warning: %1").arg(w) + "\n";
 	return s;
 }
 

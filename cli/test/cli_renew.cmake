@@ -99,6 +99,12 @@ if(NOT link MATCHES "^${old_id}\\|${plain_serial}\\|0$")
   fail("renewals row '${link}', expected ${old_id}|${plain_serial}|0")
 endif()
 
+# --- --text names predecessor and successor ----------------------------------
+bxc("text" 0 renew ${nu_id} --db "${DB}" ${PW} --text)
+if(NOT out MATCHES "renewal of certificate ${nu_id} 'dev1' serial [0-9A-F:]+ by certificate [0-9]+ 'dev1' serial")
+  fail("renew --text: '${out}'")
+endif()
+
 # --- re-key by fingerprint: the predecessor's type ---------------------------
 bxc("rekey" 0 renew --fingerprint "${old_fp}" --db "${DB}" ${PW} --rekey
     --name dev1-rekeyed)
@@ -132,12 +138,43 @@ endif()
 bxc("revoke" 0 revoke ${old_id} --db "${DB}" ${PW} --reason keyCompromise)
 bxc("compromised key" 1 renew ${old_id} --db "${DB}" ${PW})
 expect_error("compromised key" key_compromised)
+bxc("compromised rekey plan" 0 renew ${old_id} --db "${DB}" ${PW} --rekey
+    --plan --text)
+if(NOT out MATCHES "renewal of certificate ${old_id} 'dev1'[^
+]*, new key
+warning: [^
+]*\[predecessor_key_compromised\]")
+  fail("renew --rekey --plan --text after keyCompromise: '${out}'")
+endif()
 bxc("compromised rekey" 0 renew ${old_id} --db "${DB}" ${PW} --rekey
     --name dev1-after)
 one_doc("compromised rekey" "${out}" cli-result r)
 warning_codes("${r}" codes)
 if(NOT codes MATCHES "predecessor_key_compromised")
   fail("re-key after keyCompromise without warning: '${codes}'")
+endif()
+
+# --- --plan runs every check of the real run (review of the CLI chain):
+# an RSA certificate with keyEncipherment re-keyed to EC is refused by the
+# key usage check on the built certificate, in the plan already -------------
+bxc("rsa request" 0 request-cert --db "${DB}" ${PW} --cn rsa1 --key rsa-2048)
+bxc("rsa sign" 0 sign rsa1 --db "${DB}" ${PW} --ca "Renew Root")
+count_items(certificate certs_before)
+count_items(key keys_before)
+bxc("rsa to ec plan" 1 renew rsa1 --db "${DB}" ${PW} --rekey --key ec-p256 --plan)
+expect_error("rsa to ec plan" key_usage_not_for_key_type)
+bxc("rsa to ec" 1 renew rsa1 --db "${DB}" ${PW} --rekey --key ec-p256)
+expect_error("rsa to ec" key_usage_not_for_key_type)
+count_items(certificate certs_after)
+count_items(key keys_after)
+if(NOT certs_after EQUAL certs_before OR NOT keys_after EQUAL keys_before)
+  fail("a refused re-key stored something: certificates ${certs_before} -> "
+       "${certs_after}, keys ${keys_before} -> ${keys_after}")
+endif()
+bxc("rsa rekey plan" 0 renew rsa1 --db "${DB}" ${PW} --rekey --plan)
+count_items(key keys_after)
+if(NOT keys_after EQUAL keys_before)
+  fail("renew --rekey --plan stored a key")
 endif()
 
 # --- the issuer checks of sign: a CA that is not valid yet -----------------

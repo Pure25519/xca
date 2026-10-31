@@ -352,8 +352,6 @@ QString IsoDuration::toString() const
 
 bool RenewalSpec::rekey() const
 {
-	if (newKeyPlanned)
-		return true;
 	return newKey && predecessor && EVP_PKEY_eq(newKey->getPubKey(),
 			X509_get0_pubkey(predecessor->getCert())) != 1;
 }

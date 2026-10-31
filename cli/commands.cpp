@@ -6,6 +6,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 
 #include <openssl/evp.h>
 #include <openssl/objects.h>
@@ -23,6 +24,7 @@
 #include "lib/issuance_checks.h"
 #include "lib/json_report.h"
 #include "lib/pki_crl.h"
+#include "lib/pki_evp.h"
 #include "lib/pki_key.h"
 #include "lib/pki_multi.h"
 #include "lib/pki_temp.h"
@@ -512,6 +514,9 @@ static void cmdRenew(CommandContext &ctx)
 	pki_x509 *issuer = old->getSigner();
 
 	pki_multi fileItems;
+	/* --plan of a re-key: the new key is made in memory only, never
+	 * stored, so the plan runs every check of the real run on it */
+	std::unique_ptr<pki_evp> probe;
 	if (rekey) {
 		QString type = o.value("key", keyTypeOf(X509_get0_pubkey(
 						old->getCert())));
@@ -520,7 +525,11 @@ static void cmdRenew(CommandContext &ctx)
 				"The key type of '%1' has no --key name; give "
 				"--key").arg(old->getIntName()));
 		r.newKey = obtainKey(ctx, r.name, type, &fileItems);
-		r.newKeyPlanned = !r.newKey;
+		if (!r.newKey) {
+			probe.reset(new pki_evp(r.name));
+			probe->generate(keyjob(keyJobText(type)));
+			r.newKey = probe.get();
+		}
 	}
 	/* the default digest of the key that signs: the issuer's, or the
 	 * subject key of a self-signed certificate */
@@ -545,8 +554,13 @@ static void cmdRenew(CommandContext &ctx)
 			"'%1' is revoked for key compromise; it is renewed "
 			"with a new key").arg(old->getIntName()));
 	if (ctx.plan) {
+		/* every check of the real run (review of the CLI chain on
+		 * BTD-56: a green plan must not fail for real): renew() runs
+		 * inside the transaction --plan rolls back; the result
+		 * carries no document */
 		IssuanceSpec spec = r.issuanceSpec();
-		planCertificate(ctx, spec);
+		Database.model<db_x509>()->renew(ctx.svc, { r });
+		ctx.result->plannedCertificate(spec);
 		renewal["successor"] = QJsonValue();
 		ctx.result->set("renewal", renewal);
 		if (o.has("rekey"))
