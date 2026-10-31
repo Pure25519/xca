@@ -695,6 +695,21 @@ QList<AuditEntry> AuditLog::entries()
 	return readEntries(nullptr);
 }
 
+QVariantMap AuditLog::lastParams(const QString &action)
+{
+	XSqlQuery q;
+	QVariantMap params;
+
+	SQL_PREPARE(q, "SELECT params FROM audit_log WHERE action=? "
+			"ORDER BY seq DESC LIMIT 1");
+	q.bindValue(0, action);
+	q.exec();
+	throwOnError(q);
+	if (q.next())
+		canonicalParams(q.value(0).toString(), &params);
+	return params;
+}
+
 QByteArray AuditLog::checkpointPayload(const QVariantMap &params)
 {
 	QVariantMap signedPart = params;

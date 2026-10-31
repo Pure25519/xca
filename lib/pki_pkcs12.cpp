@@ -168,7 +168,7 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 }
 
 void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
-			const Passwd &pass) const
+			const Passwd &pass, const ExportOptions &opts) const
 {
 	if (cert == NULL || key == NULL)
 		my_error(tr("No key or no Cert and no pkcs12"));
@@ -178,7 +178,7 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	 * decryptKeyForExport() may throw (BTD-16) */
 	pki_evp *evp = dynamic_cast<pki_evp *>(key);
 	std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(
-		evp ? evp->decryptKeyForExport() : key->decryptKey(),
+		evp ? evp->decryptKeyForExport(opts) : key->decryptKey(),
 		&EVP_PKEY_free);
 
 	/* sk_X509_free(): the certificates belong to the pki_x509 items */
@@ -259,7 +259,6 @@ const QList<int> encAlgo::all_encAlgos(
  * the legacy algorithms only when chosen (BTD-52) */
 const int encAlgo::builtin_encAlgo(NID_aes_256_cbc);
 int encAlgo::default_encAlgo(builtin_encAlgo);
-QString encAlgo::exportName;
 
 encAlgo::encAlgo(int nid) : encAlgo_nid(nid)
 {
@@ -317,17 +316,11 @@ void encAlgo::setDefault(const QString &def)
 
 const encAlgo encAlgo::forExport()
 {
-	return encAlgo(exportName.isEmpty() ?
-			(QString)Settings["pkcs12_enc_algo"] : exportName);
+	return encAlgo((QString)Settings["pkcs12_enc_algo"]);
 }
 
-encAlgo::ExportScope::ExportScope(const QString &name)
-	: saved(exportName)
+const encAlgo encAlgo::forExport(const ExportOptions &opts)
 {
-	exportName = name;
-}
-
-encAlgo::ExportScope::~ExportScope()
-{
-	exportName = saved;
+	return opts.pkcs12Algorithm ? encAlgo(opts.pkcs12Algorithm) :
+					forExport();
 }

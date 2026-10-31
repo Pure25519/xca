@@ -186,8 +186,9 @@ after a failure checks the OpenSSL result itself:
   row that does not decode is left out on open (`db_base::loadContainer()`). The rows left out
   are reported once for the whole load, each with its reason. After the unlock they are also
   audited: one `database.rows_skipped` entry with `count`, `skipped_items` (`key:3,template:7`)
-  and `warning=rows_skipped` (BTD-209). It is written on every open, including reading commands
-  (doc/audit-checkpoints.md, "Entries written on open"). An
+  and `warning=rows_skipped` (BTD-209). It is written once per change of the skipped set, not
+  per open; when every row loads again, one closing entry with `count` 0 follows (BTD-221,
+  doc/audit-checkpoints.md, "Entries written on open"). An
   `errorEx` without text is shown nowhere (`xcaWarning::error()` drops it), so a loader never
   throws one.
 - The template loader, which the import probe tries last, accepts only a well-formed template

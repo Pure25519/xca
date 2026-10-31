@@ -27,6 +27,11 @@ bxc-main (bxc-pki fork, unreleased)
    keeps --subject. --text prints the counts, one line per object (kind,
    bootstrap id, action, database id), the skipped elements and the
    unchecked steps.
+ * BTD-107: the warning "longer valid than the signer" of the New
+   Certificate dialog no longer offers "Continue rollout": the issuance
+   caps the end at the issuer chain anyway (BTD-51), so the button
+   promised an uncapped certificate that was never issued. "Adjust date
+   and continue" remains. The renewal dialog follows with BTD-56.
  * BTD-215, BTD-127: extended key usages in the New Certificate dialog.
    An EKU of a template, profile or source certificate that is not in
    the dialog's list (missing or old eku.txt, own OID) gets a row marked
