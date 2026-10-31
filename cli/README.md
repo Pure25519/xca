@@ -401,7 +401,8 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   `CrlPolicy` for missing values) are always stored through `CrlPolicy::store()` (settings
   row, crlDays, `ca.crl_settings`), and every CA issues its empty CRL (rule 7). `key_password`
   gives the CA key a password of its own (XCA "own password"); it also unlocks the key when the
-  CA signs a child. `rsa_padding: pss` is `not_supported` (the signing service has no PSS). A CA
+  CA signs a child. `rsa_padding: pss` is valid in the schema but `not_supported` for every CA
+  in this build (the signing service has no RSASSA-PSS; BTD-234). A CA
   whose parent (or a CA above) forbids it by `path_len` is `path_length_exceeded`.
 - **Idempotency**: the settings row `bootstrap_<10 hex digits>` maps a bootstrap id to its
   object (`settings.key_` is CHAR(20), so the key is the first 10 hex digits of
