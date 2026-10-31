@@ -556,6 +556,8 @@ void test_service_audit::optionflagsMigratedAfterUnlock()
 		"WHERE key_='no_expire_colors'").toString(), QString("yes"));
 	QCOMPARE(sqlValue("SELECT value FROM settings "
 		"WHERE key_='hide_unusable'").toString(), QString("yes"));
+}
+
 void test_service_audit::baselineRecordsUnlock_data()
 {
 	QTest::addColumn<bool>("withPassword");
