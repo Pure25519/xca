@@ -168,7 +168,7 @@ extension("${d}" crlDistributionPoints cdp)
 extension("${d}" keyUsage ku)
 jget(subj "${d}" subject rfc4514)
 if(NOT bc MATCHES "pathlen:0" OR NOT nc MATCHES "lab\\.example\\.org" OR
-   NOT nc MATCHES "192\\.168\\.0\\.0" OR NOT nc_critical OR
+   NOT nc MATCHES "192\\.0\\.2\\.0" OR NOT nc_critical OR
    NOT cdp MATCHES "ot-rsa-root\\.crl" OR NOT ku MATCHES "Certificate Sign" OR
    NOT subj MATCHES "^CN=BxC OT RSA Issuing CA,OU=.*,O=BxC Security,C=DE,DC=example,DC=org$")
   fail("ot-rsa-issuing: basicConstraints '${bc}', nameConstraints '${nc}' (critical ${nc_critical}), CDP '${cdp}', keyUsage '${ku}', subject '${subj}'")
