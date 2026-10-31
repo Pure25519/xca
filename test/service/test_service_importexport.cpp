@@ -92,8 +92,12 @@ class test_service_importexport : public ServiceTestCase
 			const QString &name, const QString &source = QString());
 	QList<AuditEntry> entries(const QString &action);
 	void checkNoSecret(const QByteArray &secret);
-	/* An empty CRL of ca.pem with this CRL number, by openssl ca */
-	bool opensslCrl(const QString &name, int number, int days);
+	/* A CRL of ca.pem with this CRL number, by openssl ca; empty, or
+	 * revoking the certificate with this hex serial (keyCompromise) */
+	bool opensslCrl(const QString &name, int number, int days,
+			const QString &revokedSerial = QString());
+	/* BTD-122: a CRL stored before its CA */
+	void checkLateCrlLink(const QString &revokedSerial);
 	pki_crl *importCrl(const QString &name);
 	/* authority.crlNo and crlExpire of the CA in the database */
 	QPair<qint64, QString> authorityCrl(pki_x509 *ca);
@@ -139,6 +143,8 @@ class test_service_importexport : public ServiceTestCase
 	void crlImportAuditsRevocations();
 	void crlImportRaisesCrlNumber();
 	void crlGeneratedAfterImport();
+	void crlBeforeCaInOneImport();
+	void crlBeforeCaInTwoImports();
 	void templateCopyExport();
 	void rejections();
 	void exportFailureKeepsFile();
@@ -836,7 +842,7 @@ void test_service_importexport::crlImportAuditsRevocations()
 }
 
 bool test_service_importexport::opensslCrl(const QString &name, int number,
-					int days)
+					int days, const QString &revokedSerial)
 {
 	QFile index(file("crl-index.txt"));
 	QFile crlnumber(file("crl-number"));
@@ -845,6 +851,10 @@ bool test_service_importexport::opensslCrl(const QString &name, int number,
 	    !crlnumber.open(QIODevice::WriteOnly | QIODevice::Truncate) ||
 	    !cnf.open(QIODevice::WriteOnly | QIODevice::Truncate))
 		return false;
+	if (!revokedSerial.isEmpty())
+		index.write(QString("R\t351231000000Z\t250101000000Z,keyCompromise"
+			"\t%1\tunknown\t/CN=revoked\n").arg(revokedSerial)
+			.toUtf8());
 	index.close();
 	crlnumber.write(QString("%1\n").arg(number, 2, 16, QChar('0'))
 			.toUtf8());
@@ -876,6 +886,80 @@ QPair<qint64, QString> test_service_importexport::authorityCrl(pki_x509 *ca)
 	if (!q.first())
 		return QPair<qint64, QString>(-1, QString());
 	return qMakePair(q.value(0).toLongLong(), q.value(1).toString());
+}
+
+/* BTD-122: the CRL came before its CA (in one import or in an earlier
+ * one); when the CA is stored, its number, nextUpdate and revocations
+ * reach the CA as in a CA-first import, audited as crl.link */
+void test_service_importexport::checkLateCrlLink(const QString &revokedSerial)
+{
+	pki_x509 *ca = cert("BTD34 CA");
+	pki_x509 *leaf = cert("BTD34 Leaf");
+	QVERIFY(ca && leaf);
+	pki_crl *crl = Store.getAll<pki_crl>().value(0);
+	QVERIFY(crl);
+	QCOMPARE(crl->getIssuer(), ca);
+	QCOMPARE(authorityCrl(ca), qMakePair(5LL,
+		crl->getNextUpdate().toPlain()));
+	QCOMPARE(ca->getCrlNumber().toDec(), QString("5"));
+	QVERIFY2(leaf->isRevoked(), "the revocation of the early CRL");
+	QList<AuditEntry> links = entries("crl.link");
+	QCOMPARE(links.size(), 1);
+	QCOMPARE(links[0].objectId, crl->getSqlItemId().toString());
+	QCOMPARE(links[0].params.value("ca_id").toLongLong(),
+		ca->getSqlItemId().toLongLong());
+	QCOMPARE(links[0].params.value("crl_number").toLongLong(), 5LL);
+	QCOMPARE(links[0].params.value("authority_updated").toBool(), true);
+
+	/* the next CRL goes above it and keeps the revocation */
+	pki_crl *next = Database.model<db_crl>()->newCrl(ctx, crljob(ca));
+	QVERIFY(next);
+	QFile der(file("late-next.crl"));
+	QVERIFY(der.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	der.write(next->i2d());
+	der.close();
+	QCOMPARE(opensslOk({ "crl", "-in", der.fileName(), "-inform", "DER",
+		"-noout", "-crlnumber" }).trimmed(), QString("crlNumber=0x06"));
+	QString text = opensslOk({ "crl", "-in", der.fileName(), "-inform",
+		"DER", "-noout", "-text" });
+	QVERIFY2(text.contains("Serial Number: " + revokedSerial),
+		qPrintable(text));
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+}
+
+void test_service_importexport::crlBeforeCaInOneImport()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QString serial = opensslOk({ "x509", "-in", file("leaf.pem"), "-noout",
+		"-serial" }).trimmed().section('=', 1);
+	QVERIFY(opensslCrl("early.crl", 5, 7, serial));
+	ImportSpec spec;
+	spec.files << file("early.crl") << file("ca.key") << file("ca.pem")
+		<< file("leaf.key") << file("leaf.pem");
+	Database.importItems(ctx, spec);
+	checkLateCrlLink(serial);
+#endif
+}
+
+void test_service_importexport::crlBeforeCaInTwoImports()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QString serial = opensslOk({ "x509", "-in", file("leaf.pem"), "-noout",
+		"-serial" }).trimmed().section('=', 1);
+	QVERIFY(opensslCrl("early.crl", 5, 7, serial));
+	pki_crl *crl = importCrl("early.crl");
+	QVERIFY(crl);
+	QVERIFY(!crl->getIssuer());
+	QCOMPARE(entries("object.import").last().params
+		.value("authority_updated").toBool(), false);
+	importChain();
+	checkLateCrlLink(serial);
+#endif
 }
 
 /* Regression (BTD-49): a CRL imported for a CA of the database left
