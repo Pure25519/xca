@@ -209,6 +209,7 @@ class ResultCollector
 	bool plan{};
 	QJsonArray objects{};
 	QJsonObject entry(const pki_base *pki) const;
+	static QString bootstrapText(const QJsonObject &bootstrap);
 
   public:
 	ResultCollector(const QString &cmd, bool p) : command(cmd), plan(p)
@@ -457,8 +458,11 @@ void auditRefusal(const CommandContext &ctx, const QString &action,
 		const QString &code);
 
 /* RFC 4514 distinguished name; order kept, multi-valued RDNs (+),
- * UTF8String for directory strings. Throws usageError invalid_subject. */
-x509name parseDn(const QString &rfc4514);
+ * UTF8String for directory strings. Throws usageError invalid_subject
+ * naming the source: the option (--subject '<dn>' is no ...) or a JSON
+ * pointer of the bootstrap file (/cas/2/subject: '<dn>' is no ...). */
+x509name parseDn(const QString &rfc4514,
+		const QString &source = QStringLiteral("--subject"));
 /* Strict checks of the SAN values; throw usageError invalid_<kind> */
 QString checkIp(const QString &ip);         // canonical text
 QString checkUri(const QString &uri);

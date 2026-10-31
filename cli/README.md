@@ -372,10 +372,25 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   or a directory ending in `/` whose `*.json` files are taken in name order) or an inline object
   with `id`; a missing file is `invalid_bootstrap_file` at the entry. They are stored through
   the profile store of BTD-167 (`ProfileStore::create`; a stored document that differs, or is
-  retired, becomes a new version with `ProfileStore::update`; an equal one is kept). `ca.profile`
-  must name a profile of the file or of the database (`unknown_reference`) and is assigned to
-  the CA (`ProfileStore::assign`, which refuses a profile without a signature for the CA's key:
-  `profile_signature_mismatch`). Policies are stored; the file has no member that assigns them.
+  retired, becomes a new version with `ProfileStore::update`; an equal one is kept).
+- **Profiles and policies of a CA**: `profiles` and `policies` (arrays of unique ids) are
+  assigned to the CA (`ProfileStore::assign` of BTD-167: the profiles the CA may issue with,
+  the name policies every issuance under the CA is checked against); the assignment of a
+  profile refuses one without a signature for the CA's key (`profile_signature_mismatch`).
+  `issued_with` (one id) names the profile the CA's own certificate is issued with. Every id
+  must name a profile (`issued_with`, `profiles`) or a policy (`policies`) of the file or of the
+  database; otherwise `unknown_reference` at the pointer of the id (`/cas/1/profiles/0: there
+  is no profile 'x' in the file or the database`). `issued_with` is recorded and compared, not
+  applied: the certificate is made from the CA's own members (key, subject, validity,
+  `path_len`, `name_constraints`, `key_usage`, the parent's CDP), and bootstrap does not run
+  the profile over it, because a CA profile cannot carry name constraints or a CDP, caps the
+  validity (`validity.max`) and wants a CSR or a server key of its own, so applying it would
+  override or refuse the values of the file. What it does: the id must exist, it is stored in
+  the definition of the CA (mapping row, `definition_sha256`) and shown in the result
+  (`issued_with`), and a different `issued_with` for an existing CA is `bootstrap_conflict`,
+  like every member the certificate was made from. What it does not do: it does not check the
+  certificate against the profile, it records no profile version for the CA certificate
+  (`issued_profiles`) and it does not assign the profile to the CA or its parent.
 - **CAs**: init's code path (`createCa()` in `commands.cpp`) with the file's values: key type
   (the vocabulary of `--key`), subject from `cn` plus `subject` (order C, ST, L, O, OU, CN) or
   `dn` (RFC 4514 string or RDN list, order and multi-valued RDNs kept), `parent`, `hash`,
@@ -395,10 +410,13 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   of that definition; the row of a profile or policy its name and version. A second run keeps
   every object and writes only `bootstrap.apply`. A CA whose definition differs in `key`, `cn`,
   `subject`, `dn`, `parent`, `path_len`, `name_constraints`, `key_usage`, `hash`, `rsa_padding`,
-  `validity`, `not_before`, `not_after`, its parent's distribution points or `key_password` is
-  `bootstrap_conflict` naming the pointer, the bootstrap id and the member, and nothing of the
-  run is written; changed CRL settings (`CrlPolicy::store`) and a changed `profile` (assign)
-  are updates. A row whose CA is gone is `bootstrap_conflict` too.
+  `validity`, `not_before`, `not_after`, its parent's distribution points, `key_password` or
+  `issued_with` is `bootstrap_conflict` naming the pointer, the bootstrap id and the member, and
+  nothing of the run is written; changed CRL settings (`CrlPolicy::store`) and changed
+  `profiles` or `policies` are updates. The row of a CA also lists the profiles and policies
+  the file assigns: an update assigns the ids the CA lacks and takes back (`unassign`) the ids
+  an earlier run assigned and the file no longer lists; an assignment made outside bootstrap
+  stays. A row whose CA is gone is `bootstrap_conflict` too.
 - **Secrets**: every secret field of the file is a reference (`env:`, `file:` or `op://`); a
   literal is `invalid_bootstrap_file` at its pointer and never shown, also in elements of later
   phases. Before the database is opened the real run reads every reference it uses (the
@@ -439,23 +457,41 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   {"kind": "ca", "bootstrap_id": "ot-rsa-root", "pointer": "/cas/0", "action": "create",
    "type": "certificate", "id": 3, "name": "BxC OT RSA Root CA", "key_type": "rsa-4096",
    "serial": "...", "fingerprint": "AB:...", "issuer": "CN=BxC OT RSA Root CA,...",
-   "subject": "CN=...", "issuer_bootstrap_id": null, "profile": "root-ca",
+   "subject": "CN=...", "issuer_bootstrap_id": null, "issued_with": "root-ca",
+   "profiles": ["issuing-ca"], "policies": [],
    "not_before": "...", "not_after": "...", "crl_id": 4, "crl_number": 1,
    "next_update": "...", "definition_sha256": "<hex>"}],
  "skipped": [{"element": "/server", "reason": "the server TLS of xca-server comes in Phase 3 (BTD-160)"}],
  "unchecked": [{"object": "ca:ot-rsa-root", "check": "..."}]}
 ```
 
-  `action` is create, keep, update (with `changed`: `crl`, `profile`, `document`, `retired`),
+  `action` is create, keep, update (with `changed`: `crl`, `profiles`, `policies`, `document`,
+  `retired`),
   skip (with `reason`) or, with `--plan`, error (with `error`: `code`, `detail`; also entries of
   kind `secret` for an `op://` reference). With `--plan` a new CA has `id`, `serial`,
   `fingerprint`, `issuer`, `crl_*` and `next_update` null; `unchecked` is present only with
-  `--plan`.
+  `--plan`. With `--text` the result is printed for people: the objects written, the counts,
+  one line per object with kind, bootstrap id, action and database id (the item id of a CA,
+  the version of a profile or policy, `-` while there is none), `changed`, the reason of a skip
+  or the error of an entry, then the skipped elements and, with `--plan`, the unchecked steps:
+
+```
+bootstrap lab.json: created 10, kept 0, updated 0, skipped 6, errors 0
+profile root-ca: create, version -
+ca ot-rsa-root: create, id -
+ca ot-p256-issuing: update, id 9 (changed: profiles, policies)
+skipped /server: the server TLS of xca-server comes in Phase 3 (BTD-160)
+unchecked database: '/data/lab.xdb' does not exist: every object would be created, ...
+```
 - **Error codes**: `invalid_bootstrap_file`, `bootstrap_conflict`,
   `unresolved_secret_reference`; from the checks above `invalid_validity`, `invalid_value`,
   `invalid_uri`, `invalid_subject`, `missing_password`, `unknown_reference`,
   `path_length_exceeded`, `not_supported`, `invalid_profile`, `invalid_policy`, and the codes of
-  the services, each with the pointer of the object in front of the detail.
+  the services, each with the pointer of the object in front of the detail. A subject that
+  `parseDn()` refuses names the pointer of its member (`/cas/2/dn`, `/cas/2/cn`, or
+  `/cas/2/subject` for an attribute of `subject`): `/cas/2/subject: 'CN=R,O=' is no RFC 4514
+  distinguished name: the value of O is empty`; on the command line the source is the option
+  (`--subject 'CN=x,C=DEU' is no RFC 4514 distinguished name: ...`).
 
 ## Tests
 
@@ -481,8 +517,12 @@ the hierarchies ot-rsa, ot-p256 and pqc with root and issuing CA each, three pro
 policy adapted from the bxc-pki examples) on an empty database, verifies every chain with
 `openssl verify` and every CRL with `openssl crl -verify`, checks seq 1 `bootstrap.apply`,
 the second run (nothing changes), `--plan` without any password source (database file
-byte-identical), a file with one more CA and updates of CRL settings and a profile;
+byte-identical), a file with one more CA, updates of CRL settings and a profile, the
+profiles and policies assigned per CA and their change (assign, unassign), a different
+`issued_with` (`bootstrap_conflict`) and `--text` with and without `--plan`;
 `cli_bootstrap_errors` the refused files (schema errors with their pointers, CRL validity,
-literal, unresolvable and `op://` secrets, conflicts, an error in the middle of the run),
+literal, unresolvable and `op://` secrets, conflicts, an error in the middle of the run,
+`issued_with`, `profiles` and `policies` of the wrong type or not unique, unknown ids as
+`unknown_reference`, DN errors with the pointer instead of `--subject`, `--text`),
 own key passwords, skipped offline roots and the link dependencies (`ldd`, no 1Password
 library).

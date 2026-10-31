@@ -45,7 +45,12 @@ class CaDef
 	int index{};
 	QString pointer{};              // /cas/<index> in the file
 	QString id{}, parent{}, key{}, cn{}, hash{}, rsaPadding{};
-	QString validity{}, notBefore{}, notAfter{}, profile{};
+	QString validity{}, notBefore{}, notAfter{};
+	/* issued_with: the profile the CA certificate is issued with,
+	 * recorded and compared, not applied (cli/README.md); profiles,
+	 * policies: assigned to the CA (ProfileStore::assign) */
+	QString issuedWith{};
+	QStringList profiles{}, policies{};
 	bool external{};                // parent "external"
 	QString skipReason{};           // not set up in this phase
 	QJsonObject subject{};          // O, OU, C, L, ST with cn

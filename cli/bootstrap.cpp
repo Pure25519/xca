@@ -141,16 +141,28 @@ QString escapeValue(const QString &v)
 	return r;
 }
 
+/* parseDn() with the JSON pointer as the source of the DN, so that the
+ * detail starts with "<pointer>: " (never --subject); as a serviceError,
+ * so that the exit code is that of every other error of the file */
+x509name parsedDn(const QString &text, const QString &ptr)
+{
+	try {
+		return parseDn(text, ptr);
+	} catch (serviceError &err) {
+		throw serviceError(err.code, err.getString());
+	}
+}
+
 /* The subject: dn as given (a list of RDNs in encoding order becomes
  * RFC 4514, most significant last), or cn with the attributes of subject
- * in the order C, ST, L, O, OU, CN; parsed by parseDn() (rule 12) */
+ * in the order C, ST, L, O, OU, CN; parsed by parseDn() (rule 12). An
+ * error names /cas/<i>/dn, /cas/<i>/cn or, for an attribute of subject,
+ * /cas/<i>/subject. */
 x509name subjectOf(const CaDef &c)
 {
-	QString text, ptr = c.pointer;
-	if (c.dn.isString()) {
-		text = c.dn.toString();
-		ptr = jsonMember(c.pointer, "dn");
-	} else if (c.dn.isArray()) {
+	if (c.dn.isString())
+		return parsedDn(c.dn.toString(), jsonMember(c.pointer, "dn"));
+	if (c.dn.isArray()) {
 		QStringList rdns;
 		for (const QJsonValue &rdn : c.dn.toArray()) {
 			QStringList attrs;
@@ -160,21 +172,18 @@ x509name subjectOf(const CaDef &c)
 							.toString());
 			rdns.prepend(attrs.join("+"));
 		}
-		text = rdns.join(",");
-		ptr = jsonMember(c.pointer, "dn");
-	} else {
-		QStringList l("CN=" + escapeValue(c.cn));
-		for (const char *k : { "OU", "O", "L", "ST", "C" })
-			if (c.subject.contains(k))
-				l << QString(k) + "=" + escapeValue(
-					c.subject[k].toString());
-		text = l.join(",");
+		return parsedDn(rdns.join(","), jsonMember(c.pointer, "dn"));
 	}
-	try {
-		return parseDn(text);
-	} catch (errorEx &err) {
-		throw located(ptr, err);
-	}
+	QString cn = "CN=" + escapeValue(c.cn);
+	x509name name = parsedDn(cn, jsonMember(c.pointer, "cn"));
+	if (c.subject.isEmpty())
+		return name;
+	QStringList l(cn);
+	for (const char *k : { "OU", "O", "L", "ST", "C" })
+		if (c.subject.contains(k))
+			l << QString(k) + "=" + escapeValue(
+				c.subject[k].toString());
+	return parsedDn(l.join(","), jsonMember(c.pointer, "subject"));
 }
 
 /* What a certificate of the CA was made from; a stored CA whose
@@ -213,14 +222,26 @@ QJsonObject definition(const CaDef &c, const FileDef &f)
 		d["cdp"] = QJsonArray::fromStringList(p->distributionPoints);
 	if (c.keyPassword.isSet())
 		d["own_password"] = true;
-	if (!c.profile.isEmpty())
-		d["profile"] = c.profile;
+	/* recorded, not applied: the certificate is made from the members
+	 * above (cli/README.md, issued_with) */
+	if (!c.issuedWith.isEmpty())
+		d["issued_with"] = c.issuedWith;
 	return d;
 }
 
 const QStringList conflictMembers { "key", "cn", "subject", "dn", "parent",
 	"path_len", "name_constraints", "key_usage", "hash", "rsa_padding",
-	"validity", "not_before", "not_after", "cdp", "own_password" };
+	"validity", "not_before", "not_after", "cdp", "own_password",
+	"issued_with" };
+
+/* The assignments of a CA: the member of the file and the BTD-167 kind */
+const QList<QPair<QString, QString> > assignmentKinds {
+	{ "profiles", "profile" }, { "policies", "policy" } };
+
+const QStringList &assignedIn(const CaDef &c, const QString &member)
+{
+	return member == "profiles" ? c.profiles : c.policies;
+}
 
 /* A CIDR network as OpenSSL's name constraint wants it: address/mask */
 QString ipMask(const QString &cidr)
@@ -290,7 +311,9 @@ class Decision
 	x509name subject{};
 	QJsonObject def{};              // CA definition
 	pki_x509 *existing{};           // the CA, also after create
-	QString oldProfile{};
+	/* update: per kind (profile, policy) what is assigned and what is
+	 * taken back */
+	QMap<QString, QStringList> assign{}, unassign{};
 	ProfileStore::Document stored{};
 	bool hasRow{};
 };
@@ -304,6 +327,8 @@ class Run
 	QMap<QString, pki_x509 *> made{};
 
 	void record(Decision &d, const serviceError &err);
+	bool known(const QString &kind, const QString &id) const;
+	void references(const CaDef &c) const;
 	void evaluateDoc(Decision &d);
 	void evaluateCa(Decision &d);
 	void applyDoc(Decision &d);
@@ -432,9 +457,17 @@ void Run::evaluate()
 			tr("key generation, the signatures of the certificate "
 			"and of the empty CRL, the checks of the issuance "
 			"service (issuer chain, key usage by key type) and the "
-			"profile assignment run only in the real run") :
+			"profile and policy assignments (a profile needs a "
+			"signature for the key of the CA) run only in the real "
+			"run") :
 			tr("the private key of the CA (present and unlocked "
 			"by its password) needs the database password"));
+		if (!d.assign.value("profile").isEmpty())
+			uncheckedList << unchecked("ca:" + d.id, tr("the "
+				"assignment of the profile(s) %1 (a profile "
+				"needs a signature for the key of the CA) runs "
+				"only in the real run").arg(d.assign
+				.value("profile").join(", ")));
 	}
 }
 
@@ -481,25 +514,7 @@ void Run::evaluateCa(Decision &d)
 	}
 	d.subject = subjectOf(c);
 	d.def = definition(c, f);
-
-	if (!c.profile.isEmpty()) {
-		bool known = false;
-		for (const DocDef &doc : f.docs)
-			known = known || (doc.kind == "profile" &&
-						doc.id == c.profile);
-		if (!known && dbOpen) {
-			try {
-				ProfileStore::show("profile", c.profile);
-				known = true;
-			} catch (serviceError &) {
-			}
-		}
-		if (!known)
-			throw serviceError("unknown_reference", QString("%1: %2")
-				.arg(jsonMember(c.pointer, "profile"),
-				tr("there is no profile '%1' in the file or the "
-				"database").arg(c.profile)));
-	}
+	references(c);
 	/* rule 1: a CA whose parent (or a CA above it) forbids it by its
 	 * path_len is refused */
 	int below = 1;
@@ -575,7 +590,7 @@ void Run::evaluateCa(Decision &d)
 				text(old.value(m)), text(d.def.value(m)))));
 	}
 
-	/* applicable without a new certificate: CRL settings, profile */
+	/* applicable without a new certificate: CRL settings, assignments */
 	try {
 		if (!samePolicy(CrlPolicy::of(d.existing), c.crl))
 			d.changed << "crl";
@@ -583,13 +598,69 @@ void Run::evaluateCa(Decision &d)
 		/* an invalid stored setting is replaced (BTD-211) */
 		d.changed << "crl";
 	}
-	d.oldProfile = old["profile"].toString();
-	if (!c.profile.isEmpty() && !ProfileStore::assigned(d.existing,
-			"profile").contains(c.profile))
-		d.changed << "profile";
-	else if (d.oldProfile != c.profile && !c.profile.isEmpty())
-		d.changed << "profile";
+	/* Assigned is what the file lists and the CA lacks; taken back is
+	 * what an earlier run assigned (its row) and the file no longer
+	 * lists. An assignment made outside bootstrap stays. */
+	for (const auto &k : assignmentKinds) {
+		const QStringList &want = assignedIn(c, k.first);
+		QStringList now = ProfileStore::assigned(d.existing, k.second);
+		QStringList add, remove;
+		for (const QString &id : want)
+			if (!now.contains(id))
+				add << id;
+		for (const QJsonValue &v : row[k.first].toArray())
+			if (!want.contains(v.toString()) &&
+			    now.contains(v.toString()))
+				remove << v.toString();
+		if (add.isEmpty() && remove.isEmpty())
+			continue;
+		d.assign[k.second] = add;
+		d.unassign[k.second] = remove;
+		d.changed << k.first;
+	}
 	d.action = d.changed.isEmpty() ? "keep" : "update";
+}
+
+/* A profile or policy id of the file, or (database open) of the
+ * database */
+bool Run::known(const QString &kind, const QString &id) const
+{
+	for (const DocDef &doc : f.docs)
+		if (doc.kind == kind && doc.id == id)
+			return true;
+	if (!dbOpen)
+		return false;
+	try {
+		ProfileStore::show(kind, id);
+	} catch (serviceError &err) {
+		if (err.code != "document_not_found")
+			throw;
+		return false;
+	}
+	return true;
+}
+
+/* issued_with, profiles and policies name documents of the file or the
+ * database: unknown_reference at the pointer of the id */
+void Run::references(const CaDef &c) const
+{
+	auto check = [this](const QString &kind, const QString &id,
+			const QString &ptr) {
+		if (!known(kind, id))
+			throw serviceError("unknown_reference",
+				QString("%1: %2").arg(ptr, tr("there is no %1 "
+				"'%2' in the file or the database")
+				.arg(kind, id)));
+	};
+	if (!c.issuedWith.isEmpty())
+		check("profile", c.issuedWith,
+			jsonMember(c.pointer, "issued_with"));
+	for (const auto &k : assignmentKinds) {
+		const QStringList &ids = assignedIn(c, k.first);
+		for (int i = 0; i < ids.size(); i++)
+			check(k.second, ids[i], jsonItem(jsonMember(c.pointer,
+				k.first), i));
+	}
 }
 
 int Run::count(const QString &action) const
@@ -659,7 +730,11 @@ void Run::applyDoc(Decision &d)
 	}
 }
 
-QJsonObject caRow(const pki_x509 *cert, const QJsonObject &def)
+/* The row of a CA: its certificate, the definition it was made from, and
+ * the profiles and policies the file assigns (what a later run may take
+ * back) */
+QJsonObject caRow(const pki_x509 *cert, const QJsonObject &def,
+		const CaDef &c)
 {
 	QJsonObject row;
 	row["item"] = cert->getSqlItemId().toLongLong();
@@ -667,6 +742,9 @@ QJsonObject caRow(const pki_x509 *cert, const QJsonObject &def)
 	row["definition"] = def;
 	row["sha256"] = sha256Hex(QJsonDocument(def)
 				.toJson(QJsonDocument::Compact));
+	for (const auto &k : assignmentKinds)
+		row[k.first] = QJsonArray::fromStringList(
+				assignedIn(c, k.first));
 	return row;
 }
 
@@ -686,19 +764,16 @@ void Run::applyCa(Decision &d)
 					.arg(ca->getIntName());
 			c.crl.store(ctx.svc, ca);
 		}
-		if (d.changed.contains("profile")) {
-			ctx.step = tr("profile assignment of '%1'")
-					.arg(ca->getIntName());
-			QStringList now = ProfileStore::assigned(ca, "profile");
-			if (!d.oldProfile.isEmpty() && d.oldProfile != c.profile &&
-			    now.contains(d.oldProfile))
-				ProfileStore::unassign(ctx.svc, ca, "profile",
-							d.oldProfile);
-			if (!now.contains(c.profile))
-				ProfileStore::assign(ctx.svc, ca, "profile",
-							c.profile);
+		for (const auto &k : assignmentKinds) {
+			ctx.step = tr("%1 assignment of '%2'").arg(k.second,
+					ca->getIntName());
+			for (const QString &id : d.unassign.value(k.second))
+				ProfileStore::unassign(ctx.svc, ca, k.second,
+							id);
+			for (const QString &id : d.assign.value(k.second))
+				ProfileStore::assign(ctx.svc, ca, k.second, id);
 		}
-		writeRow("ca", c.id, caRow(ca, d.def));
+		writeRow("ca", c.id, caRow(ca, d.def, c));
 		made[c.id] = ca;
 		return;
 	}
@@ -747,12 +822,13 @@ void Run::applyCa(Decision &d)
 		throw;
 	}
 	ctx.opts = saved;
-	if (!c.profile.isEmpty()) {
-		ctx.step = tr("profile assignment of '%1'")
-				.arg(ca.cert->getIntName());
-		ProfileStore::assign(ctx.svc, ca.cert, "profile", c.profile);
+	for (const auto &k : assignmentKinds) {
+		ctx.step = tr("%1 assignment of '%2'").arg(k.second,
+				ca.cert->getIntName());
+		for (const QString &id : assignedIn(c, k.first))
+			ProfileStore::assign(ctx.svc, ca.cert, k.second, id);
 	}
-	writeRow("ca", c.id, caRow(ca.cert, d.def));
+	writeRow("ca", c.id, caRow(ca.cert, d.def, c));
 	d.existing = ca.cert;
 	made[c.id] = ca.cert;
 }
@@ -786,8 +862,10 @@ QJsonObject Run::entry(const Decision &d) const
 	e["key_type"] = c.key;
 	e["issuer_bootstrap_id"] = c.parent.isEmpty() ? QJsonValue() :
 					QJsonValue(c.parent);
-	e["profile"] = c.profile.isEmpty() ? QJsonValue() :
-					QJsonValue(c.profile);
+	e["issued_with"] = c.issuedWith.isEmpty() ? QJsonValue() :
+					QJsonValue(c.issuedWith);
+	e["profiles"] = QJsonArray::fromStringList(c.profiles);
+	e["policies"] = QJsonArray::fromStringList(c.policies);
 	if (!d.def.isEmpty())
 		e["definition_sha256"] = sha256Hex(QJsonDocument(d.def)
 				.toJson(QJsonDocument::Compact));
@@ -947,9 +1025,10 @@ void registerBootstrapCommand(Registry &r)
 		"enrollment, ocsp, publishers, rollover and parent "
 		"\"external\" are\n  reported as skipped. Objects are found "
 		"by their bootstrap id: a second run\n  keeps them; changed "
-		"CRL settings, profiles and policies are updates, a "
-		"change\n  that needs a new CA certificate is "
-		"bootstrap_conflict. One transaction: all\n  or nothing. "
+		"CRL settings, profiles, policies and the profiles and "
+		"policies\n  assigned to a CA are updates, a change that "
+		"needs a new CA certificate\n  (issued_with included) is "
+		"bootstrap_conflict. One transaction: all or nothing.\n  "
 		"Secrets only as env: or file: references (op:// is "
 		"resolved outside\n  with op run or op inject). --db "
 		"replaces the file's database, --password its\n  password. "

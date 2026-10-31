@@ -412,6 +412,21 @@ void readKeyUsage(CaDef &c, const QJsonValue &v, const QString &ptr)
 				QString("nonRepudiation") : ku);
 }
 
+/* An array of unique ids (uniqueItems) */
+QStringList idList(const QJsonValue &v, const QString &ptr,
+		const QString &what)
+{
+	QJsonArray a = asArray(v, ptr, 0);
+	QStringList ids;
+	for (int i = 0; i < a.size(); i++) {
+		QString id = matching(a[i], jsonItem(ptr, i), idRe(), what);
+		if (ids.contains(id))
+			bad(ptr, tr("names '%1' twice").arg(id));
+		ids << id;
+	}
+	return ids;
+}
+
 void readCa(FileDef &f, const QJsonValue &v, int index)
 {
 	const QString ptr = jsonItem("/cas", index);
@@ -423,7 +438,8 @@ void readCa(FileDef &f, const QJsonValue &v, int index)
 	onlyMembers(o, ptr, { "id", "cn", "dn", "subject", "parent", "key",
 		"key_password", "hash", "rsa_padding", "validity",
 		"not_before", "not_after", "path_len", "name_constraints",
-		"key_usage", "profile", "crl", "rollover" });
+		"key_usage", "issued_with", "profiles", "policies", "crl",
+		"rollover" });
 	requireMembers(o, ptr, { "id", "key" });
 	c.id = matching(o["id"], mp("id"), idRe(), tr("id (lower case "
 		"letters, digits and '-', at most 63 characters)"));
@@ -492,9 +508,15 @@ void readCa(FileDef &f, const QJsonValue &v, int index)
 	}
 	if (o.contains("key_usage"))
 		readKeyUsage(c, o["key_usage"], mp("key_usage"));
-	if (o.contains("profile"))
-		c.profile = matching(o["profile"], mp("profile"), idRe(),
+	if (o.contains("issued_with"))
+		c.issuedWith = matching(o["issued_with"], mp("issued_with"),
+					idRe(), tr("profile id"));
+	if (o.contains("profiles"))
+		c.profiles = idList(o["profiles"], mp("profiles"),
 					tr("profile id"));
+	if (o.contains("policies"))
+		c.policies = idList(o["policies"], mp("policies"),
+					tr("policy id"));
 	c.crl = CrlPolicy();
 	if (o.contains("crl"))
 		readCrl(c, o["crl"], mp("crl"));

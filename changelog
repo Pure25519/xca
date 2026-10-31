@@ -17,7 +17,16 @@ bxc-main (bxc-pki fork, unreleased)
    The audit entry bootstrap.apply (file SHA-256, schema, counts) comes
    first, on a new database as seq 1. --plan reads no secret, opens the
    database without its password, writes nothing and lists what it could
-   not check.
+   not check. Per CA, profiles and policies (unique ids) are assigned
+   through the profile store (a changed list is an update: assign,
+   unassign); issued_with names the profile the CA certificate is issued
+   with and is recorded and compared, not applied (a different one is
+   bootstrap_conflict); the old member profile is gone. An id in neither
+   the file nor the database is unknown_reference at its pointer. A DN
+   error of the file names the pointer (/cas/2/subject), the command line
+   keeps --subject. --text prints the counts, one line per object (kind,
+   bootstrap id, action, database id), the skipped elements and the
+   unchecked steps.
  * BTD-211: CRL and trust-list follow-ups to BTD-42. Trust-list leaves
    (--leaf) are trusted peers: opcua-dir writes them to trusted/certs
    (no longer own/certs, which belongs to the application's own
