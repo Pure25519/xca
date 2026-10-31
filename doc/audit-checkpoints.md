@@ -96,6 +96,17 @@ The entry is best effort. On a read-only or locked database it is lost and logge
 the read and `--audit-verify` work as before (`test_cli_skipped_rows_readonly`,
 `test_service_loaders::skippedRowsDatabaseLocked`).
 
+## An older database is not migrated by an audit check
+
+`--audit-verify` and `--audit-export` do not change the database they check (BTD-70). If its
+upstream schema or `bxc_schema` is behind, the open stops after the unlock and before any write:
+stdout gets `{"error":"...","ok":false,"schema_upgrade_required":true}` and the exit code is 1,
+and the file stays byte-identical. Any other open (the GUI, a writing or a reading command)
+migrates as before, but first copies the SQLite file to `<file>.bak-<UTC yyyyMMddTHHmmss>`; if the
+copy cannot be written, the database is not upgraded. Remote databases are migrated without a
+copy. On a current database the audit check works as before, including the checkpoint that
+`--audit-export` with the password writes when one is due.
+
 ## Deviations from the ticket (accepted 2026-10-28)
 
 1. **No second checkpoint table.** BTD-37 asked for a checkpoint "as its own record and as a

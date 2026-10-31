@@ -114,17 +114,17 @@ void CertExtend::accept()
 }
 
 /* GUI glue of the certificate renewal, moved from lib/db_x509.cpp
- * (BTD-33) and into the certificate view (BTD-36): the old certificates
- * are revoked through db_x509::revoke() */
+ * (BTD-33) and into the certificate view (BTD-36). All selected
+ * certificates are renewed by db_x509::renew() in one transaction,
+ * through the checks and the audit of every issuance (BTD-56); only
+ * then are the old ones revoked (db_x509::revoke()) or deleted. */
 void CertTreeView::renewal(QModelIndexList indexes)
 {
 	if (!basemodel)
 		return;
 	db_x509 *certs = this->certs();
-	pki_x509 *oldcert = NULL, *signer = NULL, *newcert =NULL;
+	pki_x509 *oldcert = NULL, *signer = NULL;
 	pki_key *signkey = NULL;
-	a1time time;
-	a1int serial;
 	CertExtend *dlg = NULL;
 	x509rev r;
 	bool doRevoke = false;
@@ -154,37 +154,27 @@ void CertTreeView::renewal(QModelIndexList indexes)
 			delete revoke;
 		}
 		doReplace = dlg->replace->isChecked();
+		QList<RenewalSpec> specs;
 		foreach(idx, indexes) {
 			oldcert = db_base::fromIndex<pki_x509>(idx);
 			if (!oldcert)
 				continue;
-			newcert = new pki_x509(oldcert);
-			newcert->pkiSource = renewed;
-			serial = dlg->keepSerial->isChecked() ?
-				oldcert->getSerial() : certs->getUniqueSerial(signer);
-			newcert->setRevoked(x509rev());
-
-			// change date and serial
-			newcert->setSerial(serial);
-			newcert->setNotBefore(dlg->notBefore->getDate());
-			a1time a;
+			RenewalSpec spec;
+			spec.predecessor = oldcert;
+			spec.notBefore = dlg->notBefore->getDate();
 			if (dlg->noWellDefinedExpDate->isChecked())
-				a.setUndefined();
+				spec.notAfter.setUndefined();
 			else
-				a = dlg->notAfter->getDate();
-
-			newcert->setNotAfter(a);
-
-			// and finally sign the cert
-			newcert->sign(signkey, oldcert->getDigest());
-			newcert = dynamic_cast<pki_x509 *>(certs->insert(newcert));
-			certs->createSuccess(newcert);
-			/* insert() keeps it in the store or deletes it */
-			newcert = nullptr;
+				spec.notAfter = dlg->notAfter->getDate();
+			spec.hashAlgo = oldcert->getDigest();
+			spec.keepSerial = dlg->keepSerial->isChecked();
+			specs << spec;
 		}
+		ServiceContext ctx = ServiceContext::localUser(
+					ServiceContext::gui);
+		for (pki_x509 *newcert : certs->renew(ctx, specs))
+			certs->createSuccess(newcert);
 		if (doRevoke) {
-			ServiceContext ctx = ServiceContext::localUser(
-						ServiceContext::gui);
 			foreach(idx, indexes) {
 				oldcert = db_base::fromIndex<pki_x509>(idx);
 				if (oldcert && !oldcert->isRevoked())
@@ -199,13 +189,11 @@ void CertTreeView::renewal(QModelIndexList indexes)
 				if (db_base::fromIndex<pki_x509>(idx))
 					old << db_base::fromIndex(idx);
 			}
-			certs->deleteItems(ServiceContext::localUser(
-					ServiceContext::gui), old);
+			certs->deleteItems(ctx, old);
 		}
 	}
 	catch (errorEx &err) {
 		XCA_ERROR(err);
-		delete newcert;
 	}
 	delete dlg;
 	emit certs->columnsContentChanged();

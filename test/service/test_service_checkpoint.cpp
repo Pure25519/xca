@@ -10,6 +10,7 @@
  * it, and never asks for the password (BTD-111).
  */
 
+#include <QThread>
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
@@ -1135,6 +1136,12 @@ void test_service_checkpoint::auditKeyNotUsableForSigning()
 		Database.model<db_x509>()->newCert(ctx, cert);
 	}), QString("audit_key"));
 
+	/* BTD-230: BTD230_DELAY_MS widens the gap between now and the CA
+	 * below, as a slow ASan run does, to show the race on demand */
+	int delay = qEnvironmentVariableIntValue("BTD230_DELAY_MS");
+	if (delay > 0)
+		QThread::msleep(delay);
+
 	/* A CA certificate made outside the service layer with that key,
 	 * then imported: neither issuance nor a CRL is signed with it */
 	EVP_PKEY *caKey = auditPrivateKey();
@@ -1148,7 +1155,10 @@ void test_service_checkpoint::auditKeyNotUsableForSigning()
 	X509_set_subject_name(x, name);
 	X509_set_issuer_name(x, name);
 	X509_NAME_free(name);
-	X509_gmtime_adj(X509_getm_notBefore(x), 0);
+	/* from the same now as the end entity below, a minute earlier: the
+	 * wall clock here could be a second later than its notBefore under a
+	 * slow run, and issuer_not_yet_valid came before audit_key (BTD-230) */
+	ASN1_TIME_set(X509_getm_notBefore(x), now.toSecsSinceEpoch() - 60);
 	X509_gmtime_adj(X509_getm_notAfter(x), 30 * 86400L);
 	X509_set_pubkey(x, caKey);
 	X509V3_CTX ext{};

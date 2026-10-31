@@ -35,42 +35,88 @@ class test_main: public QObject
 	static void initMain();
 
   private slots:
+	/* test lifecycle, main.cpp */
 	void initTestCase();
 	void cleanupTestCase();
 	void cleanup();
-	void newKey();
-	void keyDetailFixed();
-	void digestLessSigner();
+	/* One block per test file, sorted by file name (BTD-256): a new
+	 * test file adds its own block at its place, so branches that add
+	 * tests do not edit the same lines. QTest runs the slots in this
+	 * order. */
+
+	/* automationIds.cpp */
+	void automationIds();
+
+	/* crlRefused.cpp */
+	void crlRefusedWithoutCrlSign();
+
+	/* dialogParent.cpp */
+	void passwordDialogParent();
+
+	/* dnBounds.cpp */
+	void dnUpperBounds();
+
+	/* ekuRows.cpp */
+	void ekuRows_data();
+	void ekuRows();
+	void ekuOwnOidAndReplace();
+	void ekuBuiltInList();
+
+	/* export.cpp */
+	void exportFormat();
+
+	/* exportMlDsa.cpp */
+	void exportMlDsaEncoding();
+
+	/* importPEM.cpp */
 	void importPEM();
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
 	void tokenDialogClosedDatabase();
-	void exportFormat();
-	void exportMlDsaEncoding();
+
+	/* issuanceExt.cpp */
+	void issuanceExtensions();
+	void lineExtensionTyping();
+
+	/* issueInAccept.cpp */
+	void issueInAccept_data();
+	void issueInAccept();
+
+	/* kuByKeyType.cpp */
+	void keyUsageByKeyType_data();
+	void keyUsageByKeyType();
+
+	/* newKey.cpp */
+	void newKey();
+	void keyDetailFixed();
+	void digestLessSigner();
+
+	/* optionsChanged.cpp */
+	void optionsStoreChangedOnly();
+	void optionsAudited();
+
+	/* policy.cpp */
+	void issueRefusedByPolicy();
+
+	/* renewal.cpp */
 	void revoke();
 	void renewalSigningFails();
-	void issueRefusedByPolicy();
+
+	/* renewalService.cpp */
+	void renewalThroughService();
+	void renewalAllOrNothing();
+
+	/* templateRoundTrip.cpp */
+	void templateMergeRoundTrip();
+
+	/* validity.cpp */
 	void testValidity();
 	void proposalUnderUnlimitedCa();
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
+	void signerCapWithoutContinue();
 	void issueRefusedInsideDialog();
-	void automationIds();
-	void issuanceExtensions();
-	void optionsStoreChangedOnly();
-	void lineExtensionTyping();
-	void templateMergeRoundTrip();
-	void crlRefusedWithoutCrlSign();
-	void keyUsageByKeyType_data();
-	void keyUsageByKeyType();
-	void issueInAccept_data();
-	void issueInAccept();
-	void ekuRows_data();
-	void ekuRows();
-	void ekuOwnOidAndReplace();
-	void ekuBuiltInList();
-	void dnUpperBounds();
 
   public:
 	template <class T> static T *findWindow(const QString &name)
