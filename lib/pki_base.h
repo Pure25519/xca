@@ -194,7 +194,9 @@ class pki_base : public QObject
 		virtual int renameOnToken(const slotid &, const QString &);
 
 		/* Import / Export management */
-		virtual bool pem(BioByteArray &b);
+		/* The clipboard text; a private key with the ML-DSA encoding of
+		 * the options, which record it (BTD-183) */
+		virtual bool pem(BioByteArray &b, const ExportOptions &opts);
 		virtual void fromPEM_BIO(BIO *, const QString &);
 		virtual void fromPEMbyteArray(const QByteArray &, const QString &);
 		/* Reads the file and parses it with fromBytes() */

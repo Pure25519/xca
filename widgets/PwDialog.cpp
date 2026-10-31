@@ -11,6 +11,7 @@
 #include "lib/exception.h"
 #include "XcaWarning.h"
 #include "PwDialog.h"
+#include "MainWindow.h"
 #include "ui_SelectToken.h"
 
 #include <QDebug>
@@ -52,10 +53,19 @@ enum open_result PwDialogUI::execute(pass_info *p, Passwd *passwd,
 	return result;
 }
 
+/* The parent of the dialogs created here: the active window of XCA, the
+ * main window while XCA has no focus (BTD-177). Without a parent the
+ * dialog is not modal to XCA, not centred on it and may open behind it. */
+static QWidget *dialogParent()
+{
+	QWidget *active = qApp->activeWindow();
+	return active ? active : mainwin;
+}
+
 int PwDialogUI::selectToken(const QStringList &names)
 {
 	Ui::SelectToken ui;
-	QDialog *select_slot = new QDialog(qApp->activeWindow());
+	QDialog *select_slot = new QDialog(dialogParent());
 	ui.setupUi(select_slot);
 	ui.image->setPixmap(QPixmap(":scardImg"));
 	ui.tokenBox->addItems(names);
@@ -109,7 +119,7 @@ void PwDialogUI::pinPadLogin(pass_info *p, QThread *login)
 }
 
 PwDialog::PwDialog(pass_info *p, bool write)
-	:QDialog(qApp->activeWindow()), pi(p)
+	:QDialog(dialogParent()), pi(p)
 {
 	pi = p;
 	setupUi(this);

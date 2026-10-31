@@ -60,8 +60,9 @@ class pki_evp: public pki_key
 		bool updateLegacyEncryption();
 		EVP_PKEY *decryptKey() const;
 		/* decryptKey() in the ML-DSA private key encoding of the
-		 * export that runs (MlDsaFormatScope); other keys as they are */
-		EVP_PKEY *decryptKeyForExport() const;
+		 * options, which record it; other keys as they are (BTD-183) */
+		EVP_PKEY *decryptKeyForExport(
+			const ExportOptions &opts = ExportOptions()) const;
 		EVP_PKEY *tryDecryptKey() const;
 		EVP_PKEY *legacyDecryptKey(QByteArray &myencKey,
 					Passwd &ownPassBuf) const;
@@ -71,31 +72,23 @@ class pki_evp: public pki_key
 		/* ML-DSA private key encodings of RFC 9881 (BTD-16): "both"
 		 * (seed and expanded key), "seed", "expanded" */
 		static const QStringList mlDsaFormats;
-		/* The encoding of the export that runs; empty: OpenSSL's
-		 * default (both, or expanded for a key without seed) */
-		class MlDsaFormatScope
-		{
-			QString saved{};
-		  public:
-			MlDsaFormatScope(const QString &format);
-			~MlDsaFormatScope();
-			/* The encoding the export wrote for the key; empty
-			 * for other keys */
-			static QString written(const pki_key *key);
-		};
 		static bool isMlDsa(int keytype);
 		void fromPEMbyteArray(const QByteArray &ba, const QString &name);
 		void fromBytes(const QByteArray &ba, const QString &fname);
-		virtual bool pem(BioByteArray &b, const pki_export *xport);
+		virtual bool pem(BioByteArray &b, const pki_export *xport,
+				const ExportOptions &opts);
 		EVP_PKEY *load_ssh_ed25519_privatekey(const QByteArray &ba,
 						const pass_info &p);
 		void writeDefault(const QString &dirname) const;
 		/* enc NULL: unencrypted, pass is ignored. No prompt: the
-		 * caller provides the password (BTD-34) */
+		 * caller provides the password (BTD-34). An ML-DSA key in
+		 * the encoding of the options */
 		void writeKey(QIODevice &file, const EVP_CIPHER *enc,
-				const Passwd &pass, bool pem) const;
+				const Passwd &pass, bool pem,
+				const ExportOptions &opts = ExportOptions()) const;
 		void writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
-				const Passwd &pass, bool pem) const;
+				const Passwd &pass, bool pem,
+				const ExportOptions &opts = ExportOptions()) const;
 		void writePVKprivate(QIODevice &file) const;
 		void writeSSH2private(QIODevice &file) const;
 		void write_SSH2_ed25519_private(BIO *b, const EVP_PKEY *pkey) const;

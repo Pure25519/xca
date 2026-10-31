@@ -78,7 +78,7 @@
       {
         "device_class": "S7-1500 V02.09.08/V02.09.09",
         "characters": "/=",
-        "reference": "accepted in the CSR but brick the device on apply (IDIAL device_profiles, SMP-172)"
+        "reference": "accepted in the CSR but brick the device on apply"
       }
     ]
   },
@@ -112,11 +112,7 @@
     {
       "id": "s7-1500-rsa-4096-slow",
       "devices": "Siemens S7-1500",
-      "text": "With an RSA-4096 key the OPC UA session setup takes 8.8 to 15.2 s; S7 creates only RSA-2048 keys itself, V02.09.07 refuses a new request while a non-2048 key is installed.",
-      "references": [
-        "SMP-828",
-        "SMP-837"
-      ]
+      "text": "With an RSA-4096 key the OPC UA session setup takes 8.8 to 15.2 s; S7 creates only RSA-2048 keys itself, V02.09.07 refuses a new request while a non-2048 key is installed."
     }
   ]
 }
