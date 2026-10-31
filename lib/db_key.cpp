@@ -367,7 +367,9 @@ void db_key::writeItem(pki_base *pki, const pki_export *xport,
 void db_key::updateKeyEncryptionScheme()
 {
 	bool common_success = true;
-	if (!pki_evp::validateDatabasePassword(pki_evp::passwd))
+	/* It writes: only after a verified open (BTD-246) */
+	if (!ServiceContext::processPasswordVerified ||
+	    !pki_evp::validateDatabasePassword(pki_evp::passwd))
 		return;
 	if (Settings["legacy-keys-updated"])
 		return;

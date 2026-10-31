@@ -6,6 +6,7 @@
  */
 
 #include <QFile>
+#include <QSqlQuery>
 #include <QTemporaryDir>
 
 #include <openssl/evp.h>
@@ -23,6 +24,7 @@
 #include "lib/db_key.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_scard.h"
+#include "lib/settings.h"
 #include "lib/xfile.h"
 #include "lib/audit.h"
 #include "lib/importexport.h"
@@ -122,6 +124,7 @@ class test_service_secrets : public ServiceTestCase
 	void databasePasswordMissing();
 	void databasePasswordRejected();
 	void passwordCheckInAuditContext();
+	void keyUpdateNeedsVerifiedOpen();
 
 	void keyPassword_data();
 	void keyPassword();
@@ -287,6 +290,31 @@ void test_service_secrets::passwordCheckInAuditContext()
 	QVERIFY(!ServiceContext(ServiceContext::rest,
 			"apikey:test").passwordVerified());
 	QVERIFY(AuditLog::verify().ok());
+}
+
+/* BTD-246: the key encryption update of an open writes (re-encrypted
+ * keys, the marker legacy-keys-updated), so it needs the verified open,
+ * not only a password that validates. Before, it ran on any open. */
+void test_service_secrets::keyUpdateNeedsVerifiedOpen()
+{
+	QSqlQuery q(QSqlDatabase::database());
+	QVERIFY(q.exec("DELETE FROM settings WHERE key_='legacy-keys-updated'"));
+	Settings.clear();
+	QVERIFY(pki_evp::validateDatabasePassword(pki_evp::passwd));
+	auto marker = []() {
+		QSqlQuery c(QSqlDatabase::database());
+		c.exec("SELECT COUNT(*) FROM settings "
+			"WHERE key_='legacy-keys-updated'");
+		return c.next() ? c.value(0).toInt() : -1;
+	};
+
+	ServiceContext::processPasswordVerified = false;
+	Database.model<db_key>()->updateKeyEncryptionScheme();
+	ServiceContext::processPasswordVerified = true;
+	QCOMPARE(marker(), 0);
+
+	Database.model<db_key>()->updateKeyEncryptionScheme();
+	QCOMPARE(marker(), 1);
 }
 
 void test_service_secrets::keyPassword_data()
