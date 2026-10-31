@@ -163,6 +163,9 @@ ServiceTest(test_service_signing_failure)
 # The content of a CRL matches the database, or it is not signed (BTD-198)
 ServiceTest(test_service_crl_build)
 
+# settings.update: one entry per changed setting, secrets redacted (BTD-224)
+ServiceTest(test_service_settings_audit)
+
 # A certificate or request is complete, or it is not stored (BTD-200)
 ServiceTest(test_service_cert_build)
 

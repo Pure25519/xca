@@ -59,6 +59,7 @@ class test_main: public QObject
 	void automationIds();
 	void issuanceExtensions();
 	void optionsStoreChangedOnly();
+	void optionsAudited();
 	void lineExtensionTyping();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
