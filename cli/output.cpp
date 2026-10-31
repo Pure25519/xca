@@ -310,7 +310,8 @@ void writeOut(CommandContext &ctx, pki_base *pki, const QString &kind,
 	try {
 		data = db->exportItems(ctx.svc, spec);
 	} catch (serviceError &err) {
-		if (err.code == "missing_password")
+		if (err.code == "missing_password" &&
+		    !err.getString().contains("--export-pass"))
 			throw serviceError(err.code, err.getString() +
 				QObject::tr(" (option --export-pass)"));
 		throw;
