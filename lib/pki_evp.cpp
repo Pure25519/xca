@@ -993,6 +993,9 @@ QSqlError pki_evp::insertSqlData()
 void pki_evp::restoreSql(const QSqlRecord &rec)
 {
 	pki_key::restoreSql(rec);
+	/* read again from the row when needed: a reload may follow a
+	 * password change by another process (BTD-238) */
+	encKey.clear();
 	isPub = rec.isNull(VIEW_private_ownpass);
 	if (!isPub)
 		ownPass =(enum passType)rec.value(VIEW_private_ownpass).toInt();

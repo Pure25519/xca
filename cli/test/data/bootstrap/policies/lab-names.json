@@ -7,7 +7,7 @@
       "allow": [
         {
           "type": "subtree",
-          "value": "lab.bxc-technology.de"
+          "value": "lab.example.org"
         },
         {
           "type": "single-label",
@@ -21,14 +21,14 @@
       "deny": [
         {
           "type": "exact",
-          "value": "ca.lab.bxc-technology.de"
+          "value": "ca.lab.example.org"
         }
       ]
     },
     "ip": {
       "allow": [
-        "192.168.0.0/24",
-        "10.10.10.0/24"
+        "192.0.2.0/24",
+        "198.51.100.0/24"
       ]
     },
     "uri": {
