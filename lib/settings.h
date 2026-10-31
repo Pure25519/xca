@@ -95,6 +95,9 @@ class settings
 	bool loaded{};
 	QStringList db_keys{}, hostspecific{};
 	QMap<QString, QString> values{};
+	/* The legacy optionflags row, expanded in memory but not yet
+	 * stored as one setting per flag (BTD-137) */
+	QString legacyOptionflags{};
 	void load_settings();
 	QString get(QString key);
 	void set(QString key, QString value);
@@ -105,6 +108,9 @@ class settings
 	settings();
 	void clear();
 	QString defaults(const QString &key);
+	/* Stores the flags of a legacy optionflags row as settings of their
+	 * own and deletes the row. Writes, so only after a verified unlock. */
+	void migrateOptionflags();
 
 	svalue operator[] (QString x)
 	{

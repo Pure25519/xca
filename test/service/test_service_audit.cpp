@@ -51,6 +51,8 @@ class test_service_audit : public ServiceTestCase
 	void loadForkDump(QMap<QString, QStringList> *rows,
 			const QString &name = "schema8-fork.sql");
 	QMap<QString, QStringList> fileRows();
+	QByteArray fileHash();
+	void addOptionflags();
 	static void appendSample(int count);
 	static QDateTime utc(const QString &iso)
 	{
@@ -74,6 +76,11 @@ class test_service_audit : public ServiceTestCase
 	void upgradeProfileTables();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
+	void unverifiedOpenWritesNothing_data();
+	void unverifiedOpenWritesNothing();
+	void currentDatabaseOpensUnverified();
+	void optionflagsWrongPassword();
+	void optionflagsMigratedAfterUnlock();
 	void canonicalJson();
 	void chainHashVector();
 	void chainValid();
@@ -152,6 +159,33 @@ void test_service_audit::loadForkDump(QMap<QString, QStringList> *rows,
 	}
 	QSqlDatabase::removeDatabase("fixture");
 	*rows = fileRows();
+}
+
+/* SHA-256 of the bytes of dbFile, while XCA has it closed */
+QByteArray test_service_audit::fileHash()
+{
+	QFile f(dbFile);
+	if (!f.open(QIODevice::ReadOnly))
+		return QByteArray();
+	return QCryptographicHash::hash(f.readAll(),
+			QCryptographicHash::Sha256).toHex();
+}
+
+/* The legacy settings row of old databases: a list of option flags that
+ * reading the settings converts to one setting per flag (upstream) */
+void test_service_audit::addOptionflags()
+{
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "flags");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		QVERIFY2(q.exec("INSERT INTO settings (key_, value) VALUES "
+			"('optionflags', 'dont_colorize_expiries,hide_unusable')"),
+			CCHAR(q.lastError().text()));
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("flags");
 }
 
 /* The rows of dbFile through a connection of its own, while XCA has it
@@ -404,6 +438,115 @@ void test_service_audit::upgradeWaitsForPassword()
 	QVERIFY(rejected);
 	QVERIFY(!Database.isOpen());
 	QCOMPARE(fileRows(), before);
+}
+
+void test_service_audit::unverifiedOpenWritesNothing_data()
+{
+	QTest::addColumn<QString>("dump");
+	QTest::addColumn<bool>("cancel");
+
+	for (const char *d : { "schema8-fork.sql", "schema8-bxc2.sql",
+				"schema8-bxc3.sql" }) {
+		QTest::newRow(QString("%1, unlock cancelled").arg(d).toLatin1())
+			<< QString(d) << true;
+		QTest::newRow(QString("%1, no password").arg(d).toLatin1())
+			<< QString(d) << false;
+	}
+}
+
+void test_service_audit::unverifiedOpenWritesNothing()
+{
+	/* BTD-137 (Variante A): an old database is upgraded only after a
+	 * verified unlock. With the unlock dialog cancelled (GUI) or
+	 * without a password source (xca --no-gui) the open is refused and
+	 * the file stays as it was: no schema upgrade, no audit baseline. */
+	QFETCH(QString, dump);
+	QFETCH(bool, cancel);
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, dump);
+	QByteArray hash = fileHash();
+
+	if (cancel)
+		pwdialog->expect("", pw_cancel);
+	else
+		database_model::open_without_password = true;
+	QString code;
+	try {
+		Database.open(dbFile);
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	database_model::open_without_password = false;
+	QCOMPARE(code, QString("schema_upgrade_needs_password"));
+	QVERIFY(!Database.isOpen());
+	QCOMPARE(fileRows(), before);
+	QCOMPARE(fileHash(), hash);
+}
+
+void test_service_audit::currentDatabaseOpensUnverified()
+{
+	/* A current database keeps the public view without its password,
+	 * as upstream: unlock dialog cancelled and xca --no-gui without a
+	 * password source (BTD-78). Neither open writes. */
+	appendSample(1);
+	Database.close();
+	QByteArray hash = fileHash();
+
+	pwdialog->expect("", pw_cancel);
+	Database.open(dbFile);
+	QVERIFY(Database.isOpen());
+	QVERIFY(!ServiceContext::processPasswordVerified);
+	QCOMPARE(AuditLog::entries().size(), 1);
+	Database.close();
+	QCOMPARE(fileHash(), hash);
+
+	database_model::open_without_password = true;
+	Database.open(dbFile);
+	QVERIFY(Database.isOpen());
+	QVERIFY(!ServiceContext::processPasswordVerified);
+	Database.close();
+	QCOMPARE(fileHash(), hash);
+}
+
+void test_service_audit::optionflagsWrongPassword()
+{
+	/* BTD-137: reading the settings converted the legacy optionflags
+	 * row and committed before the password was checked. A rejected
+	 * password leaves the file byte-identical. */
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
+	addOptionflags();
+	QByteArray hash = fileHash();
+
+	PwDialogHeadless *h = new PwDialogHeadless();
+	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
+	pwdialog->delegateTo(h);
+	warning->expectMessage("Password verify error");
+	bool rejected = false;
+	try {
+		Database.open(dbFile);
+	} catch (secretError &err) {
+		rejected = err.why == secretError::rejected;
+	}
+	QVERIFY(rejected);
+	QCOMPARE(fileHash(), hash);
+}
+
+void test_service_audit::optionflagsMigratedAfterUnlock()
+{
+	/* After the verified unlock each flag is stored as a setting of its
+	 * own and the legacy row is gone; before, the flags lived only in
+	 * memory and were lost with the next open */
+	QMap<QString, QStringList> before;
+	loadForkDump(&before);
+	addOptionflags();
+	openDatabase();
+	QCOMPARE(sqlValue("SELECT COUNT(*) FROM settings "
+		"WHERE key_='optionflags'").toInt(), 0);
+	QCOMPARE(sqlValue("SELECT value FROM settings "
+		"WHERE key_='no_expire_colors'").toString(), QString("yes"));
+	QCOMPARE(sqlValue("SELECT value FROM settings "
+		"WHERE key_='hide_unusable'").toString(), QString("yes"));
 }
 
 void test_service_audit::canonicalJson()
