@@ -31,6 +31,11 @@ a1time Validity::getDate() const
 	a1time date(dateTime());
 	QTime time;
 
+	/* with the time hidden the date has day resolution: an end date is
+	 * 23:59:59 of its day, so after "Adjust date and continue" under a CA
+	 * that ends earlier that day the dialog may warn again; the issuance
+	 * caps at the CA's end anyway (BTD-51), upstream behaviour kept
+	 * (BTD-118) */
 	if (midnight) {
 		time = endDate ? QTime(23,59,59) : QTime(0,0,0);
 		date.setTimeSpec(Qt::UTC);
