@@ -160,6 +160,8 @@ const QStringList &AuditParams::allowList()
 		"key_id", "next_key_id", "public_key", "signature",
 		/* BTD-110: an unsigned log adopted by the first key */
 		"adopted_entries",
+		/* BTD-133: the interval a checkpoint was written with */
+		"checkpoint_interval",
 	};
 	return withCheckpoints;
 }
@@ -572,15 +574,44 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 				bool *writing = nullptr);
 
 /* seq of the newest checkpoint entry, 0 if there is none */
-static qint64 lastCheckpointSeq()
+/* The longest unsigned tail a writer with the database password leaves
+ * after a checkpoint that signed interval (BTD-133): that interval, but
+ * the setting is not signed. Without a signed one (no checkpoint yet, or
+ * one written before BTD-133, signedInterval 0) the setting is believed
+ * only up to the default, so that raising it cannot hide anything. */
+static int tailInterval(int signedInterval)
+{
+	if (signedInterval > 0)
+		return qMin(signedInterval, AuditLog::maxCheckpointInterval);
+	return qMin(AuditLog::checkpointInterval(),
+			AuditLog::defaultCheckpointInterval);
+}
+
+static int signedInterval(const QVariantMap &checkpointParams)
+{
+	return checkpointParams.value("checkpoint_interval").toInt();
+}
+
+/* The newest checkpoint: its seq, 0 for none, and the interval it
+ * signed, 0 for none */
+static qint64 lastCheckpointSeq(int *interval = nullptr)
 {
 	XSqlQuery q;
 
-	SQL_PREPARE(q, "SELECT MAX(seq) FROM audit_log WHERE action=?");
+	SQL_PREPARE(q, "SELECT seq, params FROM audit_log WHERE action=? "
+			"ORDER BY seq DESC LIMIT 1");
 	q.bindValue(0, QString(AuditLog::actionCheckpoint));
 	q.exec();
 	throwOnError(q);
-	return q.next() ? q.value(0).toLongLong() : 0;
+	if (!q.next()) {
+		if (interval)
+			*interval = 0;
+		return 0;
+	}
+	if (interval)
+		*interval = signedInterval(QJsonDocument::fromJson(
+			q.value(1).toString().toUtf8()).toVariant().toMap());
+	return q.value(0).toLongLong();
 }
 
 int AuditLog::checkpointInterval()
@@ -668,8 +699,13 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (inTransaction && result != "success")
 		AuditFailureCapture::record(ctx, action, objectType, objectId,
 				params, result, errorCode);
-	qint64 head = lastCheckpointSeq();
-	if (e.seq - head < checkpointInterval() || head == failedCheckpointHead)
+	/* A raised setting takes effect once a checkpoint signed it, a
+	 * lowered one at once (BTD-133); a head whose checkpoint failed is
+	 * not tried again on every entry (BTD-144) */
+	int signedN = 0;
+	qint64 head = lastCheckpointSeq(&signedN);
+	if (e.seq - head < qMin(checkpointInterval(), tailInterval(signedN)) ||
+	    head == failedCheckpointHead)
 		return e;
 	bool writing = false;
 	/* insertEntry() has committed or joined the caller's transaction */
@@ -841,16 +877,16 @@ static qint64 baselineEnd(const QList<AuditEntry> &list)
 
 /* The entries of list after the anchored ones that count against the
  * unsigned tail: a writer with the database password never leaves more
- * than checkpointInterval() + 1. The one rule of verify() and of the
- * first checkpoint (BTD-110). */
+ * than tailInterval() + 1. The one rule of verify() and of the first
+ * checkpoint (BTD-110, BTD-133). */
 static qint64 unanchoredTail(const QList<AuditEntry> &list, qint64 anchored)
 {
 	return list.size() - qMax(anchored, baselineEnd(list));
 }
 
-static bool tailTooLong(qint64 tail)
+static bool tailTooLong(qint64 tail, int signedInterval)
 {
-	return tail > AuditLog::checkpointInterval() + 1;
+	return tail > tailInterval(signedInterval) + 1;
 }
 
 /* The announcement of a generated key after prev, not written yet;
@@ -885,6 +921,9 @@ static AuditEntry makeCheckpoint(const ServiceContext &ctx,
 	p.set("key_id", key);
 	if (!next.isEmpty())
 		p.set("next_key_id", next);
+	/* signed: verify() takes the tail limit from here, not from the
+	 * setting (BTD-133) */
+	p.set("checkpoint_interval", AuditLog::checkpointInterval());
 	QByteArray payload = AuditLog::checkpointPayload(p.getValues());
 	QByteArray sig = fresh ? AuditKey::sign(*fresh, payload, pass) :
 				AuditKey::sign(key, payload, pass);
@@ -934,13 +973,14 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	qint64 adopted = 0;
 	if (key.isEmpty()) {
 		qint64 tail = unanchoredTail(AuditLog::entries(), 0);
-		if (tailTooLong(tail) && !adopt)
+		/* no key: no checkpoint signed an interval */
+		if (tailTooLong(tail, 0) && !adopt)
 			throw serviceError("audit_checkpoint_missing",
 				QObject::tr("%1 audit entries were never signed by a "
 				"checkpoint, more than the checkpoint interval allows; "
 				"checkpoints may have been deleted. Check the log, then "
 				"sign it explicitly with --audit-adopt").arg(tail));
-		if (tailTooLong(tail))
+		if (tailTooLong(tail, 0))
 			adopted = tail;
 	}
 
@@ -1129,6 +1169,7 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 	QMap<QString, QByteArray> announced;	// key id -> public PEM
 	QString signer;
 	qint64 anchored = 0, lastValid = 0;
+	int interval = 0;	// signed by the last valid checkpoint
 	qint64 baseline = baselineEnd(list);
 
 	for (const AuditEntry &e : list) {
@@ -1177,6 +1218,7 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 			if (reason.isEmpty()) {
 				anchored = n;
 				lastValid = e.seq;
+				interval = signedInterval(p);
 				r.checkpoints++;
 				if (!next.isEmpty()) {
 					signer = next;
@@ -1203,7 +1245,8 @@ static void verifyCheckpoints(const QList<AuditEntry> &list,
 	throwOnError(q);
 	while (q.next())
 		unannounced |= !announced.contains(q.value(0).toString());
-	if (unannounced || tailTooLong(unanchoredTail(list, anchored))) {
+	if (unannounced ||
+	    tailTooLong(unanchoredTail(list, anchored), interval)) {
 		r.firstBrokenSeq = anchored + 1;
 		r.reason = "checkpoint_missing";
 	}

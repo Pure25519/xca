@@ -16,7 +16,7 @@
  * "audit_checkpoint_interval", default 100) and before each export,
  * append() adds an entry "audit.checkpoint" whose params hold
  *   checkpoint_seq, checkpoint_hash, checkpoint_time, key_id,
- *   [next_key_id,] signature
+ *   [next_key_id,] checkpoint_interval, signature
  * The signature (Base64) covers checkpointPayload(), the canonical JSON
  * of these params without "signature", and is made with the audit key
  * (lib/audit_key.h). checkpoint_seq/checkpoint_hash name the entry just
@@ -42,9 +42,16 @@
  * checkpoints are reported as checkpoint_missing: a key in audit_keys that
  * no audit.key_create of the chain announces, or more than interval + 1
  * unanchored entries (the revocation baseline at the start excepted, when
- * audit.init counts exactly its rows). The interval is the setting
- * audit_checkpoint_interval clamped to maxCheckpointInterval, because the
- * setting is not signed. Once a key was announced, a missing current key
+ * audit.init counts exactly its rows). The interval is the one the last
+ * valid checkpoint signed as checkpoint_interval (BTD-133, decision A of
+ * the ticket: sign the interval instead of only capping the setting),
+ * because the setting audit_checkpoint_interval is not signed and lives
+ * in the same database. Without a signed one (no checkpoint yet, or only
+ * checkpoints from before BTD-133) it is the setting clamped to the
+ * default. append() writes the next checkpoint after the smaller of the
+ * setting and that interval: a raised setting takes effect once a
+ * checkpoint signed it, a lowered one at once, and a raise in the
+ * settings table alone changes nothing for verify(). Once a key was announced, a missing current key
  * fails the checkpoint with audit_key_missing instead of announcing a new
  * key. The first key is not announced over a log with too long an
  * unsigned tail either (audit_checkpoint_missing), so that the next
