@@ -53,6 +53,15 @@ endforeach()
 if(out MATCHES "^{")
   fail("plan fresh text: JSON instead of text:\n${out}")
 endif()
+# BTD-235: no generic "nothing written" next to the create lines; the plan
+# says itself that it wrote nothing
+if(out MATCHES "(^|\n)nothing written")
+  fail("plan fresh text: generic 'nothing written' next to the bootstrap list:\n${out}")
+endif()
+string(FIND "${out}" "plan: nothing written" pos)
+if(pos LESS 0)
+  fail("plan fresh text: no line 'plan: nothing written':\n${out}")
+endif()
 
 # --- the run on an empty database ------------------------------------------
 # no --password: the database password comes from the file (env:BXC_DB_PW)
@@ -447,5 +456,8 @@ foreach(line "ca ot-rsa-root: keep, id ${ot-rsa-root_id}"
 endforeach()
 if(out MATCHES "unchecked")
   fail("apply text: unchecked steps without --plan:\n${out}")
+endif()
+if(out MATCHES "nothing written")
+  fail("apply text: 'nothing written' next to the bootstrap list (BTD-235):\n${out}")
 endif()
 message(STATUS "bxc-pki bootstrap ok")
