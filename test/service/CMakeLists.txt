@@ -129,6 +129,16 @@ add_test(NAME test_cli_password_empty_db
 		-P ${SERVICE_TEST_DIR}/cli_password_empty_db.cmake)
 set_tests_properties(test_cli_password_empty_db PROPERTIES LABELS service)
 
+# --audit-verify and --audit-export do not migrate an older database; a
+# normal open migrates after a backup copy (BTD-70)
+add_test(NAME test_cli_audit_no_upgrade
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DDUMP=${SERVICE_TEST_DIR}/data/schema8-fork.sql
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_audit_no_upgrade
+		-P ${SERVICE_TEST_DIR}/cli_audit_no_upgrade.cmake)
+set_tests_properties(test_cli_audit_no_upgrade PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
