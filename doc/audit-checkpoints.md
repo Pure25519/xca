@@ -8,7 +8,7 @@ gap for every entry that a later checkpoint covers (PLAN.md section 6.3).
 
 | Entry action | When | Params |
 |---|---|---|
-| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
+| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ED25519`; entries before BTD-97 have `ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
 | `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100, at most 1000: the setting is not signed), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `signature` |
 
 A checkpoint signs the entry just before it: `checkpoint_seq` and `checkpoint_hash` are that

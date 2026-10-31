@@ -26,7 +26,7 @@
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
 
-const char AuditKey::typeEd25519[] = "ed25519";
+const char AuditKey::typeEd25519[] = "ED25519";
 
 static void throwOnError(XSqlQuery &q)
 {

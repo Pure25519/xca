@@ -1041,7 +1041,7 @@ void AuditLog::writeBaseline()
 	bool verified = ctx.passwordVerified();
 	for (AuditParams &p : rows) {
 		p.set("db_unlock_verified", verified);
-		insertEntry(ctx, actionRevocationBaseline, "cert",
+		insertEntry(ctx, actionRevocationBaseline, "certificate",
 			p.getValues().value("serial").toString(), p);
 	}
 	insertEntry(ctx, actionInit, "database", QString(),
