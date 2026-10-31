@@ -72,6 +72,7 @@ class test_service_objects : public ServiceTestCase
 	void deleteRejected_data();
 	void deleteRejected();
 	void deleteDatabaseError();
+	void deleteSuperRowError();
 	void tokenRenameRejected();
 };
 
@@ -461,6 +462,45 @@ void test_service_objects::deleteDatabaseError()
 	XSqlQuery c("SELECT COUNT(*) FROM certs");
 	QVERIFY(c.first());
 	QCOMPARE(c.value(0).toInt(), 2);
+	verifyChain();
+}
+
+/* BTD-129: the delete of the x509super row of a certificate fails (a
+ * trigger refuses it); pki_x509::deleteSqlData() overwrote that error with
+ * the result of its own statements, so the delete was committed and
+ * audited as success while the x509super row stayed. Now it fails with
+ * database_error and nothing is deleted. */
+void test_service_objects::deleteSuperRowError()
+{
+	pki_x509 *ca = issue("Super CA", newKey("super ca key"), nullptr);
+	QVERIFY(ca);
+	QVariant id = ca->getSqlItemId();
+	int entries = AuditLog::entries().size();
+	XSqlQuery q;
+	QVERIFY(q.exec("CREATE TRIGGER refuse_super BEFORE DELETE ON x509super "
+		"BEGIN SELECT RAISE(ABORT, 'x509super delete refused'); END"));
+
+	QString code = "<deleted>";
+	try {
+		certs()->deleteItems(ctx, { ca });
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QVERIFY(q.exec("DROP TRIGGER refuse_super"));
+	QCOMPARE(code, QString("database_error"));
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	QCOMPARE(last().action, QString("object.delete"));
+	QCOMPARE(last().result, QString("failure"));
+	QCOMPARE(last().errorCode, QString("database_error"));
+	/* rolled back: every row and the object are still there */
+	for (const char *table : { "items", "x509super", "certs" }) {
+		XSqlQuery c(QString("SELECT COUNT(*) FROM %1 WHERE %2=%3")
+			.arg(table).arg(QString(table) == "items" ? "id" : "item")
+			.arg(id.toString()));
+		QVERIFY2(c.first(), table);
+		QVERIFY2(c.value(0).toInt() == 1, table);
+	}
+	QVERIFY(Store.find(id.toULongLong()) == ca);
 	verifyChain();
 }
 
