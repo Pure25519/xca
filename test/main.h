@@ -46,6 +46,7 @@ class test_main: public QObject
 
 	/* automationIds.cpp */
 	void automationIds();
+	void keyboardContextMenu();
 
 	/* crlRefused.cpp */
 	void crlRefusedWithoutCrlSign();

@@ -344,3 +344,76 @@ void test_main::automationIds()
 	}
 	QVERIFY2(errors.isEmpty(), CCHAR(errors.join("\n")));
 }
+
+/* The Menu key opens the context menu of the current item, whatever
+ * position the event carries: Qt 6.12 delivers it to the view itself in
+ * widget coordinates, so the position lies a header height below the
+ * current row and indexAt() hit the row under it (BTD-261) */
+void test_main::keyboardContextMenu()
+{
+	try {
+	ign_openssl_error();
+	openDB();
+	pki_multi *pem = new pki_multi();
+	foreach(QString name, QStringList({ "Root CA", "Inter CA 1",
+			"Endentity", "Inter CA 1 Key", "Root CA Key" }))
+		pem->fromPEMbyteArray(pemdata[name].toUtf8(), QString());
+	ImportMulti *dlg = new ImportMulti(mainwin);
+	dlg->addItem(pem);
+	dlg->show();
+	Q_ASSERT(QTest::qWaitForWindowActive(dlg));
+	dlg->on_butOk_clicked();
+	delete dlg;
+
+	XcaTreeView *v = mainwin->certView;
+	for (int i = 0; i < mainwin->tabView->count(); i++)
+		if (mainwin->tabView->widget(i)->isAncestorOf(v))
+			mainwin->tabView->setCurrentIndex(i);
+	v->expandAll();
+	QApplication::processEvents();
+
+	/* the end entity is revocable (its issuer has a key), its root
+	 * is not: only its own menu has ctx_cert_revoke */
+	QPersistentModelIndex ee, root;
+	foreach(QModelIndex idx, allRows(v->model())) {
+		pki_x509 *c = db_base::fromIndex<pki_x509>(v->getIndex(idx));
+		if (!c)
+			continue;
+		if (c->getSigner() == c)
+			root = idx;
+		else if (!c->isCA())
+			ee = idx;
+	}
+	QVERIFY(ee.isValid() && root.isValid());
+	v->setFocus();
+	v->selectionModel()->setCurrentIndex(ee,
+		QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+
+	QStringList ids, errors;
+	QTimer timer;
+	timer.setInterval(20);
+	QObject::connect(&timer, &QTimer::timeout, [&]() {
+		QMenu *m = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+		if (!m)
+			return;
+		timer.stop();
+		foreach(QAction *a, m->actions())
+			if (!a->isSeparator())
+				ids << a->objectName();
+		m->close();
+	});
+	timer.start();
+	/* the position of the root row, as the view gets it */
+	QPoint pos = v->viewport()->mapTo(v, v->visualRect(root).center());
+	QContextMenuEvent ev(QContextMenuEvent::Keyboard, pos,
+				v->mapToGlobal(pos));
+	QApplication::sendEvent(v, &ev);
+	timer.stop();
+
+	QVERIFY2(ids.contains("ctx_cert_revoke"), CCHAR(
+		"the keyboard menu is not the one of the current end entity: " +
+		ids.join(", ")));
+	} catch (...) {
+		QVERIFY2(false, "Exception thrown");
+	}
+}
