@@ -294,15 +294,13 @@ void XcaTreeView::deleteItems()
 			names.size()).arg(names.join("', '"))))
 		return;
 
-	foreach(pki_base *pki, list) {
-		try {
-			pki->deleteFromToken();
-		} catch (errorEx &err) {
-			XCA_ERROR(err);
-		}
-	}
+	/* the deletion on the token is part of the audited service call,
+	 * after its checks (BTD-128) */
 	try {
-		basemodel->deleteItems(ctx, list);
+		DeleteResult r = basemodel->deleteItems(ctx, list, true);
+		if (!r.tokenErrors.isEmpty())
+			XCA_WARN(tr("Not deleted on the token:\n%1")
+				.arg(r.tokenErrors.join("\n")));
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}

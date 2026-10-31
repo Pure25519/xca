@@ -78,8 +78,8 @@ void pki_base::autoIntName(const QString &file)
 	setIntName(rmslashdot(file));
 }
 
-void pki_base::deleteFromToken() { }
-void pki_base::deleteFromToken(const slotid &) { }
+bool pki_base::deleteFromToken() { return false; }
+bool pki_base::deleteFromToken(const slotid &) { return false; }
 void pki_base::writeDefault(const QString&) const { }
 void pki_base::fromPEM_BIO(BIO *, const QString &) { }
 void pki_base::fload(const QString &fname)
