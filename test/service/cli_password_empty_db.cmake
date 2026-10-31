@@ -83,20 +83,23 @@ if(NOT out STREQUAL "0\n0\n0\n")
   fail("a rejected open wrote to the database (audit_log, bxc_schema, key):\n${out}")
 endif()
 
-# Without --password: the old database needs an upgrade, which needs the
-# verified password, so the open is refused and nothing is written
-# (BTD-137). Before, it was upgraded and given a baseline, unchecked.
+# Without --password: the empty password is the database's password, so
+# the open counts as verified (BTD-246, boss 2026-10-31): the old
+# database is upgraded and its baseline records db_unlock_verified=true.
+# Before, the open counted as unverified and was refused (BTD-137).
 run_xca(rc out --list-items)
-if(rc EQUAL 0 OR NOT out MATCHES "schema_upgrade_needs_password|needs the database password")
-  fail("no password: expected a refusal of the upgrade, got '${rc}':\n${out}")
+if(NOT rc EQUAL 0 OR NOT out MATCHES "fixture-rsa")
+  fail("no password: expected exit 0 and the fixture items, got '${rc}':\n${out}")
 endif()
-if(out MATCHES "fixture-rsa")
-  fail("no password: the refused open listed items:\n${out}")
-endif()
-sql(out -c "SELECT count(*) FROM sqlite_master WHERE name='audit_log'"
-        -c "SELECT count(*) FROM settings WHERE key_='bxc_schema'")
+run_xca(rc out --audit-export -)
 file(REMOVE_RECURSE "${WORK}")
-if(NOT out STREQUAL "0\n0\n")
-  message(FATAL_ERROR "no password: the refused open wrote to the database:\n${out}")
+if(NOT rc EQUAL 0 OR NOT out MATCHES "\"action\":\"audit.init\"")
+  message(FATAL_ERROR "no password: expected the baseline in the export, got '${rc}':\n${out}")
 endif()
-message(STATUS "xca --no-gui: empty-password database rejects every given source and the open without one, writes nothing")
+if(out MATCHES "\"db_unlock_verified\":false" OR out MATCHES "intruder-key")
+  message(FATAL_ERROR "the export records an unverified open or the key:\n${out}")
+endif()
+if(NOT out MATCHES "\"db_unlock_verified\":true")
+  message(FATAL_ERROR "no password: no entry records the verified open:\n${out}")
+endif()
+message(STATUS "xca --no-gui: empty-password database rejects every given source; without one it opens verified")
