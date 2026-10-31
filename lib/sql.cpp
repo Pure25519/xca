@@ -237,9 +237,10 @@ void throwSqlError(const QSqlError &e, const QString &what)
 			QSqlDatabase::defaultConnection, false).driverName(),
 			e.nativeErrorCode());
 	qDebug() << "SQL error:" << code << what << e.text();
-	/* The reason of the database only: the driver text of XSqlQuery
-	 * carries the statement and its bound values, which may be a
-	 * tls-auth key or an encrypted private key (review of xca#68) */
+	/* The reason of the database only: a driver text may carry the
+	 * statement and its bound values, which may be a tls-auth key or
+	 * an encrypted private key (review of xca#68); XSqlQuery logs them
+	 * instead (BTD-189) */
 	QString reason = e.databaseText().trimmed();
 	throw serviceError(code, reason.isEmpty() ? what :
 				QString("%1: %2").arg(what, reason));
@@ -311,13 +312,12 @@ QString XSqlQuery::query_details()
 QSqlError XSqlQuery::lastError()
 {
 	QSqlError e = QSqlQuery::lastError();
-	if (!e.isValid())
-		return e;
-	return QSqlError(QString("%1 - %2").arg(e.driverText())
-					.arg(query_details()),
-			 e.databaseText(), e.type(),
-			 e.nativeErrorCode()
-			);
+	/* The statement, its bound values and the source location are for
+	 * the debug log only: the text of the error reaches service errors,
+	 * the CLI, REST and message boxes (BTD-189) */
+	if (e.isValid())
+		qDebug() << "SQL error:" << e.text() << "-" << query_details();
+	return e;
 }
 
 XSqlQuery::XSqlQuery() : QSqlQuery()
