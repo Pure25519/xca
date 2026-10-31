@@ -44,10 +44,18 @@ generation, signature) before its first write, so such a failure keeps the calle
 database error while it writes fails the caller's operation (BTD-111) when the entry belongs to
 the caller's transaction. An entry outside any transaction, such as the failure entry a service
 function appends after its rollback, is already committed: the checkpoint failure is only logged,
-the caller keeps its own error code, and the next entry tries again (BTD-143). Entries after a change that does not chain are never signed (`audit_chain_broken`).
-Once the chain announced a key, a checkpoint without a usable current key (row deleted, retired
-without successor, private part gone) fails with `audit_key_missing` and creates no new key
-(BTD-110).
+the caller keeps its own error code, and the next entry tries again (BTD-143).
+
+Entries after a change that does not chain are never signed (`audit_chain_broken`). Once the chain
+announced a key, a checkpoint without a usable current key (row deleted, retired without
+successor, private part gone) fails with `audit_key_missing` and creates no new key (BTD-110).
+
+An automatic checkpoint that failed for such a state (a broken chain, a missing key, a key that
+does not decrypt) is not tried again for every following entry: each try scans the whole unsigned
+part, so an import would take quadratic time and log one line per entry. The next try comes when
+a new checkpoint changes the head, after an explicit checkpoint, rotation or adoption, after a
+change of the database password, or when the database is opened again (BTD-144). A missing or
+wrong password source is tried again with the next entry, since that try scans nothing.
 
 The first key is not announced over a log whose unsigned part is longer than any writer with the
 database password leaves (more than interval + 1 entries, the revocation baseline excepted): such
@@ -60,6 +68,22 @@ on request, after it was checked:
 ```
 xca --no-gui --database pki.xdb --password file:db.pass --audit-adopt --audit-verify
 ```
+
+A skipped automatic checkpoint is reported to the user (BTD-148), once per error code and open
+database: the GUI shows it in the status bar (no dialog, the work goes on), `xca --no-gui` prints
+one `Notice:` line on stderr per command. The notice names the code and the next step:
+
+| Code | Next step named in the notice |
+|---|---|
+| `audit_key_unavailable` | open the database with its password |
+| `audit_password_rejected` | check the password source |
+| `audit_checkpoint_missing` | check the log with `--audit-verify`, then sign it with `--audit-adopt` |
+| `audit_key_missing` | run `--audit-verify`; restore the audit key from a backup of the database |
+| `audit_signing_failed`, `audit_key_failed`, any other | run `--audit-verify`; the message carries the OpenSSL reason |
+
+The exit code of the command stays 0: its own operation succeeded and its entry is stored. Scripts
+that must not go on with an unsigned tail run `--audit-verify`. The log line
+(`No audit checkpoint after entry`) remains and carries the code as well.
 
 `--audit-adopt` (`AuditLog::adoptUnanchored()`) announces the first key with `adopted_entries`,
 the number of entries it takes over without proof, and signs. The announcement is covered by the
@@ -80,7 +104,15 @@ out-parameter (code and text), for the missing password source (`audit_key_unava
 
 ## Entries written on open
 
-`database.rows_skipped` (BTD-209) is written after the unlock when the set of unreadable rows
+Only an open with the verified database password writes (BTD-137): the GUI unlock dialog answered
+with the right password, or `xca --no-gui` with a password source that matched. With the unlock
+dialog cancelled or without a password source, a current database opens read-only as upstream
+allows (public items, no entry, no setting migration), and a database that still needs a schema
+upgrade is not opened at all: the open fails with `schema_upgrade_needs_password` and the file
+stays byte for byte as it was, because the upgrade and the audit baseline would write. The legacy
+`optionflags` row of old databases is likewise converted only after the verified unlock.
+
+`database.rows_skipped` (BTD-209) is written after the verified unlock when the set of unreadable rows
 the open left out differs from the set of the newest such entry (BTD-221). It carries `count`,
 `skipped_items` (`key:3,template:7`, sorted) and `warning=rows_skipped`; the sets are compared as
 sets, so the order does not matter. Reading commands open the database too, but as long as the
@@ -149,12 +181,33 @@ ids in the order they signed) and `adopted_entries` (entries the first key adopt
 An `adopted_entries` param on any other announcement, or one that does not count exactly the
 unsigned entries before it, is `checkpoint_key`.
 
-Remaining limits: entries after the last checkpoint have the hash chain only; cutting off the
-newest entries including their checkpoints still verifies unless that removes a key announcement;
-deleting the whole log or its checkpoints together with the `audit_keys` rows verifies when the
-rest is at most interval + 1 entries long; an adopted log is only as trustworthy as the check
-before `--audit-adopt`; a log rewritten from the first key announcement with a new key verifies too. Keep the `key_id` of the
-first export somewhere else and compare it with `audit_keys`.
+Remaining limits without a trust anchor: entries after the last checkpoint have the hash chain
+only; cutting off the newest entries including their checkpoints still verifies unless that
+removes a key announcement; deleting the whole log or its checkpoints together with the
+`audit_keys` rows verifies when the rest is at most interval + 1 entries long; an adopted log is
+only as trustworthy as the check before `--audit-adopt`; a log rewritten from the first key
+announcement with a new key verifies too.
+
+## Trust anchor (BTD-101)
+
+The checks above use only what is in the database. Two options pin values from outside it, kept
+from an earlier `--audit-verify` report or export:
+
+```
+xca --no-gui --database pki.xdb --audit-verify --audit-key 3f2a… --audit-min-checkpoint 1204
+```
+
+| Option | Check | `reason` on failure |
+|---|---|---|
+| `--audit-key <key-id-list>` | the first entry of `audit_keys` is one of the comma separated ids; every later key must lead from it by rotation, so a rotation does not need a new pin | `untrusted_key` |
+| `--audit-min-checkpoint <seq>` | `last_checkpoint_seq` is at least `<seq>` | `checkpoint_truncated` |
+
+A chain or checkpoint error is reported first; the pin check only sets `reason` when the log is
+otherwise intact. The report always carries `pinned_keys` (empty without `--audit-key`) and
+`pinned_min_checkpoint` (null without `--audit-min-checkpoint`), so a stored report shows which
+anchor it was checked against. A rewritten log (new first key) and a log cut off with its newest
+checkpoints both fail with a pin. Keep the pins outside the database host, e.g. with the
+exports.
 
 ## Checking an export with the OpenSSL CLI
 

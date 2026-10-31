@@ -93,11 +93,14 @@ class MainWindow: public QMainWindow, public Ui::MainWindow
 		static bool legacy_loaded;
 		int exitApp;
 		QLabel *dbindex;
+		/* A skipped automatic audit checkpoint (BTD-148) */
+		QLabel *auditNotice;
 		Help *helpdlg;
 		MainWindow();
 		virtual ~MainWindow();
 		void loadSettings();
 		void saveSettings();
+		void showAuditNotice(const QString &msg);
 		void load_engine();
 		static OidResolver *getResolver()
 		{

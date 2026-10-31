@@ -188,6 +188,11 @@ void CertTreeView::toCertificate()
 void CertTreeView::deleteFromToken()
 {
 	pki_x509 *cert = db_base::fromIndex<pki_x509>(currentIndex());
+	/* no current certificate (BTD-240) */
+	if (!cert) {
+		XCA_WARN(tr("No certificate selected"));
+		return;
+	}
 	try {
 		cert->deleteFromToken();
 	} catch (errorEx &err) {

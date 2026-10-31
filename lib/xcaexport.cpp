@@ -48,8 +48,11 @@ int main(int argc, char *argv[])
     QByteArray doc = make_doc(argv[1]).toUtf8();
 	if (argc > 2) {
 		QFile f(argv[2]);
-		f.open(QIODevice::WriteOnly);
-		f.write(doc);
+		if (!f.open(QIODevice::WriteOnly) || f.write(doc) != doc.size()) {
+			qWarning() << QString("Cannot write %1: %2")
+					.arg(argv[2], f.errorString());
+			return EXIT_FAILURE;
+		}
 		f.close();
 	} else {
 		QTextStream out(stdout);

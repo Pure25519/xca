@@ -86,7 +86,7 @@ refused("key usage unknown" invalid_bootstrap_file "/cas/0/key_usage/0" "${j}")
 variant(j cas 0 name_constraints [=[{"critical": true}]=])
 refused("name constraints empty" invalid_bootstrap_file
     "/cas/0/name_constraints" "${j}")
-variant(j cas 0 name_constraints [=[{"permitted": {"ip": ["192.168.0.0"]}}]=])
+variant(j cas 0 name_constraints [=[{"permitted": {"ip": ["192.0.2.0"]}}]=])
 refused("name constraint ip" invalid_bootstrap_file
     "/cas/0/name_constraints/permitted/ip/0" "${j}")
 variant(j cas 0 not_after [=["2046-10-31T23:59:59Z"]=])
