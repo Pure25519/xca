@@ -69,6 +69,9 @@ class test_main: public QObject
 	/* exportMlDsa.cpp */
 	void exportMlDsaEncoding();
 
+	/* exportPkcs12Mac.cpp */
+	void exportPkcs12Mac();
+
 	/* importPEM.cpp */
 	void importPEM();
 	void importLockedKeepsItems();
@@ -110,6 +113,10 @@ class test_main: public QObject
 	/* renewalService.cpp */
 	void renewalThroughService();
 	void renewalAllOrNothing();
+
+	/* staleReload.cpp */
+	void staleReloadInDelete();
+	void reloadProxyRows();
 
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();

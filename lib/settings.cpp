@@ -53,6 +53,9 @@ const QMap<QString, QString> settings::defaults() const
 		 * the database opened before (BTD-174) */
 		{ "default_hash", digest::getBuiltinDefault().name() },
 		{ "pkcs12_enc_algo", encAlgo::getBuiltinDefault().name() },
+		/* PBKDF2 iterations of a PKCS#12 export (BTD-175) */
+		{ "pkcs12_iterations",
+			QString::number(pki_pkcs12::minIterations) },
 		{ "ical_expiry", "1W" },
 		{ "cert_expiry", "80%" },
 		{ "serial_len", "64" },

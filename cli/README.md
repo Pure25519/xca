@@ -267,6 +267,12 @@ Encrypted formats take their password from `--export-pass` only; without it the 
 with `missing_password` and writes no file. Legacy only on request: `--pkcs12-algorithm
 <name>` (e.g. `PBE-SHA1-3DES`, audited with `legacy`), `--key-unencrypted` (unencrypted
 PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
+`--pkcs12-mac hmac-sha256|pbmac1` selects the PKCS#12 MAC (PBMAC1, RFC 9579, is read by
+OpenSSL 3.4 and newer, not by Windows, Java, older OpenSSL and many devices) and
+`--pkcs12-iterations <n>` the PBKDF2 count of encryption and MAC, 2048 to 10000000 (default: the
+setting `pkcs12_iterations`, 2048); both only with `--format p12` (`conflicting_options`) and not
+with a legacy algorithm (`invalid_pkcs12_mac`, `invalid_pkcs12_iterations`). The result names
+`pkcs12_algorithm`, `pkcs12_mac` and `pkcs12_iterations` as written, like the audit entry.
 `--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
 (`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
 `key.export_private` name it; on another key it is `format_not_applicable`. To check the stored
@@ -418,8 +424,16 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   override or refuse the values of the file. What it does: the id must exist, it is stored in
   the definition of the CA (mapping row, `definition_sha256`) and shown in the result
   (`issued_with`), and a different `issued_with` for an existing CA is `bootstrap_conflict`,
-  like every member the certificate was made from. What it does not do: it does not check the
-  certificate against the profile, it records no profile version for the CA certificate
+  like every member the certificate was made from. It is also compared with the CA definition
+  (BTD-233; `Profile::caMismatches()`): a profile with `basic_constraints.ca` false, a fixed
+  `basic_constraints.path_len` other than the CA's `path_len`, `key_types` without the CA's
+  `key`, or a `validity.max` shorter than the CA's validity (from `not_before` or now to
+  `not_after` or `validity`, default P10Y for a root and P5Y below) gives one warning
+  `issued_with_mismatch` per member at the pointer
+  (`/cas/1/issued_with: the profile 'tls-server' issues no CA certificates (basic_constraints.ca
+  false) (basic_constraints.ca)`), in the real run and in `--plan`. A warning, not an error:
+  the profile is not applied, so the certificate is the same either way. What it does not do:
+  it does not check the issued certificate against the profile, it records no profile version for the CA certificate
   (`issued_profiles`) and it does not assign the profile to the CA or its parent.
 - **CAs**: init's code path (`createCa()` in `commands.cpp`) with the file's values: key type
   (the vocabulary of `--key`), subject from `cn` plus `subject` (order C, ST, L, O, OU, CN) or
@@ -519,6 +533,7 @@ ca ot-p256-issuing: update, id 9 (changed: profiles, policies)
 skipped /server: the server TLS of xca-server comes in Phase 3 (BTD-160)
 unchecked database: '/data/lab.xdb' does not exist: every object would be created, ...
 ```
+- **Warning codes**: `issued_with_mismatch` (above), besides the warnings of every command.
 - **Error codes**: `invalid_bootstrap_file`, `bootstrap_conflict`,
   `unresolved_secret_reference`; from the checks above `invalid_validity`, `invalid_value`,
   `invalid_uri`, `invalid_subject`, `missing_password`, `unknown_reference`,
