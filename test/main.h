@@ -51,6 +51,7 @@ class test_main: public QObject
 	void revoke();
 	void renewalSigningFails();
 	void staleReloadInDelete();
+	void reloadProxyRows();
 	void issueRefusedByPolicy();
 	void testValidity();
 	void proposalUnderUnlimitedCa();
