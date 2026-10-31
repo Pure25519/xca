@@ -94,6 +94,10 @@ class ExportOptions
 	/* NID of the PKCS#12 encryption (encAlgo); 0: the setting
 	 * pkcs12_enc_algo */
 	int pkcs12Algorithm{};
+	/* PKCS#12 MAC, one of pki_pkcs12::macs; empty: hmac-sha256 */
+	QString pkcs12Mac{};
+	/* PKCS#12 iterations; 0: the setting pkcs12_iterations */
+	int pkcs12Iterations{};
 	/* ML-DSA private key encoding, one of pki_evp::mlDsaFormats;
 	 * empty: both, or the expanded key of a key without seed */
 	QString mlDsaFormat{};

@@ -43,8 +43,18 @@ configuration files.
   the export service; the command line follows), and keep the file only
   as long as needed. RC2-40 encrypts only the
   certificates with RC2; the key is always encrypted with 3DES.
-  PBMAC1 (RFC 9579) is not used: Windows, Java and OpenSSL before 3.4
-  cannot check it.
+  The MAC is PBMAC1 (RFC 9579) only when an export asks for it (export
+  dialog, ``--pkcs12-mac pbmac1``): OpenSSL 3.4 and newer read it;
+  Windows, Java, older OpenSSL and many devices cannot check it.
+
+- PKCS#12 iterations
+
+  The PBKDF2 iteration count of the encryption and the MAC of a PKCS#12
+  export, 2048 to 10000000, by default 2048. It is the default of the
+  database; an export may set its own (export dialog,
+  ``--pkcs12-iterations``). More iterations make a guessed password
+  slower to test and the import slower. The legacy algorithms keep 2048
+  and a MAC of one iteration; a count for them is refused.
 
   A database that stored PBE-SHA1-3DES before this default changed is
   moved to AES-256-CBC once, when it is unlocked, with an audit entry
@@ -52,8 +62,9 @@ configuration files.
   legacy can be chosen again afterwards. When the legacy algorithm was
   confirmed in the warning about it, it stays. Only a changed value is stored when the options are
   saved, so a stored algorithm is always a choice. Every export of a
-  private key records the PKCS#12 algorithm in the audit log
-  (``pkcs12_algorithm``), and a legacy method (3DES, RC2-40, the
+  private key records the PKCS#12 algorithm, MAC and iteration count in
+  the audit log (``pkcs12_algorithm``, ``pkcs12_mac``,
+  ``pkcs12_iterations``), and a legacy method (3DES, RC2-40, the
   RFC 1423 "PEM encrypted" key format) is marked ``legacy``.
 
 - Suppress success messages

@@ -72,7 +72,11 @@ void XcaTreeView::contextMenuEvent(QContextMenuEvent * e)
 	QModelIndex index;
 	if (!basemodel)
 		return;
-	index = indexAt(e->pos());
+	/* The Menu key acts on the current item. Its event position is no
+	 * help: Qt 6.12 delivers it to the view in widget coordinates, a
+	 * header height below the row in viewport coordinates (BTD-261) */
+	index = e->reason() == QContextMenuEvent::Keyboard ? currentIndex() :
+						indexAt(e->pos());
 	showContextMenu(e, getIndex(index));
 }
 

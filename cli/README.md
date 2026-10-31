@@ -8,7 +8,7 @@ prompts unless `--interactive` is given.
 ```
 bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
 bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --password env:PKI_PW
-bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
+bxc-pki request-cert --cn plc10 --ip 192.0.2.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
 bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server_EC --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
@@ -267,6 +267,12 @@ Encrypted formats take their password from `--export-pass` only; without it the 
 with `missing_password` and writes no file. Legacy only on request: `--pkcs12-algorithm
 <name>` (e.g. `PBE-SHA1-3DES`, audited with `legacy`), `--key-unencrypted` (unencrypted
 PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
+`--pkcs12-mac hmac-sha256|pbmac1` selects the PKCS#12 MAC (PBMAC1, RFC 9579, is read by
+OpenSSL 3.4 and newer, not by Windows, Java, older OpenSSL and many devices) and
+`--pkcs12-iterations <n>` the PBKDF2 count of encryption and MAC, 2048 to 10000000 (default: the
+setting `pkcs12_iterations`, 2048); both only with `--format p12` (`conflicting_options`) and not
+with a legacy algorithm (`invalid_pkcs12_mac`, `invalid_pkcs12_iterations`). The result names
+`pkcs12_algorithm`, `pkcs12_mac` and `pkcs12_iterations` as written, like the audit entry.
 `--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
 (`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
 `key.export_private` name it; on another key it is `format_not_applicable`. To check the stored

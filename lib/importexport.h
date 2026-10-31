@@ -60,6 +60,16 @@ class ImportResult
 };
 
 /* What to export */
+/* How a PKCS#12 export protects its content, as written (BTD-175) */
+class Pkcs12Protection
+{
+  public:
+	QString algorithm{};
+	QString mac{};
+	int iterations{};
+	bool legacy{};
+};
+
 class ExportSpec
 {
   public:
@@ -88,6 +98,15 @@ class ExportSpec
 	 * PBE-SHA1-3DES for a legacy reader. Empty: the setting
 	 * pkcs12_enc_algo, by default AES-256-CBC (BTD-52) */
 	QString pkcs12Algorithm{};
+	/* PKCS#12 MAC, one of pki_pkcs12::macs: "hmac-sha256" or "pbmac1"
+	 * (RFC 9579, read by OpenSSL 3.4 and newer only). Empty:
+	 * hmac-sha256 (BTD-175) */
+	QString pkcs12Mac{};
+	/* PBKDF2 iterations of the PKCS#12 encryption and MAC, between
+	 * pki_pkcs12::minIterations and maxIterations. 0: the setting
+	 * pkcs12_iterations, by default 2048. Not with a legacy
+	 * algorithm, which keeps 2048 and a MAC of 1 iteration (BTD-175) */
+	int pkcs12Iterations{};
 	/* Encoding of ML-DSA private keys (RFC 9881): "both" (seed and
 	 * expanded key), "seed" or "expanded", e.g. expanded for a reader
 	 * without seed support. Empty: OpenSSL's default, both, or the
@@ -98,6 +117,11 @@ class ExportSpec
 	 * (the bxc-pki command line reports it, BTD-42) */
 	QMap<QString, QString> *mlDsaWritten{};
 };
+
+/* The PKCS#12 algorithm, MAC and iteration count of an export of spec:
+ * its own or the settings; the audit entry and the bxc-pki result name
+ * them (BTD-175) */
+Pkcs12Protection pkcs12Protection(const ExportSpec &spec);
 
 /* "certificate", "key", "request", "crl", "template": the audit object
  * type of an item */

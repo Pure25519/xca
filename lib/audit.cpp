@@ -9,6 +9,7 @@
 #include "exception.h"
 #include "settings.h"
 #include "sql.h"
+#include "XcaWarningCore.h"
 
 #include <QCryptographicHash>
 #include <QJsonDocument>
@@ -105,7 +106,10 @@ const QStringList &AuditParams::allowList()
 		"not_after",
 		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
 		"outcome",
-		"pkcs12_algorithm", "question",
+		"pkcs12_algorithm",
+		/* the MAC and iteration count of a PKCS#12 (BTD-175) */
+		"pkcs12_iterations", "pkcs12_mac",
+		"question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial",
 		/* type:id of database rows left out on open (BTD-209) */
@@ -338,6 +342,9 @@ QVariantMap AuditVerifyResult::toMap() const
 	m["unanchored_entries"] = unanchoredEntries;
 	m["audit_keys"] = auditKeys;
 	m["adopted_entries"] = adoptedEntries;
+	m["pinned_keys"] = pins.keys;
+	m["pinned_min_checkpoint"] = pins.minCheckpoint > 0 ?
+				QVariant(pins.minCheckpoint) : QVariant();
 	return m;
 }
 
@@ -616,6 +623,59 @@ int AuditLog::checkpointInterval()
 			defaultCheckpointInterval;
 }
 
+static QSet<QString> checkpointNotices;
+
+/* The last checkpoint seq over which an automatic checkpoint failed for a
+ * reason the next entry cannot change (a broken chain, a key that is
+ * missing or does not decrypt), -1 for none. Until the head or the key
+ * state changes, append() does not try again: every try scans the whole
+ * unsigned tail, an import would be O(n^2) (BTD-144). */
+static qint64 failedCheckpointHead = -1;
+
+void AuditLog::retryFailedCheckpoint()
+{
+	failedCheckpointHead = -1;
+}
+
+void AuditLog::resetCheckpointNotices()
+{
+	checkpointNotices.clear();
+	retryFailedCheckpoint();
+}
+
+/* The next step for a skipped automatic checkpoint (BTD-148) */
+static QString checkpointRemedy(const QString &code)
+{
+	if (code == "audit_key_unavailable")
+		return QObject::tr("Open the database with its password; "
+			"the next entry is signed then.");
+	if (code == "audit_password_rejected")
+		return QObject::tr("Check the password source.");
+	if (code == "audit_checkpoint_missing")
+		return QObject::tr("Check the log with --audit-verify, then "
+			"sign it with --audit-adopt.");
+	if (code == "audit_key_missing")
+		return QObject::tr("Run --audit-verify and restore the audit "
+			"key from a backup of the database.");
+	return QObject::tr("Run --audit-verify.");
+}
+
+/* A skipped automatic checkpoint: the log line with the code (BTD-144)
+ * and, once per code and open database, a notice to the user that does
+ * not interrupt the work (BTD-148) */
+static void reportSkippedCheckpoint(qint64 seq, const errorEx &err)
+{
+	const serviceError *se = dynamic_cast<const serviceError *>(&err);
+	QString code = se ? se->code : QString("audit_checkpoint_failed");
+	qWarning() << "No audit checkpoint after entry" << seq << code
+		<< err.getString();
+	if (checkpointNotices.contains(code))
+		return;
+	checkpointNotices << code;
+	xcaWarning::notice(QObject::tr("Audit checkpoint skipped (%1): %2 %3")
+		.arg(code, checkpointRemedy(code), err.getString()));
+}
+
 AuditEntry AuditLog::append(const ServiceContext &ctx,
 		const QString &action, const QString &objectType,
 		const QString &objectId, const AuditParams &params,
@@ -640,10 +700,12 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 		AuditFailureCapture::record(ctx, action, objectType, objectId,
 				params, result, errorCode);
 	/* A raised setting takes effect once a checkpoint signed it, a
-	 * lowered one at once (BTD-133) */
+	 * lowered one at once (BTD-133); a head whose checkpoint failed is
+	 * not tried again on every entry (BTD-144) */
 	int signedN = 0;
-	qint64 last = lastCheckpointSeq(&signedN);
-	if (e.seq - last < qMin(checkpointInterval(), tailInterval(signedN)))
+	qint64 head = lastCheckpointSeq(&signedN);
+	if (e.seq - head < qMin(checkpointInterval(), tailInterval(signedN)) ||
+	    head == failedCheckpointHead)
 		return e;
 	bool writing = false;
 	/* insertEntry() has committed or joined the caller's transaction */
@@ -660,8 +722,13 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 		 * error and the next append() tries again (BTD-143) */
 		if (writing && callerTransaction)
 			throw;
-		qWarning() << "No audit checkpoint after entry" << e.seq
-			<< err.getString();
+		/* Without the password (or a wrong source) the next entry
+		 * may have it: no scan was made, try again */
+		const serviceError *se = dynamic_cast<serviceError *>(&err);
+		if (!writing && !(se && (se->code == "audit_key_unavailable" ||
+				se->code == "audit_password_rejected")))
+			failedCheckpointHead = head;
+		reportSkippedCheckpoint(e.seq, err);
 	}
 	return e;
 }
@@ -950,29 +1017,37 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	return e;
 }
 
+/* An explicit checkpoint always tries; the automatic ones try again
+ * afterwards (BTD-144) */
 AuditEntry AuditLog::checkpoint(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, false, true);
 }
 
 AuditEntry AuditLog::rotateKey(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, true, true);
 }
 
 AuditEntry AuditLog::adoptUnanchored(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, false, true, true);
 }
 
-QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
+QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
 	return exportJsonLines(ServiceContext::localUser(
-			ServiceContext::processChannel), unsignedEntries);
+			ServiceContext::processChannel), unsignedEntries,
+			skipped);
 }
 
 QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
-				qint64 *unsignedEntries)
+				qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
 	QByteArray out;
 	QList<AuditEntry> list = entries();
@@ -983,10 +1058,21 @@ QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 			checkpoint(ctx);
 			list = entries();
 		} catch (serviceError &err) {
-			/* No password source: a read-only export without a
-			 * new checkpoint (BTD-70); nothing was written */
-			if (err.code != "audit_key_unavailable")
+			/* Read only, without a new checkpoint, and nothing
+			 * written: without a password source (BTD-70), and
+			 * for a log no checkpoint may sign, which an auditor
+			 * needs exported most (BTD-112). A wrong password or
+			 * a database error still fails. */
+			static const QStringList readOnly {
+				"audit_key_unavailable", "audit_chain_broken",
+				"audit_key_missing", "audit_checkpoint_missing",
+			};
+			if (!readOnly.contains(err.code))
 				throw;
+			if (skipped) {
+				skipped->code = err.code;
+				skipped->reason = err.getString();
+			}
 		}
 	}
 	for (const AuditEntry &e : list)
@@ -1173,7 +1259,7 @@ class revocationState
 };
 }
 
-AuditVerifyResult AuditLog::verify()
+AuditVerifyResult AuditLog::verify(const AuditVerifyPins &pins)
 {
 	typedef QPair<qint64, QString> revKey;
 	AuditVerifyResult r;
@@ -1325,6 +1411,24 @@ AuditVerifyResult AuditLog::verify()
 		m.expected = "present";
 		m.actual = "absent";
 		r.mismatches << m;
+	}
+	/* The trust anchor from outside the database (BTD-101): the first
+	 * key of the log must be a pinned one (the chain check above makes
+	 * every later key lead from it), and the log must still have the
+	 * newest checkpoint an earlier export saw. A log rewritten from
+	 * scratch with a new key, or cut off with its newest checkpoints,
+	 * passes the checks above on its own. */
+	r.pins = pins;
+	if (!pins.keys.isEmpty() && (r.auditKeys.isEmpty() ||
+			!pins.keys.contains(r.auditKeys.first()))) {
+		r.pinsOk = false;
+		if (r.reason.isEmpty())
+			r.reason = "untrusted_key";
+	} else if (pins.minCheckpoint > 0 &&
+			r.lastCheckpointSeq < pins.minCheckpoint) {
+		r.pinsOk = false;
+		if (r.reason.isEmpty())
+			r.reason = "checkpoint_truncated";
 	}
 	return r;
 }

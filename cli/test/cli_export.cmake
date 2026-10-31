@@ -160,6 +160,34 @@ openssl_run(t pkcs12 -info -noout -legacy -in ${files} -passin env:EXP_PW)
 if(NOT t MATCHES "3DES|TripleDES")
   fail("--pkcs12-algorithm PBE-SHA1-3DES:\n${t}")
 endif()
+# --- PKCS#12 MAC and iterations (BTD-175) ----------------------------------
+xport("pbmac1 p12" 0 dev --type certificate --format p12 ${EP}
+    --pkcs12-mac pbmac1 --pkcs12-iterations 4096 --force)
+openssl_run(t pkcs12 -info -noout -in ${files} -passin env:EXP_PW)
+if(NOT t MATCHES "MAC: PBMAC1 using PBKDF2, Iteration 4096" OR
+   NOT t MATCHES "Shrouded Keybag: PBES2, PBKDF2, AES-256-CBC, Iteration 4096")
+  fail("--pkcs12-mac pbmac1 --pkcs12-iterations 4096:\n${t}")
+endif()
+string(JSON mac GET "${_r}" files 0 pkcs12_mac)
+string(JSON iter GET "${_r}" files 0 pkcs12_iterations)
+if(NOT mac STREQUAL "pbmac1" OR NOT iter EQUAL 4096)
+  fail("pbmac1 p12: result names ${mac} ${iter}")
+endif()
+xport("default p12 mac" 0 dev --type certificate --format p12 ${EP} --force)
+string(JSON mac GET "${_r}" files 0 pkcs12_mac)
+string(JSON iter GET "${_r}" files 0 pkcs12_iterations)
+if(NOT mac STREQUAL "hmac-sha256" OR NOT iter EQUAL 2048)
+  fail("default p12: result names ${mac} ${iter}")
+endif()
+xport("p12 iterations below minimum" 1 dev --type certificate --format p12
+    ${EP} --pkcs12-iterations 1000 --force)
+expect_error("p12 iterations below minimum" invalid_pkcs12_iterations)
+xport("p12 unknown mac" 1 dev --type certificate --format p12 ${EP}
+    --pkcs12-mac hmac-md5 --force)
+expect_error("p12 unknown mac" invalid_pkcs12_mac)
+xport("mac option on pem" 2 dev --type certificate --format pem
+    --pkcs12-mac pbmac1)
+expect_error("mac option on pem" conflicting_options)
 xport("unencrypted pkcs8" 0 dev --type key --format pkcs8 --key-unencrypted
     --force)
 file(READ "${WORK}/${files}" k)
