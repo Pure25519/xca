@@ -69,6 +69,7 @@ void settings::clear()
 	loaded = false;
 	values.clear();
 	db_keys.clear();
+	legacyOptionflags.clear();
 	keyjob::defaultjob = keyjob();
 	const QMap<QString, QString> def = defaults();
 	for(QString key : def.keys())
@@ -89,21 +90,46 @@ void settings::setAction(const QString &key, const QString &value)
 	else if (key == "defaultkey")
 		keyjob::defaultjob = keyjob(value);
 	else if (key == "optionflags") {
-		XSqlQuery q;
-		Transaction;
-		if (!TransBegin())
-			return;
-		SQL_PREPARE(q, "DELETE FROM settings where key_='optionflags'");
-		q.exec();
+		/* Reading the settings happens before the database password
+		 * is checked: memory only, migrateOptionflags() stores them
+		 * (BTD-137). Before, the row was deleted and committed here. */
+		legacyOptionflags = value;
 		foreach(QString flag, value.split(",")) {
 			if (flag == "dont_colorize_expiries")
 				flag = "no_expire_colors";
 			setAction(flag, "yes");
 		}
-		TransCommit();
 		return;
 	}
 	values[key] = value;
+}
+
+void settings::migrateOptionflags()
+{
+	load_settings();
+	if (legacyOptionflags.isEmpty())
+		return;
+	XSqlQuery q;
+	Transaction;
+	if (!TransBegin())
+		return;
+	foreach(QString flag, legacyOptionflags.split(",", Qt::SkipEmptyParts)) {
+		if (flag == "dont_colorize_expiries")
+			flag = "no_expire_colors";
+		/* "yes" in memory already, but not stored: not in db_keys */
+		set(flag, "yes");
+	}
+	SQL_PREPARE(q, "DELETE FROM settings WHERE key_='optionflags'");
+	q.exec();
+	if (q.lastError().isValid()) {
+		qWarning() << "optionflags not migrated:" << q.lastError().text();
+		TransRollback();
+		return;
+	}
+	if (!TransCommit())
+		return;
+	db_keys.removeAll("optionflags");
+	legacyOptionflags.clear();
 }
 
 QString settings::defaults(const QString &key)

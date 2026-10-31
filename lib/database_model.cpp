@@ -200,6 +200,14 @@ QSqlError database_model::initSqlDB()
 	return QSqlError();
 }
 
+/* An existing database below the current upstream or fork schema: opening
+ * it writes the migration (and the audit baseline) */
+static bool schemaUpgradeNeeded()
+{
+	return XSqlQuery::schemaVersion() < MAX_SCHEMAS ||
+		bxcSchemaVersion() < BXC_MAX_SCHEMAS;
+}
+
 bool database_model::checkForOldDbFormat(const QString &dbfile) const
 {
 	// 0x ca db 19 69
@@ -391,12 +399,23 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			throw pw_exit;
 		if (result != pw_ok && Settings["pwhash"].empty())
 			throw open_abort;
+		/* Nothing is written without the verified password: GUI
+		 * Cancel and xca --no-gui without a password source open a
+		 * current database read-only, an old one not at all, since
+		 * its upgrade and audit baseline would write (BTD-137) */
+		bool verified = ServiceContext::processPasswordVerified;
+		if (existing && !verified && schemaUpgradeNeeded())
+			throw serviceError("schema_upgrade_needs_password", tr(
+				"The database %1 has to be upgraded to the current "
+				"version, which needs the database password. Open "
+				"it with its password.")
+				.arg(compressFilename(dbName)));
 		if (existing)
 			initSchema();
-		/* only after the unlock: an open without the password
-		 * writes nothing (BTD-117) */
-		if (result == pw_ok)
+		if (verified) {
+			Settings.migrateOptionflags();
 			migratePkcs12Default(existing);
+		}
 	} catch (...) {
 		/* No destructor runs for a failed constructor: close the
 		 * connection here, or the next open() inherits its state */
@@ -421,7 +440,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	if (dbkey)
 		dbkey->updateKeyEncryptionScheme();
-	reportSkippedRows(result == pw_ok);
+	reportSkippedRows(ServiceContext::processPasswordVerified);
 
 	foreach(db_base *m, models) {
 		Q_CHECK_PTR(m);

@@ -67,7 +67,15 @@ checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it
 
 ## Entries written on open
 
-`database.rows_skipped` (BTD-209) is written after the unlock when the set of unreadable rows
+Only an open with the verified database password writes (BTD-137): the GUI unlock dialog answered
+with the right password, or `xca --no-gui` with a password source that matched. With the unlock
+dialog cancelled or without a password source, a current database opens read-only as upstream
+allows (public items, no entry, no setting migration), and a database that still needs a schema
+upgrade is not opened at all: the open fails with `schema_upgrade_needs_password` and the file
+stays byte for byte as it was, because the upgrade and the audit baseline would write. The legacy
+`optionflags` row of old databases is likewise converted only after the verified unlock.
+
+`database.rows_skipped` (BTD-209) is written after the verified unlock when the set of unreadable rows
 the open left out differs from the set of the newest such entry (BTD-221). It carries `count`,
 `skipped_items` (`key:3,template:7`, sorted) and `warning=rows_skipped`; the sets are compared as
 sets, so the order does not matter. Reading commands open the database too, but as long as the
