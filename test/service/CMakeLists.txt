@@ -35,7 +35,7 @@ find_program(SERVICE_SETPRIV setpriv)
 macro(ServiceTest name)
   add_executable(${name} ${SERVICE_TEST_DIR}/${name}.cpp)
   target_link_libraries(${name} xcaservicetest)
-  target_link_options(${name} PRIVATE -pthread)
+  target_link_libraries(${name} Threads::Threads)
   target_compile_definitions(${name} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")

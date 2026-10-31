@@ -75,42 +75,36 @@ XCA can be used with Xcode after initializing the directory with:
 
 ### Windows
 
+This fork builds with MSVC (Visual Studio 2022) against OpenSSL 4.1 and Qt 6.12
+(`msvc2022_64`). Untested in this fork: no Windows build has run yet, the steps
+below follow the MSVC setup and are checked when it is done.
+
 - Install the dependencies
-  - Install Python 3.11 for windows from the store or https://www.python.org/downloads/windows/
-  - Install OpenSSL from here: https://slproweb.com/download/Win64OpenSSL-3_1_5.msi and verify the sha256 from https://github.com/slproweb/opensslhashes/blob/master/win32_openssl_hashes.json
-  - To install the Qt libraries, cmake and the MinGW compiler [aqtinstall](https://github.com/miurahr/aqtinstall) is used.
-    Sphinx is used to generate the documentation
+  - Visual Studio 2022 Build Tools with the workload "Desktop development with C++"
+    (cl, nmake and CMake 3.25 or later)
+  - Strawberry Perl and NASM, both on PATH, for the OpenSSL build
+  - Python 3 with Sphinx (documentation) and aqtinstall (Qt):
     ```
     pip3 install sphinx aqtinstall
+    aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt
     ```
-  - Add the PATH shown by pip to your PATH
-  - Install Qt, cmake and the MinGW toolchain
-    ```
-    aqt install-qt windows desktop 6.6.3 win64_mingw
-    aqt install-tool windows desktop tools_mingw90 qt.tools.win64_mingw900
-    aqt install-tool windows desktop tools_vcredist qt.tools.vcredist_64
-    ```
-  - If 7z is missing, install it from the store. `7-Zip File Manager (unofficial)` or from 7-zip.org
-  - Install the "vcredist\\vcredist_64.exe"
-  - Add cmake, MinGW, OpenSSL and Qt6 to your Path
-    ```
-    %USERPROFILE%\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.10_qbz5n2kfra8p0\LocalCache\local-packages\Python310\Scripts;
-    %USERPROFILE%\AppData\Local\Microsoft\WindowsApps;
-    %USERPROFILE%\Tools\CMake_64\bin;
-    %USERPROFILE%\Tools\mingw_64\bin;
-    %USERPROFILE%\6.6.3\mingw_64\bin;
-    ```
-  - Create `CMAKE_PREFIX_PATH` environment variable:
-    ```
-    %USERPROFILE%\6.6.3\mingw_64\lib\cmake
-    ```
-  - Install `https://wixtoolset.org/releases/` if you want to create the MSI installer
-
+  - `https://wixtoolset.org/releases/` (WiX 3) if you want to create the MSI installer
+- OpenSSL 4.1 has no official Windows binaries. Build it from source in an
+  "x64 Native Tools Command Prompt for VS 2022"; the script checks the SHA-256 of
+  the release tarball and installs `libcrypto-4-x64.dll`:
+  ```
+  pwsh -File xca\release\build-openssl-msvc.ps1 -Prefix C:\OpenSSL-4.1
+  ```
 - Clone: `git clone https://github.com/chris2511/xca.git`
-- Configure: `cmake -B build -G "MinGW Makefiles" xca`
-- Make: `cmake --build build -j5`
-- Create the Portable App: `cmake --build build -t install`
+- Configure (same prompt): `cmake -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release -DOPENSSL_ROOT_DIR=C:\OpenSSL-4.1 -DCMAKE_PREFIX_PATH=C:\Qt\6.12.0\msvc2022_64 xca`
+- Make: `cmake --build build`
+- Create the Portable App: `cmake --install build`
 - Build the MSI installer (and the Portable App): `cd build ; cpack`
+
+The installer ships the libcrypto DLL of the OpenSSL found
+(`libcrypto-<major>-x64.dll`), and the MinGW runtime DLLs only from a MinGW build.
+`release/build-w64.sh` still builds with MinGW in MSYS2, with OpenSSL 4.1 from
+source; it is untested in this fork as well.
 
 ## __SQL Remote Database Drivers__
 
