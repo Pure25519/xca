@@ -234,6 +234,8 @@ void AuditKey::retire(const QString &id)
 
 void AuditKey::reencrypt(const Passwd &newPass)
 {
+	/* a key that did not decrypt may do so now (BTD-144) */
+	AuditLog::retryFailedCheckpoint();
 	XSqlQuery q;
 	QList<QPair<QString, QByteArray> > keys;
 

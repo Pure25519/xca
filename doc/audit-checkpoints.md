@@ -34,10 +34,18 @@ generation, signature) before its first write, so such a failure keeps the calle
 database error while it writes fails the caller's operation (BTD-111) when the entry belongs to
 the caller's transaction. An entry outside any transaction, such as the failure entry a service
 function appends after its rollback, is already committed: the checkpoint failure is only logged,
-the caller keeps its own error code, and the next entry tries again (BTD-143). Entries after a change that does not chain are never signed (`audit_chain_broken`).
-Once the chain announced a key, a checkpoint without a usable current key (row deleted, retired
-without successor, private part gone) fails with `audit_key_missing` and creates no new key
-(BTD-110).
+the caller keeps its own error code, and the next entry tries again (BTD-143).
+
+Entries after a change that does not chain are never signed (`audit_chain_broken`). Once the chain
+announced a key, a checkpoint without a usable current key (row deleted, retired without
+successor, private part gone) fails with `audit_key_missing` and creates no new key (BTD-110).
+
+An automatic checkpoint that failed for such a state (a broken chain, a missing key, a key that
+does not decrypt) is not tried again for every following entry: each try scans the whole unsigned
+part, so an import would take quadratic time and log one line per entry. The next try comes when
+a new checkpoint changes the head, after an explicit checkpoint, rotation or adoption, after a
+change of the database password, or when the database is opened again (BTD-144). A missing or
+wrong password source is tried again with the next entry, since that try scans nothing.
 
 The first key is not announced over a log whose unsigned part is longer than any writer with the
 database password leaves (more than interval + 1 entries, the revocation baseline excepted): such
