@@ -145,3 +145,27 @@ Binary XCA template exports from the fork's git history: `misc/CA.xca` at upstre
 `git show <commit>:misc/CA.xca`. `test_service_loaders::templatesImport` checks that old exports
 still import once the template loader accepts only well-formed exports (BTD-88): both have a size
 field equal to the remaining length, like every export since.
+
+## `audit-legacy-spelling.sql`
+
+SQL dump (Python `sqlite3.iterdump()`) of a database whose audit log was written before BTD-97
+unified the spelling of audit values: the revocation baseline has `object_type` `cert` and the
+audit key announcement (`audit.key_create`) has `key_type` `ed25519`.
+`test_service_audit::legacySpellingVerifies` checks that this log still verifies, also after new
+entries and a key rotation in the new spelling (`certificate`, `ED25519`).
+
+Content: `schema8-fork.sql` upgraded by the fork (revocation baseline of the one revocation,
+`audit.init`), a generated Ed25519 key (`fixture-ed25519`) and the first audit key with its signed
+checkpoint, written by the audit export with the password. The private keys are throwaway test
+keys, encrypted with `ServiceTestCase::dbPassword`.
+
+Created in the dev container with a build of bxc-main `172003a6` (before BTD-97):
+
+```
+python3 -c "import sqlite3; sqlite3.connect('fixture.xdb').executescript(open('schema8-fork.sql').read())"
+xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --keygen ED25519 --name fixture-ed25519
+xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --audit-export export.jsonl
+python3 -c "import sqlite3; open('audit-legacy-spelling.sql','w').write('\n'.join(sqlite3.connect('fixture.xdb').iterdump())+'\n')"
+```
+
+Regenerate it only with a build before BTD-97; a newer build writes the new spelling.

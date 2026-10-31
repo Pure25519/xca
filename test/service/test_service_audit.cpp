@@ -75,6 +75,7 @@ class test_service_audit : public ServiceTestCase
 	void upgradeForkDatabase();
 	void upgradeKeyTypeColumn();
 	void upgradeProfileTables();
+	void legacySpellingVerifies();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
 	void unverifiedOpenWritesNothing_data();
@@ -254,6 +255,8 @@ void test_service_audit::upgradeForkDatabase()
 	QList<AuditEntry> baseline = AuditLog::entries();
 	QCOMPARE(baseline.size(), 2);
 	QCOMPARE(baseline[0].action, QString(AuditLog::actionRevocationBaseline));
+	/* "certificate" as every certificate entry (BTD-97) */
+	QCOMPARE(baseline[0].objectType, QString("certificate"));
 	QCOMPARE(baseline[0].objectId, QString("01A2B3"));
 	QCOMPARE(baseline[0].params.value("ca_id").toLongLong(), qint64(2));
 	QCOMPARE(baseline[0].params.value("revocation_date").toString(),
@@ -413,6 +416,47 @@ void test_service_audit::upgradeProfileTables()
 	QVERIFY2(!q.exec("INSERT INTO renewals (item, predecessor, "
 			"predecessor_serial, rekey) SELECT min(id), 4, '0B', 1 FROM items"),
 			"one predecessor per certificate");
+}
+
+/* Entries written before BTD-97 keep their spelling: the hash chain
+ * forbids rewriting them. A log with the baseline object_type "cert"
+ * and the audit key type "ed25519" still verifies, also after entries
+ * in the new spelling. */
+void test_service_audit::legacySpellingVerifies()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "audit-legacy-spelling.sql");
+	openDatabase();
+
+	QList<AuditEntry> entries = AuditLog::entries();
+	QStringList legacy;
+	for (const AuditEntry &e : entries) {
+		if (e.action == AuditLog::actionRevocationBaseline)
+			legacy << "baseline:" + e.objectType;
+		if (e.action == AuditLog::actionKeyCreate)
+			legacy << "key_create:" +
+				e.params.value("key_type").toString();
+	}
+	QCOMPARE(legacy, QStringList({ "baseline:cert",
+				"key_create:ed25519" }));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.checkpoints, qint64(1));
+
+	/* New entries and a new audit key in the new spelling */
+	appendSample(2);
+	AuditLog::rotateKey(cliAlice);
+	reopenDatabase();
+	entries = AuditLog::entries();
+	QVERIFY(entries.size() > before["audit_log"].size());
+	r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.auditKeys.size(), 2);
+	QString lastKeyType;
+	for (const AuditEntry &e : entries)
+		if (e.action == AuditLog::actionKeyCreate)
+			lastKeyType = e.params.value("key_type").toString();
+	QCOMPARE(lastKeyType, QString("ED25519"));
 }
 
 void test_service_audit::upgradeWaitsForPassword_data()
