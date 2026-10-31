@@ -282,7 +282,7 @@ void pki_x509req::writeReq(QIODevice &file, bool pem) const
 	export_write(file, b, what());
 }
 
-bool pki_x509req::pem(BioByteArray &b)
+bool pki_x509req::pem(BioByteArray &b, const ExportOptions &)
 {
 	export_check(PEM_write_bio_X509_REQ(b, request),
 			"PEM_write_bio_X509_REQ", what());

@@ -142,12 +142,14 @@ class db_base: public QAbstractItemModel
 		 * throws their serviceError, writes nothing (bxc-pki
 		 * --plan, BTD-211) */
 		void checkExportSpec(const ExportSpec &spec) const;
-		/* The writers behind exportItems(): no prompt, no audit */
+		/* The writers behind exportItems(): no prompt, no audit;
+		 * the options of the export (BTD-183) */
 		virtual void writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &pass) const;
+			QIODevice &file, const Passwd &pass,
+			const ExportOptions &opts) const;
 		virtual void writeItems(const QList<pki_base *> &items,
 			const pki_export *xport, QIODevice &file,
-			const Passwd &pass) const;
+			const Passwd &pass, const ExportOptions &opts) const;
 		/* The objects a format writes for the items, e.g. the chain */
 		virtual QList<pki_base *> exportedObjects(
 			const QList<pki_base *> &items,
