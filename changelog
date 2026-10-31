@@ -1,6 +1,16 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-118: follow-ups of the validity cap (BTD-51). An issuance below a
+   CA whose end date is no valid time fails with invalid_validity naming
+   the CA, instead of issuing an uncapped certificate. The renewal dialog
+   warns like the New Certificate dialog when "No well-defined
+   expiration" is ticked under a CA with a finite end; "Adjust date and
+   continue" unticks it and takes the CA's end. requested_not_after is
+   null for the undefined date, like not_after. With the time hidden the
+   dialog's end is 23:59:59 of its day, so it may warn again under a CA
+   that ends earlier that day; the issuance caps anyway (upstream
+   behaviour kept).
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,
