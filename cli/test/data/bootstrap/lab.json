@@ -58,6 +58,7 @@
       "key": "ec-p256",
       "hash": "sha256",
       "validity": "P10Y",
+      "path_len": 0,
       "issued_with": "issuing-ca",
       "profiles": ["tls-server"],
       "policies": ["lab-names"],
@@ -80,6 +81,7 @@
       "subject": { "O": "BxC Security", "OU": "OT Lab", "C": "DE" },
       "key": "ml-dsa-65",
       "validity": "P10Y",
+      "path_len": 0,
       "issued_with": "issuing-ca",
       "policies": ["lab-names"],
       "crl": { "validity": "P7D" }

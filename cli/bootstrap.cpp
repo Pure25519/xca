@@ -324,12 +324,14 @@ class Run
 	const FileDef &f;
 	QList<Decision> decisions{};
 	QJsonArray uncheckedList{};
+	QList<QPair<QString, QString> > warningList{};  // code, detail
 	QMap<QString, pki_x509 *> made{};
 
 	void record(Decision &d, const serviceError &err);
 	bool known(const QString &kind, const QString &id,
 		bool *retired = nullptr) const;
 	void references(const CaDef &c) const;
+	void issuedWithFits(const CaDef &c);
 	void evaluateDoc(Decision &d);
 	void evaluateCa(Decision &d);
 	void applyDoc(Decision &d);
@@ -404,6 +406,7 @@ void Run::evaluate()
 {
 	decisions.clear();
 	uncheckedList = QJsonArray();
+	warningList.clear();
 	if (ctx.plan) {
 		for (const SecretField &s : secrets()) {
 			if (s.value.startsWith("op://")) {
@@ -516,6 +519,7 @@ void Run::evaluateCa(Decision &d)
 	d.subject = subjectOf(c);
 	d.def = definition(c, f);
 	references(c);
+	issuedWithFits(c);
 	/* rule 1: a CA whose parent (or a CA above it) forbids it by its
 	 * path_len is refused */
 	int below = 1;
@@ -678,6 +682,42 @@ void Run::references(const CaDef &c) const
 			check(k.second, ids[i], jsonItem(jsonMember(c.pointer,
 				k.first), i), true);
 	}
+}
+
+/* issued_with is not applied, but a profile that contradicts the CA would
+ * be a misleading record: every mismatch of the profile (from the file or
+ * the database) with the CA's key type, path_len and validity is a
+ * warning issued_with_mismatch at the pointer of issued_with (BTD-233).
+ * The validity is the one the CA is made with: not_before or now, then
+ * not_after or validity (default P10Y for a root, P5Y below) */
+void Run::issuedWithFits(const CaDef &c)
+{
+	if (c.issuedWith.isEmpty())
+		return;
+	QJsonObject doc;
+	for (const DocDef &d : f.docs)
+		if (d.kind == "profile" && d.id == c.issuedWith)
+			doc = d.doc;
+	if (doc.isEmpty())
+		doc = ProfileStore::show("profile", c.issuedWith).document;
+	Profile p;
+	QDateTime from, to;
+	try {
+		p = Profile::fromJson(doc);
+		from = c.notBefore.isEmpty() ? QDateTime::currentDateTimeUtc() :
+			(QDateTime)parseTimestamp(c.notBefore, "not_before");
+		to = !c.notAfter.isEmpty() ?
+			(QDateTime)parseTimestamp(c.notAfter, "not_after") :
+			parseDuration(!c.validity.isEmpty() ? c.validity :
+				c.parent.isEmpty() ? "P10Y" : "P5Y", "validity")
+				.addTo(from);
+	} catch (errorEx &) {
+		return;  // the profile entry or the CA reports it
+	}
+	QString ptr = jsonMember(c.pointer, "issued_with");
+	for (const auto &m : p.caMismatches(c.key, c.pathLen, from, to))
+		warningList << qMakePair(QString("issued_with_mismatch"),
+			QString("%1: %2 (%3)").arg(ptr, m.second, m.first));
 }
 
 int Run::count(const QString &action) const
@@ -919,6 +959,8 @@ QJsonObject Run::entry(const Decision &d) const
 
 QJsonObject Run::report() const
 {
+	for (const auto &w : warningList)
+		ctx.result->warning(w.first, w.second);
 	QJsonObject b, counts;
 	b["file"] = f.path;
 	b["file_sha256"] = f.sha256;
