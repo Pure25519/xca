@@ -7,7 +7,9 @@
  * (BTD-110): removed checkpoints and keys, a checkpoint that does not
  * sign its predecessor, changed checkpoint metadata, a missing key.
  * A failing automatic checkpoint never takes the caller's change with
- * it, and never asks for the password (BTD-111).
+ * it, and never asks for the password (BTD-111). An export of a log in
+ * one of those states is read-only instead of failing, and the audit key
+ * is stored with an explicit PBKDF2 count (BTD-112).
  */
 
 #include <QThread>
@@ -87,6 +89,7 @@ class test_service_checkpoint : public ServiceTestCase
 	static QByteArray publicPem(EVP_PKEY *pkey);
 	static QString signature(EVP_PKEY *pkey, const QVariantMap &params);
 	static QString errorCode(std::function<void()> call);
+	static int storedIterations();
 	QString writeFile(const QString &name, const QByteArray &data);
 	QString keyAtCheckpoint(int n, const QString &name);
 #ifdef OPENSSL_PROGRAM
@@ -126,6 +129,11 @@ class test_service_checkpoint : public ServiceTestCase
 	void unusableKeyKeepsChange();
 	void automaticCheckpointNeverAsks();
 	void neverSignsBrokenTail();
+	void forensicExport_data();
+	void forensicExport();
+	void auditKeyIterations();
+	void oldKeyStillSigns();
+	void emptyPasswordSigns();
 	void keyRotation();
 	void passwordChange();
 	void reservedActions();
@@ -314,6 +322,38 @@ QString test_service_checkpoint::errorCode(std::function<void()> call)
 		return "errorEx: " + err.getString();
 	}
 	return QString();
+}
+
+/* The PBKDF2 iteration count of the stored current audit key */
+int test_service_checkpoint::storedIterations()
+{
+	QByteArray der = QByteArray::fromBase64(sqlValue(
+		"SELECT private FROM audit_keys WHERE retired=0").toByteArray());
+	const unsigned char *p = (const unsigned char *)der.constData();
+	X509_SIG *p8 = d2i_X509_SIG(NULL, &p, der.size());
+	int iter = -1;
+	if (!p8)
+		return iter;
+	const X509_ALGOR *alg = nullptr;
+	X509_SIG_get0(p8, &alg, NULL);
+	PBE2PARAM *pbe2 = OBJ_obj2nid(alg->algorithm) != NID_pbes2 ? nullptr :
+		(PBE2PARAM *)ASN1_TYPE_unpack_sequence(
+			ASN1_ITEM_rptr(PBE2PARAM), alg->parameter);
+	if (pbe2 && OBJ_obj2nid(pbe2->keyfunc->algorithm) == NID_id_pbkdf2) {
+		PBKDF2PARAM *kdf = (PBKDF2PARAM *)ASN1_TYPE_unpack_sequence(
+			ASN1_ITEM_rptr(PBKDF2PARAM), pbe2->keyfunc->parameter);
+		if (kdf) {
+			int prf = kdf->prf ? OBJ_obj2nid(kdf->prf->algorithm) :
+					NID_hmacWithSHA1;
+			if (prf == NID_hmacWithSHA256 && OBJ_obj2nid(
+				pbe2->encryption->algorithm) == NID_aes_256_cbc)
+				iter = ASN1_INTEGER_get(kdf->iter);
+			PBKDF2PARAM_free(kdf);
+		}
+	}
+	PBE2PARAM_free(pbe2);
+	X509_SIG_free(p8);
+	return iter;
 }
 
 QString test_service_checkpoint::writeFile(const QString &name,
@@ -858,8 +898,7 @@ void test_service_checkpoint::forgedDeletionNotSigned()
 		QString("audit_checkpoint_missing"));
 	QCOMPARE(errorCode([&]() { AuditLog::rotateKey(ctx); }),
 		QString("audit_checkpoint_missing"));
-	QCOMPARE(errorCode([&]() { AuditLog::exportJsonLines(ctx); }),
-		QString("audit_checkpoint_missing"));
+	/* The export is read-only instead (BTD-112): forensicExport */
 	QCOMPARE(AuditLog::entries().size(), 11);
 }
 
@@ -1263,11 +1302,10 @@ void test_service_checkpoint::neverSignsBrokenTail()
 	appendSample(2);
 
 	/* An entry after the checkpoint changed without recomputing: no
-	 * checkpoint anchors it, the export fails, append() goes on */
+	 * checkpoint anchors it, the export is read-only (BTD-112),
+	 * append() goes on */
 	sql("UPDATE audit_log SET actor='os:mallory' WHERE seq=7");
 	QCOMPARE(errorCode([&]() { AuditLog::checkpoint(ctx); }),
-		QString("audit_chain_broken"));
-	QCOMPARE(errorCode([&]() { AuditLog::exportJsonLines(ctx); }),
 		QString("audit_chain_broken"));
 	Settings["audit_checkpoint_interval"] = 1;
 	appendSample(1);
@@ -1277,6 +1315,137 @@ void test_service_checkpoint::neverSignsBrokenTail()
 	QCOMPARE(r.firstBrokenSeq, qint64(7));
 	QCOMPARE(r.reason, QString("hash"));
 	QCOMPARE(r.lastCheckpointSeq, qint64(5));
+}
+
+void test_service_checkpoint::forensicExport_data()
+{
+	QTest::addColumn<QString>("state");
+	QTest::addColumn<QString>("code");
+
+	QTest::newRow("chain broken") << "chain" << "audit_chain_broken";
+	QTest::newRow("key missing") << "key" << "audit_key_missing";
+	QTest::newRow("checkpoint missing") << "tail"
+					<< "audit_checkpoint_missing";
+}
+
+void test_service_checkpoint::forensicExport()
+{
+	QFETCH(QString, state);
+	QFETCH(QString, code);
+
+	/* A log in a state no checkpoint may sign is exported read-only
+	 * with the password too (BTD-112): every entry, the code and its
+	 * text for the caller, nothing written */
+	if (state == "chain") {
+		appendSample(3);
+		AuditLog::checkpoint(ctx);
+		appendSample(2);
+		sql("UPDATE audit_log SET actor='os:mallory' WHERE seq=7");
+	} else if (state == "key") {
+		Settings["audit_checkpoint_interval"] = 5;
+		appendSample(6);
+		sql("DELETE FROM audit_keys");
+	} else {
+		Settings["audit_checkpoint_interval"] = 5;
+		appendSample(10);
+		removeCheckpoints(true);
+		appendSample(1);
+	}
+	QMap<QString, QStringList> before = tableRows();
+	int entries = AuditLog::entries().size();
+
+	qint64 unsignedEntries = -1;
+	AuditSkippedCheckpoint skipped;
+	QByteArray out;
+	QCOMPARE(errorCode([&]() {
+		out = AuditLog::exportJsonLines(ctx, &unsignedEntries,
+						&skipped);
+	}), QString());
+	QCOMPARE(out.count('\n'), entries);
+	QCOMPARE(skipped.code, code);
+	QVERIFY(!skipped.reason.isEmpty());
+	QVERIFY(unsignedEntries > 0);
+	QCOMPARE(tableRows(), before);
+	QVERIFY(!AuditLog::verify().ok());
+
+	/* Without the out-parameter the same export */
+	QCOMPARE(AuditLog::exportJsonLines(ctx), out);
+}
+
+void test_service_checkpoint::auditKeyIterations()
+{
+	/* PBES2, AES-256-CBC, PBKDF2-HMAC-SHA256 with the documented
+	 * count, not OpenSSL's default of 2048 (BTD-112) */
+	appendSample(2);
+	AuditLog::checkpoint(ctx);
+	QCOMPARE(storedIterations(), 600000);
+#ifdef OPENSSL_PROGRAM
+	/* As doc/audit-checkpoints.md checks it */
+	int rc;
+	QString der = writeFile("audit-key.der", QByteArray::fromBase64(
+		sqlValue("SELECT private FROM audit_keys WHERE retired=0")
+			.toByteArray()));
+	QByteArray parsed = openssl({ "asn1parse", "-inform", "DER",
+					"-in", der }, &rc);
+	QCOMPARE(rc, 0);
+	QVERIFY2(parsed.contains(":0927C0") || parsed.contains(":927C0"),
+		parsed.constData());
+	QVERIFY2(parsed.contains("hmacWithSHA256"), parsed.constData());
+#endif
+}
+
+void test_service_checkpoint::oldKeyStillSigns()
+{
+	/* A key stored before BTD-112, with the default count 2048 */
+	appendSample(2);
+	AuditLog::checkpoint(ctx);
+	EVP_PKEY *pkey = auditPrivateKey();
+	QVERIFY(pkey);
+	PKCS8_PRIV_KEY_INFO *inf = EVP_PKEY2PKCS8(pkey);
+	X509_SIG *p8 = PKCS8_encrypt_ex(-1, EVP_aes_256_cbc(), dbPassword,
+			strlen(dbPassword), NULL, 0, PKCS5_DEFAULT_ITER, inf,
+			NULL, NULL);
+	BioByteArray der;
+	QVERIFY(p8 && i2d_PKCS8_bio(der, p8) > 0);
+	X509_SIG_free(p8);
+	PKCS8_PRIV_KEY_INFO_free(inf);
+	EVP_PKEY_free(pkey);
+	sql(QString("UPDATE audit_keys SET private='%1' WHERE retired=0")
+		.arg(QString::fromLatin1(der.byteArray().toBase64())));
+	QCOMPARE(storedIterations(), PKCS5_DEFAULT_ITER);
+
+	appendSample(1);
+	AuditLog::checkpoint(ctx);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 2);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	/* Read as it is; only a password change stores it anew */
+	QCOMPARE(storedIterations(), PKCS5_DEFAULT_ITER);
+}
+
+void test_service_checkpoint::emptyPasswordSigns()
+{
+	/* A database whose password is empty (the GUI allows it): the
+	 * audit key is encrypted with the empty password and signs */
+	pki_evp::passHash = pki_evp::sha512passwT(QByteArray(),
+						pki_evp::passHash);
+	pki_evp::passwd.cleanse();
+	QVERIFY(pki_evp::validateDatabasePassword(Passwd()));
+	appendSample(2);
+	AuditLog::checkpoint(ctx);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(storedIterations(), 600000);
+
+	QByteArray der = QByteArray::fromBase64(sqlValue(
+		"SELECT private FROM audit_keys WHERE retired=0").toByteArray());
+	X509_SIG *p8 = d2i_PKCS8_bio(BioByteArray(der).ro(), NULL);
+	QVERIFY(p8);
+	PKCS8_PRIV_KEY_INFO *inf = PKCS8_decrypt(p8, "", 0);
+	X509_SIG_free(p8);
+	QVERIFY(inf);
+	PKCS8_PRIV_KEY_INFO_free(inf);
 }
 
 void test_service_checkpoint::keyRotation()

@@ -926,15 +926,19 @@ AuditEntry AuditLog::adoptUnanchored(const ServiceContext &ctx)
 	return writeCheckpoint(ctx, false, true, true);
 }
 
-QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
+QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
 	return exportJsonLines(ServiceContext::localUser(
-			ServiceContext::processChannel), unsignedEntries);
+			ServiceContext::processChannel), unsignedEntries,
+			skipped);
 }
 
 QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
-				qint64 *unsignedEntries)
+				qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
+	(void)skipped;
 	QByteArray out;
 	QList<AuditEntry> list = entries();
 	qint64 lastCheckpoint = 0;

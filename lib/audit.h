@@ -248,6 +248,14 @@ class AuditStateMismatch
 	QVariantMap toMap() const;
 };
 
+/* The checkpoint an export could not sign (BTD-112): the error code and
+ * its text; an empty code if it signed one or none was due */
+class AuditSkippedCheckpoint {
+  public:
+	QString code{};
+	QString reason{};
+};
+
 class AuditVerifyResult
 {
   public:
@@ -386,9 +394,11 @@ class AuditLog
 	 * serviceError when a checkpoint is due and cannot be signed
 	 * (audit_password_rejected, audit_chain_broken). */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
-			qint64 *unsignedEntries = nullptr);
+			qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 	/* The same for the local user on the channel of this process */
-	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);
