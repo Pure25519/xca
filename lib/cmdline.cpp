@@ -118,6 +118,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::DatabasePassword, dbpass);
 		headless->setSource(pass_info::KeyPassword, dbpass);
 		headless->setSource(pass_info::SqlPassword, sqlpass);
+		/* the options of xca; nothing gives an import password */
+		headless->setOption(pass_info::DatabasePassword, "--password");
+		headless->setOption(pass_info::KeyPassword, "--password");
+		headless->setOption(pass_info::SqlPassword, "--sqlpass");
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
 		/* Questions likewise: "yes" only if confirmed here */
