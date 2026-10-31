@@ -129,6 +129,13 @@ add_test(NAME test_cli_password_empty_db
 		-P ${SERVICE_TEST_DIR}/cli_password_empty_db.cmake)
 set_tests_properties(test_cli_password_empty_db PROPERTIES LABELS service)
 
+# A failed --pem-file write keeps the old file (BTD-139)
+add_test(NAME test_cli_pem_file_atomic
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_pem_file_atomic
+		-P ${SERVICE_TEST_DIR}/cli_pem_file_atomic.cmake)
+set_tests_properties(test_cli_pem_file_atomic PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
@@ -319,6 +326,11 @@ endforeach()
 # Export integrity (BTD-199): a failing encoder is an error, never an
 # empty export; i2d_bytearray() never returns empty DER
 ServiceTest(test_service_export_integrity)
+
+# The remaining file writers (BTD-139): dump, index, DH parameters and the
+# .rnd seed write through StagedFile; a failed write keeps the old file,
+# key material is owner-only from the creation of the file on
+ServiceTest(test_service_file_writers)
 
 ServiceTest(test_service_export_defaults)
 if(OPENSSL_PROGRAM)
