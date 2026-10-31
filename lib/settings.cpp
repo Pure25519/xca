@@ -12,6 +12,7 @@
 #include "digest.h"
 #include "pki_pkcs12.h"
 #include "pki_export.h"
+#include "audit.h"
 
 #include <QDebug>
 #include <QDir>
@@ -202,4 +203,48 @@ void settings::set(QString key, QString value)
 		else
 			values.remove(origkey);
 	});
+}
+
+/* The options of the Options dialog (the keys of its shown()):
+ * their values go into the audit log in clear (BTD-224) */
+static const QStringList clearSettings {
+	"adapt_explicit_subj", "cert_expiry", "default_hash",
+	"disable_netscape", "explicit_dn", "ical_expiry", "mandatory_dn",
+	"no_expire_colors", "only_token_hashes", "pkcs11path",
+	"pkcs12_enc_algo", "serial_len", "string_opt", "suppress_messages",
+	"translate_dn",
+};
+
+static bool clearSetting(const QString &key)
+{
+	/* never a password or the password hash, whatever the list says */
+	if (key.contains("pass", Qt::CaseInsensitive) || key == "pwhash")
+		return false;
+	return clearSettings.contains(key);
+}
+
+void settings::update(const ServiceContext &ctx,
+			const QMap<QString, QString> &changes)
+{
+	Transaction;
+	TransThrow();
+	for (auto i = changes.cbegin(); i != changes.cend(); ++i) {
+		QString old = get(i.key());
+		set(i.key(), i.value());
+		QString now = get(i.key());
+		/* set() skips a value it does not take (a workingdir
+		 * that does not exist) */
+		if (now == old)
+			continue;
+		AuditParams params;
+		params.set("setting", hostspecific.contains(i.key()) ?
+			QString("%1:%2").arg(i.key()).arg(hostId()) : i.key());
+		if (clearSetting(i.key()))
+			params.set("old_value", old).set("new_value", now);
+		else
+			params.set("redacted", true);
+		AuditLog::append(ctx, AuditLog::actionSettingsUpdate,
+				"database", QString(), params);
+	}
+	TransCommitThrow();
 }

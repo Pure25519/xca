@@ -134,8 +134,9 @@ class db_base: public QAbstractItemModel
 		}
 		/* Exports the items (BTD-34). Throws serviceError for a
 		 * rejected spec and errorEx for anything else; one audit entry
-		 * object.export per exported object and key.export_private per
-		 * private key in the output, or one object.export failure. No
+		 * object.export per exported object, key.export_private per
+		 * private key and secret.export per symmetric secret in the
+		 * output (BTD-90), or one object.export failure. No
 		 * question or message; call it outside a transaction.
 		 * Returns the exported bytes, also when they went to a file. */
 		QByteArray exportItems(const ServiceContext &ctx,
@@ -159,6 +160,12 @@ class db_base: public QAbstractItemModel
 			const pki_export *xport) const;
 		/* The private keys a format writes for the items */
 		virtual QList<pki_key *> exportedPrivateKeys(
+			const QList<pki_base *> &items,
+			const pki_export *xport) const;
+		/* The objects whose symmetric secret a format writes for the
+		 * items (BTD-90): the certificate that stores an OpenVPN
+		 * tls-auth key */
+		virtual QList<pki_base *> exportedSecrets(
 			const QList<pki_base *> &items,
 			const pki_export *xport) const;
 		/* True if the format writes the private key of an ML-DSA key:

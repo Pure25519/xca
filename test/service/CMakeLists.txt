@@ -1,5 +1,12 @@
 
 # Service-layer tests, ctest label "service". How to add one: README.md here.
+#
+# Registration is by file name (BTD-256), so that branches that add tests
+# do not edit the same lines:
+#  - test_service_<name>.cpp is one service test of that name;
+#  - cli_<name>.cmake is one CMake script test test_cli_<name>;
+# both found with file(GLOB). Only a test that needs more than the common
+# settings has lines of its own below, kept in alphabetical order.
 
 set(SERVICE_TEST_DIR ${PROJECT_SOURCE_DIR}/test/service)
 
@@ -20,11 +27,24 @@ macro(Headless test)
   endif()
 endmacro()
 
-# ServiceTest(<name>) builds test/service/<name>.cpp into one ctest
+find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
+find_program(SERVICE_SETPRIV setpriv)
+
+# ServiceTest(<name>) builds test/service/<name>.cpp into one ctest. Every
+# test gets the same settings; a test that does not use one ignores it:
+# SERVICE_TEST_DATA (test/service/data), XCA_SOURCE_DIR (the source tree)
+# and, if the program was found, OPENSSL_PROGRAM (checks with openssl).
 macro(ServiceTest name)
   add_executable(${name} ${SERVICE_TEST_DIR}/${name}.cpp)
   target_link_libraries(${name} xcaservicetest)
   target_link_options(${name} PRIVATE -pthread)
+  target_compile_definitions(${name} PRIVATE
+	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
+  if(OPENSSL_PROGRAM)
+    target_compile_definitions(${name} PRIVATE
+	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
+  endif()
   add_test(NAME ${name} COMMAND ${name})
   set_tests_properties(${name} PROPERTIES LABELS service)
   Headless(${name})
@@ -32,312 +52,54 @@ macro(ServiceTest name)
   list(APPEND CORE_BINARIES ${name})
 endmacro()
 
-ServiceTest(test_service_harness)
-# Key usage by the subject key type, every issuance (BTD-195)
-ServiceTest(test_service_key_usage)
-ServiceTest(test_service_key)
-# Extensions under an OID OpenSSL does not know (BTD-169)
-ServiceTest(test_service_unknown_extensions)
-# The options of an export reach only its writers (BTD-183)
-ServiceTest(test_service_export_options)
-# the source scan for printf conversions in .arg() messages (BTD-184)
-target_compile_definitions(test_service_key PRIVATE
-	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-ServiceTest(test_service_secrets)
-ServiceTest(test_service_audit)
-target_compile_definitions(test_service_audit PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
-	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-
-# Signed audit checkpoints (BTD-37); signatures checked with openssl pkeyutl
-ServiceTest(test_service_checkpoint)
-
-# The outer commit after a nested rollback reports failure (BTD-142)
-ServiceTest(test_service_transaction)
-
-# Memory follows the database after a rollback (BTD-130)
-ServiceTest(test_service_memory)
-
-# A failed SQL write is a typed service error (BTD-50)
-ServiceTest(test_service_sql_errors)
-
-# xca --no-gui: no colour codes off a terminal, no false parser warning
-add_test(NAME test_cli_plain_output
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_plain_output
-		-P ${SERVICE_TEST_DIR}/cli_plain_output.cmake)
-set_tests_properties(test_cli_plain_output PROPERTIES LABELS service)
-
-# The harness must fail a test on an unexpected prompt
-add_test(NAME test_service_harness_selfcheck
-	COMMAND test_service_harness selfcheckUnexpectedPrompt)
-set_tests_properties(test_service_harness_selfcheck PROPERTIES LABELS service
-	ENVIRONMENT XCA_SERVICE_SELFCHECK=1
-	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckUnexpectedPrompt\\(\\)[^\n]*unexpected password prompt")
-Headless(test_service_harness_selfcheck)
-
-# The empty-DER check of cleanup() must fail when its query cannot run
-# (BTD-181), not pass silently
-add_test(NAME test_service_harness_selfcheck_der
-	COMMAND test_service_harness selfcheckEmptyDerQuery)
-set_tests_properties(test_service_harness_selfcheck_der PROPERTIES
-	LABELS service ENVIRONMENT XCA_SERVICE_SELFCHECK=1
-	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckEmptyDerQuery\\(\\)[^\n]*empty DER check failed[^\n]*cert")
-Headless(test_service_harness_selfcheck_der)
-
-# xca --no-gui with a missing password exits non-zero instead of prompting
-add_test(NAME test_cli_missing_password
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_missing_password
-		-P ${SERVICE_TEST_DIR}/cli_missing_password.cmake)
-set_tests_properties(test_cli_missing_password PROPERTIES LABELS service)
-add_dependencies(tests ${CMAKE_PROJECT_NAME})
-
-# xca --no-gui --interactive without a terminal: a password error (BTD-145)
-add_test(NAME test_cli_interactive_no_tty
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_interactive_no_tty
-		-P ${SERVICE_TEST_DIR}/cli_interactive_no_tty.cmake)
-set_tests_properties(test_cli_interactive_no_tty PROPERTIES LABELS service)
-
-# xca --no-gui answers questions only with --yes or --confirm (BTD-71)
-add_test(NAME test_cli_confirmations
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_confirmations
-		-P ${SERVICE_TEST_DIR}/cli_confirmations.cmake)
-set_tests_properties(test_cli_confirmations PROPERTIES LABELS service)
-
-# xca --no-gui checks a given database password on open (BTD-78)
-add_test(NAME test_cli_password_verify
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_verify
-		-P ${SERVICE_TEST_DIR}/cli_password_verify.cmake)
-set_tests_properties(test_cli_password_verify PROPERTIES LABELS service)
+file(GLOB service_tests CONFIGURE_DEPENDS
+	${SERVICE_TEST_DIR}/test_service_*.cpp)
+list(SORT service_tests)
+foreach(src ${service_tests})
+  get_filename_component(t ${src} NAME_WE)
+  ServiceTest(${t})
+endforeach()
 
 # sqlite3 for the CLI tests: prepares databases the CLI cannot create
 add_executable(sql_exec ${SERVICE_TEST_DIR}/sql_exec.cpp)
 target_link_libraries(sql_exec ${QT}::Sql ${ASAN_LIB})
 add_dependencies(tests sql_exec)
+add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
-# A given password is checked on a database with an empty password too,
-# and a rejected one leaves an old database unchanged (BTD-117)
-add_test(NAME test_cli_password_empty_db
+# CliScriptTest(<name>) runs test/service/cli_<name>.cmake as the ctest
+# test_cli_<name>. Every script gets the same variables; its header names
+# the ones it uses: XCA, SQL_EXEC, OPENSSL (empty without the program),
+# SETPRIV, DATA (test/service/data), SOURCE (the source tree) and WORK (its
+# own scratch directory).
+macro(CliScriptTest name)
+  add_test(NAME test_cli_${name}
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
 		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
-		-DDUMP=${SERVICE_TEST_DIR}/data/schema8-fork.sql
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_empty_db
-		-P ${SERVICE_TEST_DIR}/cli_password_empty_db.cmake)
-set_tests_properties(test_cli_password_empty_db PROPERTIES LABELS service)
-
-# The debug output of xca --no-gui never shows --password or --sqlpass values
-add_test(NAME test_cli_debug_secrets
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_debug_secrets
-		-P ${SERVICE_TEST_DIR}/cli_debug_secrets.cmake)
-set_tests_properties(test_cli_debug_secrets PROPERTIES LABELS service)
-
-# --password serves every database password request of one command
-find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
-if(OPENSSL_PROGRAM)
-  add_test(NAME test_cli_password_sources
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
 		-DOPENSSL=${OPENSSL_PROGRAM}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_password_sources
-		-P ${SERVICE_TEST_DIR}/cli_password_sources.cmake)
-  set_tests_properties(test_cli_password_sources PROPERTIES LABELS service)
-else()
-  message(STATUS "openssl program not found: test_cli_password_sources skipped")
-endif()
-
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_checkpoint PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# Certificate issuance (BTD-31); checks the chain with openssl verify
-ServiceTest(test_service_issuance)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_issuance PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# A failed signature is an error, never a stored object (BTD-171)
-ServiceTest(test_service_signing_failure)
-
-# The content of a CRL matches the database, or it is not signed (BTD-198)
-ServiceTest(test_service_crl_build)
-
-# A certificate or request is complete, or it is not stored (BTD-200)
-ServiceTest(test_service_cert_build)
-
-# Every loader checks its OpenSSL result: broken input is an import error,
-# never an empty object (BTD-95)
-ServiceTest(test_service_loaders)
-# old binary template exports in data/templates (BTD-88)
-target_compile_definitions(test_service_loaders PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-
-# OpenSSL results a service path checks itself: key encryption, the audit
-# checkpoint signature, refused subject entries (BTD-95)
-ServiceTest(test_service_openssl_checks)
-
-# Extension input OpenSSL cannot encode is an error, not a missing
-# extension (BTD-197)
-ServiceTest(test_service_extension_errors)
-
-# Checks before every signature: path length, issuer, CSR, OPC UA chains
-# (BTD-55)
-ServiceTest(test_service_signing)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_signing PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# Device CSRs of the IDIAL corpus under the profiles (BTD-65)
-ServiceTest(test_service_csr_acceptance)
-target_compile_definitions(test_service_csr_acceptance PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_csr_acceptance PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# What a CSR adds per extension, the profile engine (BTD-54), the name
-# checks and policies (BTD-167)
-foreach(t test_service_merge test_service_profiles test_service_names
-	test_service_profile_store test_service_template_migration)
-  ServiceTest(${t})
-  target_compile_definitions(${t} PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-  if(OPENSSL_PROGRAM)
-    target_compile_definitions(${t} PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-  endif()
-endforeach()
-
-target_compile_definitions(test_service_template_migration PRIVATE
-	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-
-# RFC 5280 upper bounds of DN values (BTD-202)
-ServiceTest(test_service_dn_bounds)
-target_compile_definitions(test_service_dn_bounds PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_dn_bounds PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# the default templates of misc/ against every key type (BTD-203)
-ServiceTest(test_service_default_templates)
-target_compile_definitions(test_service_default_templates PRIVATE
-	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
-
-# renewal and re-key as a service function (BTD-56)
-ServiceTest(test_service_renewal)
-target_compile_definitions(test_service_renewal PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_renewal PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# xca --no-gui exits 1 when a command fails, 0 when it succeeds
-add_test(NAME test_cli_exit_codes
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DOPENSSL=${OPENSSL_PROGRAM}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_exit_codes
-		-P ${SERVICE_TEST_DIR}/cli_exit_codes.cmake)
-set_tests_properties(test_cli_exit_codes PROPERTIES LABELS service)
-
-# xca --migrate-template turns a template into a profile (BTD-167)
-add_test(NAME test_cli_migrate_template
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DSOURCE=${PROJECT_SOURCE_DIR}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_migrate_template
-		-P ${SERVICE_TEST_DIR}/cli_migrate_template.cmake)
-set_tests_properties(test_cli_migrate_template PROPERTIES LABELS service)
-
-# Key generation and request creation (BTD-32); openssl req -verify
-ServiceTest(test_service_request)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_request PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# Key sizes as openssl pkey reads them (BTD-94)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_key PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# --keygen and --help for Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-16)
-add_test(NAME test_cli_keygen_types
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_keygen_types
-		-P ${SERVICE_TEST_DIR}/cli_keygen_types.cmake)
-set_tests_properties(test_cli_keygen_types PROPERTIES LABELS service)
-
-# xca --no-gui on a read-only database: exit 1, read_only_database (BTD-50)
-find_program(SERVICE_SETPRIV setpriv)
-add_test(NAME test_cli_readonly_database
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
 		-DSETPRIV=${SERVICE_SETPRIV}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_readonly_database
-		-P ${SERVICE_TEST_DIR}/cli_readonly_database.cmake)
-set_tests_properties(test_cli_readonly_database PROPERTIES LABELS service)
+		-DDATA=${SERVICE_TEST_DIR}/data
+		-DSOURCE=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_${name}
+		-P ${SERVICE_TEST_DIR}/cli_${name}.cmake)
+  set_tests_properties(test_cli_${name} PROPERTIES LABELS service)
+endmacro()
 
-# Revocation and CRL generation (BTD-33); checks every CRL with openssl crl
-ServiceTest(test_service_revocation)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_revocation PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
+# Scripts that need the openssl program; without it they are skipped
+set(cli_needs_openssl password_sources)
 
-# Signing with Ed25519, Ed448, ML-DSA and SLH-DSA (BTD-164); every
-# object checked with the openssl program
-ServiceTest(test_service_pqc_signing)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_pqc_signing PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# Import and export (BTD-34); files made and checked with the openssl program
-ServiceTest(test_service_importexport)
-target_compile_definitions(test_service_importexport PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_importexport PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# ML-DSA keys under an openssl.cnf that changes the default provider
-# (BTD-16): the same test functions with data/mldsa-<mode>.cnf; prefer_seed
-# also in the other spellings OpenSSL reads as false (BTD-194). Each run
-# checks first that OpenSSL loaded the cnf (checkOpensslConf)
-foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
-  add_test(NAME test_service_importexport_cnf_${mode}
-	COMMAND test_service_importexport mlDsaUnderOpensslConf
-		mlDsaSeedlessPasswordChange)
-  set_tests_properties(test_service_importexport_cnf_${mode} PROPERTIES
-	LABELS service
-	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
-  Headless(test_service_importexport_cnf_${mode})
+file(GLOB cli_scripts CONFIGURE_DEPENDS ${SERVICE_TEST_DIR}/cli_*.cmake)
+list(SORT cli_scripts)
+foreach(script ${cli_scripts})
+  get_filename_component(name ${script} NAME_WE)
+  string(REGEX REPLACE "^cli_" "" name ${name})
+  if(NOT OPENSSL_PROGRAM AND name IN_LIST cli_needs_openssl)
+    message(STATUS "openssl program not found: test_cli_${name} skipped")
+    continue()
+  endif()
+  CliScriptTest(${name})
 endforeach()
 
-# Secure export defaults (BTD-52); every export read back with openssl
-# Export integrity (BTD-199): a failing encoder is an error, never an
-# empty export; i2d_bytearray() never returns empty DER
-ServiceTest(test_service_export_integrity)
-
-ServiceTest(test_service_export_defaults)
-if(OPENSSL_PROGRAM)
-  target_compile_definitions(test_service_export_defaults PRIVATE
-	OPENSSL_PROGRAM="${OPENSSL_PROGRAM}")
-endif()
-
-# Templates, rename and delete (BTD-35)
-ServiceTest(test_service_template)
-ServiceTest(test_service_objects)
+# --- Tests with settings of their own, in alphabetical order ---
 
 # xcacore without Qt Widgets, Gui and Help (BTD-36). test_core_sources
 # greps its sources for GUI code; test_core_link links every object of
@@ -377,48 +139,39 @@ else()
   message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
 endif()
 
-# JSON documents of the objects and list outputs (BTD-39)
-ServiceTest(test_service_json)
-target_compile_definitions(test_service_json PRIVATE
-	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data")
-
-# xca --no-gui --json: JSON Lines on stdout, error objects, no secrets
-add_test(NAME test_cli_json_output
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DDATA=${SERVICE_TEST_DIR}/data/json
-		-DOPENSSL=${OPENSSL_PROGRAM}
-		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_json_output
-		-P ${SERVICE_TEST_DIR}/cli_json_output.cmake)
-set_tests_properties(test_cli_json_output PROPERTIES LABELS service)
-
-# The challengePassword of a request is never shown in clear text (BTD-168)
-add_test(NAME test_cli_challenge_password
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DDATA=${SERVICE_TEST_DIR}/data/json
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_challenge_password
-		-P ${SERVICE_TEST_DIR}/cli_challenge_password.cmake)
-set_tests_properties(test_cli_challenge_password PROPERTIES LABELS service)
-
-# A database with an unreadable row that the reader may not write: open,
-# read and verify work, no audit entry is left (BTD-209)
-find_program(SKIPPED_ROWS_SETPRIV setpriv)
-add_test(NAME test_cli_skipped_rows_readonly
-	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
-		-DSETPRIV=${SKIPPED_ROWS_SETPRIV}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_skipped_rows_readonly
-		-P ${SERVICE_TEST_DIR}/cli_skipped_rows_readonly.cmake)
-set_tests_properties(test_cli_skipped_rows_readonly PROPERTIES LABELS service)
-
 # no internal references in the public fork (BTD-236)
 add_test(NAME test_private_refs
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
 		-P ${SERVICE_TEST_DIR}/private_refs.cmake)
 set_tests_properties(test_private_refs PROPERTIES LABELS service)
 
-# model signals of the insert path (BTD-231)
-ServiceTest(test_service_model_signals)
+# The harness must fail a test on an unexpected prompt
+add_test(NAME test_service_harness_selfcheck
+	COMMAND test_service_harness selfcheckUnexpectedPrompt)
+set_tests_properties(test_service_harness_selfcheck PROPERTIES LABELS service
+	ENVIRONMENT XCA_SERVICE_SELFCHECK=1
+	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckUnexpectedPrompt\\(\\)[^\n]*unexpected password prompt")
+Headless(test_service_harness_selfcheck)
 
-# the reload keeps the object of each row (BTD-238)
-ServiceTest(test_service_reload)
+# The empty-DER check of cleanup() must fail when its query cannot run
+# (BTD-181), not pass silently
+add_test(NAME test_service_harness_selfcheck_der
+	COMMAND test_service_harness selfcheckEmptyDerQuery)
+set_tests_properties(test_service_harness_selfcheck_der PROPERTIES
+	LABELS service ENVIRONMENT XCA_SERVICE_SELFCHECK=1
+	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_harness::selfcheckEmptyDerQuery\\(\\)[^\n]*empty DER check failed[^\n]*cert")
+Headless(test_service_harness_selfcheck_der)
+
+# ML-DSA keys under an openssl.cnf that changes the default provider
+# (BTD-16): the same test functions with data/mldsa-<mode>.cnf; prefer_seed
+# also in the other spellings OpenSSL reads as false (BTD-194). Each run
+# checks first that OpenSSL loaded the cnf (checkOpensslConf)
+foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
+  add_test(NAME test_service_importexport_cnf_${mode}
+	COMMAND test_service_importexport mlDsaUnderOpensslConf
+		mlDsaSeedlessPasswordChange)
+  set_tests_properties(test_service_importexport_cnf_${mode} PROPERTIES
+	LABELS service
+	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
+  Headless(test_service_importexport_cnf_${mode})
+endforeach()
