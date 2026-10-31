@@ -588,9 +588,22 @@ int AuditLog::checkpointInterval()
 
 static QSet<QString> checkpointNotices;
 
+/* The last checkpoint seq over which an automatic checkpoint failed for a
+ * reason the next entry cannot change (a broken chain, a key that is
+ * missing or does not decrypt), -1 for none. Until the head or the key
+ * state changes, append() does not try again: every try scans the whole
+ * unsigned tail, an import would be O(n^2) (BTD-144). */
+static qint64 failedCheckpointHead = -1;
+
+void AuditLog::retryFailedCheckpoint()
+{
+	failedCheckpointHead = -1;
+}
+
 void AuditLog::resetCheckpointNotices()
 {
 	checkpointNotices.clear();
+	retryFailedCheckpoint();
 }
 
 /* The next step for a skipped automatic checkpoint (BTD-148) */
@@ -649,7 +662,8 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	if (inTransaction && result != "success")
 		AuditFailureCapture::record(ctx, action, objectType, objectId,
 				params, result, errorCode);
-	if (e.seq - lastCheckpointSeq() < checkpointInterval())
+	qint64 head = lastCheckpointSeq();
+	if (e.seq - head < checkpointInterval() || head == failedCheckpointHead)
 		return e;
 	bool writing = false;
 	/* insertEntry() has committed or joined the caller's transaction */
@@ -666,6 +680,12 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 		 * error and the next append() tries again (BTD-143) */
 		if (writing && callerTransaction)
 			throw;
+		/* Without the password (or a wrong source) the next entry
+		 * may have it: no scan was made, try again */
+		const serviceError *se = dynamic_cast<serviceError *>(&err);
+		if (!writing && !(se && (se->code == "audit_key_unavailable" ||
+				se->code == "audit_password_rejected")))
+			failedCheckpointHead = head;
 		reportSkippedCheckpoint(e.seq, err);
 	}
 	return e;
@@ -951,18 +971,23 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	return e;
 }
 
+/* An explicit checkpoint always tries; the automatic ones try again
+ * afterwards (BTD-144) */
 AuditEntry AuditLog::checkpoint(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, false, true);
 }
 
 AuditEntry AuditLog::rotateKey(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, true, true);
 }
 
 AuditEntry AuditLog::adoptUnanchored(const ServiceContext &ctx)
 {
+	retryFailedCheckpoint();
 	return writeCheckpoint(ctx, false, true, true);
 }
 

@@ -345,6 +345,10 @@ class AuditLog
 	/* A skipped automatic checkpoint is shown to the user once per
 	 * error code (BTD-148); a newly opened database shows it again */
 	static void resetCheckpointNotices();
+	/* The next automatic checkpoint is tried again even if the last
+	 * one failed over the same head (BTD-144): after a change of the
+	 * audit keys or the password, and on open */
+	static void retryFailedCheckpoint();
 
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),

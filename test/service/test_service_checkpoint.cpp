@@ -1424,10 +1424,12 @@ void test_service_checkpoint::failedCheckpointNotRetried()
 	appendSample(2);
 	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
 	QString stored = sqlValue("SELECT private FROM audit_keys").toString();
+	/* entry 5, after the checkpoint row 4: in the unsigned tail */
+	appendSample(1);
 	if (state == "key")
 		sql("UPDATE audit_keys SET private='AAAA'");
 	else
-		sql("UPDATE audit_log SET actor='os:mallory' WHERE seq=2");
+		sql("UPDATE audit_log SET actor='os:mallory' WHERE seq=5");
 
 	skipLines.clear();
 	previousHandler = qInstallMessageHandler(skipLogger);
