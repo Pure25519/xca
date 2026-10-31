@@ -120,6 +120,7 @@ class test_service_checkpoint : public ServiceTestCase
 	void auditKeyNotUsableForSigning();
 	void exportSignsCheckpoint();
 	void exportWithoutPassword();
+	void exportCountMatchesVerify();
 	void exportWithWrongPassword();
 	void noPasswordKeepsEntry();
 	void checkpointFailureAfterWrite();
@@ -1241,15 +1242,35 @@ void test_service_checkpoint::exportWithoutPassword()
 				QString("pass:") + dbPassword);
 	out = AuditLog::exportJsonLines(ctx, &unsignedEntries);
 	QCOMPARE(out.count('\n'), 4);
-	QCOMPARE(unsignedEntries, qint64(0));
 	QVERIFY(QByteArray(out.split('\n')[3]).contains(
 			"\"action\":\"audit.checkpoint\""));
-	/* verify counts the checkpoint row itself (BTD-110) */
+	/* Counted like verify, the checkpoint row itself (BTD-110, BTD-134) */
+	QCOMPARE(unsignedEntries, qint64(1));
 	QCOMPARE(AuditLog::verify().unanchoredEntries, qint64(1));
 
 	/* Covered already: nothing to sign */
 	QCOMPARE(AuditLog::exportJsonLines(ctx, &unsignedEntries), out);
-	QCOMPARE(unsignedEntries, qint64(0));
+	QCOMPARE(unsignedEntries, qint64(1));
+}
+
+void test_service_checkpoint::exportCountMatchesVerify()
+{
+	/* A checkpoint, then unsigned entries, exported without a
+	 * password: the count of the warning is unanchored_entries of
+	 * verify, the checkpoint row included (BTD-134) */
+	appendSample(3);
+	AuditLog::checkpoint(ctx);
+	appendSample(2);
+	pki_evp::passwd.cleanse();
+	pwdialog->delegateTo(new PwDialogHeadless());
+	qint64 unsignedEntries = -1;
+	AuditSkippedCheckpoint skipped;
+	AuditLog::exportJsonLines(ctx, &unsignedEntries, &skipped);
+	QCOMPARE(skipped.code, QString("audit_key_unavailable"));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.unanchoredEntries, qint64(3));
+	QCOMPARE(unsignedEntries, r.unanchoredEntries);
 }
 
 void test_service_checkpoint::exportWithWrongPassword()
