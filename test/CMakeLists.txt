@@ -33,6 +33,39 @@ add_test(NAME test_no_worker_threads
 set_tests_properties(test_no_worker_threads PROPERTIES LABELS service)
 target_link_options(testxca PRIVATE -pthread)
 
+# Exactly one libcrypto, OpenSSL 4, in xca, bxc-pki and the test binaries
+# (BTD-251): a preload library lists the loaded objects at process exit.
+# The _injected run preloads the Debian libcrypto.so.3 and must be caught.
+if(UNIX AND NOT APPLE)
+  add_library(loadcheck MODULE ${PROJECT_SOURCE_DIR}/test/loadcheck/loadcheck.cpp)
+  target_link_libraries(loadcheck ${ASAN_LIB})
+  add_dependencies(tests loadcheck)
+  find_file(LOADCHECK_LIBCRYPTO3 libcrypto.so.3
+	PATHS /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib64 /usr/lib
+	NO_DEFAULT_PATH)
+  set(modes clean)
+  if(LOADCHECK_LIBCRYPTO3)
+    list(APPEND modes injected)
+  endif()
+  foreach(mode IN LISTS modes)
+    set(name test_one_libcrypto)
+    if(mode STREQUAL "injected")
+      set(name test_one_libcrypto_injected)
+    endif()
+    add_test(NAME ${name}
+	COMMAND ${CMAKE_COMMAND} -DMODE=${mode}
+		-DLOADCHECK=$<TARGET_FILE:loadcheck>
+		-DINJECT=${LOADCHECK_LIBCRYPTO3}
+		-DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DBXC_PKI=$<TARGET_FILE:bxc-pki>
+		-DTESTXCA=$<TARGET_FILE:testxca>
+		-DSERVICE_TEST=$<TARGET_FILE:test_service_audit>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/${name}
+		-P ${PROJECT_SOURCE_DIR}/test/loadcheck/one_libcrypto.cmake)
+    set_tests_properties(${name} PROPERTIES LABELS service)
+  endforeach()
+endif()
+
 if (APPLE)
   target_link_libraries(testxca
 	${IOKIT_LIBRARY} ${COREFOUNDATION_LIBRARY}
