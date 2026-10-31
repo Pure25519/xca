@@ -48,7 +48,7 @@ class ExtensionSpec
 	                            // 0 is a constraint, never a default
 
 	bool subjectKeyId{};
-	bool authorityKeyId{};      // never added to a self-signed certificate
+	bool authorityKeyId{};      // also on a self-signed certificate (BTD-48)
 	bool authorityKeyIdIssuer{}; // keyid plus issuer and serial, not
 	                             // only the keyid (profile aki.form)
 
@@ -249,6 +249,13 @@ class IssuanceSpec
 	 * by IssuanceChecks::names() before the serial and the signature */
 	QList<Policy> policies{};
 	enum pki_source source{ generated };
+	/* Renewal (BTD-56): the extensions are the predecessor's, copied
+	 * in their order; on a re-key the key identifiers are made from the
+	 * new key. The ExtensionSpec above then only carries what the
+	 * checks read (basicConstraints, pathLen, key usage). keepSerial
+	 * takes the predecessor's serial, which the caller must delete. */
+	pki_x509 *predecessor{};
+	bool keepSerial{};
 
 	bool selfSigned() const
 	{
@@ -272,6 +279,33 @@ class IssuanceSpec
 	{
 		return cappedNotAfter(requestedNotAfter(), signer, capped);
 	}
+};
+
+/* Renewal or re-key of a certificate (BTD-56), the input of
+ * db_x509::renew(). Subject, extensions and issuer are the
+ * predecessor's; it is signed by the issuer of the predecessor (itself
+ * when it is self-signed) through the same checks as any issuance. */
+class RenewalSpec
+{
+  public:
+	pki_x509 *predecessor{};
+	pki_key *newKey{};          // re-key; nullptr: the predecessor's key
+	QString name{};             // internal name; empty: the predecessor's
+	a1time notBefore{};
+	a1time notAfter{};          // may be undefined (99991231235959Z)
+	IsoDuration validity{};     // when valid, notAfter is ignored
+	digest hashAlgo{};
+	/* the predecessor's serial instead of a new one; only for a
+	 * predecessor that is deleted afterwards (the dialog's "replace") */
+	bool keepSerial{};
+
+	/* A new key that differs from the predecessor's */
+	bool rekey() const;
+	/* The issuance of the renewal. Throws serviceError
+	 * missing_certificate, unknown_issuer (the issuer is not in the
+	 * database) and key_compromised (the predecessor is revoked with
+	 * reason keyCompromise and its key would be used again). */
+	IssuanceSpec issuanceSpec() const;
 };
 
 #endif

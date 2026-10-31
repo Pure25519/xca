@@ -35,6 +35,16 @@ true, and the caller reported success with nothing stored). Every outermost comm
 service function turns false into `database_error` with a `failure` entry. The log names the first
 inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
 
+The close of a database vacuums only after a run that committed a write (BTD-225). For SQLite
+the file change counter in the header (bytes 24 to 27) decides: it is read at the open and at the
+close, and a read, `--plan`'s rolled-back work or an open that wrote nothing leave it as it was. So
+a read-only command (`bxc-pki list` and `show`, `--list-items`, `--index`, `--hierarchy`,
+`--audit-verify`, an `--audit-export` with no checkpoint due) leaves the file byte-identical, also
+its mtime, and a read-only file closes without a VACUUM attempt. A plan run and an export that
+writes its due checkpoint are audited, so they are writes. A failed VACUUM is logged with its SQL
+error and the close goes on. Remote databases (PostgreSQL, MariaDB) keep the VACUUM on every close
+that they had. `test_cli_readonly`, `test_service_sql_errors::failedVacuumLogged`.
+
 A failed SQL write is a typed error, never a message box in a service path (BTD-50).
 
 - **The helper.** `throwSqlError(QSqlError, what)` in `lib/sql.h` picks the code from SQLite's result code:
@@ -66,6 +76,20 @@ database. A change that removes or replaces memory (freeing a deleted object) wa
 `DbTransaction::afterCommit()` for the outermost COMMIT. `db_base::storeInMemory()` and
 `db_base::removeItem()` do this for every insert and delete; a service function frees an object
 whose insert was rolled back (`!isStored()`).
+
+Who owns an object that a rollback took out of the store (BTD-228): the undo of
+`storeInMemory()` (`db_base::unstore()`) puts it on the list of unstored objects
+(`pki_base::addUnstored()`). It is the database's until someone deletes or claims it:
+
+- A service function whose own transaction rolled back deletes it in its catch (`!isStored()`),
+  as before; the destructor takes it off the list, so nothing is freed twice.
+- A caller that keeps it takes it off the list with `pki_base::claimUnstored()`. Today that is
+  only `ImportSpec::unstored`, the hand-back to the import dialog (BTD-114).
+- The rest is what a later step of an outer transaction rolled back after the storing function
+  had returned (bxc-pki `runInTransaction`): `pki_base::freeUnstored()` frees it where no caller
+  holds one, at the start of the next request (`runInTransaction`, later each request of the
+  server of BTD-154) and when the database closes. Not at the next transaction: the failure entry
+  of `auditedTransaction()` is one, written before the caller's catch block deletes its object.
 
 ## Service functions so far
 
@@ -163,8 +187,9 @@ after a failure checks the OpenSSL result itself:
   row that does not decode is left out on open (`db_base::loadContainer()`). The rows left out
   are reported once for the whole load, each with its reason. After the unlock they are also
   audited: one `database.rows_skipped` entry with `count`, `skipped_items` (`key:3,template:7`)
-  and `warning=rows_skipped` (BTD-209). It is written on every open, including reading commands
-  (doc/audit-checkpoints.md, "Entries written on open"). An
+  and `warning=rows_skipped` (BTD-209). It is written once per change of the skipped set, not
+  per open; when every row loads again, one closing entry with `count` 0 follows (BTD-221,
+  doc/audit-checkpoints.md, "Entries written on open"). An
   `errorEx` without text is shown nowhere (`xcaWarning::error()` drops it), so a loader never
   throws one.
 - The template loader, which the import probe tries last, accepts only a well-formed template

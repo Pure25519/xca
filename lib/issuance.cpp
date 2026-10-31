@@ -18,6 +18,9 @@
 #include "BioByteArray.h"
 #include "func_base.h"
 #include "pki_x509.h"
+#include "profile.h"
+#include "profile_store.h"
+#include "sql.h"
 
 /* Drop the "<token>:copy" entry that only means something in a
  * certificate. splitSanEntries() keeps commas inside single values. */
@@ -68,11 +71,16 @@ x509v3ext ExtensionSpec::authorityKeyIdExt(X509V3_CTX *ctx,
 					bool selfSigned) const
 {
 	x509v3ext ext;
-	if (!authorityKeyId || selfSigned)
+	/* a self-signed certificate too (OPC 10000-6 6.2.4, BTD-48), with
+	 * its own SKI as key identifier: without SKI it has none, as
+	 * before. OpenSSL leaves the AKI of a self-signed certificate out
+	 * unless "always" is given */
+	if (!authorityKeyId || (selfSigned && !subjectKeyId))
 		return ext;
 
 	ext.create(NID_authority_key_identifier, authorityKeyIdIssuer ?
-			"keyid:always,issuer:always" : "keyid,issuer", ctx);
+			"keyid:always,issuer:always" :
+			selfSigned ? "keyid:always" : "keyid,issuer", ctx);
 	return ext;
 }
 
@@ -345,4 +353,92 @@ QString IsoDuration::toString() const
 	if (!t.isEmpty())
 		s += "T" + t;
 	return s == "P" ? QString("PT0S") : s;
+}
+
+bool RenewalSpec::rekey() const
+{
+	return newKey && predecessor && EVP_PKEY_eq(newKey->getPubKey(),
+			X509_get0_pubkey(predecessor->getCert())) != 1;
+}
+
+/* The bits of a key usage extension by their OpenSSL names */
+static QStringList keyUsageNames(X509 *x)
+{
+	static const char *names[] = { "digitalSignature", "nonRepudiation",
+		"keyEncipherment", "dataEncipherment", "keyAgreement",
+		"keyCertSign", "cRLSign", "encipherOnly", "decipherOnly" };
+	QStringList bits;
+	ASN1_BIT_STRING *ku = (ASN1_BIT_STRING *)X509_get_ext_d2i(x,
+			NID_key_usage, nullptr, nullptr);
+	for (int b = 0; ku && b < 9; b++) {
+		if (ASN1_BIT_STRING_get_bit(ku, b))
+			bits << names[b];
+	}
+	ASN1_BIT_STRING_free(ku);
+	return bits;
+}
+
+IssuanceSpec RenewalSpec::issuanceSpec() const
+{
+	if (!predecessor)
+		throw serviceError("missing_certificate",
+			QCoreApplication::translate("RenewalSpec",
+			"No certificate given"));
+	pki_x509 *signer = predecessor->getSigner();
+	if (!signer)
+		throw serviceError("unknown_issuer",
+			QCoreApplication::translate("RenewalSpec",
+			"The issuer of '%1' is not in the database")
+			.arg(predecessor->getIntName()));
+	x509rev rev = predecessor->getRevocation();
+	if (predecessor->isRevoked() && !rekey() &&
+	    rev.getReasonBit() == CRL_REASON_KEY_COMPROMISE)
+		throw serviceError("key_compromised",
+			QCoreApplication::translate("RenewalSpec",
+			"'%1' is revoked for key compromise; its key is never used again, only a re-key renews it")
+			.arg(predecessor->getIntName()));
+
+	IssuanceSpec spec;
+	spec.name = name.isEmpty() ? predecessor->getIntName() : name;
+	spec.subject = predecessor->getSubject();
+	/* the predecessor's key, if it is in the database; its public key
+	 * otherwise (db_x509::issue()) */
+	spec.key = newKey ? newKey : predecessor->getRefKey();
+	spec.signer = signer == predecessor ? nullptr : signer;
+	spec.notBefore = notBefore;
+	spec.notAfter = notAfter;
+	spec.validity = validity;
+	spec.hashAlgo = hashAlgo;
+	spec.source = renewed;
+	spec.predecessor = predecessor;
+	spec.keepSerial = keepSerial;
+
+	/* what the checks read from the spec */
+	ExtensionSpec &e = spec.extensions;
+	bool ca = false, hasLen = false;
+	a1int pathLen;
+	if (predecessor->caAndPathLen(&ca, &pathLen, &hasLen)) {
+		e.basicCA = ca ? ExtensionSpec::bc_ca : ExtensionSpec::bc_not_ca;
+		if (ca && hasLen)
+			e.pathLen = pathLen.toDec();
+	}
+	e.keyUsage = keyUsageNames(predecessor->getCert());
+
+	/* the stored profile the predecessor was issued under: its
+	 * policies and, for family opcua, the OPC UA chain rules apply
+	 * again, and the successor records it (BTD-167) */
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT profile, version FROM issued_profiles "
+			"WHERE item=?");
+	q.bindValue(0, predecessor->getSqlItemId());
+	q.exec();
+	if (q.first()) {
+		spec.profile = q.value(0).toString();
+		spec.profileVersion = q.value(1).toInt();
+		Profile profile = Profile::fromJson(ProfileStore::show(
+			"profile", spec.profile, spec.profileVersion).document);
+		if (profile.family == "opcua")
+			spec.chainRules = IssuanceSpec::chain_opcua;
+	}
+	return spec;
 }

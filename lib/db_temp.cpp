@@ -176,7 +176,7 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 }
 
 void db_temp::writeItem(pki_base *pki, const pki_export *,
-			QIODevice &file, const Passwd &) const
+			QIODevice &file, const Passwd &, const ExportOptions &) const
 {
 	pki_temp *temp = dynamic_cast<pki_temp *>(pki);
 	if (temp)

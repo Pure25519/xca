@@ -12,6 +12,7 @@
  */
 
 #include <QFile>
+#include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
 
@@ -103,6 +104,7 @@ class test_service_sql_errors : public ServiceTestCase
   private slots:
 	void cleanup();
 	void readOnlyDatabase();
+	void failedVacuumLogged();
 	void diskFull();
 	void removedWhileOpen();
 	void insertKeepsObject();
@@ -182,6 +184,19 @@ void test_service_sql_errors::readOnlyDatabase()
 	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
 	QCOMPARE(rows("items"), keys);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+}
+
+/* After a run that wrote, the close vacuums; a failed VACUUM is logged
+ * with its SQL error and the close goes on (BTD-225: the result was not
+ * checked) */
+void test_service_sql_errors::failedVacuumLogged()
+{
+	QVERIFY(key("vacuum key"));
+	QCOMPARE(sql("PRAGMA query_only = ON"), QString());
+	QTest::ignoreMessage(QtWarningMsg, QRegularExpression(
+		"VACUUM after the writes of this run failed:.*readonly"));
+	reopenDatabase();
+	QCOMPARE(Store.getAll<pki_key>().size(), 1);
 }
 
 void test_service_sql_errors::diskFull()

@@ -37,6 +37,7 @@ class db_temp: public db_x509name
 	void updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 				const TemplateSpec &spec);
 	void writeItem(pki_base *pki, const pki_export *xport,
-		QIODevice &file, const Passwd &pass) const;
+		QIODevice &file, const Passwd &pass,
+		const ExportOptions &opts) const;
 };
 #endif

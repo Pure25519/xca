@@ -334,6 +334,16 @@ QString x509v3ext::getValue() const
 	BioByteArray bba;
 	if (!isValid())
 		return QString();
+	/* an OID OpenSSL cannot decode: the DER of the value as hex, in
+	 * the form of the advanced section ("DER:0C:03:...", BTD-169) */
+	if (!X509V3_EXT_get(ext)) {
+		const ASN1_OCTET_STRING *v = getData();
+		QStringList hex;
+		for (size_t i = 0; i < ASN1_STRING_get_length(v); i++)
+			hex << QString("%1").arg(ASN1_STRING_get0_data(v)[i],
+					2, 16, QChar('0')).toUpper();
+		return "DER:" + hex.join(":");
+	}
 	int ret = X509V3_EXT_print(bba, ext, X509V3_EXT_DEFAULT, 0);
 	if (ign_openssl_error() || !ret)
 		ret = ASN1_STRING_print(bba, (ASN1_STRING *)getData());
@@ -767,7 +777,9 @@ bool x509v3ext::parse_Crldp(QString *single, QString *adv) const
 		}
 		if (point->CRLissuer) {
 			QString ret;
-			if (genNameStack2conf(point->CRLissuer,
+			/* failure, not success, is unparsable: inverted, a
+			 * readable cRLIssuer dropped the CRLDP (BTD-229) */
+			if (!genNameStack2conf(point->CRLissuer,
 					tag +"_crlissuer", &ret, &othersect))
 				goto could_not_parse;
 			crldpsect += "CRLissuer=" + ret + "\n";
@@ -1197,10 +1209,13 @@ X509_EXTENSION *x509v3ext::get() const
 	return ext ? X509_EXTENSION_dup(ext) : nullptr;
 }
 
+/* An OID and data, whether OpenSSL knows the OID or not: a vendor or
+ * industry extension is shown and kept, not dropped (BTD-169). Empty
+ * data stays invalid. */
 bool x509v3ext::isValid() const
 {
-	return ext && getData() && ASN1_STRING_get_length(getData()) > 0 &&
-		OBJ_obj2nid(X509_EXTENSION_get_object(ext)) != NID_undef;
+	return ext && X509_EXTENSION_get_object(ext) && getData() &&
+		ASN1_STRING_get_length(getData()) > 0;
 }
 
 /*************************************************************/

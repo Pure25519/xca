@@ -13,6 +13,9 @@ set(CLI_SOURCES
 	${CLI_DIR}/lifecycle.cpp
 	${CLI_DIR}/export.cpp
 	${CLI_DIR}/output.cpp
+	${CLI_DIR}/bootstrap.h
+	${CLI_DIR}/bootstrap.cpp
+	${CLI_DIR}/bootstrap_reader.cpp
 	${PROJECT_BINARY_DIR}/local.h)
 add_executable(bxc-pki ${CLI_SOURCES})
 target_link_libraries(bxc-pki xcacore ${ASAN_LIB})
@@ -91,4 +94,11 @@ if(BUILD_TESTING)
   CliTest(cli_default_templates)
   # RFC 5280 upper bounds of DN values (BTD-202)
   CliTest(cli_dn_bounds)
+  # renewal and re-key (BTD-56)
+  CliTest(cli_renew)
+  # bootstrap (BTD-166): CAs, profiles and policies from one file
+  CliTest(cli_bootstrap)
+  CliTest(cli_bootstrap_errors)
+  # a read-only command leaves the database file byte-identical (BTD-225)
+  CliTest(cli_readonly)
 endif()

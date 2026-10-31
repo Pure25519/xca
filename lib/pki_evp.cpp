@@ -675,30 +675,6 @@ bool pki_evp::updateLegacyEncryption()
 }
 
 const QStringList pki_evp::mlDsaFormats { "both", "seed", "expanded" };
-/* Like encAlgo::exportName (BTD-52): an export runs on one thread at a
- * time; a REST server with parallel exports needs a per-call value */
-static QString mlDsaExportFormat;
-/* The ML-DSA encodings that decryptKeyForExport() wrote while the
- * scope runs, per key: what the audit entries name */
-static QMap<const pki_evp *, QString> mlDsaWritten;
-
-pki_evp::MlDsaFormatScope::MlDsaFormatScope(const QString &format)
-	: saved(mlDsaExportFormat)
-{
-	mlDsaExportFormat = format;
-	mlDsaWritten.clear();
-}
-
-pki_evp::MlDsaFormatScope::~MlDsaFormatScope()
-{
-	mlDsaExportFormat = saved;
-	mlDsaWritten.clear();
-}
-
-QString pki_evp::MlDsaFormatScope::written(const pki_key *key)
-{
-	return mlDsaWritten.value(dynamic_cast<const pki_evp *>(key));
-}
 
 bool pki_evp::isMlDsa(int keytype)
 {
@@ -721,7 +697,10 @@ bool pki_evp::isMlDsa(int keytype)
  * expanded key pass (BTD-16). They live as long as the process. */
 static OSSL_LIB_CTX *mlDsaContext(const QString &format)
 {
-	static QMap<QString, OSSL_LIB_CTX *> contexts;
+	/* never destroyed: a map destroyed at exit left its contexts
+	 * unreachable, a leak for LeakSanitizer (BTD-228) */
+	static QMap<QString, OSSL_LIB_CTX *> &contexts =
+		*new QMap<QString, OSSL_LIB_CTX *>;
 	static QMutex lock;
 	QMutexLocker locker(&lock);
 
@@ -827,7 +806,7 @@ static bool opensslDropsSeed()
 	return drops;
 }
 
-EVP_PKEY *pki_evp::decryptKeyForExport() const
+EVP_PKEY *pki_evp::decryptKeyForExport(const ExportOptions &opts) const
 {
 	EVP_PKEY *pkey = decryptKey();
 	if (!pkey || !isMlDsa(getKeyType()))
@@ -835,7 +814,7 @@ EVP_PKEY *pki_evp::decryptKeyForExport() const
 
 	/* A key imported as expanded key only has no seed */
 	bool seed = mlDsaHasSeed(pkey);
-	QString format = mlDsaExportFormat;
+	QString format = opts.mlDsaFormat;
 	if (format.isEmpty())
 		format = seed ? "both" : "expanded";
 	if (!seed && format != "expanded") {
@@ -853,7 +832,7 @@ EVP_PKEY *pki_evp::decryptKeyForExport() const
 		throw;
 	}
 	EVP_PKEY_free(pkey);
-	mlDsaWritten[this] = format;
+	opts.mlDsaWritten[this] = format;
 	return moved;
 }
 
@@ -1062,12 +1041,13 @@ int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
 }
 #endif
 
-bool pki_evp::pem(BioByteArray &b, const pki_export *xport)
+bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
+			const ExportOptions &opts)
 {
 	EVP_PKEY *pkey;
 
 	if (xport->match_all(F_PEM | F_PRIVATE)) {
-		pkey = decryptKeyForExport();
+		pkey = decryptKeyForExport(opts);
 		int ok = PEM_write_bio_PrivateKey_traditional(b, pkey, nullptr,
 						nullptr, 0, nullptr, nullptr);
 		EVP_PKEY_free(pkey);
@@ -1075,14 +1055,14 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport)
 	} else if (xport->match_all(F_PKCS8 | F_PRIVATE)) {
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
-		pkey = decryptKeyForExport();
+		pkey = decryptKeyForExport(opts);
 		int ok = PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
 		EVP_PKEY_free(pkey);
 		export_check(ok, "PEM_write_bio_PrivateKey", what());
 	} else
-		return pki_key::pem(b, xport);
+		return pki_key::pem(b, xport, opts);
 
 	return true;
 }
@@ -1115,9 +1095,9 @@ void pki_evp::fillJWK(QJsonObject &json, const pki_export *xport) const
 };
 
 void pki_evp::writePKCS8(QIODevice &file, const EVP_CIPHER *enc,
-		const Passwd &pass, bool pem) const
+		const Passwd &pass, bool pem, const ExportOptions &opts) const
 {
-	EVP_PKEY *pkey = decryptKeyForExport();
+	EVP_PKEY *pkey = decryptKeyForExport(opts);
 	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	/* With a cipher, kstr is never NULL: OpenSSL must not fall back
 	 * to its own terminal prompt */
@@ -1168,13 +1148,14 @@ void pki_evp::writeDefault(const QString &dirname) const
 }
 
 void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,
-			const Passwd &pass, bool pem) const
+			const Passwd &pass, bool pem,
+			const ExportOptions &opts) const
 {
 	if (isPubKey()) {
 		writePublic(file, pem);
 		return;
 	}
-	EVP_PKEY *pkey = key ? decryptKeyForExport() : NULL;
+	EVP_PKEY *pkey = key ? decryptKeyForExport(opts) : NULL;
 	export_check(pkey != nullptr, "decryptKeyForExport", what());
 	BioByteArray b;
 	int ok;

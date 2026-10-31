@@ -134,6 +134,14 @@ const QStringList &AuditParams::allowList()
 		 * (trustlist.export) */
 		"crl_validity", "reissue_fraction", "size_budget",
 		"trigger", "trust_list_budget",
+		/* renewal and re-key (BTD-56) */
+		"predecessor_id", "predecessor_serial", "rekey",
+		"serial_kept",
+		/* bxc-pki bootstrap (BTD-166), action bootstrap.apply: the
+		 * SHA-256 of the file, its schema id and the number of
+		 * objects created, kept, updated and elements skipped */
+		"file_sha256", "schema", "created", "kept", "updated",
+		"skipped",
 		/* settings.update (BTD-224): the setting, and its values
 		 * only for the options of the Options dialog, otherwise
 		 * redacted */
@@ -693,6 +701,21 @@ static QList<AuditEntry> readEntries(QSet<qint64> *badParams,
 QList<AuditEntry> AuditLog::entries()
 {
 	return readEntries(nullptr);
+}
+
+QVariantMap AuditLog::lastParams(const QString &action)
+{
+	XSqlQuery q;
+	QVariantMap params;
+
+	SQL_PREPARE(q, "SELECT params FROM audit_log WHERE action=? "
+			"ORDER BY seq DESC LIMIT 1");
+	q.bindValue(0, action);
+	q.exec();
+	throwOnError(q);
+	if (q.next())
+		canonicalParams(q.value(0).toString(), &params);
+	return params;
 }
 
 QByteArray AuditLog::checkpointPayload(const QVariantMap &params)

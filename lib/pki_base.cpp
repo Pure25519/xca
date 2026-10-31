@@ -6,6 +6,7 @@
  */
 
 
+#include <QSet>
 #include "func.h"
 #include "xfile.h"
 #include "pki_base.h"
@@ -35,6 +36,36 @@ pki_base::pki_base(const pki_base *p)
 
 pki_base::~pki_base(void)
 {
+	claimUnstored(this);
+}
+
+/* never destroyed: objects may be deleted during the static
+ * destruction at exit */
+static QSet<pki_base *> &unstoredObjects()
+{
+	static QSet<pki_base *> *set = new QSet<pki_base *>;
+	return *set;
+}
+
+void pki_base::addUnstored(pki_base *pki)
+{
+	unstoredObjects().insert(pki);
+}
+
+void pki_base::claimUnstored(pki_base *pki)
+{
+	unstoredObjects().remove(pki);
+}
+
+void pki_base::freeUnstored()
+{
+	/* a destructor may delete more objects, which then leave the list */
+	QSet<pki_base *> &set = unstoredObjects();
+	while (!set.isEmpty()) {
+		pki_base *pki = *set.begin();
+		set.erase(set.begin());
+		delete pki;
+	}
 }
 
 QString pki_base::comboText() const
@@ -125,7 +156,7 @@ QByteArray pki_base::i2d() const
 	return QByteArray();
 }
 
-bool pki_base::pem(BioByteArray &)
+bool pki_base::pem(BioByteArray &, const ExportOptions &)
 {
 	return false;
 }
