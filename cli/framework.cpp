@@ -160,7 +160,11 @@ QString ResultCollector::text() const
 				.arg(o["requested_not_after"].toString());
 		s += "\n";
 	}
-	if (objects.isEmpty() && extra["files"].toArray().isEmpty())
+	QJsonObject b = extra["bootstrap"].toObject();
+	/* bootstrap reports its objects in its own member, not in objects:
+	 * the generic line would contradict that list (BTD-235) */
+	if (objects.isEmpty() && extra["files"].toArray().isEmpty() &&
+	    b.isEmpty())
 		s += QObject::tr("nothing written") + "\n";
 	for (const QJsonValue &v : extra["files"].toArray()) {
 		QJsonObject f = v.toObject();
@@ -189,9 +193,11 @@ QString ResultCollector::text() const
 			.arg(tl["target_format"].toString())
 			.arg(tl["size"].toVariant().toString())
 			.arg(tl["budget"].toVariant().toString());
-	QJsonObject b = extra["bootstrap"].toObject();
-	if (!b.isEmpty())
+	if (!b.isEmpty()) {
+		if (plan)
+			s += QObject::tr("plan: nothing written") + "\n";
 		s += bootstrapText(b);
+	}
 	return s;
 }
 
