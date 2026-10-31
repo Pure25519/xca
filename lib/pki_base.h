@@ -189,8 +189,10 @@ class pki_base : public QObject
 		int indexOf(const pki_base *child) const;
 
 		/* Token handling */
-		virtual void deleteFromToken();
-		virtual void deleteFromToken(const slotid &);
+		/* true if objects were deleted on a token; false if there
+		 * was none or the user declined (BTD-128) */
+		virtual bool deleteFromToken();
+		virtual bool deleteFromToken(const slotid &);
 		virtual int renameOnToken(const slotid &, const QString &);
 
 		/* Import / Export management */
