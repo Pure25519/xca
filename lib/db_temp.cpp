@@ -115,8 +115,8 @@ pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
 				QString(), params, [&]() {
 			QSqlError e = temp->insertSql();
 			if (e.isValid())
-				throw serviceError("database_error",
-					e.text());
+				throwSqlError(e, tr("The template '%1' could "
+					"not be stored").arg(spec.name));
 			storeInMemory(temp);
 			AuditLog::append(ctx, "template.create", "template",
 					itemId(temp), params);
@@ -162,7 +162,8 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			q.exec();
 			QSqlError e = q.lastError();
 			if (e.isValid())
-				throw serviceError("database_error", e.text());
+				throwSqlError(e, tr("The template '%1' could "
+					"not be updated").arg(spec.name));
 			writeNameComment(temp);
 			AuditLog::append(ctx, "template.update", "template",
 					itemId(temp), params);

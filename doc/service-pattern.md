@@ -55,6 +55,11 @@ A failed SQL write is a typed error, never a message box in a service path (BTD-
   - `execOrThrow(q, what)`;
   - `TransThrow()`;
   - `TransCommitThrow()`, which carries the error of the failed COMMIT.
+  - Since BTD-214 also every other SQL error path: the audit log and the audit keys (before an untyped
+    error "Database error: …", audited as `internal_error`), the profile store, the CRL settings of a
+    CA, the profile and predecessor rows of an issuance, revocation rows, templates, the revocation
+    count of a CA and the bootstrap state of `bxc-pki` (before `database_error` in every case). A
+    read-only or full database therefore gives `read_only_database` or `disk_full` there too.
 - **The text.** It is `what` and SQLite's reason, never the statement and its values (they may hold key material). The full statement goes to the debug log.
 - **Helpers throw instead of returning false.** This covers `x509revList::sqlUpdate()`, `pki_x509req::markSigned()`, `pki_evp::sqlUpdatePrivateKey()` and the UPDATEs of `db_x509::markRequestSigned()`, `pki_x509::getTaKey()` and `pki_scard::updateLabel()`. Their callers therefore stop at the first failure instead of running on in a transaction that can only roll back.
 - **`db_base::insertPKI()` and the `insert()` overrides** throw without deleting:

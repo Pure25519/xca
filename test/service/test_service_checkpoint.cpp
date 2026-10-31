@@ -89,6 +89,8 @@ class test_service_checkpoint : public ServiceTestCase
 	static QByteArray publicPem(EVP_PKEY *pkey);
 	static QString signature(EVP_PKEY *pkey, const QVariantMap &params);
 	static QString errorCode(std::function<void()> call);
+	/* the text of the error errorCode() caught last */
+	static QString errorText;
 	static int storedIterations();
 	QString writeFile(const QString &name, const QByteArray &data);
 	QString keyAtCheckpoint(int n, const QString &name);
@@ -322,13 +324,18 @@ EVP_PKEY *test_service_checkpoint::auditPrivateKey()
 	return pkey;
 }
 
+QString test_service_checkpoint::errorText;
+
 QString test_service_checkpoint::errorCode(std::function<void()> call)
 {
+	errorText.clear();
 	try {
 		call();
 	} catch (serviceError &err) {
+		errorText = err.getString();
 		return err.code;
 	} catch (errorEx &err) {
+		errorText = err.getString();
 		return "errorEx: " + err.getString();
 	}
 	return QString();
@@ -403,7 +410,9 @@ void test_service_checkpoint::checkpointFailureAfterWrite()
 		"SELECT RAISE(ABORT, 'BTD-144 checkpoint row'); END")
 		.arg(AuditLog::actionCheckpoint));
 	QString code = keyAtCheckpoint(3, "victim");
-	QVERIFY2(code.contains("BTD-144 checkpoint row"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 checkpoint row"), CCHAR(errorText));
 
 	reopenDatabase();
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
@@ -438,7 +447,9 @@ void test_service_checkpoint::checkpointRowFailsWithKey()
 					QString::number(10 + i));
 		TransCommitThrow();
 	});
-	QVERIFY2(code.contains("BTD-144 checkpoint row"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 checkpoint row"), CCHAR(errorText));
 	QCOMPARE(AuditLog::entries().size(), before);
 	sql("DROP TRIGGER fault");
 	appendSample(3);
@@ -459,7 +470,9 @@ void test_service_checkpoint::rotationRetireFails()
 	sql("CREATE TRIGGER fault BEFORE UPDATE ON audit_keys BEGIN "
 		"SELECT RAISE(ABORT, 'BTD-144 retire'); END");
 	QString code = errorCode([&]() { AuditLog::rotateKey(ctx); });
-	QVERIFY2(code.contains("BTD-144 retire"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 retire"), CCHAR(errorText));
 	QCOMPARE(AuditLog::entries().size(), entries);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 1);
 	QCOMPARE(AuditKey::current(), key);
@@ -478,9 +491,10 @@ void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
 	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
 		"SELECT RAISE(ABORT, 'BTD-111 checkpoint write'); END");
 	QString code = keyAtCheckpoint(3, "victim");
-	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
+	QCOMPARE(code, QString("database_error"));
 	/* the checkpoint's error, not one of newKey() (BTD-143) */
-	QVERIFY2(code.contains("BTD-111 checkpoint write"), CCHAR(code));
+	QVERIFY2(errorText.contains("BTD-111 checkpoint write"),
+		CCHAR(errorText));
 	/* nor in memory: on 9121ddcd the key stayed in store and view
 	 * with the id of its rolled-back row (BTD-130) */
 	for (pki_key *key : Store.getAll<pki_key>())
@@ -548,7 +562,9 @@ void test_service_checkpoint::exportCheckpointWriteFails()
 	QString code = errorCode([&]() {
 		Database.model<db_key>()->exportItems(ctx, spec);
 	});
-	QVERIFY2(code.contains("BTD-143 checkpoint write"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-143 checkpoint write"), CCHAR(errorText));
 	/* neither the file nor a temporary file of QSaveFile */
 	QCOMPARE(QDir(dir.path()).entryList({ "btd143.pem*" },
 		QDir::Files | QDir::Hidden).size(), 0);

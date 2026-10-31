@@ -509,7 +509,7 @@ void test_service_sql_errors::auditWriteTyped()
 		AuditLog::append(ctx, "key.generate", "key", "214");
 	});
 	QCOMPARE(r.first, QString("read_only_database"));
-	QVERIFY2(r.second.startsWith("The audit entry"), CCHAR(r.second));
+	QVERIFY2(r.second.startsWith("The audit log"), CCHAR(r.second));
 	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
 }
 

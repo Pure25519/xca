@@ -473,7 +473,8 @@ static void throwOnError(XSqlQuery &q)
 {
 	QSqlError e = q.lastError();
 	if (e.isValid())
-		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
+		throwSqlError(e, QObject::tr("The audit log could not be "
+			"read or written"));
 }
 
 /* seq and hash of the newest entry; seq 0 for an empty log */
@@ -562,8 +563,8 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 			objectId, params.getValues(), result, errorCode);
 	writeEntry(e);
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit entry was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit entry was not committed"));
 	return e;
 }
 
@@ -972,8 +973,8 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	if (rotate && !first)
 		AuditKey::retire(key);
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit checkpoint was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit checkpoint was not committed"));
 	return e;
 }
 
@@ -1087,8 +1088,8 @@ void AuditLog::writeBaseline()
 		AuditParams().set("count", (qint64)rows.size())
 			.set("db_unlock_verified", verified));
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit baseline was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit baseline was not committed"));
 }
 
 /* RFC 3339 of a date in the revocations table; empty if undefined */

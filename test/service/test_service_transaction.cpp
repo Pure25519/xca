@@ -63,6 +63,8 @@ class test_service_transaction : public ServiceTestCase
 	}
 	/* "" on success, the serviceError code, or "errorEx: <text>" */
 	static QString errorCode(std::function<void()> call);
+	/* the text of the error errorCode() caught last */
+	static QString errorText;
 	static pki_key *newKey(const QString &name)
 	{
 		return Database.model<db_key>()->newKey(
@@ -124,13 +126,18 @@ class WriteLock
 	}
 };
 
+QString test_service_transaction::errorText;
+
 QString test_service_transaction::errorCode(std::function<void()> call)
 {
+	errorText.clear();
 	try {
 		call();
 	} catch (serviceError &err) {
+		errorText = err.getString();
 		return err.code;
 	} catch (errorEx &err) {
+		errorText = err.getString();
 		return "errorEx: " + err.getString();
 	}
 	return QString();
@@ -443,7 +450,8 @@ void test_service_transaction::appendCommitFails()
 			AuditParams().set("name", "BTD-142"));
 	});
 	sql("DROP TRIGGER temp.btd142_commit");
-	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
+	/* typed since BTD-214 */
+	QCOMPARE(code, QString("database_error"));
 	QCOMPARE(AuditLog::entries().size(), before);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM btd142_child").toInt(), 0);
 }
