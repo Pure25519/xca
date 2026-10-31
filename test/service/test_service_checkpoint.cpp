@@ -7,7 +7,8 @@
  * (BTD-110): removed checkpoints and keys, a checkpoint that does not
  * sign its predecessor, changed checkpoint metadata, a missing key.
  * A failing automatic checkpoint never takes the caller's change with
- * it, and never asks for the password (BTD-111).
+ * it, and never asks for the password (BTD-111). The tail rule takes its
+ * interval from the last signed checkpoint, not from the setting (BTD-133).
  */
 
 #include <QThread>
@@ -532,7 +533,8 @@ void test_service_checkpoint::checkpointEveryN()
 	QCOMPARE(cp.value("checkpoint_hash").toString().toLatin1(), list[5].hash);
 	QVERIFY(!cp.contains("next_key_id"));
 	QCOMPARE(QStringList(cp.keys()), QStringList({ "checkpoint_hash",
-		"checkpoint_seq", "checkpoint_time", "key_id", "signature" }));
+		"checkpoint_interval", "checkpoint_seq", "checkpoint_time",
+		"key_id", "signature" }));
 	QVERIFY(AuditKey::verify(list[5].params.value("public_key").toString()
 		.toLatin1(), AuditLog::checkpointPayload(cp),
 		QByteArray::fromBase64(cp.value("signature").toByteArray())));
@@ -593,8 +595,8 @@ void test_service_checkpoint::checkpointAfterConfirmedOperation()
 	QVERIFY(!list[5].params.contains("db_unlock_verified"));
 	QCOMPARE(list[6].action, QString(AuditLog::actionCheckpoint));
 	QCOMPARE(QStringList(list[6].params.keys()), QStringList({
-		"checkpoint_hash", "checkpoint_seq", "checkpoint_time",
-		"key_id", "signature" }));
+		"checkpoint_hash", "checkpoint_interval", "checkpoint_seq",
+		"checkpoint_time", "key_id", "signature" }));
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY2(r.ok(), r.toJson().constData());
 	QCOMPARE(r.checkpoints, qint64(1));
