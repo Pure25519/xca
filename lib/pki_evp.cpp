@@ -1031,7 +1031,6 @@ QSqlError pki_evp::deleteSqlData()
 	return q.lastError();
 }
 
-#ifndef LIBRESSL_VERSION_NUMBER
 int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
                                          const EVP_CIPHER *enc,
                                          unsigned char *kstr, int klen,
@@ -1042,7 +1041,6 @@ int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
 	return PEM_ASN1_write_bio((i2d_of_void *)i2d_PrivateKey,
 			pem.toLatin1(), bp, (char*)x, enc, kstr, klen, cb, u);
 }
-#endif
 
 bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
 			const ExportOptions &opts)
