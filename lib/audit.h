@@ -340,6 +340,9 @@ class AuditLog
 	 * audit log, so that verify() can tell them from rows added later
 	 * without an entry. Called by database_model::initSqlDB(). */
 	static void writeBaseline();
+	/* A skipped automatic checkpoint is shown to the user once per
+	 * error code (BTD-148); a newly opened database shows it again */
+	static void resetCheckpointNotices();
 
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),

@@ -7,6 +7,7 @@
 
 #include "XcaWarning.h"
 #include "XcaDialog.h"
+#include "MainWindow.h"
 #include "lib/func.h"
 
 #include <QApplication>
@@ -48,6 +49,16 @@ void xcaWarningGui::information(const QString &msg)
 void xcaWarningGui::warning(const QString &msg)
 {
 	showBox(msg, QMessageBox::Warning, QMessageBox::Ok);
+}
+
+/* No dialog: a notice must not interrupt the work (BTD-148). It stays
+ * in the status bar until the database is closed. */
+void xcaWarningGui::notice(const QString &msg)
+{
+	if (mainwin)
+		mainwin->showAuditNotice(msg);
+	else
+		qWarning().noquote() << msg;
 }
 
 bool xcaWarningGui::yesno(const QString &id, const QString &msg)
