@@ -248,7 +248,6 @@ void test_service_secrets::databasePasswordRejected()
 	PwDialogHeadless *h = useHeadless();
 	h->setSource(pass_info::DatabasePassword,
 				makeSource("env", "wrong-db-password"));
-	warning->expectMessage("Password verify error");
 	try {
 		Database.open(dbFile);
 		QFAIL("Database.open() did not throw");

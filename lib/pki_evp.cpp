@@ -290,7 +290,7 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
 		if (openssl_pw_error())
-			XCA_PASSWD_ERROR();
+			PwDialogCore::passwordRetry(p.getPurpose());
 		/* an empty queue asks again; take_openssl_errors() names an
 		 * empty queue too (BTD-95), so look first */
 		if (ERR_peek_error()) {
@@ -452,7 +452,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
 		if (openssl_pw_error())
-			XCA_PASSWD_ERROR();
+			PwDialogCore::passwordRetry(p.getPurpose());
 		if (pki_ign_openssl_error())
 			break;
 	} while (!pkey);

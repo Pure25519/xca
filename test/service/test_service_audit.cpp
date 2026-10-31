@@ -403,7 +403,6 @@ void test_service_audit::upgradeWaitsForPassword()
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
 	pwdialog->delegateTo(h);
-	warning->expectMessage("Password verify error");
 	bool rejected = false;
 	try {
 		Database.open(dbFile);

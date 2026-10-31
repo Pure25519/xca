@@ -34,6 +34,12 @@ class PwDialogUI_i
 	/* The PIN is entered on the PIN pad of the reader: starts the
 	 * login thread and returns when it has finished */
 	virtual void pinPadLogin(pass_info *p, QThread *login) = 0;
+	/* True if requests of purpose p are answered from a password source
+	 * instead of a prompt (BTD-89); a dialog always prompts */
+	virtual bool answersFromSource(enum pass_info::purpose) const
+	{
+		return false;
+	}
 	virtual ~PwDialogUI_i() { };
 };
 
@@ -87,6 +93,10 @@ class PwDialogHeadless: public PwDialogUI_i
 	int selectKeySlot(const QString &label,
 			const QStringList &names) override;
 	void pinPadLogin(pass_info *p, QThread *login) override;
+	bool answersFromSource(enum pass_info::purpose purpose) const override
+	{
+		return hasSource(purpose);
+	}
 };
 
 class PasswordSourceScope;
@@ -109,6 +119,10 @@ class PwDialogCore
 	 * instead of a dialog: the caller must ask even if the current
 	 * password already fits, or the given one is never checked */
 	static bool hasSource(enum pass_info::purpose p);
+	/* A password of purpose p was wrong and will be asked again:
+	 * warns "Password verify error" only if the next request prompts
+	 * somebody, not when a source answers it (BTD-89) */
+	static void passwordRetry(enum pass_info::purpose p);
 	static int selectToken(const QStringList &names);
 	static int selectKeySlot(const QString &label,
 			const QStringList &names);
