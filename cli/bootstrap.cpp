@@ -327,7 +327,8 @@ class Run
 	QMap<QString, pki_x509 *> made{};
 
 	void record(Decision &d, const serviceError &err);
-	bool known(const QString &kind, const QString &id) const;
+	bool known(const QString &kind, const QString &id,
+		bool *retired = nullptr) const;
 	void references(const CaDef &c) const;
 	void evaluateDoc(Decision &d);
 	void evaluateCa(Decision &d);
@@ -623,15 +624,22 @@ void Run::evaluateCa(Decision &d)
 
 /* A profile or policy id of the file, or (database open) of the
  * database */
-bool Run::known(const QString &kind, const QString &id) const
+/* retired: set when the document exists only in the database and its
+ * newest version is retired; a document of the file is stored as a new,
+ * not retired version (evaluateDoc) */
+bool Run::known(const QString &kind, const QString &id, bool *retired) const
 {
+	if (retired)
+		*retired = false;
 	for (const DocDef &doc : f.docs)
 		if (doc.kind == kind && doc.id == id)
 			return true;
 	if (!dbOpen)
 		return false;
 	try {
-		ProfileStore::show(kind, id);
+		bool r = ProfileStore::show(kind, id).retired;
+		if (retired)
+			*retired = r;
 	} catch (serviceError &err) {
 		if (err.code != "document_not_found")
 			throw;
@@ -641,25 +649,34 @@ bool Run::known(const QString &kind, const QString &id) const
 }
 
 /* issued_with, profiles and policies name documents of the file or the
- * database: unknown_reference at the pointer of the id */
+ * database: unknown_reference at the pointer of the id. profiles and
+ * policies are assigned, so a retired database document is refused with
+ * the code of ProfileStore::assign (document_retired, BTD-232);
+ * issued_with only records how the CA was issued, a profile retired since
+ * then stays a valid record */
 void Run::references(const CaDef &c) const
 {
 	auto check = [this](const QString &kind, const QString &id,
-			const QString &ptr) {
-		if (!known(kind, id))
+			const QString &ptr, bool assigned) {
+		bool retired;
+		if (!known(kind, id, &retired))
 			throw serviceError("unknown_reference",
 				QString("%1: %2").arg(ptr, tr("there is no %1 "
 				"'%2' in the file or the database")
 				.arg(kind, id)));
+		if (assigned && retired)
+			throw serviceError("document_retired",
+				QString("%1: %2").arg(ptr, tr("the %1 '%2' "
+				"of the database is retired").arg(kind, id)));
 	};
 	if (!c.issuedWith.isEmpty())
 		check("profile", c.issuedWith,
-			jsonMember(c.pointer, "issued_with"));
+			jsonMember(c.pointer, "issued_with"), false);
 	for (const auto &k : assignmentKinds) {
 		const QStringList &ids = assignedIn(c, k.first);
 		for (int i = 0; i < ids.size(); i++)
 			check(k.second, ids[i], jsonItem(jsonMember(c.pointer,
-				k.first), i));
+				k.first), i), true);
 	}
 }
 

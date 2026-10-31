@@ -320,7 +320,12 @@ static void setAssigned(const ServiceContext &ctx, const QString &ownerType,
 	else
 		params.set("profile", owner);
 	auditedTransaction(ctx, action, kind, name, params, [&]() {
-		ProfileStore::show(kind, name);
+		/* a retired document never takes effect: issue() refuses a
+		 * retired profile, policiesFor() leaves a retired policy out
+		 * (BTD-232); unassign stays possible */
+		if (ProfileStore::show(kind, name).retired && on)
+			throw serviceError("document_retired",
+				tr("The %1 '%2' is retired").arg(kind, name));
 		if (on && check)
 			check();
 		if (on == isAssigned(ownerType, owner, kind, name))
