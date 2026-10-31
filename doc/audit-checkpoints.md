@@ -94,8 +94,8 @@ checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it
 
 | `--audit-export` | Result |
 |---|---|
-| with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0 |
-| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries`, plus one when the log has a checkpoint (the checkpoint row itself, see below) |
+| with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0, no warning: only the checkpoint row itself is left unanchored, which carries no data of its own (`unanchored_entries` 1, BTD-134) |
+| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. N is `unanchored_entries` of `--audit-verify`, the checkpoint row of the last checkpoint included (BTD-134) |
 | with a wrong password source | `audit_password_rejected`, exit 1 |
 | a log no checkpoint may sign: the entries since the last checkpoint do not chain (`audit_chain_broken`), the announced key is gone (`audit_key_missing`) or the unsigned part is too long (`audit_checkpoint_missing`) | read only for forensics (BTD-112): every entry is exported (file or standard output), no checkpoint, nothing written to the database; stderr gets `Warning: the audit log was exported read-only, no audit checkpoint signed: <code>: <reason>`; **exit 1**, so a script does not take it for a clean export. `--audit-verify` reports the break (a deleted key alone leaves the chain intact) |
 
