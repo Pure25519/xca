@@ -526,7 +526,8 @@ void test_service_checkpoint::checkpointEveryN()
 	QString key = AuditKey::current();
 	QCOMPARE(key.size(), 64);
 	QCOMPARE(list[5].objectId, key);
-	QCOMPARE(list[5].params.value("key_type").toString(), QString("ed25519"));
+	/* keytype::name, as every key entry (BTD-97) */
+	QCOMPARE(list[5].params.value("key_type").toString(), QString("ED25519"));
 	QCOMPARE(AuditKey::keyId(list[5].params.value("public_key")
 			.toString().toLatin1()), key);
 	QVariantMap cp = list[6].params;
