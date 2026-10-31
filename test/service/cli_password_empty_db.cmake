@@ -5,9 +5,12 @@
 # opens as upstream allows, unchecked.
 # The xca command line cannot create such a database (the GUI can): the
 # schema 8 fixture gets the stored hash of the empty password.
-# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> -DDUMP=<schema8-fork.sql>
+# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> [-DDUMP=<schema8-fork.sql>] -DDATA=<test/service/data>
 #       -DWORK=<scratch dir> -P cli_password_empty_db.cmake
 
+if(NOT DUMP)
+  set(DUMP "${DATA}/schema8-fork.sql")
+endif()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")
