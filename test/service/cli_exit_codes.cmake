@@ -33,6 +33,32 @@ set(missing "${WORK}/no-such-dir")
 
 expect(0 "new key" --keygen EC:prime256v1 --name exit-key)
 expect(1 "unknown key type" --keygen FOO:1)
+# A failed key generation exits 1 and writes no key (BTD-96): without a
+# password source, with a wrong password and with an unknown curve
+foreach(source "" "pass:wrong-pw")
+  if(source STREQUAL "")
+    set(label "--keygen without a password source")
+    set(pw)
+  else()
+    set(label "--keygen with a wrong password")
+    set(pw --password "${source}")
+  endif()
+  execute_process(COMMAND "${XCA}" --no-gui --database "${WORK}/exit.xdb"
+      ${pw} --keygen EC:prime256v1 --name failed-key
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE out
+    TIMEOUT 30)
+  if(NOT rc EQUAL 1)
+    fail("${label}: expected exit code 1, got '${rc}':
+${out}")
+  endif()
+endforeach()
+expect(1 "--keygen with an unknown curve" --keygen EC:nocurve
+  --name failed-key)
+expect(0 "list after the failed key generations" --list-items)
+if(out MATCHES "failed-key")
+  fail("a failed --keygen wrote a key:
+${out}")
+endif()
 expect(1 "unknown CA for --crlgen" --crlgen no-such-ca)
 if(NOT out MATCHES "Issuer 'no-such-ca' not found")
   fail("unknown CA for --crlgen: missing error message:\n${out}")
