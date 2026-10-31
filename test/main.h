@@ -93,6 +93,9 @@ class test_main: public QObject
 	void keyDetailFixed();
 	void digestLessSigner();
 
+	/* nullHandlers.cpp */
+	void tokenHandlersWithoutToken();
+
 	/* optionsChanged.cpp */
 	void optionsStoreChangedOnly();
 	void optionsAudited();
