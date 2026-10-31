@@ -481,7 +481,7 @@ set(iw [=[{"schema": "urn:bxc-pki:schema:bootstrap:v1",
  "profiles": ["profiles/root-ca.json", "profiles/issuing-ca.json", "profiles/tls-server.json"],
  "cas": [
   {"id": "iw-fits", "cn": "IW Fits", "key": "ec-p256", "validity": "P5Y", "issued_with": "root-ca"},
-  {"id": "iw-ee", "cn": "IW EE", "key": "ec-p256", "validity": "P5Y", "issued_with": "tls-server"},
+  {"id": "iw-ee", "cn": "IW EE", "key": "ec-p256", "validity": "P300D", "issued_with": "tls-server"},
   {"id": "iw-long", "cn": "IW Long", "key": "ec-p256", "validity": "P30Y", "issued_with": "root-ca"},
   {"id": "iw-key", "cn": "IW Key", "key": "ec-p256", "validity": "P5Y", "issued_with": "rsa-only-ca"},
   {"id": "iw-path", "parent": "iw-fits", "cn": "IW Path", "key": "ec-p256", "validity": "P2Y", "issued_with": "issuing-ca"}]}]=])
@@ -528,8 +528,8 @@ foreach(mode apply plan)
     fail("issued_with ${mode}: a warning for the CA that fits:\n${details}")
   endif()
 endforeach()
-# not applied: the CA under the end-entity profile is still a CA, with the
-# validity of its own definition
+# not applied: the CA under the end-entity profile is still a CA, and the
+# CA under root-ca (validity.max P20Y) keeps its own P30Y
 bxc("issued_with apply again" 0 bootstrap --file "${file}" --db "${IDB}")
 one_doc("issued_with apply again" "${out}" cli-result r)
 bs_entry("${r}" ca iw-ee e)
@@ -537,12 +537,13 @@ jget(eeid "${e}" id)
 bxc("issued_with ee cert" 0 show ${eeid} --type certificate --db "${IDB}")
 string(STRIP "${out}" d)
 extension("${d}" basicConstraints bc)
-jget(nb "${d}" not_before)
-jget(na "${d}" not_after)
+bs_entry("${r}" ca iw-long e)
+jget(nb "${e}" not_before)
+jget(na "${e}" not_after)
 string(SUBSTRING "${nb}" 0 4 y0)
 string(SUBSTRING "${na}" 0 4 y1)
 math(EXPR years "${y1} - ${y0}")
-if(NOT bc MATCHES "CA:TRUE" OR NOT years EQUAL 5)
-  fail("issued_with ee cert: the profile was applied: basicConstraints '${bc}', ${nb} to ${na}")
+if(NOT bc MATCHES "CA:TRUE" OR NOT years EQUAL 30)
+  fail("issued_with: the profile was applied: iw-ee basicConstraints '${bc}', iw-long ${nb} to ${na}")
 endif()
 message(STATUS "bxc-pki bootstrap ok")
