@@ -389,7 +389,9 @@ class AuditLog
 	 * one canonical JSON object per line, including prev_hash and hash.
 	 * Without a database password source it signs nothing and writes
 	 * nothing to the database (BTD-70); *unsignedEntries receives the
-	 * number of entries after the last checkpoint (0: all covered).
+	 * number of entries after the checkpoint_seq of the last
+	 * checkpoint, the checkpoint row included, as unanchored_entries of
+	 * verify() counts them (BTD-134).
 	 * A log that no checkpoint may sign (audit_chain_broken,
 	 * audit_key_missing, audit_checkpoint_missing) is exported read-only
 	 * too (BTD-112); *skipped receives the code and its text, also for

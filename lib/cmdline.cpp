@@ -302,8 +302,11 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
 					"%1: %2\n")
 					.arg(skipped.code, skipped.reason).toUtf8());
-			/* Without --password the export only reads (BTD-70) */
-			else if (unsignedEntries > 0)
+			/* Without --password the export only reads (BTD-70);
+			 * a signed export leaves only its checkpoint row
+			 * unanchored and stays silent (BTD-134) */
+			else if (skipped.code == "audit_key_unavailable" &&
+				 unsignedEntries > 0)
 				console_write(stderr, QObject::tr(
 					"Warning: no database password given, no audit checkpoint signed; "
 					"the newest %1 audit entries are not covered by a checkpoint "

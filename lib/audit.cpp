@@ -964,9 +964,13 @@ QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 			}
 		}
 	}
+	/* Counted like unanchored_entries of verify(): the entries after
+	 * the checkpoint_seq of the last checkpoint, the checkpoint row
+	 * itself included (BTD-110, BTD-134) */
 	for (const AuditEntry &e : list)
 		if (e.action == actionCheckpoint)
-			lastCheckpoint = e.seq;
+			lastCheckpoint = e.params.value("checkpoint_seq")
+						.toLongLong();
 	if (unsignedEntries)
 		*unsignedEntries = list.size() - lastCheckpoint;
 	for (const AuditEntry &e : list) {
