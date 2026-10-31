@@ -90,6 +90,24 @@ the number of entries it takes over without proof, and signs. The announcement i
 checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it as
 `adopted_entries`.
 
+## Interval and key rotation on the command line (BTD-100)
+
+```
+xca --no-gui --database pki.xdb --audit-checkpoint-interval current
+xca --no-gui --database pki.xdb --password file:db.pass --audit-checkpoint-interval 50
+xca --no-gui --database pki.xdb --password file:db.pass --audit-rotate-key
+```
+
+| Option | Effect |
+|---|---|
+| `--audit-checkpoint-interval current` | prints `{"setting":"audit_checkpoint_interval","value":N}`; needs no password |
+| `--audit-checkpoint-interval <n>` | sets the interval (`AuditLog::setCheckpointInterval()`), 1 to 1000 (the clamp of BTD-110); prints `{"new_value":…,"old_value":…,"setting":"audit_checkpoint_interval"}` and writes one `settings.update` entry with both values in clear text. Outside the range or not a number: `invalid_value`, exit 1; without a verified password: `missing_password`, exit 1; nothing is written then |
+| `--audit-rotate-key` | `AuditLog::rotateKey()`: announces a new key and signs a checkpoint with the old one that names it in `next_key_id`; the old key is retired. Without the password `audit_key_unavailable`, exit 1. `--audit-verify` afterwards lists both keys in `audit_keys` |
+
+The interval decides when the next automatic checkpoint is written. Both options run before
+`--audit-verify` and `--audit-export` of the same command. REST endpoints for both are a
+requirement for the REST work of Phase 3; there are none yet.
+
 ## Export with and without a password
 
 | `--audit-export` | Result |
