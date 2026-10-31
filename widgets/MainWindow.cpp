@@ -47,6 +47,7 @@
 #include "OpenDb.h"
 #include "Help.h"
 #include "OidResolver.h"
+#include "AuditVerify.h"
 #include "lib/oid.h"
 
 OidResolver *MainWindow::resolver;
@@ -830,6 +831,17 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
 		}
 	}
 	update();
+}
+
+/* Extra > Verify audit log (BTD-103): the report of --audit-verify; not
+ * modal, like the OID resolver */
+void MainWindow::verifyAudit()
+{
+	if (!Database.isOpen())
+		return;
+	AuditVerify *dlg = new AuditVerify(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->show();
 }
 
 void MainWindow::dump_database()

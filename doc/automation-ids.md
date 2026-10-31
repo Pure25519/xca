@@ -55,7 +55,7 @@ two IDs (`ctx_key_delete`, `ctx_cert_delete`).
 | `menu_file` | `act_file_newDatabase`, `act_file_openDatabase`, `act_file_openRemoteDatabase`, `menu_history` (`act_history_<n>`), `act_file_setDefaultDatabase`, `act_file_closeDatabase`, `act_file_options`, `menu_language` (`act_lang_*`), `act_file_exit` |
 | `menu_import` | `act_import_keys`, `act_import_requests`, `act_import_certificates`, `act_import_pkcs12`, `act_import_pkcs7`, `act_import_template`, `act_import_crl`, `act_import_pemFile`, `act_import_pastePem` |
 | `menu_token` | `act_token_manage`, `act_token_init`, `act_token_changePin`, `act_token_changeSoPin`, `act_token_initPin` |
-| `menu_extra` | `act_extra_dumpDatabase`, `act_extra_exportIndex`, `act_extra_exportIndexHierarchy`, `act_extra_changeDbPassword`, `act_extra_changeTableFont`, `act_extra_resetTableFont`, `act_extra_generateDhParam`, `act_extra_oidResolver` |
+| `menu_extra` | `act_extra_dumpDatabase`, `act_extra_exportIndex`, `act_extra_exportIndexHierarchy`, `act_extra_changeDbPassword`, `act_extra_verifyAudit`, `act_extra_changeTableFont`, `act_extra_resetTableFont`, `act_extra_generateDhParam`, `act_extra_oidResolver` |
 | `menu_help` | `act_help_content`, `act_help_about` |
 
 In the App Store build the language menu and `act_file_options` sit in `menu_extra`; the IDs
@@ -87,6 +87,7 @@ Column menu entries: `columns_reset`, `columns_hide`, `columns_details`, the sub
 | `dlg_pastePem_text` | text field of Import → Paste PEM |
 | `dlg_about_text` | text of the About dialog |
 | `dlg_warningV3_text` | text of the extension warning dialog |
+| `dlg_auditVerify`, `dlg_auditVerify_<field>` | Extra → Verify audit log (BTD-103) and its values: `ok`, `entries`, `firstBrokenSeq`, `reason`, `checkpoints`, `lastCheckpointSeq`, `unanchoredEntries`, `auditKeys`, `adoptedEntries`, `unauditedRevocations` (accessible name = label text); `dlg_auditVerify_mismatches` (table), `dlg_auditVerify_pinKeys`, `dlg_auditVerify_minCheckpoint`; buttons `btn_verify`, `btn_adopt`, `btn_close` |
 
 ## Accessible names
 
