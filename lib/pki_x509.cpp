@@ -1142,7 +1142,7 @@ QList<pki_base *> pki_x509::vcalendarObjects() const
 	objects << const_cast<pki_x509 *>(this);
 	foreach(pki_base *p, childItems) {
 		pki_x509 *pki = static_cast<pki_x509 *>(p);
-		if (pki->getNotAfter() > a1time() && !isRevoked())
+		if (pki->getNotAfter() > a1time() && !pki->isRevoked())
 			objects << pki;
 	}
 
