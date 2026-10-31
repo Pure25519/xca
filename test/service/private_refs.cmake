@@ -7,6 +7,7 @@
 file(GLOB_RECURSE files
   "${SRC}/test/service/data/*.json" "${SRC}/test/service/data/*.md"
   "${SRC}/test/*.cpp" "${SRC}/cli/test/*.cmake"
+  "${SRC}/cli/test/data/*.json"
   "${SRC}/cli/*.cpp" "${SRC}/cli/*.h" "${SRC}/cli/*.md"
   "${SRC}/lib/*.cpp" "${SRC}/lib/*.h" "${SRC}/widgets/*.cpp")
 set(found "")

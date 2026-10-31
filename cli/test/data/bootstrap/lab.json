@@ -11,14 +11,14 @@
       "validity": "P20Y",
       "issued_with": "root-ca",
       "profiles": ["issuing-ca"],
-      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-root.crl"] }
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.example.org/crl/ot-rsa-root.crl"] }
     },
     {
       "id": "ot-rsa-issuing",
       "parent": "ot-rsa-root",
       "dn": [
         [{ "type": "DC", "value": "de" }],
-        [{ "type": "DC", "value": "bxc-technology" }],
+        [{ "type": "DC", "value": "example" }],
         [{ "type": "C", "value": "DE" }],
         [{ "type": "O", "value": "BxC Security" }],
         [{ "type": "OU", "value": "OT Lab" }, { "type": "OU", "value": "OPC UA" }],
@@ -30,13 +30,13 @@
       "path_len": 0,
       "name_constraints": {
         "critical": true,
-        "permitted": { "dns": [".lab.bxc-technology.de"], "ip": ["192.168.0.0/24", "10.10.10.0/24", "127.0.0.1/32"] }
+        "permitted": { "dns": [".lab.example.org"], "ip": ["192.0.2.0/24", "198.51.100.0/24", "127.0.0.1/32"] }
       },
       "validity": "P10Y",
       "issued_with": "issuing-ca",
       "profiles": ["tls-server"],
       "policies": ["lab-names"],
-      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-rsa-issuing.crl"] },
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.example.org/crl/ot-rsa-issuing.crl"] },
       "rollover": { "before": "P1Y", "switch_after": "P30D" }
     },
     {
@@ -48,7 +48,7 @@
       "validity": "P20Y",
       "issued_with": "root-ca",
       "profiles": ["issuing-ca"],
-      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-root.crl"] }
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.example.org/crl/ot-p256-root.crl"] }
     },
     {
       "id": "ot-p256-issuing",
@@ -61,7 +61,7 @@
       "issued_with": "issuing-ca",
       "profiles": ["tls-server"],
       "policies": ["lab-names"],
-      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.bxc-technology.de/crl/ot-p256-issuing.crl"] }
+      "crl": { "validity": "P7D", "distribution_points": ["http://pki.lab.example.org/crl/ot-p256-issuing.crl"] }
     },
     {
       "id": "pqc-root",
@@ -91,7 +91,7 @@
     "profiles/tls-server.json"
   ],
   "policies": ["policies/lab-names.json"],
-  "ocsp": { "ca": ["ot-rsa-issuing", "ot-p256-issuing", "pqc-issuing"], "signer_validity": "P1Y", "url": "http://pki.lab.bxc-technology.de/ocsp" },
+  "ocsp": { "ca": ["ot-rsa-issuing", "ot-p256-issuing", "pqc-issuing"], "signer_validity": "P1Y", "url": "http://pki.lab.example.org/ocsp" },
   "publishers": [
     {
       "type": "file",
@@ -111,7 +111,7 @@
     "tls_cert": {
       "ca": "ot-rsa-issuing",
       "profile": "tls-server",
-      "dns": ["pki.lab.bxc-technology.de"],
+      "dns": ["pki.lab.example.org"],
       "ip": ["127.0.0.1"],
       "uri": ["urn:bxc:pki:server"]
     }
@@ -127,7 +127,7 @@
         {
           "name": "idial",
           "secret": "env:BXC_PKI_EST_IDIAL_SECRET",
-          "allowed_names": ["*.lab.bxc-technology.de", "192.168.0.*"],
+          "allowed_names": ["*.lab.example.org", "192.0.2.*"],
           "application_uri": { "pattern": "^urn:bxc:[a-z0-9-]+$" },
           "reusable": true
         }
