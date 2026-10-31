@@ -69,8 +69,20 @@ The ctest `test_service_harness_selfcheck` proves that an unexpected prompt real
    #include "test_service_<area>.moc"
    ```
 
-2. Add one line to `test/service/CMakeLists.txt`: `ServiceTest(test_service_<area>)`.
+2. Nothing to register: `test/service/CMakeLists.txt` finds every `test_service_*.cpp` with
+   `file(GLOB)` (BTD-256); re-run CMake (the build does it) and the test is there. Every service
+   test is built with `SERVICE_TEST_DATA` (`test/service/data`), `XCA_SOURCE_DIR` and, when the
+   program is found, `OPENSSL_PROGRAM`. Only a test that needs more (another ctest entry with
+   arguments, an environment, a pass expression) gets lines of its own in the section "Tests
+   with settings of their own" of `test/service/CMakeLists.txt`, in alphabetical order.
 3. Run `ctest -L service` in the build container (bxc-pki `deploy/build/linux/Dockerfile`).
+
+A CMake script test (a run of `xca --no-gui` with checks) is a file
+`test/service/cli_<name>.cmake`; it becomes the ctest `test_cli_<name>` without any registration.
+Every script gets the same variables: `XCA`, `SQL_EXEC`, `OPENSSL` (empty without the program),
+`SETPRIV`, `DATA` (`test/service/data`), `SOURCE` (the source tree) and `WORK` (its own scratch
+directory, `cli_<name>` in the build tree). Name the ones it uses in its header comment. A script
+that cannot run without `openssl` goes into `cli_needs_openssl` in the CMakeLists.
 
 Rules:
 

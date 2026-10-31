@@ -178,6 +178,12 @@ class pki_x509 : public pki_x509super
 		void restoreSql(const QSqlRecord &rec);
 		QStringList icsVEVENT() const;
 		QStringList icsVEVENT_ca() const;
+		/* The objects of icsVEVENT_ca(): the CA, its valid issued
+		 * certificates and its latest CRL */
+		QList<pki_base *> vcalendarObjects() const;
+		/* The certificate whose tls-auth key getTaKey() returns: an
+		 * end-entity certificate shares the one of its issuer */
+		pki_x509 *taKeyOwner();
 		QString getTaKey();
 		bool importTaKey(const QByteArray &takey);
 		QList<int> ossl_verify() const;

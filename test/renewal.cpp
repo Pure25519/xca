@@ -100,7 +100,10 @@ static void renewAsIs(CertExtend *dlg)
 /* BTD-181: the renewal signs with the issuer's key and the digest of the
  * old certificate; when that signature fails (an RSA-512 CA key with
  * SHA-512), the dialog shows the error and stores nothing, never a
- * certificate with an empty DER (BTD-171) */
+ * certificate with an empty DER (BTD-171). Since BTD-56 the renewal runs
+ * the issuer checks first: the swapped CA key is refused before any
+ * signature (issuer_key_mismatch); a failing signature itself is covered
+ * by test_service_signing_failure. */
 void test_main::renewalSigningFails()
 {
 	try {
@@ -152,7 +155,7 @@ void test_main::renewalSigningFails()
 		xcaWarning::setGui(new xcaWarningCore());
 
 		QCOMPARE(renewErrors.size(), 1);
-		QVERIFY2(renewErrors[0].contains("could not be signed"),
+		QVERIFY2(renewErrors[0].contains("does not belong to"),
 			CCHAR(renewErrors[0]));
 		QCOMPARE(Store.getAll<pki_x509>().size(), before);
 		QCOMPARE(getcerts("renew leaf").size(), 1);
@@ -219,9 +222,11 @@ void test_main::revoke()
 	dbstatus();
 	l = getcerts("Inter CA 1");
 	QCOMPARE(1, l.size());
-	not_after.setUndefined();
+	/* "no well-defined expiration" ends with the issuer since BTD-56:
+	 * a renewal never outlives its CA (BTD-51) */
 	if (l.size() > 0)
-		QCOMPARE(l[0]->getNotAfter().toPlain(), not_after.toPlain());
+		QCOMPARE(l[0]->getNotAfter().toPlain(), dynamic_cast<pki_x509*>(
+			certs->getByName("Root CA"))->getNotAfter().toPlain());
 
 	} catch (...) {
 		QVERIFY2(false, "Exception thrown");
