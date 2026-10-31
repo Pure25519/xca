@@ -5,9 +5,12 @@
 # opens as upstream allows, unchecked.
 # The xca command line cannot create such a database (the GUI can): the
 # schema 8 fixture gets the stored hash of the empty password.
-# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> -DDUMP=<schema8-fork.sql>
+# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> [-DDUMP=<schema8-fork.sql>] -DDATA=<test/service/data>
 #       -DWORK=<scratch dir> -P cli_password_empty_db.cmake
 
+if(NOT DUMP)
+  set(DUMP "${DATA}/schema8-fork.sql")
+endif()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")
@@ -91,5 +94,9 @@ if(NOT rc EQUAL 0 OR NOT out MATCHES "\"action\":\"audit.init\"")
 endif()
 if(out MATCHES "\"db_unlock_verified\":true" OR out MATCHES "intruder-key")
   message(FATAL_ERROR "the export claims a checked password or the key:\n${out}")
+endif()
+# The baseline records the unchecked open (BTD-135)
+if(NOT out MATCHES "\"action\":\"audit.init\",[^\n]*\"db_unlock_verified\":false")
+  message(FATAL_ERROR "no password: audit.init lacks db_unlock_verified=false:\n${out}")
 endif()
 message(STATUS "xca --no-gui: empty-password database rejects every given source, writes nothing")
