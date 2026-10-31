@@ -159,8 +159,8 @@ class pki_x509 : public pki_x509super
 		a1time column_a1time(const dbheader *hd) const;
 		QByteArray i2d() const;
 		void d2i(QByteArray &ba);
-		void deleteFromToken();
-		void deleteFromToken(const slotid &slot);
+		bool deleteFromToken();
+		bool deleteFromToken(const slotid &slot);
 		QString getMsg(msg_type msg, int n = 1) const;
 		int renameOnToken(const slotid &slot, const QString &name);
 		bool pem(BioByteArray &b, const ExportOptions &opts);

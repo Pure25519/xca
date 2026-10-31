@@ -537,27 +537,30 @@ void pki_x509::store_token(bool alwaysSelect)
 	p11.createObject(p11_atts);
 }
 
-void pki_x509::deleteFromToken()
+bool pki_x509::deleteFromToken()
 {
 	pki_key *privkey = getRefKey();
 	pki_scard *card = dynamic_cast<pki_scard *>(privkey);
 	slotidList p11_slots;
+	bool deleted = false;
 
 	if (!card || !pkcs11::libraries.loaded())
-		return;
+		return false;
 
 	if (privkey && privkey->isToken()) {
 		slotid slot;
 		if (!card->prepare_card(&slot))
-			return;
+			return false;
 		p11_slots << slot;
 	} else {
 		pkcs11 p11;
 		p11_slots = p11.getSlotList();
 	}
 	for (int i=0; i<p11_slots.count(); i++) {
-		deleteFromToken(p11_slots[i]);
+		if (deleteFromToken(p11_slots[i]))
+			deleted = true;
 	}
+	return deleted;
 }
 
 pk11_attlist pki_x509::objectAttributes()
@@ -570,7 +573,7 @@ pk11_attlist pki_x509::objectAttributes()
 	return attrs;
 }
 
-void pki_x509::deleteFromToken(const slotid &slot)
+bool pki_x509::deleteFromToken(const slotid &slot)
 {
 	pkcs11 p11;
 	p11.startSession(slot, true);
@@ -578,18 +581,19 @@ void pki_x509::deleteFromToken(const slotid &slot)
 	pk11_attlist atts = objectAttributes();
 	QList<CK_OBJECT_HANDLE> objs = p11.objectList(atts);
 	if (!objs.count())
-		return;
+		return false;
 
 	tkInfo ti = p11.tokenInfo();
 	if (!XCA_YESNO("token.delete_certificate", tr("Delete the certificate '%1' from the token '%2 (#%3)'?").
 		arg(getIntName()).arg(ti.label()).arg(ti.serial())))
 	{
-		return;
+		return false;
 	}
 	if (!p11.tokenLoginForModification())
-		return;
+		return false;
 
 	p11.deleteObjects(objs);
+	return true;
 }
 
 int pki_x509::renameOnToken(const slotid &slot, const QString &name)

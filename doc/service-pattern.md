@@ -135,17 +135,28 @@ Templates, rename and delete (BTD-35):
   exists once. Applying a template changes nothing in the database and writes no entry.
 - Audit parameters: `template.create`/`template.update` `name`, `subject`, `old_name` (only when
   the name changed); `object.rename` `name`, `old_name`, `on_token` (renamed on a token,
-  `db_token`); `object.update_comment` `name` (never the comment); `object.delete` and
+  `db_token`; `object_id` is the CKA_ID of a key or the SHA-256 fingerprint of a certificate,
+  BTD-128); `object.update_comment` `name` (never the comment); `object.delete` and
   `template.delete` `name`, `dependents` (objects that stay and referred to it),
-  `revocations` (certificates only: the revocation rows it had as a CA).
+  `revocations` (certificates only: the revocation rows it had as a CA), `on_token` (the GUI
+  deletion also deleted it on a token) and `warning` `token_delete_failed` (the deletion on
+  the token failed, the database deletion went on).
 - `deleteItems()` deletes all objects of the call in one transaction or none. The objects that
   refer to a deleted one are handled as XCA always did and listed in `DeleteResult::dependents`:
   certificates and requests lose their private key; certificates lose their issuer (and move to
   another certificate with the issuer's subject and key, if there is one); CRLs lose their issuer;
   the CA's revocation rows are deleted. `AuditLog::verify()` replays an `object.delete` of a
-  certificate as the removal of its revocation rows. The question `item.delete` and the deletion
-  on a token (`pki_base::deleteFromToken()`) stay with the GUI caller (`XcaTreeView::deleteItems`,
-  `xcaWarning::confirmOkCancel()` records the answer in the `ServiceContext`).
+  certificate as the removal of its revocation rows. The question `item.delete` stays with the
+  GUI caller (`XcaTreeView::deleteItems`, `xcaWarning::confirmOkCancel()` records the answer in
+  the `ServiceContext`). With `fromToken` (the GUI's delete) `deleteItems()` also deletes each
+  object on its token (`pki_base::deleteFromToken()`, which may ask), after all checks, so a
+  rejected call never touches a token (BTD-128). `db_token::rename()` updates the database
+  first and the label on the token last. Deleting on a token only, with the database row kept
+  (Delete from token of a certificate, the import dialog), goes through the static
+  `db_token::deleteOnToken()`: one `object.delete` with `on_token` and the token object as
+  `object_id` (CKA_ID or fingerprint, never a numeric item id, so `verify()` does not replay it
+  as a removed CA); nothing deleted is the failure `nothing_deleted`, a token error
+  `token_error` (BTD-248).
 - `lib/` signatures of the group take `pki_base *`; `db_base::remFromCont(pki_base *)` replaces
   the `QModelIndex` variant and `db_base::removeItem()` the old `deletePKI(QModelIndex)` (no
   audit, used by the import that completes a public key). Only the Qt model override

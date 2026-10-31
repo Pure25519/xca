@@ -14,6 +14,7 @@
 #include "headerlist.h"
 
 #include <QStringList>
+#include <functional>
 #include <QAbstractItemModel>
 #include <QHash>
 
@@ -48,6 +49,9 @@ class DeleteResult
 	QList<pki_base *> dependents{};
 	/* Revocation rows of deleted CA certificates that were removed */
 	int revocations{};
+	/* Objects whose deletion on the token failed, with the reason;
+	 * they are deleted from the database (BTD-128) */
+	QStringList tokenErrors{};
 };
 
 class db_base: public QAbstractItemModel
@@ -201,11 +205,20 @@ class db_base: public QAbstractItemModel
 		 * per object, all in one transaction: either all objects are
 		 * deleted or none, then one failure entry names the object
 		 * that failed and memory is unchanged (BTD-130). The
-		 * confirmation (question item.delete) and the deletion of a
-		 * key or certificate on its token belong to the caller. The
-		 * pointers in items are invalid after a successful call. */
+		 * confirmation (question item.delete) belongs to the caller.
+		 * fromToken: after the checks each object is also deleted on
+		 * its token (pki_base::deleteFromToken(), which may ask), and
+		 * its entry records on_token; a failure on the token is
+		 * returned in tokenErrors and recorded as warning
+		 * token_delete_failed (BTD-128). The pointers in items are
+		 * invalid after a successful call. */
 		DeleteResult deleteItems(const ServiceContext &ctx,
-				const QList<pki_base *> &items);
+				const QList<pki_base *> &items,
+				bool fromToken = false);
+		/* Tests only (BTD-128): replaces pki_base::deleteFromToken()
+		 * in deleteItems(); true if the object was deleted on a token,
+		 * an exception is a failure on the token */
+		static std::function<bool(pki_base *)> tokenDeleteHook;
 		static pki_base *fromIndex(const QModelIndex &index)
 		{
 			if (!index.isValid())
