@@ -211,6 +211,24 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	}
 	database_model::open_without_password = false;
 
+	/* A read-only database (BTD-214): reading goes on, a writing
+	 * command ends here, before any key, template or file work */
+	if (Database.isOpen() && database_model::read_only) {
+		console_write(stderr, QObject::tr("Notice: the database %1 is "
+			"read-only; commands that write to it are refused\n")
+			.arg(compressFilename(Database.name())).toUtf8());
+		for (const char *opt : { "keygen", "import", "crlgen",
+				"migrate-template", "audit-adopt" }) {
+			if (cmd_opts.has(opt)) {
+				report(serviceError("read_only_database",
+					QObject::tr("--%1 writes to the database "
+					"%2, which is read-only").arg(opt)
+					.arg(compressFilename(Database.name()))));
+				return EXIT_FAILURE;
+			}
+		}
+	}
+
 	if (cmd_opts.has("list-curves")) {
 		QStringList list;
 		foreach(const builtin_curve &c, builtinCurves) {
@@ -306,7 +324,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			QByteArray lines = AuditLog::exportJsonLines(
 					&unsignedEntries, &skipped);
 			bool broken = !skipped.code.isEmpty() &&
-				skipped.code != "audit_key_unavailable";
+				skipped.code != "audit_key_unavailable" &&
+				skipped.code != "read_only_database";
 			/* A log no checkpoint may sign: exported read-only
 			 * for forensics, but not a clean run (BTD-112) */
 			if (broken)
@@ -314,6 +333,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
 					"%1: %2\n")
 					.arg(skipped.code, skipped.reason).toUtf8());
+			/* A read-only database cannot take a checkpoint
+			 * (BTD-214) */
+			else if (skipped.code == "read_only_database" &&
+				 unsignedEntries > 0)
+				console_write(stderr, QObject::tr(
+					"Warning: the database is read-only, no audit checkpoint signed; "
+					"the newest %1 audit entries are not covered by a checkpoint "
+					"(unanchored_entries of --audit-verify).\n")
+					.arg(unsignedEntries).toUtf8());
 			/* Without --password the export only reads (BTD-70) */
 			else if (unsignedEntries > 0)
 				console_write(stderr, QObject::tr(

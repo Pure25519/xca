@@ -64,6 +64,11 @@ class database_model: public QObject
 		 * migrate an older database: schema_upgrade_required, nothing
 		 * written (BTD-70) */
 		static bool refuse_schema_upgrade;
+		/* The open database cannot be written: the write probe after
+		 * the unlock failed with "read-only" (BTD-214). Reading works,
+		 * the CLI refuses writing commands and the GUI disables the
+		 * write actions; nothing is written during the open. */
+		static bool read_only;
 		database_model(const QString &dbName,
 				const Passwd &pass = Passwd());
 		~database_model();

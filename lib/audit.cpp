@@ -5,6 +5,7 @@
 
 #include "audit.h"
 #include "audit_key.h"
+#include "database_model.h"
 #include "asn1time.h"
 #include "exception.h"
 #include "settings.h"
@@ -1013,7 +1014,15 @@ QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 	QList<AuditEntry> list = entries();
 	qint64 lastCheckpoint = 0;
 
-	if (!list.isEmpty() && list.last().action != actionCheckpoint) {
+	if (!list.isEmpty() && list.last().action != actionCheckpoint &&
+	    database_model::read_only) {
+		/* nothing can be signed on a read-only database (BTD-214) */
+		if (skipped) {
+			skipped->code = "read_only_database";
+			skipped->reason = QObject::tr("The database is "
+				"read-only");
+		}
+	} else if (!list.isEmpty() && list.last().action != actionCheckpoint) {
 		try {
 			checkpoint(ctx);
 			list = entries();

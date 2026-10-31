@@ -106,7 +106,7 @@ endforeach()
 
 # An export does not try to sign a checkpoint on it
 run(0 "${DB}" ${pw} --audit-export "${WORK}/ro-export.jsonl")
-if(NOT err MATCHES "read-only")
+if(NOT err MATCHES "database is read-only, no audit checkpoint signed")
   fail("--audit-export does not say why no checkpoint was signed:\n${err}")
 endif()
 

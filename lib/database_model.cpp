@@ -40,6 +40,39 @@ xca_db Database;
 
 bool database_model::refuse_schema_upgrade = false;
 bool database_model::open_without_password = false;
+bool database_model::read_only = false;
+
+/* Whether this connection may write (BTD-214). SQLite takes the write
+ * lock with BEGIN IMMEDIATE, which a read-only file still grants, so a
+ * write that touches no row follows; both are rolled back, nothing
+ * changes. A lock that another process holds (SQLITE_BUSY after the busy
+ * timeout) is no reason to call the database read-only. PostgreSQL and
+ * MariaDB report their read-only mode (not tested before BTD-79). */
+static bool probeReadOnly()
+{
+	QSqlDatabase db = QSqlDatabase::database();
+	QString driver = db.driverName();
+	QSqlQuery q(db);
+
+	if (driver == "QSQLITE") {
+		if (!q.exec("BEGIN IMMEDIATE"))
+			return sqlErrorCode(driver,
+				q.lastError().nativeErrorCode()) ==
+				"read_only_database";
+		bool writable = q.exec("DELETE FROM settings WHERE 0");
+		QString native = q.lastError().nativeErrorCode();
+		q.exec("ROLLBACK");
+		return !writable &&
+			sqlErrorCode(driver, native) == "read_only_database";
+	}
+	if (driver == "QPSQL")
+		return q.exec("SHOW transaction_read_only") && q.next() &&
+			q.value(0).toString() == "on";
+	if (driver == "QMYSQL" || driver == "QMARIADB")
+		return q.exec("SELECT @@global.read_only") && q.next() &&
+			q.value(0).toInt() != 0;
+	return false;
+}
 
 const QString &database_model::detect_provider()
 {
@@ -342,6 +375,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 	enum open_result result;
 	QSqlError err;
 
+	read_only = false;
 #ifndef APPSTORE_COMPLIANT
 	dbName = name;
 #else
@@ -405,6 +439,15 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		 * current database read-only, an old one not at all, since
 		 * its upgrade and audit baseline would write (BTD-137) */
 		bool verified = ServiceContext::processPasswordVerified;
+		/* A read-only database opens for reading; one that needs
+		 * its upgrade (and audit baseline) cannot be read by this
+		 * version and is not opened (BTD-214) */
+		read_only = existing && probeReadOnly();
+		if (read_only && schemaUpgradeNeeded())
+			throw serviceError("read_only_database", tr(
+				"The database %1 has to be upgraded to the current "
+				"version, which needs write access, but it is "
+				"read-only.").arg(compressFilename(dbName)));
 		if (existing && !verified && schemaUpgradeNeeded())
 			throw serviceError("schema_upgrade_needs_password", tr(
 				"The database %1 has to be upgraded to the current "
@@ -413,7 +456,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 				.arg(compressFilename(dbName)));
 		if (existing)
 			initSchema();
-		if (verified) {
+		if (verified && !read_only) {
 			Settings.migrateOptionflags();
 			migratePkcs12Default(existing);
 		}
@@ -439,9 +482,10 @@ database_model::database_model(const QString &name, const Passwd &pass)
 	models << new db_crl();
 	models << new db_temp();
 
-	if (dbkey)
+	if (dbkey && !read_only)
 		dbkey->updateKeyEncryptionScheme();
-	reportSkippedRows(ServiceContext::processPasswordVerified);
+	reportSkippedRows(ServiceContext::processPasswordVerified &&
+			  !read_only);
 
 	foreach(db_base *m, models) {
 		Q_CHECK_PTR(m);
@@ -580,6 +624,7 @@ database_model::~database_model()
 	/* no transactions on a connection that is gone (review of
 	 * xca#68): begin() would run on the removed connection */
 	DbTransaction::setHasTransaction(false);
+	read_only = false;
 	if (!QSqlDatabase::database().isOpen()) {
 		QSqlDatabase::removeDatabase(connName);
 		Settings.clear();
