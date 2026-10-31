@@ -101,7 +101,10 @@ const QStringList &AuditParams::allowList()
 		"not_after",
 		"not_before", "old_name", "old_pkcs12_algorithm", "on_token",
 		"outcome",
-		"pkcs12_algorithm", "question",
+		"pkcs12_algorithm",
+		/* the MAC and iteration count of a PKCS#12 (BTD-175) */
+		"pkcs12_iterations", "pkcs12_mac",
+		"question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial",
 		/* type:id of database rows left out on open (BTD-209) */
