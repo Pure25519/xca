@@ -30,6 +30,7 @@
 
 #include <QCoreApplication>
 #include <algorithm>
+#include <optional>
 #include <QRegularExpression>
 #include <QTimeZone>
 
@@ -436,6 +437,20 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 	}
 	if (!spec.profileWarnings.isEmpty())
 		p.set("profile_warnings", spec.profileWarnings.join(","));
+	if (spec.predecessor) {
+		pki_x509 *old = spec.predecessor;
+		bool rekey = spec.key && EVP_PKEY_eq(spec.key->getPubKey(),
+				X509_get0_pubkey(old->getCert())) != 1;
+		p.set("predecessor_id", old->getSqlItemId().toLongLong());
+		p.set("predecessor_serial", old->getSerial().toHex());
+		p.set("rekey", rekey);
+		if (spec.keepSerial)
+			p.set("serial_kept", true);
+		if (rekey && old->isRevoked() &&
+		    old->getRevocation().getReasonBit() ==
+				CRL_REASON_KEY_COMPROMISE)
+			p.warn("predecessor_key_compromised");
+	}
 	QStringList policies;
 	for (const Policy &policy : spec.policies)
 		policies << policy.id;
@@ -464,6 +479,64 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 			QCoreApplication::translate("db_x509",
 			"The profile of the certificate could not be stored: %1")
 			.arg(q.lastError().text()));
+}
+
+/* The predecessor of a renewal (BTD-56); inside the issuing transaction.
+ * Its id may outlive the predecessor (replace), its serial stays. */
+static void recordRenewal(const IssuanceSpec &spec, pki_x509 *cert)
+{
+	pki_x509 *old = spec.predecessor;
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO renewals (item, predecessor, "
+		"predecessor_serial, rekey) VALUES (?, ?, ?, ?)");
+	q.bindValue(0, cert->getSqlItemId());
+	q.bindValue(1, old->getSqlItemId());
+	q.bindValue(2, old->getSerial().toHex());
+	q.bindValue(3, EVP_PKEY_eq(X509_get0_pubkey(cert->getCert()),
+			X509_get0_pubkey(old->getCert())) == 1 ? 0 : 1);
+	q.exec();
+	if (q.lastError().isValid())
+		throw serviceError("database_error",
+			QCoreApplication::translate("db_x509",
+			"The predecessor of the certificate could not be stored: %1")
+			.arg(q.lastError().text()));
+}
+
+/* The extensions of the predecessor in their order (BTD-56). A new key
+ * gets its own subject key identifier and, when it signs itself, its
+ * own authority key identifier; everything else is copied as it is. */
+static void predecessorExtensions(const IssuanceSpec &spec, pki_x509 *cert,
+				X509V3_CTX *ctx)
+{
+	X509 *old = spec.predecessor->getCert(), *x = cert->getCert();
+	bool newKey = EVP_PKEY_eq(X509_get0_pubkey(old),
+				X509_get0_pubkey(x)) != 1;
+	for (int i = 0; i < X509_get_ext_count(old); i++) {
+		const X509_EXTENSION *ext = X509_get_ext(old, i);
+		int nid = OBJ_obj2nid(X509_EXTENSION_get_object(ext));
+		x509v3ext made;
+		if (newKey && nid == NID_subject_key_identifier) {
+			/* added to the certificate by create() */
+			made.create(nid, "hash", ctx);
+		} else if (newKey && spec.selfSigned() &&
+			   nid == NID_authority_key_identifier) {
+			made.create(nid, "keyid:always", ctx);
+		} else {
+			if (!X509_add_ext(x, ext, -1))
+				throw serviceError("invalid_extension",
+					QString("%1\n%2").arg(
+					QCoreApplication::translate("db_x509",
+					"The extension %1 of the predecessor cannot be copied.")
+					.arg(OBJ_nid2sn(nid)),
+					take_openssl_errors()));
+			continue;
+		}
+		if (!made.isValid())
+			throw serviceError("invalid_extension", QString("%1\n%2")
+				.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be made for the new key.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
+	}
 }
 
 /* The subject as given, byte for byte; with a profile that adds a
@@ -819,7 +892,7 @@ static void orderExtensions(const QList<int> &order, pki_x509 *cert)
 }
 
 pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
-			const ServiceContext &ctx)
+			const ServiceContext &ctx, const QString &action)
 {
 	pki_x509 *cert = nullptr, *stored = nullptr, *signcert;
 	pki_key *signkey, *clientkey = spec.key, *tempkey = nullptr;
@@ -838,6 +911,10 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 			clientkey = spec.request->getPubKey();
 			tempkey = clientkey;
 		}
+	} else if (!clientkey && spec.predecessor) {
+		/* a renewal of a certificate whose key is not stored */
+		clientkey = spec.predecessor->getPubKey();
+		tempkey = clientkey;
 	} else if (!clientkey) {
 		throw serviceError("missing_key",
 			tr("Neither a key nor a certificate signing request was given"));
@@ -894,7 +971,11 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	// profile without CSR only the registration's SAN is free input, so
 	// a failure is that SAN's (BTD-191)
 	try {
-		spec.extensions.build(&ext_ctx, spec.selfSigned(), false);
+		if (spec.predecessor)
+			predecessorExtensions(spec, cert, &ext_ctx);
+		else
+			spec.extensions.build(&ext_ctx, spec.selfSigned(),
+						false);
 	} catch (errorEx &err) {
 		if (!spec.csrPolicy.profile || spec.request)
 			throw;
@@ -940,7 +1021,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 		params.set("policy_result", "pass");
 
 	// the serial only once every check passed
-	cert->setSerial(getUniqueSerial(spec.signer));
+	cert->setSerial(spec.keepSerial && spec.predecessor ?
+			spec.predecessor->getSerial() :
+			getUniqueSerial(spec.signer));
 	/* the AKI of a self-signed certificate in the issuer form names its
 	 * own serial, which exists only now: built again in its place, or
 	 * verifiers do not take the root for self-issued (BTD-48) */
@@ -997,7 +1080,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	markRequestSigned(spec.request, stored);
 	if (spec.profileVersion)
 		recordProfile(named, stored);
-	AuditLog::append(ctx, "certificate.issue", "certificate",
+	if (spec.predecessor)
+		recordRenewal(spec, stored);
+	AuditLog::append(ctx, action, "certificate",
 			stored->getSqlItemId().toString(), params);
 	TransCommitThrow();
     }
@@ -1012,23 +1097,71 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
     return stored;
 }
 
-pki_x509 *db_x509::newCert(const ServiceContext &ctx,
-			const IssuanceSpec &spec)
+pki_x509 *db_x509::issueAudited(const ServiceContext &ctx,
+			const IssuanceSpec &spec, const QString &action)
 {
 	AuditParams params = issuanceParams(spec);
 	try {
-		return issue(spec, params, ctx);
+		return issue(spec, params, ctx, action);
 	} catch (serviceError &err) {
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::appendFailure(ctx, "certificate.issue", "certificate",
+		AuditLog::appendFailure(ctx, action, "certificate",
 				QString(), params, err.code);
 		throw;
 	} catch (...) {
 		/* errorEx (database, OpenSSL, key decryption) and anything else */
-		AuditLog::appendFailure(ctx, "certificate.issue", "certificate",
+		AuditLog::appendFailure(ctx, action, "certificate",
 				QString(), params, "internal_error");
 		throw;
 	}
+}
+
+pki_x509 *db_x509::newCert(const ServiceContext &ctx,
+			const IssuanceSpec &spec)
+{
+	return issueAudited(ctx, spec, "certificate.issue");
+}
+
+QList<pki_x509 *> db_x509::renew(const ServiceContext &ctx,
+			const QList<RenewalSpec> &specs)
+{
+	QList<pki_x509 *> renewed;
+	/* the failure entry of a renewal is written inside this
+	 * transaction and rolled back with it: kept and written again
+	 * after the rollback, unless a caller's transaction (the command
+	 * line) does that with its own capture */
+	std::optional<AuditFailureCapture> capture;
+	if (!DbTransaction::active())
+		capture.emplace();
+	try {
+		Transaction;
+		TransThrow();
+		for (const RenewalSpec &r : specs) {
+			IssuanceSpec spec;
+			try {
+				spec = r.issuanceSpec();
+			} catch (serviceError &err) {
+				AuditParams p;
+				if (r.predecessor) {
+					p.set("name", r.predecessor->getIntName());
+					p.set("predecessor_id", r.predecessor->
+						getSqlItemId().toLongLong());
+					p.set("predecessor_serial",
+						r.predecessor->getSerial().toHex());
+				}
+				AuditLog::appendFailure(ctx, "certificate.renew",
+					"certificate", QString(), p, err.code);
+				throw;
+			}
+			renewed << issueAudited(ctx, spec, "certificate.renew");
+		}
+		TransCommitThrow();
+	} catch (...) {
+		if (capture)
+			capture->replay();
+		throw;
+	}
+	return renewed;
 }
 
 int db_x509::exportFlags(pki_base *pki) const

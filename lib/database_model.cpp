@@ -5,6 +5,7 @@
  * All rights reserved.
  */
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QDebug>
@@ -37,6 +38,7 @@
 
 xca_db Database;
 
+bool database_model::refuse_schema_upgrade = false;
 bool database_model::open_without_password = false;
 
 const QString &database_model::detect_provider()
@@ -82,6 +84,23 @@ static unsigned bxcSchemaVersion()
 	return q.next() ? q.value(0).toUInt() : 0;
 }
 
+/* A copy of the SQLite file before its schema is migrated, next to it
+ * as <file>.bak-<UTC time> (BTD-70): no migration without the copy.
+ * Remote databases are migrated as before. */
+void database_model::backupBeforeMigration()
+{
+	if (isRemoteDB(dbName))
+		return;
+	QString copy = QString("%1.bak-%2").arg(dbName).arg(
+		QDateTime::currentDateTimeUtc().toString("yyyyMMddTHHmmss"));
+	if (!QFile::copy(dbName, copy))
+		throw errorEx(tr("No copy of the database '%1' could be written "
+			"to '%2' before its schema upgrade; it was not upgraded")
+			.arg(dbName, copy));
+	qInfo().noquote() << "Database copied to" << copy
+		<< "before the schema upgrade";
+}
+
 QSqlError database_model::initSqlDB()
 {
 #define MAX_SCHEMAS 8
@@ -91,7 +110,7 @@ QSqlError database_model::initSqlDB()
  */
 #define INITIAL_SCHEMA_VERSION "7"
 /* Migrations of the bxc-pki fork, counted in settings 'bxc_schema' */
-#define BXC_MAX_SCHEMAS 4
+#define BXC_MAX_SCHEMAS 5
 
 	QStringList schemas[MAX_SCHEMAS];
 	QStringList bxc_schemas[BXC_MAX_SCHEMAS];
@@ -116,6 +135,22 @@ QSqlError database_model::initSqlDB()
 
 	bool existing = XSqlQuery::schemaVersion() > 0;
 	bool auditCreated = false;
+
+	/* An older database: an audit check does not migrate what it
+	 * checks; any other open keeps a copy of the old file (BTD-70) */
+	if (existing && (XSqlQuery::schemaVersion() < MAX_SCHEMAS ||
+			 bxcSchemaVersion() < BXC_MAX_SCHEMAS)) {
+		if (refuse_schema_upgrade) {
+			TransRollback();
+			throw serviceError("schema_upgrade_required", tr(
+				"The database has an older schema (upstream %1, "
+				"bxc-pki %2); an audit check does not upgrade it. "
+				"Open it once with a writing command or the GUI.")
+				.arg(XSqlQuery::schemaVersion())
+				.arg(bxcSchemaVersion()));
+		}
+		backupBeforeMigration();
+	}
 
 	for (;;) {
 		i = XSqlQuery::schemaVersion();
