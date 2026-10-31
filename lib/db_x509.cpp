@@ -1128,7 +1128,7 @@ void db_x509::writeTaggedPEM(const BioByteArray &b, const QString &tag, QIODevic
 
 void db_x509::writeItems(const QList<pki_base *> &list,
 			const pki_export *xport, QIODevice &file,
-			const Passwd &pass) const
+			const Passwd &pass, const ExportOptions &opts) const
 {
 	if (list.empty())
 		return;
@@ -1159,9 +1159,9 @@ void db_x509::writeItems(const QList<pki_base *> &list,
 							arg(crt->getIntName()));
 				if (xport->match_all(F_PKCS8)) {
 					pkey->writePKCS8(file, EVP_aes_256_cbc(),
-						pass, true);
+						pass, true, opts);
 				} else {
-					pkey->writeKey(file, NULL, pass, true);
+					pkey->writeKey(file, NULL, pass, true, opts);
 				}
 			}
 			foreach(crt, certs)
@@ -1171,15 +1171,15 @@ void db_x509::writeItems(const QList<pki_base *> &list,
 		BioByteArray key, cert, extra, ca;
 		pki_evp *pkey = (pki_evp *)crt->getRefKey();
 		if (pkey)
-			pkey->pem(key, pki_export::by_id(20)); // PEM unencrypted
+			pkey->pem(key, pki_export::by_id(20), opts); // PEM unencrypted
 		foreach(pki_base *pki, exportedObjects(list, xport)) {
 			crt = static_cast<pki_x509 *>(pki);
 			if (crt == crt->getSigner())
-				crt->pem(ca);
+				crt->pem(ca, opts);
 			else if (cert.size() == 0)
-				crt->pem(cert);
+				crt->pem(cert, opts);
 			else
-				crt->pem(extra);
+				crt->pem(extra, opts);
 		}
 		writeTaggedPEM(ca, "ca", file);
 		writeTaggedPEM(extra, "extra-certs", file);
@@ -1202,12 +1202,13 @@ void db_x509::writeItems(const QList<pki_base *> &list,
 		file.write(crt->getTaKey().toLatin1());
 	} else {
 		qDebug() << "writeItems: db_base";
-		db_base::writeItems(list, xport, file, pass);
+		db_base::writeItems(list, xport, file, pass, opts);
 	}
 }
 
 void db_x509::writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &pass) const
+			QIODevice &file, const Passwd &pass,
+			const ExportOptions &opts) const
 {
 	pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
 	if (!crt)
@@ -1216,11 +1217,11 @@ void db_x509::writeItem(pki_base *pki, const pki_export *xport,
 	if (xport->match_all(F_DER)) {
 		crt->writeCert(file, false);
 	} else if (xport->match_all(F_PKCS12)) {
-		writePKCS12(crt, file, xport->match_all(F_CHAIN), pass);
+		writePKCS12(crt, file, xport->match_all(F_CHAIN), pass, opts);
 	} else if (xport->match_all(F_CONFIG)) {
 		crt->opensslConf(file);
 	} else {
-		db_base::writeItem(pki, xport, file, pass);
+		db_base::writeItem(pki, xport, file, pass, opts);
 	}
 }
 
@@ -1235,7 +1236,7 @@ void db_x509::writeIndex(QIODevice &file, QList<pki_x509*> items) const
 }
 
 void db_x509::writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
-			const Passwd &pass) const
+			const Passwd &pass, const ExportOptions &opts) const
 {
 	pki_evp *privkey = (pki_evp *)cert->getRefKey();
 	if (!privkey || privkey->isPubKey())
@@ -1248,8 +1249,8 @@ void db_x509::writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
 		foreach(pki_base *signer, certChain(cert).mid(1))
 			p12.append_item(signer);
 	}
-	encAlgo encAlgo = encAlgo::forExport();
-	p12.writePKCS12(file, encAlgo, pass);
+	encAlgo encAlgo = encAlgo::forExport(opts);
+	p12.writePKCS12(file, encAlgo, pass, opts);
 }
 
 void db_x509::writePKCS7(const QList<pki_base *> &certs, QIODevice &file) const

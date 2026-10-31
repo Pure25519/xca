@@ -38,6 +38,8 @@ ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
 # Extensions under an OID OpenSSL does not know (BTD-169)
 ServiceTest(test_service_unknown_extensions)
+# The options of an export reach only its writers (BTD-183)
+ServiceTest(test_service_export_options)
 # the source scan for printf conversions in .arg() messages (BTD-184)
 target_compile_definitions(test_service_key PRIVATE
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -405,3 +407,6 @@ add_test(NAME test_private_refs
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
 		-P ${SERVICE_TEST_DIR}/private_refs.cmake)
 set_tests_properties(test_private_refs PROPERTIES LABELS service)
+
+# model signals of the insert path (BTD-231)
+ServiceTest(test_service_model_signals)

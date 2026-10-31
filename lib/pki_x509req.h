@@ -84,7 +84,7 @@ class pki_x509req : public pki_x509super
 		virtual QString getMsg(msg_type msg, int n = 1) const;
 		void d2i(QByteArray &ba);
 		QByteArray i2d() const;
-		bool pem(BioByteArray &);
+		bool pem(BioByteArray &b, const ExportOptions &opts);
 		bool visible() const;
 		QSqlError insertSqlData();
 		QSqlError deleteSqlData();

@@ -337,7 +337,7 @@ static TrustListItem certItem(pki_x509 *cert, const QString &kind,
 	i.fileId = i.id;
 	i.der = cert->i2d();
 	BioByteArray b;
-	cert->pem(b);
+	cert->pem(b, ExportOptions());
 	i.pem = b.byteArray();
 	return i;
 }
@@ -354,7 +354,7 @@ static TrustListItem crlItem(pki_crl *crl, pki_x509 *ca, const QString &role)
 		i.id = crl->getSqlItemId().toLongLong();
 		i.der = crl->i2d();
 		BioByteArray b;
-		crl->pem(b);
+		crl->pem(b, ExportOptions());
 		i.pem = b.byteArray();
 	}
 	return i;

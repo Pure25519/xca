@@ -67,12 +67,14 @@ checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it
 
 ## Entries written on open
 
-`database.rows_skipped` (BTD-209) is written on every open, after the unlock, that left
-unreadable rows out. It carries `count`, `skipped_items` (`key:3,template:7`) and
-`warning=rows_skipped`. Reading commands open the database too, so `--list-items` or
-`--audit-verify` with the password each add one entry for as long as the rows stay unreadable. A
-cron job that runs `--list-items` therefore fills the log with identical entries. Writing only
-when the set of rows changes is BTD-221.
+`database.rows_skipped` (BTD-209) is written after the unlock when the set of unreadable rows
+the open left out differs from the set of the newest such entry (BTD-221). It carries `count`,
+`skipped_items` (`key:3,template:7`, sorted) and `warning=rows_skipped`; the sets are compared as
+sets, so the order does not matter. Reading commands open the database too, but as long as the
+same rows stay unreadable no open adds an entry, so a cron job running `--list-items` does not
+fill the log. The first open after every row loads again writes one closing entry with `count`
+0, an empty `skipped_items` and no warning; later clean opens write nothing. No entry is ever
+changed or removed.
 
 The entry is best effort. On a read-only or locked database it is lost and logged, and the open,
 the read and `--audit-verify` work as before (`test_cli_skipped_rows_readonly`,

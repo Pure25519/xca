@@ -315,8 +315,9 @@ class pki_key: public pki_base
 		{
 			qFatal("generate in pki_key");
 		}
-		bool pem(BioByteArray &);
-		virtual bool pem(BioByteArray &b, const pki_export *xport);
+		bool pem(BioByteArray &b, const ExportOptions &opts);
+		virtual bool pem(BioByteArray &b, const pki_export *xport,
+				const ExportOptions &opts);
 		QVariant column_data(const dbheader *hd) const;
 		QString base64UrlEncodeParam(const EVP_PKEY *pkey,
 						const char *param, int bits = 0) const;

@@ -60,8 +60,12 @@ class db_x509: public db_x509super
 		 * caller's transaction would be rolled back with it. */
 		pki_x509 *newCert(const ServiceContext &ctx,
 				const IssuanceSpec &spec);
+		/* The PKCS#12 algorithm and ML-DSA encoding of the
+		 * options; by default the setting pkcs12_enc_algo and
+		 * OpenSSL's encoding */
 		void writePKCS12(pki_x509 *cert, QIODevice &file, bool chain,
-				const Passwd &pass) const;
+				const Passwd &pass,
+				const ExportOptions &opts = ExportOptions()) const;
 		void writePKCS7(const QList<pki_base *> &certs,
 				QIODevice &file) const;
 		void inToCont(pki_base *pki);
@@ -106,9 +110,10 @@ class db_x509: public db_x509super
 		int exportFlags(pki_base *pki) const;
 		void writeItems(const QList<pki_base *> &items,
 				const pki_export *xport, QIODevice &file,
-				const Passwd &pass) const;
+				const Passwd &pass, const ExportOptions &opts) const;
 		void writeItem(pki_base *pki, const pki_export *xport,
-				QIODevice &file, const Passwd &pass) const;
+				QIODevice &file, const Passwd &pass,
+				const ExportOptions &opts) const;
 		QList<pki_base *> exportedObjects(
 				const QList<pki_base *> &items,
 				const pki_export *xport) const;

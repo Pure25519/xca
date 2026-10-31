@@ -12,6 +12,7 @@
 #include <QMetaType>
 #include <QString>
 #include <QList>
+#include <QMap>
 
 #define BIT(n) (1<<n)
 #define DEFAULT_KEY_CLIPBOARD_TYPE 19
@@ -80,6 +81,24 @@ class pki_export : public QObject {
 
   private:
 	static QList<pki_export*> elements;
+};
+
+class pki_base;
+
+/* The options of one export, passed from exportItems() down to the
+ * writers instead of static state, so writers that run at the same time
+ * do not take each other's options (BTD-183) */
+class ExportOptions
+{
+  public:
+	/* NID of the PKCS#12 encryption (encAlgo); 0: the setting
+	 * pkcs12_enc_algo */
+	int pkcs12Algorithm{};
+	/* ML-DSA private key encoding, one of pki_evp::mlDsaFormats;
+	 * empty: both, or the expanded key of a key without seed */
+	QString mlDsaFormat{};
+	/* Out: the ML-DSA encoding written per key, for the audit */
+	mutable QMap<const pki_base *, QString> mlDsaWritten{};
 };
 
 #endif

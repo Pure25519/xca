@@ -122,7 +122,7 @@ pki_base *db_crl::insert(pki_base *item)
 
 void db_crl::writeItems(const QList<pki_base *> &items,
 			const pki_export *xport, QIODevice &file,
-			const Passwd &) const
+			const Passwd &, const ExportOptions &) const
 {
 	QStringList vcal;
 	foreach(pki_base *pki, items) {
