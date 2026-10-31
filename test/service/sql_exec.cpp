@@ -5,11 +5,13 @@
  * command line cannot create (e.g. one with an empty password) and reads
  * what xca left in a database.
  *
- * sql_exec <database> (<dump.sql> | -c <statement>)...
+ * sql_exec <database> (<dump.sql> | -c <statement> | --sleep <seconds>)...
  *
  * A dump is a file of statements, each ending with ';' at a line end
  * (Python's sqlite3 iterdump(), like data/schema8-fork.sql). The rows of
  * every -c statement are printed, one per line, columns joined by '|'.
+ * --sleep waits, so that a lock taken before (-c 'BEGIN EXCLUSIVE') is
+ * held for that long and given back at the exit (BTD-214).
  * Exit code 1 on the first failing statement.
  */
 
@@ -21,6 +23,7 @@
 #include <QSqlRecord>
 #include <QStringList>
 #include <QTextStream>
+#include <QThread>
 
 static bool run(QSqlDatabase &db, const QString &statement, bool print)
 {
@@ -47,7 +50,8 @@ int main(int argc, char *argv[])
 
 	if (args.size() < 2) {
 		QTextStream(stderr) << "usage: sql_exec <database> "
-				"(<dump.sql> | -c <statement>)...\n";
+				"(<dump.sql> | -c <statement> | "
+				"--sleep <seconds>)...\n";
 		return 1;
 	}
 	QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE");
@@ -61,6 +65,12 @@ int main(int argc, char *argv[])
 		if (arg == "-c") {
 			if (args.isEmpty() || !run(db, args.takeFirst(), true))
 				return 1;
+			continue;
+		}
+		if (arg == "--sleep") {
+			if (args.isEmpty())
+				return 1;
+			QThread::sleep(args.takeFirst().toULong());
 			continue;
 		}
 		QFile dump(arg);
