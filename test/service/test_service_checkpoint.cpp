@@ -1057,6 +1057,8 @@ void test_service_checkpoint::setIntervalNeedsVerifiedOpen()
 	QCOMPARE(AuditLog::checkpointInterval(),
 		AuditLog::defaultCheckpointInterval);
 	QCOMPARE(AuditLog::entries().size(), entries);
+}
+
 void test_service_checkpoint::intervalSigned()
 {
 	/* Each checkpoint signs the interval it was written with (BTD-133) */
