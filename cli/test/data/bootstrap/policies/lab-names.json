@@ -1,0 +1,56 @@
+{
+  "schema": "urn:bxc-pki:schema:policy:v1",
+  "id": "lab-names",
+  "description": "Names of the OT lab for the bootstrap test (BTD-166), from the example policy ot-lab-names.",
+  "names": {
+    "dns": {
+      "allow": [
+        {
+          "type": "subtree",
+          "value": "lab.example.org"
+        },
+        {
+          "type": "single-label",
+          "pattern": "plc[0-9]+"
+        },
+        {
+          "type": "single-label",
+          "pattern": "scalance[0-9]*"
+        }
+      ],
+      "deny": [
+        {
+          "type": "exact",
+          "value": "ca.lab.example.org"
+        }
+      ]
+    },
+    "ip": {
+      "allow": [
+        "192.0.2.0/24",
+        "198.51.100.0/24"
+      ]
+    },
+    "uri": {
+      "allow": [
+        {
+          "type": "prefix",
+          "value": "urn:bxc:lab:"
+        }
+      ]
+    },
+    "email": {
+      "allow": []
+    },
+    "dn": {
+      "O": {
+        "allow": [
+          {
+            "type": "exact",
+            "value": "BxC Security"
+          }
+        ]
+      }
+    }
+  }
+}

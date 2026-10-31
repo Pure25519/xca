@@ -248,6 +248,20 @@ class AuditStateMismatch
 	QVariantMap toMap() const;
 };
 
+/* A trust anchor from outside the database (BTD-101): the audit key ids
+ * of an earlier export and the newest checkpoint seen then */
+class AuditVerifyPins
+{
+  public:
+	QStringList keys{};          // the first key of the log is one of them
+	qint64 minCheckpoint{};      // 0: none; else the log has a valid
+	                             // checkpoint at this seq or later
+	bool isEmpty() const
+	{
+		return keys.isEmpty() && minCheckpoint <= 0;
+	}
+};
+
 class AuditVerifyResult
 {
   public:
@@ -268,6 +282,10 @@ class AuditVerifyResult
 	QList<AuditStateMismatch> mismatches{};
 	qint64 unauditedRevocations{};   // also listed in mismatches
 	qint64 adoptedEntries{};   // unsigned entries the first key adopted
+	/* The trust anchor of the call (BTD-101) and whether the log meets
+	 * it: reason untrusted_key or checkpoint_truncated otherwise */
+	AuditVerifyPins pins{};
+	bool pinsOk{ true };
 
 	bool chainOk() const
 	{
@@ -275,7 +293,7 @@ class AuditVerifyResult
 	}
 	bool ok() const
 	{
-		return chainOk() && mismatches.isEmpty();
+		return chainOk() && mismatches.isEmpty() && pinsOk;
 	}
 	QVariantMap toMap() const;
 	QByteArray toJson() const;
@@ -304,6 +322,8 @@ class AuditLog
 	/* A stored setting changed by an upgrade, not by the user: the
 	 * PKCS#12 default of BTD-52 (old_pkcs12_algorithm, pkcs12_algorithm) */
 	static const char actionSettingsMigrate[];
+	/* one changed setting (BTD-224) */
+	static const char actionSettingsUpdate[];
 	/* Rows of the database left out on open because they did not
 	 * decode (BTD-209): count, skipped_items, warning rows_skipped */
 	static const char actionRowsSkipped[];
@@ -374,7 +394,8 @@ class AuditLog
 	 * table; a row no entry knows is a mismatch. Never throws for a
 	 * tampered entry: an entry without a canonical form is reported as
 	 * broken. */
-	static AuditVerifyResult verify();
+	static AuditVerifyResult verify(const AuditVerifyPins &pins =
+				AuditVerifyPins());
 	/* Signs a checkpoint unless the newest entry is one, then writes
 	 * one canonical JSON object per line, including prev_hash and hash.
 	 * Without a database password source it signs nothing and writes

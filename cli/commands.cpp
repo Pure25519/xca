@@ -6,6 +6,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 
 #include <openssl/evp.h>
 #include <openssl/objects.h>
@@ -23,7 +24,9 @@
 #include "lib/issuance_checks.h"
 #include "lib/json_report.h"
 #include "lib/pki_crl.h"
+#include "lib/pki_evp.h"
 #include "lib/pki_key.h"
+#include "lib/PwDialogCore.h"
 #include "lib/pki_multi.h"
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
@@ -278,21 +281,48 @@ static QString nameFrom(const Options &o, const x509name &subject,
 
 /* --- init ------------------------------------------------------------- */
 
-static void cmdInit(CommandContext &ctx)
+/* bootstrap (BTD-166): the password source of a key; the database
+ * password unless the key has one of its own */
+static void keySource(const CaExtras &x, const QString &own)
+{
+	if (x.passwords)
+		PwDialogCore::headless()->setSource(pass_info::KeyPassword,
+			own.isEmpty() ? x.defaultPassword : own);
+}
+
+/* An XCA "own password" (ptPrivate) for a new key, from the source of
+ * x.keyPassword; the key is re-encrypted and its row updated in the
+ * caller's transaction */
+static void ownPassword(const CaExtras &x, pki_key *key)
+{
+	pki_evp *evp = dynamic_cast<pki_evp *>(key);
+	if (!x.passwords || x.keyPassword.isEmpty() || !evp)
+		return;
+	keySource(x, x.keyPassword);
+	evp->setOwnPass(pki_key::ptPrivate);
+	if (evp->getOwnPass() != pki_key::ptPrivate ||
+	    !evp->sqlUpdatePrivateKey())
+		throw serviceError("database_error", QObject::tr(
+			"The key '%1' did not get its own password")
+			.arg(key->getIntName()));
+}
+
+CaCreated createCa(CommandContext &ctx, const CaExtras &x)
 {
 	const Options &o = ctx.opts;
 	IssuanceSpec spec;
-	pki_x509 *parent = nullptr;
+	pki_x509 *parent = x.parent;
+	CaCreated made;
 
-	spec.subject = subjectFrom(o);
+	spec.subject = x.subject.entryCount() > 0 ? x.subject :
+			subjectFrom(o);
 	if (spec.subject.entryCount() == 0)
 		throw usageError("missing_option",
 			QObject::tr("init needs --cn or --subject"));
-	if (o.has("parent")) {
+	if (!parent && o.has("parent"))
 		parent = resolveAs<pki_x509>(o.value("parent"), "certificate",
 						"--parent");
-		spec.signer = parent;
-	}
+	spec.signer = parent;
 	spec.name = nameFrom(o, spec.subject, QStringList());
 	applyValidity(o, spec, parseDuration(parent ? "P5Y" : "P10Y",
 				"validity"), false);
@@ -305,12 +335,17 @@ static void cmdInit(CommandContext &ctx)
 		e.pathLen = QString::number(o.value("path-len").toInt());
 	e.subjectKeyId = true;
 	e.authorityKeyId = true;
-	e.keyUsage << "keyCertSign" << "cRLSign";
+	if (x.keyUsage.isEmpty())
+		e.keyUsage << "keyCertSign" << "cRLSign";
+	else
+		e.keyUsage = x.keyUsage;
 	e.keyUsageCritical = true;
+	e.nameConstraints = x.nameConstraints;
+	e.crlDistPoints = x.crlDistPoints;
 	e.netscape = false;
 
 	/* the CRL settings and --out before anything is generated */
-	CrlPolicy policy = crlPolicy(o, nullptr);
+	CrlPolicy policy = x.hasCrlPolicy ? x.crlPolicy : crlPolicy(o, nullptr);
 	checkOutOptions(ctx, true);
 
 	pki_multi fileItems;
@@ -324,11 +359,15 @@ static void cmdInit(CommandContext &ctx)
 		writeOut(ctx, spec.key, "key", spec.name);
 		writeOut(ctx, nullptr, "crt", spec.name);
 		writeOut(ctx, nullptr, "crl", spec.name);
-		return;
+		return made;
 	}
+	made.key = spec.key;
+	ownPassword(x, spec.key);
+	keySource(x, parent ? x.signerPassword : x.keyPassword);
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
+	made.cert = cert;
 	ctx.result->writtenCertificate(cert, spec);
-	if (hasCrlOptions(o)) {
+	if (x.hasCrlPolicy || hasCrlOptions(o)) {
 		ctx.step = QObject::tr("CRL settings of '%1'").arg(spec.name);
 		policy.store(ctx.svc, cert);
 	}
@@ -337,6 +376,7 @@ static void cmdInit(CommandContext &ctx)
 	 * cannot sign one (IssuanceChecks::crlIssuer) */
 	pki_crl *crl = nullptr;
 	QDateTime now = nowSeconds();
+	keySource(x, x.keyPassword);
 	if ((QDateTime)cert->getNotBefore() <= now &&
 	    now < (QDateTime)cert->getNotAfter())
 		crl = issueCrl(ctx, cert, policy, "init");
@@ -347,10 +387,18 @@ static void cmdInit(CommandContext &ctx)
 			.arg(cert->getIntName())
 			.arg(cert->getNotBefore().toPrettyGMT())
 			.arg(cert->getNotAfter().toPrettyGMT()));
+	keySource(x, QString());
+	made.crl = crl;
 	writeOut(ctx, spec.key, "key");
 	writeOut(ctx, cert, "crt");
 	if (crl)
 		writeOut(ctx, crl, "crl");
+	return made;
+}
+
+static void cmdInit(CommandContext &ctx)
+{
+	createCa(ctx);
 }
 
 /* --- request-cert ----------------------------------------------------- */
@@ -475,6 +523,114 @@ static void cmdSign(CommandContext &ctx)
 	reissueIfDue(ctx, ca, CrlPolicy::of(ca));
 }
 
+/* --- renew ------------------------------------------------------------ */
+
+/* BTD-56: subject, extensions and issuer of the predecessor through
+ * db_x509::renew(); the predecessor stays (revoke is its own command) */
+static void cmdRenew(CommandContext &ctx)
+{
+	const Options &o = ctx.opts;
+	checkCertificateSelectors(o, "renew");
+	if (o.has("key") && !o.has("rekey"))
+		throw usageError("missing_option", QObject::tr(
+			"--key needs --rekey"));
+	bool rekey = o.has("rekey") || o.has("use-key");
+	checkOutOptions(ctx, o.has("rekey"));
+
+	pki_x509 *ca = nullptr, *old = nullptr;
+	try {
+		old = selectedCertificate(o, &ca);
+	} catch (serviceError &err) {
+		AuditParams p;
+		selectorParams(o, ca, p);
+		auditRefusal(ctx, "certificate.renew", old, p, err.code);
+		throw;
+	}
+	RenewalSpec r;
+	r.predecessor = old;
+	r.name = o.value("name", old->getIntName());
+	/* rule 6 as sign; without options the period of the predecessor */
+	IssuanceSpec period;
+	period.notBefore = old->getNotBefore();
+	period.notAfter = old->getNotAfter();
+	applyValidity(o, period, IsoDuration(), true);
+	r.notBefore = period.notBefore;
+	r.notAfter = period.notAfter;
+	r.validity = period.validity;
+	pki_x509 *issuer = old->getSigner();
+
+	pki_multi fileItems;
+	/* --plan of a re-key: the new key is made in memory only, never
+	 * stored, so the plan runs every check of the real run on it */
+	std::unique_ptr<pki_evp> probe;
+	if (rekey) {
+		QString type = o.value("key", keyTypeOf(X509_get0_pubkey(
+						old->getCert())));
+		if (type.isEmpty() && !o.has("use-key"))
+			throw usageError("missing_option", QObject::tr(
+				"The key type of '%1' has no --key name; give "
+				"--key").arg(old->getIntName()));
+		r.newKey = obtainKey(ctx, r.name, type, &fileItems);
+		if (!r.newKey) {
+			probe.reset(new pki_evp(r.name));
+			probe->generate(keyjob(keyJobText(type)));
+			r.newKey = probe.get();
+		}
+	}
+	/* the default digest of the key that signs: the issuer's, or the
+	 * subject key of a self-signed certificate */
+	r.hashAlgo = hashFrom(o, issuer != old ? (issuer ?
+			issuer->getRefKey() : nullptr) :
+			r.newKey ? r.newKey : old->getRefKey());
+
+	QJsonObject renewal;
+	auto ref = [](const pki_x509 *c) {
+		QJsonObject j;
+		j["id"] = c->getSqlItemId().toLongLong();
+		j["name"] = c->getIntName();
+		j["serial"] = JsonReport::serial(c->getSerial());
+		return j;
+	};
+	renewal["predecessor"] = ref(old);
+	renewal["rekey"] = r.rekey();
+	ctx.step = QObject::tr("renewal of '%1'").arg(old->getIntName());
+	if (old->isRevoked() && r.rekey() &&
+	    old->getRevocation().getReasonBit() == CRL_REASON_KEY_COMPROMISE)
+		ctx.result->warning("predecessor_key_compromised", QObject::tr(
+			"'%1' is revoked for key compromise; it is renewed "
+			"with a new key").arg(old->getIntName()));
+	if (ctx.plan) {
+		/* every check of the real run (review of the CLI chain on
+		 * BTD-56: a green plan must not fail for real): renew() runs
+		 * inside the transaction --plan rolls back; the result
+		 * carries no document */
+		IssuanceSpec spec = r.issuanceSpec();
+		Database.model<db_x509>()->renew(ctx.svc, { r });
+		ctx.result->plannedCertificate(spec);
+		renewal["successor"] = QJsonValue();
+		ctx.result->set("renewal", renewal);
+		if (o.has("rekey"))
+			writeOut(ctx, nullptr, "key", r.name);
+		writeOut(ctx, nullptr, "crt", r.name);
+		if (spec.signer)
+			reissueIfDue(ctx, spec.signer,
+					CrlPolicy::of(spec.signer));
+		return;
+	}
+	pki_x509 *cert = Database.model<db_x509>()->renew(ctx.svc, { r })[0];
+	/* the spec it was issued from, for the cap (validity_capped) */
+	IssuanceSpec spec = r.issuanceSpec();
+	ctx.result->writtenCertificate(cert, spec);
+	renewal["successor"] = ref(cert);
+	ctx.result->set("renewal", renewal);
+	if (o.has("rekey"))
+		writeOut(ctx, r.newKey, "key");
+	writeOut(ctx, cert, "crt");
+	/* rule 7 as sign */
+	if (spec.signer)
+		reissueIfDue(ctx, spec.signer, CrlPolicy::of(spec.signer));
+}
+
 /* --- list and show (read only) --------------------------------------- */
 
 static const QStringList objectTypes { "key", "certificate", "request",
@@ -593,6 +749,7 @@ void registerCommands(Registry &r)
 		{ "key-unencrypted", "no-key-file" } } +
 		validityConflicts();
 	c.writes = true;
+	c.createsDatabase = true;
 	c.handler = cmdInit;
 	r.add(c);
 
@@ -667,8 +824,52 @@ void registerCommands(Registry &r)
 	c.handler = cmdSign;
 	r.add(c);
 
+	c = Command();
+	c.name = "renew";
+	c.usage = "[<certificate>]";
+	c.summary = QObject::tr("renew a certificate, with --rekey for a new "
+				"key");
+	c.description = QObject::tr(
+		"  Subject, extensions and issuer of the predecessor, a new "
+		"serial; the same\n  checks as sign. The certificate is "
+		"chosen as by revoke: a reference, --serial\n  with --ca, or "
+		"--fingerprint. Default validity: the period of the "
+		"predecessor,\n  from now. A key revoked for keyCompromise is "
+		"never used again: --rekey.\n  The predecessor stays; revoke "
+		"it with 'bxc-pki revoke'.");
+	c.options = QList<OptionSpec> {
+		opt("serial", OptionSpec::string, "<serial>", QObject::tr(
+			"the serial number of the certificate, hex or "
+			"dec:<digits> (needs --ca)")),
+		opt("fingerprint", OptionSpec::string, "<sha256>",
+			QObject::tr("the SHA-256 fingerprint of the "
+			"certificate")),
+		opt("ca", OptionSpec::reference, "<ca>", QObject::tr(
+			"the issuing CA; the certificate must be one of its")),
+		opt("rekey", OptionSpec::flag, QString(), QObject::tr(
+			"a new key of the type --key (default: the type of "
+			"the predecessor's key)")),
+		opt("name", OptionSpec::string, "<name>", QObject::tr(
+			"internal name of the new certificate (default: the "
+			"predecessor's)")),
+	} + keyOptions(QObject::tr("the predecessor's"), false) +
+		validityOptions(QObject::tr("the predecessor's period")) +
+		outOptions(true);
+	for (OptionSpec &s : c.options)
+		if (s.name == "use-key")
+			s.help = QObject::tr("re-key with this key of the "
+				"database instead of a new one");
+	c.conflicts = QList<QPair<QString, QString> > {
+		{ "rekey", "use-key" }, { "key", "use-key" },
+		{ "key-unencrypted", "no-key-file" } } + validityConflicts();
+	c.maxArgs = 1;
+	c.writes = true;
+	c.handler = cmdRenew;
+	r.add(c);
+
 	registerLifecycleCommands(r);
 	registerExportCommands(r);
+	registerBootstrapCommand(r);
 
 	c = Command();
 	c.name = "list";
