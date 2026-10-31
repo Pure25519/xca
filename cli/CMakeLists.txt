@@ -94,6 +94,8 @@ if(BUILD_TESTING)
   CliTest(cli_default_templates)
   # RFC 5280 upper bounds of DN values (BTD-202)
   CliTest(cli_dn_bounds)
+  # renewal and re-key (BTD-56)
+  CliTest(cli_renew)
   # bootstrap (BTD-166): CAs, profiles and policies from one file
   CliTest(cli_bootstrap)
   CliTest(cli_bootstrap_errors)

@@ -51,6 +51,8 @@ class test_main: public QObject
 	void revoke();
 	void renewalSigningFails();
 	void tokenHandlersWithoutToken();
+	void renewalThroughService();
+	void renewalAllOrNothing();
 	void passwordDialogParent();
 	void issueRefusedByPolicy();
 	void testValidity();
