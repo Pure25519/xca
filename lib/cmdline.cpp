@@ -302,9 +302,20 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		QString filename = cmd_opts["audit-export"];
 		try {
 			qint64 unsignedEntries = 0;
-			QByteArray lines = AuditLog::exportJsonLines(&unsignedEntries);
+			AuditSkippedCheckpoint skipped;
+			QByteArray lines = AuditLog::exportJsonLines(
+					&unsignedEntries, &skipped);
+			bool broken = !skipped.code.isEmpty() &&
+				skipped.code != "audit_key_unavailable";
+			/* A log no checkpoint may sign: exported read-only
+			 * for forensics, but not a clean run (BTD-112) */
+			if (broken)
+				console_write(stderr, QObject::tr(
+					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
+					"%1: %2\n")
+					.arg(skipped.code, skipped.reason).toUtf8());
 			/* Without --password the export only reads (BTD-70) */
-			if (unsignedEntries > 0)
+			else if (unsignedEntries > 0)
 				console_write(stderr, QObject::tr(
 					"Warning: no database password given, no audit checkpoint signed; "
 					"the newest %1 audit entries are not covered by a checkpoint "
@@ -320,6 +331,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 							.arg(filename));
 				f.close();
 			}
+			if (broken)
+				exitcode = EXIT_FAILURE;
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;

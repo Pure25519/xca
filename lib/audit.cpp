@@ -997,14 +997,17 @@ AuditEntry AuditLog::adoptUnanchored(const ServiceContext &ctx)
 	return writeCheckpoint(ctx, false, true, true);
 }
 
-QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries)
+QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
 	return exportJsonLines(ServiceContext::localUser(
-			ServiceContext::processChannel), unsignedEntries);
+			ServiceContext::processChannel), unsignedEntries,
+			skipped);
 }
 
 QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
-				qint64 *unsignedEntries)
+				qint64 *unsignedEntries,
+				AuditSkippedCheckpoint *skipped)
 {
 	QByteArray out;
 	QList<AuditEntry> list = entries();
@@ -1015,10 +1018,21 @@ QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 			checkpoint(ctx);
 			list = entries();
 		} catch (serviceError &err) {
-			/* No password source: a read-only export without a
-			 * new checkpoint (BTD-70); nothing was written */
-			if (err.code != "audit_key_unavailable")
+			/* Read only, without a new checkpoint, and nothing
+			 * written: without a password source (BTD-70), and
+			 * for a log no checkpoint may sign, which an auditor
+			 * needs exported most (BTD-112). A wrong password or
+			 * a database error still fails. */
+			static const QStringList readOnly {
+				"audit_key_unavailable", "audit_chain_broken",
+				"audit_key_missing", "audit_checkpoint_missing",
+			};
+			if (!readOnly.contains(err.code))
 				throw;
+			if (skipped) {
+				skipped->code = err.code;
+				skipped->reason = err.getString();
+			}
 		}
 	}
 	for (const AuditEntry &e : list)
