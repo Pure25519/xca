@@ -87,6 +87,8 @@ class svalue
 	}
 };
 
+class ServiceContext;
+
 class settings
 {
 	friend class svalue;
@@ -111,6 +113,14 @@ class settings
 	/* Stores the flags of a legacy optionflags row as settings of their
 	 * own and deletes the row. Writes, so only after a verified unlock. */
 	void migrateOptionflags();
+	/* Stores the given settings in one transaction, one audit entry
+	 * settings.update per value that changed (BTD-224). Values are
+	 * logged only for the options of the Options dialog; any other
+	 * key, and anything that looks like a password or a hash, only
+	 * as redacted. Throws when the write fails: then neither a
+	 * setting nor an entry is stored. */
+	void update(const ServiceContext &ctx,
+			const QMap<QString, QString> &changes);
 
 	svalue operator[] (QString x)
 	{

@@ -32,6 +32,7 @@ const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
 const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
+const char AuditLog::actionSettingsUpdate[] = "settings.update";
 const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
@@ -96,6 +97,9 @@ const QStringList &AuditParams::allowList()
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
 		"hash_algo", "invalidity_date", "issuer", "item_id",
+		/* what secret.export wrote, e.g. openvpn_tls_auth, never
+		 * the secret (BTD-90) */
+		"kind",
 		"key_size", "key_type", "legacy", "ml_dsa_encoding", "name",
 		"next_update",
 		"not_after",
@@ -141,6 +145,10 @@ const QStringList &AuditParams::allowList()
 		 * objects created, kept, updated and elements skipped */
 		"file_sha256", "schema", "created", "kept", "updated",
 		"skipped",
+		/* settings.update (BTD-224): the setting, and its values
+		 * only for the options of the Options dialog, otherwise
+		 * redacted */
+		"setting", "old_value", "new_value", "redacted",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
