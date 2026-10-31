@@ -47,7 +47,13 @@ bool PwDialogCore::hasSource(enum pass_info::purpose p)
 {
 	if (PasswordSourceScope::answering(p) || !cmdline_passwd.isEmpty())
 		return true;
-	return ui() == &headlessUI && headlessUI.hasSource(p);
+	return ui()->answersFromSource(p);
+}
+
+void PwDialogCore::passwordRetry(enum pass_info::purpose p)
+{
+	if (!hasSource(p))
+		XCA_PASSWD_ERROR();
 }
 
 PasswordSourceScope::PasswordSourceScope(enum pass_info::purpose p,

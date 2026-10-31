@@ -797,7 +797,7 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 		{
 			given = false;
 			if (result == pw_ok)
-				XCA_PASSWD_ERROR();
+				PwDialogCore::passwordRetry(p.getPurpose());
 			p.setTitle(tr("Password"));
 			p.setDescription(tr("Please enter the password for unlocking the database:\n%1").arg(compressFilename(dbName)));
 			result = PwDialogCore::execute(&p, &pki_evp::passwd,
