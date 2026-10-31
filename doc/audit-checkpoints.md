@@ -172,6 +172,18 @@ anchor it was checked against. A rewritten log (new first key) and a log cut off
 checkpoints both fail with a pin. Keep the pins outside the database host, e.g. with the
 exports.
 
+## The check in the GUI (BTD-103)
+
+**Extra > Verify audit log** (`act_extra_verifyAudit`) runs the same `AuditLog::verify()` as
+`--audit-verify` and shows its report: result, entries, first entry not anchored, reason,
+valid checkpoints with the last one, unanchored entries, audit keys, adopted entries, unaudited
+revocations and the revocation state mismatches. The fields "Pinned audit key ids" and
+"Minimum checkpoint" are the trust anchor of `--audit-key` and `--audit-min-checkpoint`;
+**Verify** runs the check again with them. When the log has no audit key yet and verify reports
+`checkpoint_missing`, **Adopt unanchored entries** does what `--audit-adopt` does, after a
+question that names the number of entries (id `audit.adopt`); the announcement records them as
+`adopted_entries`. The dialog is not modal and needs an open database.
+
 ## Checking an export with the OpenSSL CLI
 
 Each line of the export is self-contained. With `jq` and OpenSSL 3 or later (run in the build
