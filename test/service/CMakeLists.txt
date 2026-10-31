@@ -139,6 +139,17 @@ else()
   message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
 endif()
 
+# configuring against OpenSSL 3 stops with the version message (BTD-253);
+# the stand-in prefix uses the Unix library names
+if(UNIX)
+  add_test(NAME test_openssl_minimum
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		"-DGENERATOR=${CMAKE_GENERATOR}"
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openssl_minimum
+		-P ${SERVICE_TEST_DIR}/openssl_minimum.cmake)
+  set_tests_properties(test_openssl_minimum PROPERTIES LABELS service)
+endif()
+
 # no internal references in the public fork (BTD-236)
 add_test(NAME test_private_refs
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
