@@ -10,6 +10,7 @@
 #include <functional>
 #include <QSqlQuery>
 
+#include "lib/audit.h"
 #include "lib/digest.h"
 #include "lib/settings.h"
 #include "widgets/MainWindow.h"
@@ -102,6 +103,60 @@ void test_main::optionsStoreChangedOnly()
 		}), (int)QDialog::Accepted);
 		QCOMPARE(settingsRows()["default_hash"],
 			digest(NID_sha256).name());
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}
+
+/* settings.update entries from first on: "key old->new" */
+static QStringList settingsEntries(int first)
+{
+	QStringList list;
+	QList<AuditEntry> entries = AuditLog::entries();
+	for (int i = first; i < entries.size(); i++) {
+		const AuditEntry &e = entries[i];
+		if (e.action != "settings.update")
+			continue;
+		list << QString("%1 %2->%3").arg(
+			e.params.value("setting").toString(),
+			e.params.value("old_value").toString(),
+			e.params.value("new_value").toString());
+		if (e.channel != "gui" || e.result != "success")
+			list << "bad " + e.channel + " " + e.result;
+	}
+	return list;
+}
+
+/* One settings.update entry per option the user changed, with the old
+ * and the new value (BTD-224): an Options change left no trace */
+void test_main::optionsAudited()
+{
+	try {
+		openDB();
+		Settings["suppress_messages"] = false;
+		int first = AuditLog::entries().size();
+
+		/* OK without a change: no entry */
+		QCOMPARE(runOptions([](Options *) {}), (int)QDialog::Accepted);
+		QCOMPARE(settingsEntries(first), QStringList());
+
+		/* one change: one entry */
+		QCOMPARE(runOptions([](Options *o) {
+			o->suppress->setChecked(true);
+		}), (int)QDialog::Accepted);
+		QCOMPARE(settingsEntries(first),
+			QStringList("suppress_messages no->yes"));
+
+		/* two changes: two entries */
+		QCOMPARE(runOptions([](Options *o) {
+			o->suppress->setChecked(false);
+			o->serial_len->setValue(o->serial_len->value() + 8);
+		}), (int)QDialog::Accepted);
+		QStringList all = settingsEntries(first);
+		QCOMPARE(all.size(), 3);
+		QVERIFY2(all.contains("suppress_messages yes->no"),
+			CCHAR(all.join(", ")));
+		QVERIFY(AuditLog::verify().ok());
 	} catch (errorEx &err) {
 		QVERIFY2(false, CCHAR(err.getString()));
 	}
