@@ -56,10 +56,11 @@ class test_service_audit_dn : public ServiceTestCase
 };
 
 /* Most significant RDN last; the members of the multi-valued RDN joined
- * with '+'; ',' and '+' in a value escaped with '\'; UTF-8 as it is
+ * with '+' (in the order of the stored name, which RFC 4514 2.2 leaves
+ * open); ',' and '+' in a value escaped with '\'; UTF-8 as it is
  * (RFC 4514 2.1-2.4) */
 const QString test_service_audit_dn::expected =
-	QString::fromUtf8("CN=a\\+b+OU=Ops,O=M\xc3\xbcller\\, Lab,C=DE");
+	QString::fromUtf8("OU=Ops+CN=a\\+b,O=M\xc3\xbcller\\, Lab,C=DE");
 
 x509name test_service_audit_dn::dn()
 {

@@ -209,7 +209,7 @@ void test_service_request::keyAndRequest()
 	QCOMPARE(e.objectId, req->getSqlItemId().toString());
 	QCOMPARE(e.result, QString("success"));
 	QCOMPARE(e.params["name"].toString(), QString("device-request"));
-	QCOMPARE(e.params["subject"].toString(), req->getSubject().oneLine());
+	QCOMPARE(e.params["subject"].toString(), req->getSubject().rfc4514());
 	QCOMPARE(e.params["key_type"].toString(), type);
 	QCOMPARE(e.params["key_size"].toInt(), bits);
 	QCOMPARE(e.params["hash_algo"].toString(), QString("SHA256"));

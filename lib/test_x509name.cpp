@@ -51,6 +51,13 @@ void test_x509name::entries()
 	QCOMPARE(x.oneLine(), "C = DE, ST = Berlin, O = Firma");
 	x509name z(x);
 	QCOMPARE(z.oneLine(XN_FLAG_RFC2253), "O=Firma,ST=Berlin,C=DE");
+	/* RFC 4514: like RFC 2253, but UTF-8 stays as it is (BTD-104) */
+	QCOMPARE(z.rfc4514(), "O=Firma,ST=Berlin,C=DE");
+	x509name u;
+	u.addEntryByNid(NID_organizationName,
+		QString::fromUtf8("M\xc3\xbcller, Lab"));
+	QCOMPARE(u.rfc4514(), QString::fromUtf8("O=M\xc3\xbcller\\, Lab"));
+	QCOMPARE(u.oneLine(XN_FLAG_RFC2253), "O=M\\C3\\BCller\\, Lab");
 
 	QCOMPARE(x.nid(0), NID_countryName);
 	QCOMPARE(x.nid(1), NID_stateOrProvinceName);
