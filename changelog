@@ -1,6 +1,13 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-241: the "CA vCalendar" export (format 18) lists only valid
+   issued certificates, as its description says. Upstream behaviour
+   that changes: upstream asked the CA instead of each certificate
+   whether it was revoked, so a valid CA listed its revoked
+   certificates too and a revoked CA listed none. The object.export
+   audit entries follow the same list.
+
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,
