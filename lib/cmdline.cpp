@@ -275,7 +275,19 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* Both fail closed: any error means exit code 1 */
 	if (cmd_opts.has("audit-verify")) {
 		try {
-			AuditVerifyResult r = AuditLog::verify();
+			AuditVerifyPins pins;
+			if (cmd_opts.has("audit-key"))
+				pins.keys = cmd_opts["audit-key"].split(',',
+						Qt::SkipEmptyParts);
+			if (cmd_opts.has("audit-min-checkpoint")) {
+				bool ok;
+				pins.minCheckpoint =
+					cmd_opts["audit-min-checkpoint"].toLongLong(&ok);
+				if (!ok || pins.minCheckpoint <= 0)
+					throw errorEx(QObject::tr("Invalid checkpoint sequence number '%1'")
+						.arg(cmd_opts["audit-min-checkpoint"]));
+			}
+			AuditVerifyResult r = AuditLog::verify(pins);
 			console_write(stdout, r.toJson() + '\n');
 			if (!r.ok())
 				exitcode = EXIT_FAILURE;
