@@ -33,7 +33,9 @@ pki_x509req::pki_x509req(const QString &name)
 pki_x509req::pki_x509req(const pki_x509req *req)
 	: pki_x509super(req)
 {
-	request = X509_REQ_dup(request);
+	/* the copy of req: dup(request) read the uninitialised member of
+	 * this object (BTD-200) */
+	request = X509_REQ_dup(req->request);
 	done = req->done;
 	resetX509count();
 	pki_openssl_error();
@@ -112,10 +114,10 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	}
 	AuditKey::refuseSigning(key);
 
-	X509_REQ_set_version(request, 0L);
-	X509_REQ_set_pubkey(request, key->getPubKey());
+	certBuild::check(X509_REQ_set_version(request, 0L), "request_version");
+	certBuild::check(X509_REQ_set_pubkey(request, key->getPubKey()),
+			"request_public_key");
 	setSubject(dn);
-	pki_openssl_error();
 
 	foreach(int nid , bad_nids)
 		el.delByNid(nid);
@@ -227,6 +229,17 @@ void pki_x509req::addAttribute(int nid, QString content)
 		throwInvalidString(content, nid);
 }
 
+QString pki_x509req::challengePasswordMarker()
+{
+	return tr("present, not shown");
+}
+
+QString pki_x509req::challengePasswordShown() const
+{
+	return getAttribute(NID_pkcs9_challengePassword).isEmpty() ?
+		QString() : challengePasswordMarker();
+}
+
 x509name pki_x509req::getSubject() const
 {
 	x509name x(X509_REQ_get_subject_name(request));
@@ -241,7 +254,9 @@ int pki_x509req::sigAlg() const
 
 void pki_x509req::setSubject(const x509name &n)
 {
-	X509_REQ_set_subject_name(request, n.get());
+	/* get0(): get() is a copy that was never freed (BTD-200) */
+	certBuild::check(X509_REQ_set_subject_name(request, n.get0()),
+			"request_subject");
 }
 
 void pki_x509req::writeDefault(const QString &dirname) const
@@ -357,7 +372,7 @@ void pki_x509req::collect_properties(QMap<QString, QString> &prp) const
 	if (!s.isEmpty())
 		prp["Unstructured Name"] = s;
 
-	s = getAttribute(NID_pkcs9_challengePassword);
+	s = challengePasswordShown();
 	if (!s.isEmpty())
 		prp["Challenge Password"] = s;
 
@@ -369,9 +384,25 @@ void pki_x509req::print(BioByteArray &bba, enum print_opt opt) const
 {
 	pki_x509super::print(bba, opt);
 	switch (opt) {
-	case print_openssl_txt:
-		X509_REQ_print(bba, request);
+	case print_openssl_txt: {
+		/* a copy with the marker in place of the challengePassword:
+		 * the OpenSSL layout and every other field stay (BTD-168) */
+		X509_REQ *shown = X509_REQ_dup(request);
+		if (!shown)
+			throw errorEx(tr("Out of memory"));
+		int at = X509_REQ_get_attr_by_NID(shown,
+				NID_pkcs9_challengePassword, -1);
+		if (at >= 0) {
+			X509_ATTRIBUTE_free(X509_REQ_delete_attr(shown, at));
+			QByteArray m = challengePasswordMarker().toUtf8();
+			X509_REQ_add1_attr_by_NID(shown,
+				NID_pkcs9_challengePassword, MBSTRING_UTF8,
+				(const unsigned char *)m.constData(), m.size());
+		}
+		X509_REQ_print(bba, shown);
+		X509_REQ_free(shown);
 		break;
+	}
 	case print_pem:
 		PEM_write_bio_X509_REQ(bba, request);
 		break;
@@ -388,7 +419,7 @@ QVariant pki_x509req::column_data(const dbheader *hd) const
 	case HD_req_unstr_name:
 		return getAttribute(NID_pkcs9_unstructuredName);
 	case HD_req_chall_pass:
-		return getAttribute(NID_pkcs9_challengePassword);
+		return challengePasswordShown();
 	case HD_req_certs:
 		return QVariant(issuedCerts());
 	}
@@ -416,7 +447,6 @@ bool pki_x509req::visible() const
 		return true;
 	if (getAttribute(NID_pkcs9_unstructuredName).contains(limitPattern))
 		return true;
-	if (getAttribute(NID_pkcs9_challengePassword).contains(limitPattern))
-		return true;
+	/* never the challengePassword: the search would reveal it */
 	return false;
 }

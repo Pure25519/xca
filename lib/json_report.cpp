@@ -5,6 +5,7 @@
  */
 
 #include "json_report.h"
+#include "x509v3ext.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -176,22 +177,6 @@ QJsonObject JsonReport::publicKey(const EVP_PKEY *pkey)
 	return o;
 }
 
-/* Value of an extension as OpenSSL prints it, like x509v3ext::getValue()
- * but also for an OID OpenSSL does not know */
-static QString extensionValue(const X509_EXTENSION *ext)
-{
-	BioByteArray bba;
-	X509_EXTENSION *e = const_cast<X509_EXTENSION *>(ext);
-	int ret = X509V3_EXT_print(bba, e, X509V3_EXT_DEFAULT, 0);
-	if (ign_openssl_error() || !ret) {
-		bba = BioByteArray();
-		ret = ASN1_STRING_print(bba, X509_EXTENSION_get_data(e));
-	}
-	if (ign_openssl_error() || !ret)
-		return QString();
-	return QString::fromUtf8(bba.byteArray()).trimmed();
-}
-
 static QJsonArray extensions(const STACK_OF(X509_EXTENSION) *sk)
 {
 	QJsonArray list;
@@ -200,7 +185,8 @@ static QJsonArray extensions(const STACK_OF(X509_EXTENSION) *sk)
 		QJsonObject o = JsonReport::oidName(
 				X509_EXTENSION_get_object(ext)).toObject();
 		o["critical"] = X509_EXTENSION_get_critical(ext) > 0;
-		o["value"] = extensionValue(ext);
+		/* an unknown OID as hex DER (BTD-169) */
+		o["value"] = x509v3ext(ext).getValue();
 		list.append(o);
 	}
 	return list;

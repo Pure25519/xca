@@ -759,6 +759,25 @@ static QString dnsNameError(const QString &name)
 	return QString();
 }
 
+void IssuanceChecks::sanIa5(const GENERAL_NAMES *san)
+{
+	for (int i = 0; i < sk_GENERAL_NAME_num(san); i++) {
+		const GENERAL_NAME *gn = sk_GENERAL_NAME_value(san, i);
+		if (gn->type != GEN_URI && gn->type != GEN_EMAIL &&
+		    gn->type != GEN_DNS)
+			continue;
+		const ASN1_IA5STRING *s = gn->d.ia5;
+		const unsigned char *p = ASN1_STRING_get0_data(s);
+		for (size_t j = 0; j < ASN1_STRING_get_length(s); j++) {
+			if (p[j] > 0x7f)
+				throw serviceError("san_not_ia5",
+					tr("The %1 '%2' is not ASCII; an IA5String name is written as a URI (RFC 3987) or A-label, it is not converted")
+					.arg(nameType(gn->type), QString::fromUtf8(
+						(const char *)p, ASN1_STRING_get_length(s))));
+		}
+	}
+}
+
 void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain)
 {
@@ -780,6 +799,13 @@ void IssuanceChecks::names(const IssuanceSpec &spec, const pki_x509 *cert,
 			throw serviceError("invalid_dns_name",
 				tr("The dNSName '%1' is refused: %2").arg(dns, why));
 		}
+	}
+	/* URI and rfc822Name: ASCII on every path (BTD-208) */
+	try {
+		sanIa5(san);
+	} catch (...) {
+		GENERAL_NAMES_free(san);
+		throw;
 	}
 	GENERAL_NAMES_free(san);
 

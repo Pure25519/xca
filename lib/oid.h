@@ -15,6 +15,8 @@ class QString;
 typedef QList<int> NIDlist;
 
 extern NIDlist extkeyuse_nid;
+/* eku.txt was not found: extkeyuse_nid is the built-in list (BTD-215) */
+extern bool extkeyuse_builtin;
 extern NIDlist distname_nid;
 
 extern int first_additional_oid;

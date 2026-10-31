@@ -36,6 +36,11 @@ ServiceTest(test_service_harness)
 # Key usage by the subject key type, every issuance (BTD-195)
 ServiceTest(test_service_key_usage)
 ServiceTest(test_service_key)
+# Extensions under an OID OpenSSL does not know (BTD-169)
+ServiceTest(test_service_unknown_extensions)
+# the source scan for printf conversions in .arg() messages (BTD-184)
+target_compile_definitions(test_service_key PRIVATE
+	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
 ServiceTest(test_service_secrets)
 ServiceTest(test_service_audit)
 target_compile_definitions(test_service_audit PRIVATE
@@ -159,6 +164,9 @@ ServiceTest(test_service_signing_failure)
 
 # The content of a CRL matches the database, or it is not signed (BTD-198)
 ServiceTest(test_service_crl_build)
+
+# A certificate or request is complete, or it is not stored (BTD-200)
+ServiceTest(test_service_cert_build)
 
 # Every loader checks its OpenSSL result: broken input is an import error,
 # never an empty object (BTD-95)
@@ -372,3 +380,22 @@ add_test(NAME test_cli_json_output
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_json_output
 		-P ${SERVICE_TEST_DIR}/cli_json_output.cmake)
 set_tests_properties(test_cli_json_output PROPERTIES LABELS service)
+
+# The challengePassword of a request is never shown in clear text (BTD-168)
+add_test(NAME test_cli_challenge_password
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DDATA=${SERVICE_TEST_DIR}/data/json
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_challenge_password
+		-P ${SERVICE_TEST_DIR}/cli_challenge_password.cmake)
+set_tests_properties(test_cli_challenge_password PROPERTIES LABELS service)
+
+# A database with an unreadable row that the reader may not write: open,
+# read and verify work, no audit entry is left (BTD-209)
+find_program(SKIPPED_ROWS_SETPRIV setpriv)
+add_test(NAME test_cli_skipped_rows_readonly
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DSETPRIV=${SKIPPED_ROWS_SETPRIV}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_skipped_rows_readonly
+		-P ${SERVICE_TEST_DIR}/cli_skipped_rows_readonly.cmake)
+set_tests_properties(test_cli_skipped_rows_readonly PROPERTIES LABELS service)

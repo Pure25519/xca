@@ -17,6 +17,23 @@
 
 #define VIEW_x509super_keyid 6
 
+/* Test hook of the certificate and request build (BTD-200): the step
+ * named in injected is skipped as if its OpenSSL setter had failed.
+ * Empty in production, set by tests only. Steps: serial, not_before,
+ * not_after, subject, issuer, public_key, request_version,
+ * request_public_key, request_subject. */
+namespace certBuild
+{
+	extern QString injected;
+	bool fail(const char *step);
+	/* serviceError("certificate_build_failed") naming the step and the
+	 * OpenSSL reason */
+	[[noreturn]] void failed(const char *step);
+	/* failed(step) unless the setter succeeded and no failure of step
+	 * is injected */
+	void check(int ok, const char *step);
+}
+
 class pki_x509name : public pki_base
 {
   protected:

@@ -8,6 +8,7 @@
  */
 
 #include <QDateTime>
+#include <QSignalSpy>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -52,6 +53,8 @@ class test_service_objects : public ServiceTestCase
 		return AuditLog::entries().last();
 	}
 	static void verifyChain();
+	static void verifyDataChanged(const db_base *model,
+				const QSignalSpy &spy);
 	template <class T> static T *reread(const QVariant &id)
 	{
 		return Store.lookupPki<T>(id);
@@ -114,6 +117,26 @@ qint64 test_service_objects::revocationRows()
 {
 	XSqlQuery q("SELECT COUNT(*) FROM revocations");
 	return q.first() ? q.value(0).toLongLong() : -1;
+}
+
+/* Every dataChanged() of the model names cells that exist: the view's
+ * proxy model maps the range column by column without a bounds check, so
+ * a column past the last one read beyond its mapping (BTD-227) */
+void test_service_objects::verifyDataChanged(const db_base *model,
+			const QSignalSpy &spy)
+{
+	QVERIFY(spy.size() > 0);
+	for (const QList<QVariant> &args : spy) {
+		QModelIndex tl = args[0].value<QModelIndex>();
+		QModelIndex br = args[1].value<QModelIndex>();
+		QVERIFY(tl.isValid() && br.isValid());
+		QCOMPARE(tl.parent(), br.parent());
+		QVERIFY(tl.row() <= br.row() && tl.column() <= br.column());
+		QVERIFY(br.row() < model->rowCount(br.parent()));
+		QVERIFY2(br.column() < model->columnCount(br.parent()),
+			qPrintable(QString("column %1 of %2").arg(br.column())
+				.arg(model->columnCount(br.parent()))));
+	}
 }
 
 /* Acceptance criterion 1: rename of a key and a certificate */
@@ -198,8 +221,15 @@ void test_service_objects::updateProperties()
 	QVERIFY(cert);
 	QVariant id = cert->getSqlItemId();
 	int entries = AuditLog::entries().size();
+	QSignalSpy changed(certs(), &QAbstractItemModel::dataChanged);
 
 	certs()->updateProperties(ctx, cert, "props 2", "a comment");
+	verifyDataChanged(certs(), changed);
+	/* no index past the last column (QAbstractItemModel::hasIndex()) */
+	QModelIndex row = certs()->index(cert);
+	QVERIFY(row.isValid());
+	QVERIFY(!certs()->index(row.row(), certs()->columnCount(row.parent()),
+				row.parent()).isValid());
 	QList<AuditEntry> list = AuditLog::entries();
 	QCOMPARE(list.size(), entries + 2);
 	QCOMPARE(list[entries].action, QString("object.rename"));

@@ -34,11 +34,9 @@ static bool kuHadAction;
 
 /* Answers the warning box of the dialog: Apply ("Remove unfitting key
  * usage bits") or Ok ("Edit") */
-static void answerBox(QMessageBox::StandardButton answer)
+static void answerBox(xcaWarningBox *box,
+			QMessageBox::StandardButton answer)
 {
-	xcaWarningBox *box = test_main::findWindow<xcaWarningBox>("dlg_warning");
-	if (!box)
-		return;
 	kuBoxText = box->text() + "\n" + box->informativeText();
 	QAbstractButton *remove = box->button(QMessageBox::Apply);
 	kuHadAction = remove &&
@@ -119,12 +117,14 @@ void test_main::keyUsageByKeyType()
 		 * fails instead of waiting for it */
 		kuBoxText.clear();
 		kuHadAction = false;
-		QThread *job2 = QThread::create(answerBox, answer ?
-			(QMessageBox::StandardButton)answer : QMessageBox::Ok);
-		job2->start();
+		QMessageBox::StandardButton button = answer ?
+			(QMessageBox::StandardButton)answer : QMessageBox::Ok;
+		/* in the box's event loop (whenShown(), BTD-180) */
+		whenShown<xcaWarningBox>("dlg_warning",
+			[button](xcaWarningBox *box) {
+				answerBox(box, button);
+			});
 		dlg->accept();
-		job2->wait();
-		delete job2;
 		if (answer) {
 			QVERIFY2(kuBoxText.contains("keyEncipherment") &&
 				kuBoxText.contains("template 'TLS_server'"),

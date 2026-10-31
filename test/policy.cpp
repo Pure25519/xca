@@ -30,16 +30,6 @@ static pki_x509 *policyCa;
 static pki_key *policyKey;
 
 /* the visible widget of that type and name, or nullptr */
-template <class T> static T *visibleWidget(const QString &name)
-{
-	for (QWidget *w : QApplication::allWidgets()) {
-		T *t = dynamic_cast<T *>(w);
-		if (t && t->objectName() == name && t->isVisible())
-			return t;
-	}
-	return nullptr;
-}
-
 /* Reads the refusal box and answers "Edit"; runs in its event loop */
 static void readRefusal()
 {

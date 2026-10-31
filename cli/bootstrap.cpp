@@ -979,8 +979,6 @@ void cmdBootstrap(CommandContext &ctx)
 
 	if (ctx.plan) {
 		if (exists) {
-			/* no VACUUM on close: the file stays as it is */
-			database_model::vacuum_on_close = false;
 			ctx.openDatabase();
 			run.dbOpen = true;
 		}

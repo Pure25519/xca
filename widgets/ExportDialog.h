@@ -23,6 +23,8 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
   protected:
 	QString filter{}, savedFile{}, filenameLabelOrig{};
 	QList<const pki_export*> alltypes;
+	QList<pki_base *> pkis{};
+	void mlDsaHelp(const pki_export *x);
 
   public:
 	ExportDialog(QWidget *w, const QString &title, const QString &filt,
@@ -34,6 +36,10 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
 	/* The chosen format and file name for the items; with
 	 * "separate files" the file name is the directory */
 	ExportSpec exportSpec(const QList<pki_base *> &items) const;
+	/* True if the format writes an ML-DSA private key of the items:
+	 * only then is the ML-DSA encoding offered (BTD-190) */
+	static bool mlDsaApplies(const QList<pki_base *> &items,
+		const pki_export *xport);
 	static bool mayWriteFile(const QString &fname, bool inSeparateFiles);
 	void setupExportFormat(int disable_flag);
 
@@ -42,6 +48,7 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
 	void on_separateFiles_clicked(bool checked);
 	void on_exportFormat_activated(int);
 	void on_exportFormat_highlighted(int index);
+	void on_mlDsaFormat_currentIndexChanged(int);
 	void accept();
 };
 

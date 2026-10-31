@@ -89,6 +89,15 @@ class db_base: public QAbstractItemModel
 		db_base(const char *classname);
 		virtual void updateHeaders();
 		virtual ~db_base();
+		/* A database row that did not decode: left out of the store,
+		 * collected by loadContainer() and reported once for the
+		 * whole load (BTD-209) */
+		struct SkippedRow {
+			QString type, id, reason;
+		};
+		static QList<SkippedRow> takeSkippedRows();
+		/* The message naming each row and its reason */
+		static QString skippedRowsText(const QList<SkippedRow> &rows);
 		/* Stores pki and returns it. A failed write throws the typed
 		 * error of throwSqlError() and leaves pki with the caller,
 		 * not stored and without id (BTD-50); it used to delete it
@@ -146,6 +155,10 @@ class db_base: public QAbstractItemModel
 		/* The private keys a format writes for the items */
 		virtual QList<pki_key *> exportedPrivateKeys(
 			const QList<pki_base *> &items,
+			const pki_export *xport) const;
+		/* True if the format writes the private key of an ML-DSA key:
+		 * only then may ExportSpec::privateKeyFormat be set */
+		bool exportsMlDsaPrivateKey(const QList<pki_base *> &items,
 			const pki_export *xport) const;
 		/* The format of pki_base::pem() for the clipboard text, or
 		 * NULL if it never contains a private key */

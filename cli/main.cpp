@@ -20,6 +20,7 @@
 #include "lib/func_base.h"
 #include "lib/json_report.h"
 #include "lib/oid.h"
+#include "lib/pki_export.h"
 #include "lib/PwDialogCore.h"
 #include "lib/settings.h"
 #include "lib/XcaProgress.h"
@@ -359,6 +360,8 @@ int main(int argc, char *argv[])
 		ret = run(args);
 		Database.close();
 	}
+	/* the formats by_id() set up on demand (BTD-200) */
+	pki_export::free_elements();
 	UI_set_default_method(UI_OpenSSL());
 	UI_destroy_method(ui);
 	return ret;

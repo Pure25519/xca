@@ -1,7 +1,7 @@
 
 list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp policy.cpp crlRefused.cpp kuByKeyType.cpp dnBounds.cpp issueInAccept.cpp templateRoundTrip.cpp
-	automationIds.cpp issuanceExt.cpp TestEnv.cpp TestEnv.h)
+	newKey.cpp pem.cpp export.cpp renewal.cpp validity.cpp policy.cpp crlRefused.cpp kuByKeyType.cpp dnBounds.cpp issueInAccept.cpp ekuRows.cpp templateRoundTrip.cpp
+	automationIds.cpp issuanceExt.cpp exportMlDsa.cpp optionsChanged.cpp TestEnv.cpp TestEnv.h)
 
 list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)
 
@@ -25,6 +25,12 @@ add_test(NAME test_automation_ids COMMAND testxca automationIds)
 set_tests_properties(test_automation_ids PROPERTIES LABELS gui
 	ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 target_link_libraries(testxca ${ASAN_LIB} ${QT}::Test xcagui)
+
+# No test drives a dialog from a worker thread (BTD-180)
+add_test(NAME test_no_worker_threads
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		-P ${PROJECT_SOURCE_DIR}/test/no_worker_threads.cmake)
+set_tests_properties(test_no_worker_threads PROPERTIES LABELS service)
 target_link_options(testxca PRIVATE -pthread)
 
 if (APPLE)

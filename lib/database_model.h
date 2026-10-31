@@ -32,6 +32,9 @@ class database_model: public QObject
 		int dbTimer{};
 		QString dbName{};
 		QString db_provider{};
+		/* SQLite file change counter at the open, -1 if unknown
+		 * (BTD-225) */
+		qint64 openChangeCounter{-1};
 		void openSqlDB();
 
 		QSqlError initSqlDB();
@@ -56,10 +59,6 @@ class database_model: public QObject
 
 	public:
 		static bool open_without_password;
-		/* false: close() leaves the file as it is, without the
-		 * VACUUM of XCA (bxc-pki bootstrap --plan, BTD-166: the
-		 * database file stays byte-identical) */
-		static bool vacuum_on_close;
 		database_model(const QString &dbName,
 				const Passwd &pass = Passwd());
 		~database_model();

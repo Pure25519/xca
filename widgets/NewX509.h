@@ -58,6 +58,7 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		 * them (BTD-195), for the audit of the issuance */
 		QStringList keyUsageRemoved{};
 		bool keyUsageFitsKey();
+		void selectEkus(const QStringList &names);
 		/* BTD-212: the model accept() issues into, and the result */
 		db_x509 *certModel{};
 		pki_x509 *issuedCert{};

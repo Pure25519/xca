@@ -32,6 +32,7 @@ const char AuditLog::actionInit[] = "audit.init";
 const char AuditLog::actionCheckpoint[] = "audit.checkpoint";
 const char AuditLog::actionKeyCreate[] = "audit.key_create";
 const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
+const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -103,6 +104,8 @@ const QStringList &AuditParams::allowList()
 		"pkcs12_algorithm", "question",
 		"reason", "reason_bit", "requested_not_after",
 		"revocation_date", "revocations", "serial",
+		/* type:id of database rows left out on open (BTD-209) */
+		"skipped_items",
 		/* the effective algorithm of a signature (BTD-164) */
 		"signature_algorithm", "subject",
 		"template", "this_update", "validity_capped",

@@ -14,6 +14,9 @@
 #include "PwDialogMock.h"
 
 #include <QTest>
+#include <QTimer>
+#include <QApplication>
+#include <functional>
 #include <QtGlobal>
 
 class test_main: public QObject
@@ -44,6 +47,7 @@ class test_main: public QObject
 	void importAuditFailureKeepsItem();
 	void tokenDialogClosedDatabase();
 	void exportFormat();
+	void exportMlDsaEncoding();
 	void revoke();
 	void renewalSigningFails();
 	void issueRefusedByPolicy();
@@ -54,6 +58,7 @@ class test_main: public QObject
 	void issueRefusedInsideDialog();
 	void automationIds();
 	void issuanceExtensions();
+	void optionsStoreChangedOnly();
 	void lineExtensionTyping();
 	void templateMergeRoundTrip();
 	void crlRefusedWithoutCrlSign();
@@ -61,6 +66,10 @@ class test_main: public QObject
 	void keyUsageByKeyType();
 	void issueInAccept_data();
 	void issueInAccept();
+	void ekuRows_data();
+	void ekuRows();
+	void ekuOwnOidAndReplace();
+	void ekuBuiltInList();
 	void dnUpperBounds();
 
   public:
@@ -86,5 +95,45 @@ class test_main: public QObject
 		return nullptr;
 	}
 };
+
+/* BTD-180: dialogs are driven from the GUI thread only. A worker thread
+ * that clicks in a dialog races with the GUI thread (Qt widgets are not
+ * thread-safe) and crashed testxca now and then (test_main::revoke).
+ * whenShown() runs action in the event loop of the modal dialog that
+ * opens next: a timer looks every 10 ms for a visible widget of type T
+ * with that object name, for at most ten seconds. test_main::cleanup()
+ * ends the timers of a test, so none acts on a later test's dialog. */
+extern int dialogDriverRun;
+/* extkeyuse_nid as initOIDs() left it, without eku.txt (BTD-215) */
+extern QList<int> ekuListAtStart;
+
+template <class T> static T *visibleWidget(const QString &name)
+{
+	for (QWidget *w : QApplication::allWidgets()) {
+		T *t = dynamic_cast<T *>(w);
+		if (t && t->objectName() == name && t->isVisible())
+			return t;
+	}
+	return nullptr;
+}
+
+template <class T> static void whenShown(const QString &name,
+				std::function<void(T *)> action,
+				int tries = 1000)
+{
+	int run = dialogDriverRun;
+	QTimer::singleShot(10, [name, action, tries, run]() {
+		if (run != dialogDriverRun)
+			return;
+		T *w = visibleWidget<T>(name);
+		if (w)
+			action(w);
+		else if (tries > 0)
+			whenShown<T>(name, action, tries - 1);
+		else
+			qWarning() << "Widget not shown:" << name;
+	});
+}
+
 
 #endif

@@ -27,6 +27,15 @@ bxc-main (bxc-pki fork, unreleased)
    keeps --subject. --text prints the counts, one line per object (kind,
    bootstrap id, action, database id), the skipped elements and the
    unchecked steps.
+ * BTD-215, BTD-127: extended key usages in the New Certificate dialog.
+   An EKU of a template, profile or source certificate that is not in
+   the dialog's list (missing or old eku.txt, own OID) gets a row marked
+   "(from the template)" and is kept; before it was dropped without a
+   word (a TLS_server certificate without serverAuth). Without eku.txt
+   a built-in list (serverAuth, clientAuth, codeSigning,
+   emailProtection, timeStamping, OCSPSigning) is used, with a warning
+   in the log and the status bar. Applying a template now replaces the
+   selected EKUs, as the service path does; upstream XCA only adds them.
  * BTD-211: CRL and trust-list follow-ups to BTD-42. Trust-list leaves
    (--leaf) are trusted peers: opcua-dir writes them to trusted/certs
    (no longer own/certs, which belongs to the application's own

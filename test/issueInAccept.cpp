@@ -37,16 +37,6 @@ static QString iaBoxText, iaSanKept;
 static bool iaStillOpen;
 
 /* the visible widget of that type and name, or nullptr */
-template <class T> static T *visibleWidget(const QString &name)
-{
-	for (QWidget *w : QApplication::allWidgets()) {
-		T *t = dynamic_cast<T *>(w);
-		if (t && t->objectName() == name && t->isVisible())
-			return t;
-	}
-	return nullptr;
-}
-
 /* Answers the refusal box with "Edit"; runs in the box's event loop */
 static void answerRefusal()
 {

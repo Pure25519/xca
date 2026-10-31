@@ -97,4 +97,6 @@ if(BUILD_TESTING)
   # bootstrap (BTD-166): CAs, profiles and policies from one file
   CliTest(cli_bootstrap)
   CliTest(cli_bootstrap_errors)
+  # a read-only command leaves the database file byte-identical (BTD-225)
+  CliTest(cli_readonly)
 endif()

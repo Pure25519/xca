@@ -65,6 +65,19 @@ checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it
 | with a wrong password source | `audit_password_rejected`, exit 1 |
 | a checkpoint is due and the entries since the last one do not chain | `audit_chain_broken`, exit 1 (only with a password; without one the export reads as it is) |
 
+## Entries written on open
+
+`database.rows_skipped` (BTD-209) is written on every open, after the unlock, that left
+unreadable rows out. It carries `count`, `skipped_items` (`key:3,template:7`) and
+`warning=rows_skipped`. Reading commands open the database too, so `--list-items` or
+`--audit-verify` with the password each add one entry for as long as the rows stay unreadable. A
+cron job that runs `--list-items` therefore fills the log with identical entries. Writing only
+when the set of rows changes is BTD-221.
+
+The entry is best effort. On a read-only or locked database it is lost and logged, and the open,
+the read and `--audit-verify` work as before (`test_cli_skipped_rows_readonly`,
+`test_service_loaders::skippedRowsDatabaseLocked`).
+
 ## Deviations from the ticket (accepted 2026-10-28)
 
 1. **No second checkpoint table.** BTD-37 asked for a checkpoint "as its own record and as a

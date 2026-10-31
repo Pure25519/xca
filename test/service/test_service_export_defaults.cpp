@@ -81,6 +81,7 @@ class test_service_export_defaults : public ServiceTestCase
 	void keepLegacyIsAChoice();
 	void migrationIsOneTransaction_data();
 	void migrationIsOneTransaction();
+	void migrationNeedsUnlock();
 	void clearKeepsOpenDatabase();
 	void pkcs12Default_data();
 	void pkcs12Default();
@@ -754,6 +755,36 @@ void test_service_export_defaults::clearKeepsOpenDatabase()
 	Settings.clear();
 	QCOMPARE(digest::getDefault().name(), QString("SHA512"));
 	QVERIFY(encAlgo::getDefault().legacy());
+}
+
+/* An open whose unlock was cancelled (the BTD-117 path, pwhash set)
+ * migrates nothing: no marker, no algorithm, no entry, no message. The
+ * next open with the password migrates once with one message, and the
+ * one after it shows none (StrictWarning fails on an unexpected one;
+ * review of xca#48 MINOR 5, BTD-186) */
+void test_service_export_defaults::migrationNeedsUnlock()
+{
+	QVERIFY(storeOldSettings(false));
+	Database.close();
+	pwdialog->expect("", pw_cancel);
+	try {
+		Database.open(dbFile);
+	} catch (...) {
+		QFAIL("the open without password failed");
+	}
+	QVERIFY(Database.isOpen());
+	QCOMPARE(storedSetting("pkcs12_enc_algo"), QString("PBE-SHA1-3DES"));
+	QVERIFY(storedSetting("pkcs12_migrated").isNull());
+	QCOMPARE(migrationEntries().size(), 0);
+
+	warning->expectMessage("PBE-SHA1-3DES");
+	reopenDatabase();
+	QCOMPARE(storedSetting("pkcs12_enc_algo"), QString("AES-256-CBC"));
+	QCOMPARE(storedSetting("pkcs12_migrated"), QString("yes"));
+	QCOMPARE(migrationEntries().size(), 1);
+
+	reopenDatabase();
+	QCOMPARE(migrationEntries().size(), 1);
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_export_defaults)

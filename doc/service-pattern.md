@@ -35,6 +35,16 @@ true, and the caller reported success with nothing stored). Every outermost comm
 service function turns false into `database_error` with a `failure` entry. The log names the first
 inner rollback (`Commit at ... rolled back after the rollback at file(line)`).
 
+The close of a database vacuums only after a run that committed a write (BTD-225). For SQLite
+the file change counter in the header (bytes 24 to 27) decides: it is read at the open and at the
+close, and a read, `--plan`'s rolled-back work or an open that wrote nothing leave it as it was. So
+a read-only command (`bxc-pki list` and `show`, `--list-items`, `--index`, `--hierarchy`,
+`--audit-verify`, an `--audit-export` with no checkpoint due) leaves the file byte-identical, also
+its mtime, and a read-only file closes without a VACUUM attempt. A plan run and an export that
+writes its due checkpoint are audited, so they are writes. A failed VACUUM is logged with its SQL
+error and the close goes on. Remote databases (PostgreSQL, MariaDB) keep the VACUUM on every close
+that they had. `test_cli_readonly`, `test_service_sql_errors::failedVacuumLogged`.
+
 A failed SQL write is a typed error, never a message box in a service path (BTD-50).
 
 - **The helper.** `throwSqlError(QSqlError, what)` in `lib/sql.h` picks the code from SQLite's result code:
@@ -159,12 +169,20 @@ after a failure checks the OpenSSL result itself:
   object it decoded and throws an `errorEx` that names the file or item and the OpenSSL reasons
   (`throw_unreadable()` in `lib/pki_base.h`); it never keeps an object without content. The
   import then fails with `no_pki_data` or `unreadable_input` and a `failure` entry, and a database
-  row that does not decode is reported and left out on open (`db_base::loadContainer()`). An
+  row that does not decode is left out on open (`db_base::loadContainer()`). The rows left out
+  are reported once for the whole load, each with its reason. After the unlock they are also
+  audited: one `database.rows_skipped` entry with `count`, `skipped_items` (`key:3,template:7`)
+  and `warning=rows_skipped` (BTD-209). It is written on every open, including reading commands
+  (doc/audit-checkpoints.md, "Entries written on open"). An
   `errorEx` without text is shown nowhere (`xcaWarning::error()` drops it), so a loader never
   throws one.
 - The template loader, which the import probe tries last, accepts only a well-formed template
   export (size field equal to the rest, known version, the settings consumed completely), so it
-  does not hide the errors of the loaders before it (BTD-88).
+  does not hide the errors of the loaders before it (BTD-88). A stored template row is not
+  checked for data after the settings (BTD-209).
+- `ign_openssl_error()` empties the queue into the debug log with the same text as
+  `take_openssl_errors()`. Neither uses OpenSSL's static buffer of `ERR_error_string(e, NULL)`,
+  which threads would share (BTD-209).
 - Key material and the audit log: `pki_evp::encryptKey()` throws `key_encryption_failed`
   before it replaces the private key by the public one, `changeDatabasePassword()` fails when a
   key is not stored with the new password, and `AuditKey` throws `audit_key_failed` or
@@ -175,6 +193,13 @@ after a failure checks the OpenSSL result itself:
   request's extensions, the merge and order paths of the issuance; an extension of a request that
   does not decode is `invalid_request_extension` with its name, not taken for absent (BTD-197).
   Before, the object was signed without the extension and audited as success.
+- A URI, rfc822Name or dNSName of the SAN is an IA5String (RFC 5280 4.2.1.6): one with a byte
+  above 0x7F is `san_not_ia5` naming the entry, never converted, because an OPC UA
+  ApplicationUri is compared byte for byte. `IssuanceChecks::sanIa5()` runs in
+  `IssuanceChecks::names()` on every certificate path (dialog, template, profile, registration
+  URI, a signed device CSR: refused, not repaired; a non-ASCII dNSName there stays
+  `invalid_dns_name`) and in `db_x509req::create()` for CSR creation (BTD-208). An IRI is written
+  as a URI (RFC 3987), an IDN as A-labels.
 - The CRL build checks every step (version, issuer, each revoked entry with serial, date, reason
   and invalidity date, AKI, IAN, CRL number, update times) and compares the built CRL with the
   revocations it was built from before signing; a failure or a difference is `crl_build_failed`

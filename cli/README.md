@@ -267,7 +267,12 @@ with `missing_password` and writes no file. Legacy only on request: `--pkcs12-al
 PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
 `--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
 (`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
-`key.export_private` name it; on another key it is `format_not_applicable`. `--plan` runs the
+`key.export_private` name it; on another key it is `format_not_applicable`. To check the stored
+encoding, read the first byte of the RFC 9881 `ML-DSA-PrivateKey` inside the decrypted PKCS#8:
+`0x80` seed, `0x04` expanded, `0x30` both. `openssl pkcs8` and `openssl pkey` are no proof:
+they decode the key and encode it again, so a seed-only key comes back as both.
+`misc/mldsa-key-encoding.sh <file> [<password variable>]` decrypts PBES2 without decoding the
+key and prints the encoding as JSON (password from `EXPORT_PASS` by default). `--plan` runs the
 option checks of the export service (`db_base::checkExportSpec()`: format, PKCS#12 algorithm,
 ML-DSA key format) and reports the error of the real run (BTD-211). Every export writes
 `object.export`, a private key also `key.export_private`. `--type` selects the object kind when
@@ -431,8 +436,8 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   file's database, `--password` its password.
 - **--plan**: reads no secret, opens an existing database without its password (public
   objects and settings rows; a missing database is not created) and writes nothing, not even
-  `cli.plan`, and closes it without XCA's `VACUUM` (`database_model::vacuum_on_close`): the
-  file stays byte-identical. It lists every object as create, keep, update, skip
+  `cli.plan`; closing it runs no `VACUUM`, because XCA vacuums only after a run that
+  committed a write (BTD-225): the file stays byte-identical. It lists every object as create, keep, update, skip
   or error (an error of one object, e.g. `bootstrap_conflict` or `not_supported`, is an entry
   with `error`, exit code 0; an error of the file ends the plan as in the real run) and under
   `unchecked` every check it could not do: the secret references, the private keys and
