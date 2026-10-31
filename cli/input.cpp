@@ -41,16 +41,28 @@ int hexValue(QChar c)
 	return -1;
 }
 
-[[noreturn]] void badDn(const QString &dn, const QString &why)
+/* The DN and where it comes from: an option (--subject) or a JSON
+ * pointer of the bootstrap file, which gets a ':' after it as in every
+ * bootstrap error */
+class DnText
 {
+  public:
+	QString text{};
+	QString source{};
+};
+
+[[noreturn]] void badDn(const DnText &where, const QString &why)
+{
+	QString source = where.source.startsWith('/') ?
+			where.source + ":" : where.source;
 	throw usageError("invalid_subject", QObject::tr(
-		"--subject '%1' is no RFC 4514 distinguished name: %2")
-		.arg(dn).arg(why));
+		"%1 '%2' is no RFC 4514 distinguished name: %3")
+		.arg(source, where.text, why));
 }
 
 /* The attribute type: a descriptor of RFC 4514 or known to OpenSSL
  * (case-insensitive), or a dotted OID */
-ASN1_OBJECT *attributeType(const QString &dn, const QString &type)
+ASN1_OBJECT *attributeType(const DnText &where, const QString &type)
 {
 	static const QRegularExpression oid("^[0-9]+(\\.[0-9]+)+$");
 	static const QRegularExpression descr("^[A-Za-z][A-Za-z0-9-]*$");
@@ -75,34 +87,35 @@ ASN1_OBJECT *attributeType(const QString &dn, const QString &type)
 	}
 	ign_openssl_error();
 	if (!obj)
-		badDn(dn, QObject::tr("unknown attribute type '%1'").arg(type));
+		badDn(where, QObject::tr("unknown attribute type '%1'")
+			.arg(type));
 	return obj;
 }
 
 /* RFC 5280: countryName, serialNumber and dnQualifier are
  * PrintableString, domainComponent and emailAddress IA5String; every
  * other attribute is a UTF8String (rule 12) */
-int stringType(const QString &dn, int nid, const QByteArray &value)
+int stringType(const DnText &where, int nid, const QByteArray &value)
 {
 	static const QRegularExpression printable(
 		"^[A-Za-z0-9 '()+,\\-./:=?]*$");
 	switch (nid) {
 	case NID_countryName:
 		if (value.size() != 2)
-			badDn(dn, QObject::tr("C needs two letters, not '%1'")
+			badDn(where, QObject::tr("C needs two letters, not '%1'")
 				.arg(QString::fromUtf8(value)));
 		/* fall through */
 	case NID_serialNumber:
 	case NID_dnQualifier:
 		if (!printable.match(QString::fromUtf8(value)).hasMatch())
-			badDn(dn, QObject::tr("'%1' is no PrintableString")
+			badDn(where, QObject::tr("'%1' is no PrintableString")
 				.arg(QString::fromUtf8(value)));
 		return V_ASN1_PRINTABLESTRING;
 	case NID_domainComponent:
 	case NID_pkcs9_emailAddress:
 		for (char c : value)
 			if ((unsigned char)c > 0x7f)
-				badDn(dn, QObject::tr("'%1' is no IA5String")
+				badDn(where, QObject::tr("'%1' is no IA5String")
 					.arg(QString::fromUtf8(value)));
 		return V_ASN1_IA5STRING;
 	}
@@ -111,15 +124,16 @@ int stringType(const QString &dn, int nid, const QByteArray &value)
 
 } // namespace
 
-x509name parseDn(const QString &dn)
+x509name parseDn(const QString &dn, const QString &source)
 {
+	const DnText where{ dn, source };
 	static const QString special("\"+,;<>\\=# ");
 	QList<QList<Attr> > rdns;
 	QList<Attr> rdn;
 	int i = 0, n = dn.size();
 
 	if (dn.trimmed().isEmpty())
-		badDn(dn, QObject::tr("it is empty"));
+		badDn(where, QObject::tr("it is empty"));
 	while (i < n) {
 		Attr a;
 		while (i < n && dn[i] == ' ')
@@ -128,19 +142,19 @@ x509name parseDn(const QString &dn)
 		while (i < n && dn[i] != '=' && dn[i] != ',' && dn[i] != '+')
 			i++;
 		if (i >= n || dn[i] != '=')
-			badDn(dn, QObject::tr("'=' missing after '%1'")
+			badDn(where, QObject::tr("'=' missing after '%1'")
 				.arg(dn.mid(start, i - start)));
 		a.type = dn.mid(start, i - start).trimmed();
 		i++;
 		if (i < n && dn[i] == '#')
-			badDn(dn, QObject::tr("hex encoded values (#...) are "
+			badDn(where, QObject::tr("hex encoded values (#...) are "
 				"not supported"));
 		int trailingSpaces = 0;
 		while (i < n && dn[i] != ',' && dn[i] != '+') {
 			QChar c = dn[i];
 			if (c == '\\') {
 				if (i + 1 >= n)
-					badDn(dn, QObject::tr("'\\' at the end"));
+					badDn(where, QObject::tr("'\\' at the end"));
 				QChar e = dn[i + 1];
 				if (special.contains(e)) {
 					a.value += QString(e).toUtf8();
@@ -151,14 +165,14 @@ x509name parseDn(const QString &dn)
 							hexValue(dn[i + 2]));
 					i += 3;
 				} else {
-					badDn(dn, QObject::tr("invalid escape "
+					badDn(where, QObject::tr("invalid escape "
 						"'\\%1'").arg(e));
 				}
 				trailingSpaces = 0;
 				continue;
 			}
 			if (c == '"' || c == ';' || c == '<' || c == '>')
-				badDn(dn, QObject::tr("'%1' must be escaped")
+				badDn(where, QObject::tr("'%1' must be escaped")
 					.arg(c));
 			if (c == ' ' && a.value.isEmpty()) {
 				i++;    /* space after '=' */
@@ -170,10 +184,10 @@ x509name parseDn(const QString &dn)
 		}
 		a.value.chop(trailingSpaces);
 		if (a.value.isEmpty())
-			badDn(dn, QObject::tr("the value of %1 is empty")
+			badDn(where, QObject::tr("the value of %1 is empty")
 				.arg(a.type));
 		if (QString::fromUtf8(a.value).toUtf8() != a.value)
-			badDn(dn, QObject::tr("the value of %1 is no UTF-8")
+			badDn(where, QObject::tr("the value of %1 is no UTF-8")
 				.arg(a.type));
 		rdn << a;
 		if (i < n && dn[i] == '+') {
@@ -185,11 +199,11 @@ x509name parseDn(const QString &dn)
 		if (i < n) {   /* ',' */
 			i++;
 			if (i >= n)
-				badDn(dn, QObject::tr("',' at the end"));
+				badDn(where, QObject::tr("',' at the end"));
 		}
 	}
 	if (!rdn.isEmpty())
-		badDn(dn, QObject::tr("'+' at the end"));
+		badDn(where, QObject::tr("'+' at the end"));
 
 	/* RFC 4514 writes the last RDN of the sequence first */
 	X509_NAME *name = X509_NAME_new();
@@ -199,8 +213,8 @@ x509name parseDn(const QString &dn)
 			const Attr &a = rdns[r][k];
 			ASN1_OBJECT *obj = nullptr;
 			try {
-				obj = attributeType(dn, a.type);
-				int type = stringType(dn, OBJ_obj2nid(obj), a.value);
+				obj = attributeType(where, a.type);
+				int type = stringType(where, OBJ_obj2nid(obj), a.value);
 				X509_NAME_ENTRY *ne = X509_NAME_ENTRY_create_by_OBJ(
 					nullptr, obj, type,
 					(const unsigned char *)a.value.constData(),
@@ -210,7 +224,7 @@ x509name parseDn(const QString &dn)
 							k == 0 ? 0 : -1)) {
 					X509_NAME_ENTRY_free(ne);
 					ign_openssl_error();
-					badDn(dn, QObject::tr("%1 is not accepted")
+					badDn(where, QObject::tr("%1 is not accepted")
 						.arg(a.type));
 				}
 				X509_NAME_ENTRY_free(ne);
@@ -446,6 +460,12 @@ QString keyTypeOf(const EVP_PKEY *pkey)
 		if (job.compare(t.job, Qt::CaseInsensitive) == 0)
 			return t.name;
 	return QString();
+QStringList keyTypeNames()
+{
+	QStringList l;
+	for (const auto &t : keyTypeTable)
+		l << t.name;
+	return l;
 }
 
 QString keyJobText(const QString &keyType)

@@ -26,6 +26,7 @@
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_key.h"
+#include "lib/PwDialogCore.h"
 #include "lib/pki_multi.h"
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
@@ -280,21 +281,48 @@ static QString nameFrom(const Options &o, const x509name &subject,
 
 /* --- init ------------------------------------------------------------- */
 
-static void cmdInit(CommandContext &ctx)
+/* bootstrap (BTD-166): the password source of a key; the database
+ * password unless the key has one of its own */
+static void keySource(const CaExtras &x, const QString &own)
+{
+	if (x.passwords)
+		PwDialogCore::headless()->setSource(pass_info::KeyPassword,
+			own.isEmpty() ? x.defaultPassword : own);
+}
+
+/* An XCA "own password" (ptPrivate) for a new key, from the source of
+ * x.keyPassword; the key is re-encrypted and its row updated in the
+ * caller's transaction */
+static void ownPassword(const CaExtras &x, pki_key *key)
+{
+	pki_evp *evp = dynamic_cast<pki_evp *>(key);
+	if (!x.passwords || x.keyPassword.isEmpty() || !evp)
+		return;
+	keySource(x, x.keyPassword);
+	evp->setOwnPass(pki_key::ptPrivate);
+	if (evp->getOwnPass() != pki_key::ptPrivate ||
+	    !evp->sqlUpdatePrivateKey())
+		throw serviceError("database_error", QObject::tr(
+			"The key '%1' did not get its own password")
+			.arg(key->getIntName()));
+}
+
+CaCreated createCa(CommandContext &ctx, const CaExtras &x)
 {
 	const Options &o = ctx.opts;
 	IssuanceSpec spec;
-	pki_x509 *parent = nullptr;
+	pki_x509 *parent = x.parent;
+	CaCreated made;
 
-	spec.subject = subjectFrom(o);
+	spec.subject = x.subject.entryCount() > 0 ? x.subject :
+			subjectFrom(o);
 	if (spec.subject.entryCount() == 0)
 		throw usageError("missing_option",
 			QObject::tr("init needs --cn or --subject"));
-	if (o.has("parent")) {
+	if (!parent && o.has("parent"))
 		parent = resolveAs<pki_x509>(o.value("parent"), "certificate",
 						"--parent");
-		spec.signer = parent;
-	}
+	spec.signer = parent;
 	spec.name = nameFrom(o, spec.subject, QStringList());
 	applyValidity(o, spec, parseDuration(parent ? "P5Y" : "P10Y",
 				"validity"), false);
@@ -307,12 +335,17 @@ static void cmdInit(CommandContext &ctx)
 		e.pathLen = QString::number(o.value("path-len").toInt());
 	e.subjectKeyId = true;
 	e.authorityKeyId = true;
-	e.keyUsage << "keyCertSign" << "cRLSign";
+	if (x.keyUsage.isEmpty())
+		e.keyUsage << "keyCertSign" << "cRLSign";
+	else
+		e.keyUsage = x.keyUsage;
 	e.keyUsageCritical = true;
+	e.nameConstraints = x.nameConstraints;
+	e.crlDistPoints = x.crlDistPoints;
 	e.netscape = false;
 
 	/* the CRL settings and --out before anything is generated */
-	CrlPolicy policy = crlPolicy(o, nullptr);
+	CrlPolicy policy = x.hasCrlPolicy ? x.crlPolicy : crlPolicy(o, nullptr);
 	checkOutOptions(ctx, true);
 
 	pki_multi fileItems;
@@ -326,11 +359,15 @@ static void cmdInit(CommandContext &ctx)
 		writeOut(ctx, spec.key, "key", spec.name);
 		writeOut(ctx, nullptr, "crt", spec.name);
 		writeOut(ctx, nullptr, "crl", spec.name);
-		return;
+		return made;
 	}
+	made.key = spec.key;
+	ownPassword(x, spec.key);
+	keySource(x, parent ? x.signerPassword : x.keyPassword);
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx.svc, spec);
+	made.cert = cert;
 	ctx.result->writtenCertificate(cert, spec);
-	if (hasCrlOptions(o)) {
+	if (x.hasCrlPolicy || hasCrlOptions(o)) {
 		ctx.step = QObject::tr("CRL settings of '%1'").arg(spec.name);
 		policy.store(ctx.svc, cert);
 	}
@@ -339,6 +376,7 @@ static void cmdInit(CommandContext &ctx)
 	 * cannot sign one (IssuanceChecks::crlIssuer) */
 	pki_crl *crl = nullptr;
 	QDateTime now = nowSeconds();
+	keySource(x, x.keyPassword);
 	if ((QDateTime)cert->getNotBefore() <= now &&
 	    now < (QDateTime)cert->getNotAfter())
 		crl = issueCrl(ctx, cert, policy, "init");
@@ -349,10 +387,18 @@ static void cmdInit(CommandContext &ctx)
 			.arg(cert->getIntName())
 			.arg(cert->getNotBefore().toPrettyGMT())
 			.arg(cert->getNotAfter().toPrettyGMT()));
+	keySource(x, QString());
+	made.crl = crl;
 	writeOut(ctx, spec.key, "key");
 	writeOut(ctx, cert, "crt");
 	if (crl)
 		writeOut(ctx, crl, "crl");
+	return made;
+}
+
+static void cmdInit(CommandContext &ctx)
+{
+	createCa(ctx);
 }
 
 /* --- request-cert ----------------------------------------------------- */
@@ -703,6 +749,7 @@ void registerCommands(Registry &r)
 		{ "key-unencrypted", "no-key-file" } } +
 		validityConflicts();
 	c.writes = true;
+	c.createsDatabase = true;
 	c.handler = cmdInit;
 	r.add(c);
 
@@ -822,6 +869,7 @@ void registerCommands(Registry &r)
 
 	registerLifecycleCommands(r);
 	registerExportCommands(r);
+	registerBootstrapCommand(r);
 
 	c = Command();
 	c.name = "list";

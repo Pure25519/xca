@@ -38,6 +38,7 @@
 #include "lib/exception.h"
 #include "lib/issuance.h"
 #include "lib/pass_info.h"
+#include "lib/x509name.h"
 
 class pki_base;
 class pki_crl;
@@ -47,7 +48,6 @@ class pki_x509req;
 class pki_temp;
 class StagedDirectory;
 class StagedFile;
-class x509name;
 
 namespace bxcpki {
 
@@ -166,6 +166,12 @@ class Command
 	int minArgs{}, maxArgs{};
 	bool writes{};              // runs in a transaction, --plan allowed
 	bool needsDatabase{ true };
+	/* may create a database that does not exist (init, bootstrap) */
+	bool createsDatabase{};
+	/* the handler calls runInTransaction() itself (bootstrap: it reads
+	 * its file and opens the database first; its --plan writes nothing,
+	 * not even the cli.plan entry) */
+	bool ownTransaction{};
 	std::function<void(CommandContext &)> handler{};
 };
 
@@ -205,6 +211,7 @@ class ResultCollector
 	bool plan{};
 	QJsonArray objects{};
 	QJsonObject entry(const pki_base *pki) const;
+	static QString bootstrapText(const QJsonObject &bootstrap);
 
   public:
 	ResultCollector(const QString &cmd, bool p) : command(cmd), plan(p)
@@ -389,6 +396,46 @@ void checkCertificateSelectors(const Options &o, const QString &command);
 pki_x509 *selectedCertificate(const Options &o, pki_x509 **ca);
 void selectorParams(const Options &o, const pki_x509 *ca, AuditParams &p);
 void registerExportCommands(Registry &r);     // export
+void registerBootstrapCommand(Registry &r);   // bootstrap (BTD-166)
+
+/* --- CA creation (init, bootstrap) -------------------------------------- */
+
+/* What bootstrap (BTD-166) gives the CA creation of init beyond init's
+ * options (ctx.opts: --name, --key, --validity, --not-before,
+ * --not-after, --hash, --path-len). Default constructed: init as it is. */
+class CaExtras
+{
+  public:
+	x509name subject{};         // empty: --cn or --subject
+	pki_x509 *parent{};         // nullptr: --parent, if given
+	QStringList keyUsage{};     // empty: keyCertSign, cRLSign
+	QString nameConstraints{};  // OpenSSL configuration value
+	QString crlDistPoints{};    // OpenSSL configuration value
+	/* the CRL settings, stored through CrlPolicy::store(); otherwise
+	 * the --crl-* options */
+	bool hasCrlPolicy{};
+	CrlPolicy crlPolicy{};
+	/* Password sources (env:, file:) for the keys: with passwords on,
+	 * the new key gets a password of its own (XCA ptPrivate) from
+	 * keyPassword, unless it is empty; signerPassword unlocks the
+	 * parent's key; defaultPassword is the database password source */
+	bool passwords{};
+	QString keyPassword{}, signerPassword{}, defaultPassword{};
+};
+
+class CaCreated
+{
+  public:
+	pki_key *key{};
+	pki_x509 *cert{};
+	pki_crl *crl{};             // nullptr when the CA is not valid now
+};
+
+/* init's CA: key, certificate (basicConstraints CA:TRUE critical, key
+ * usage critical, SKI, AKI; pathLen only when given), the CRL settings
+ * when given and the empty CRL (rule 7). With --plan only init's checks;
+ * the result then holds nullptr. */
+CaCreated createCa(CommandContext &ctx, const CaExtras &x = CaExtras());
 
 /* --- Runner ----------------------------------------------------------- */
 
@@ -422,8 +469,11 @@ void auditRefusal(const CommandContext &ctx, const QString &action,
 		const QString &code);
 
 /* RFC 4514 distinguished name; order kept, multi-valued RDNs (+),
- * UTF8String for directory strings. Throws usageError invalid_subject. */
-x509name parseDn(const QString &rfc4514);
+ * UTF8String for directory strings. Throws usageError invalid_subject
+ * naming the source: the option (--subject '<dn>' is no ...) or a JSON
+ * pointer of the bootstrap file (/cas/2/subject: '<dn>' is no ...). */
+x509name parseDn(const QString &rfc4514,
+		const QString &source = QStringLiteral("--subject"));
 /* Strict checks of the SAN values; throw usageError invalid_<kind> */
 QString checkIp(const QString &ip);         // canonical text
 QString checkUri(const QString &uri);
@@ -440,6 +490,8 @@ QString keyJobText(const QString &keyType);
 QStringList supportedKeyTypes();
 /* The --key name of a key's type; empty when the vocabulary has none */
 QString keyTypeOf(const EVP_PKEY *pkey);
+/* Every name of the vocabulary, also those this build cannot generate */
+QStringList keyTypeNames();
 
 /* The command line option that supplies a secret of this purpose */
 QString optionForPurpose(int purpose);

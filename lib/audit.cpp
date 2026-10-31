@@ -136,6 +136,11 @@ const QStringList &AuditParams::allowList()
 		/* renewal and re-key (BTD-56) */
 		"predecessor_id", "predecessor_serial", "rekey",
 		"serial_kept",
+		/* bxc-pki bootstrap (BTD-166), action bootstrap.apply: the
+		 * SHA-256 of the file, its schema id and the number of
+		 * objects created, kept, updated and elements skipped */
+		"file_sha256", "schema", "created", "kept", "updated",
+		"skipped",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

@@ -11,6 +11,32 @@ bxc-main (bxc-pki fork, unreleased)
    is recorded (table renewals); audit action certificate.renew.
    Upstream behaviour that changes: "no well-defined expiration" ends
    with the issuer, and an MD5 certificate is no longer renewed.
+ * BTD-166: bxc-pki bootstrap --file <file> [--db <db>] [--plan] sets up
+   the database, CAs, profiles and policies of a bootstrap file
+   (urn:bxc-pki:schema:bootstrap:v1) in one transaction. A strict reader
+   checks the members of this phase as the bxc-pki schema does and names
+   the JSON pointer of every error (invalid_bootstrap_file); server,
+   roles, enrollment, ocsp, publishers, rollover and offline roots are
+   reported as skipped. CAs are made by init's code path with their empty
+   CRL and CRL settings (CrlPolicy::store), profiles and policies through
+   the profile store of BTD-167. A settings row per bootstrap id makes the
+   run idempotent: a second run keeps everything, changed CRL settings and
+   documents are updates, a change that needs a new CA certificate is
+   bootstrap_conflict. Secrets only as env:/file: references; op:// is
+   unresolved_secret_reference (resolve it with op run or op inject).
+   The audit entry bootstrap.apply (file SHA-256, schema, counts) comes
+   first, on a new database as seq 1. --plan reads no secret, opens the
+   database without its password, writes nothing and lists what it could
+   not check. Per CA, profiles and policies (unique ids) are assigned
+   through the profile store (a changed list is an update: assign,
+   unassign); issued_with names the profile the CA certificate is issued
+   with and is recorded and compared, not applied (a different one is
+   bootstrap_conflict); the old member profile is gone. An id in neither
+   the file nor the database is unknown_reference at its pointer. A DN
+   error of the file names the pointer (/cas/2/subject), the command line
+   keeps --subject. --text prints the counts, one line per object (kind,
+   bootstrap id, action, database id), the skipped elements and the
+   unchecked steps.
  * BTD-107: the warning "longer valid than the signer" of the New
    Certificate dialog no longer offers "Continue rollout": the issuance
    caps the end at the issuer chain anyway (BTD-51), so the button
@@ -41,6 +67,14 @@ bxc-main (bxc-pki fork, unreleased)
    otherwise), so the GUI, which uses crlDays, and the command line issue
    CRLs of the same validity. export --plan runs the option checks of the
    export service and reports the error of the real run.
+
+   Upgrade note: stored CRL settings written by older runs that the
+   command line now refuses (e.g. a crlpolicy_<id> row with the
+   validity PT12H) are crl_settings_invalid on every command that reads
+   them, and they also block the automatic CRL re-issue on sign, until
+   all three --crl-* options are set again. Repair:
+   bxc-pki crl --ca <CA> --crl-validity P7D --crl-reissue-fraction 1/3
+   --crl-size-budget 4096 --db <db> --password <source>
  * BTD-212: the New Certificate dialog issues the certificate itself when
    OK is pressed and closes only on success, on all four entry points
    (new, from a request, from a template, from a certificate). A refusal
