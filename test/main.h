@@ -106,6 +106,9 @@ class test_main: public QObject
 	/* policy.cpp */
 	void issueRefusedByPolicy();
 
+	/* readOnlyDb.cpp */
+	void readOnlyDatabaseActions();
+
 	/* renewal.cpp */
 	void revoke();
 	void renewalSigningFails();
