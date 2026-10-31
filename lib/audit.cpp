@@ -133,6 +133,9 @@ const QStringList &AuditParams::allowList()
 		 * (trustlist.export) */
 		"crl_validity", "reissue_fraction", "size_budget",
 		"trigger", "trust_list_budget",
+		/* renewal and re-key (BTD-56) */
+		"predecessor_id", "predecessor_serial", "rekey",
+		"serial_kept",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

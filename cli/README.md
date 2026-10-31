@@ -13,6 +13,7 @@ bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server_EC --validity P1Y
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
 bxc-pki revoke plc10 --reason keyCompromise --ca "BxC OT Issuing" --password env:PKI_PW
+bxc-pki renew plc10 --rekey --password env:PKI_PW
 bxc-pki crl --ca "BxC OT Issuing" --out ./pki --layout certstrap --password env:PKI_PW
 bxc-pki export plc10 --type certificate --format p12 --out ./out --password env:PKI_PW --export-pass env:P12_PW
 bxc-pki export "BxC OT Issuing" --format trustlist --target-format opcua-dir --out ./tl --password env:PKI_PW
@@ -47,7 +48,7 @@ bxc-pki export "BxC OT Issuing" --format trustlist --target-format opcua-dir --o
 - Every write goes through the service layer, which writes the audit entries (channel `cli`,
   actor `os:<login>`). `list` and `show` only read and write no audit entry (PLAN.md 6.1).
 
-Result document of `init`, `request-cert`, `sign`, `revoke`, `crl` and `export` (schema
+Result document of `init`, `request-cert`, `sign`, `revoke`, `crl`, `export` and `renew` (schema
 `urn:bxc-pki:schema:cli-result:v1`):
 
 ```json
@@ -66,8 +67,9 @@ Members of part 2 (BTD-42), present only when a command sets them:
 | `files` | every command with `--out`, `export` | one entry per file: `path`, `kind` (key, csr, crt, crl, der, chain, p12, public_key, pem_bundle, manifest), `secret`, `written`, `size` and `sha256` (not with `--plan`), `object_type`/`object_id`/`object_name` of the object in it; `export` adds `format`, `encrypted`, `pkcs12_algorithm` (p12) and `ml_dsa_encoding` (ML-DSA key) |
 | `crls` | init, revoke, crl, sign (re-issue), export trustlist | one entry per CRL: `ca_id`, `ca_name`, `crl_id`, `crl_name`, `crl_number`, `revoked_count`, `this_update`, `next_update`, `reissue_fraction`, `reissue_at`, `remaining_seconds`, `remaining_validity` (ISO 8601), `reissue_due`, `expired`, `der_size`, `size_budget`, `within_budget`, `trigger` (init, revoke, command, reissue_due, missing); trustlist also `role` (trusted, issuer) and `reissued`. With `--plan` a CRL to be issued has `crl_id` null and only the times and settings |
 | `revocation` | revoke | `certificate_id`, `certificate_name`, `serial`, `reason` (RFC 5280 name), `ca_id`, `ca_name`, `revocation_date` (not with `--plan`) |
+| `renewal` | renew (BTD-56) | `predecessor` and `successor` (each `id`, `name`, `serial`; `successor` null with `--plan`), `rekey` |
 | `trust_list` | export trustlist | `target_format`, `size` (DER bytes of the CA certificates, CRLs and leaves), `budget`, `within_budget`, `on_budget_exceeded`, `ca_count`, `leaf_count` |
-| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `cleanup_incomplete` (trustlist), `crl_not_issued` (init of a CA not valid now); also printed on stderr |
+| `warnings` | any | `code` and `detail` of what was accepted but must be seen: `budget_exceeded`, `crl_expired`, `crl_reissue_due`, `crl_missing` (trustlist with `--allow-stale-crl`), `cleanup_incomplete` (trustlist), `crl_not_issued` (init of a CA not valid now), `predecessor_key_compromised` (renew --rekey of a certificate revoked for keyCompromise); also printed on stderr |
 
 `--plan` (writing commands): nothing is generated, signed or stored. The handlers run the checks
 that need no signature — key type, inputs, `IssuanceChecks::preflight()` (spec, issuer chain,
@@ -346,13 +348,32 @@ of the services (`certificate.revoke`, `crl.generate`, `object.export`, `key.exp
 export password, PKCS#12 included; `--interactive` asks for a new password twice,
 `wrong_password` for an export when the entries differ).
 
+## Renewal (BTD-56)
+
+- `renew [<certificate>]`: the certificate is chosen as by `revoke` (a reference, `--serial`
+  with `--ca`, `--fingerprint`; the same usage errors). Subject, every extension and the issuer
+  are the predecessor's (`db_x509::renew()`, the service function the renewal dialog uses too);
+  the serial is new (rule 2). The validity options are those of `sign`; without them the new
+  certificate has the period of the predecessor, from now, capped at the issuer chain (rule 6).
+- `--rekey` makes a new key of the predecessor's key type, or of `--key`; `--use-key` takes a key
+  of the database. A new key gets its own subject key identifier (and, self-signed, authority
+  key identifier); all other extensions are copied as they are.
+- A predecessor revoked for keyCompromise is never renewed with its own key (`key_compromised`);
+  with a new key the result carries the warning `predecessor_key_compromised`.
+- The issuer checks, the profile and the policies of `sign` apply: a predecessor issued under a
+  stored profile is renewed under that profile version again (OPC UA chain rules included).
+- The predecessor stays; revoking it is `bxc-pki revoke`. The audit entry is `certificate.renew`
+  (the parameters of `certificate.issue` plus `predecessor_id`, `predecessor_serial`, `rekey`);
+  the link is kept in the table `renewals` (`bxc_schema` 5). The CRL of the CA is re-issued when
+  it is due (rule 7), as by `sign`.
+
 ## Tests
 
 `ctest -L cli` (build container, `deploy/build/linux/dev.py test -L cli` in bxc-pki): the
 scripts in `cli/test/` run the binary against fresh databases; each keeps a `transcript.log`
 of every call in its work directory under the build tree. `cli_fixture` is a test helper that
 creates what the command line cannot (templates with a custom EKU, a key with a password of
-its own, many revocations for a large CRL). Part 2: `cli_revoke`, `cli_crl`, `cli_export`,
+its own, many revocations for a large CRL). Part 2: `cli_revoke`, `cli_crl`, `cli_export`, `cli_renew` (BTD-56),
 `cli_out` (certstrap layout and script), `cli_trustlist`, `cli_files`; the hardening of
 BTD-210: `cli_files_noreplace`, `cli_files_tempfiles`, `cli_files_dirswap`,
 `cli_files_longname`. `cli_files*` run `bxc-pki-faults`, the same command line built with

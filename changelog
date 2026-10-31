@@ -1,6 +1,16 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-56: renewal and re-key as a service function, db_x509::renew().
+   The renewal dialog and the new command "bxc-pki renew" issue through
+   the checks, the validity cap and the audit of every issuance; before,
+   the dialog signed on its own: no audit entry, no issuer checks, and a
+   renewal could outlive its CA. Several selected certificates are
+   renewed in one transaction, and only then revoked or replaced. A key
+   revoked for keyCompromise is refused (re-key only). The predecessor
+   is recorded (table renewals); audit action certificate.renew.
+   Upstream behaviour that changes: "no well-defined expiration" ends
+   with the issuer, and an MD5 certificate is no longer renewed.
  * BTD-215, BTD-127: extended key usages in the New Certificate dialog.
    An EKU of a template, profile or source certificate that is not in
    the dialog's list (missing or old eku.txt, own OID) gets a row marked

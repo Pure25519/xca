@@ -150,6 +150,7 @@ QSqlError pki_x509::deleteSqlData()
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
 		<< "DELETE FROM issued_profiles WHERE item=?"
+		<< "DELETE FROM renewals WHERE item=?"
 		;
 	foreach(QString task, tasks) {
 		SQL_PREPARE(q, task);
