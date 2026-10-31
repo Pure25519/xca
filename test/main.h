@@ -50,6 +50,8 @@ class test_main: public QObject
 	void exportMlDsaEncoding();
 	void revoke();
 	void renewalSigningFails();
+	void renewalThroughService();
+	void renewalAllOrNothing();
 	void passwordDialogParent();
 	void issueRefusedByPolicy();
 	void testValidity();

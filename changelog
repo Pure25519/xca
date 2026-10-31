@@ -19,6 +19,16 @@ bxc-main (bxc-pki fork, unreleased)
    when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
    XCA generates never carry reasonCode unspecified. The stored value is
    unchanged (0 without a reason), no migration.
+ * BTD-56: renewal and re-key as a service function, db_x509::renew().
+   The renewal dialog and the new command "bxc-pki renew" issue through
+   the checks, the validity cap and the audit of every issuance; before,
+   the dialog signed on its own: no audit entry, no issuer checks, and a
+   renewal could outlive its CA. Several selected certificates are
+   renewed in one transaction, and only then revoked or replaced. A key
+   revoked for keyCompromise is refused (re-key only). The predecessor
+   is recorded (table renewals); audit action certificate.renew.
+   Upstream behaviour that changes: "no well-defined expiration" ends
+   with the issuer, and an MD5 certificate is no longer renewed.
  * BTD-166: bxc-pki bootstrap --file <file> [--db <db>] [--plan] sets up
    the database, CAs, profiles and policies of a bootstrap file
    (urn:bxc-pki:schema:bootstrap:v1) in one transaction. A strict reader
