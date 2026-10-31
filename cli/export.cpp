@@ -364,7 +364,7 @@ static TrustListItem crlItem(pki_crl *crl, pki_x509 *ca, const QString &role)
  * its re-issue point (rule 7) unless --no-reissue or the CA has no
  * private key; a missing or expired one or one past the re-issue point
  * is refused without --allow-stale-crl (an S7 refuses the whole trust
- * list for one expired CRL, SMP-831). --force only replaces files: a
+ * list for one expired CRL). --force only replaces files: a
  * routine re-export needs it and must not switch this check off (review
  * of xca#62). */
 static pki_crl *trustListCrl(CommandContext &ctx, pki_x509 *ca,

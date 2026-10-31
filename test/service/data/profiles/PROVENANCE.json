@@ -1,7 +1,7 @@
 {
   "description": "Certificate profiles of bxc-pki (BTD-64) and their golden expectation files, copied unchanged; the CSR acceptance tests (BTD-65) and the profile engine (BTD-54) apply the profiles and compare issued certificates with the golden files. Regenerate the golden files in bxc-pki (tests/schemas/check_profiles.py --write profiles) and copy profiles and golden files again; never edit them here.",
-  "source_repository": "https://github.com/Pure25519/bxc-pki",
+  "source_repository": "bxc-pki (private repository)",
   "source_path": "profiles/",
-  "source_commit": "f95297af04df7152844b9beb3d2992471ea872c8",
+  "source_commit": "36553a8e136ef938a228a67c1e893e4dffbd00ee",
   "files": "<id>.json: the 8 profiles of profiles/; golden/*.json: all 16 files of profiles/golden/; both at that commit"
 }
