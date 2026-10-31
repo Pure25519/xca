@@ -359,7 +359,8 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			for (pki_crl *c : linked) {
 				AuditParams lp;
 				lp.set("name", c->getIntName());
-				if (raiseCrlNumber(model<db_crl>(), c, lp))
+				if (raiseCrlNumber(model<db_crl>(), c, lp,
+						&result.warnings))
 					raised << c;
 				AuditLog::append(ctx, "crl.link", auditObjectType(c),
 					itemId(c), lp);
