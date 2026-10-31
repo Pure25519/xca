@@ -34,6 +34,26 @@ endif()
 math(EXPR T60 "60 * ${TIME_FACTOR}")
 math(EXPR T120 "120 * ${TIME_FACTOR}")
 
+# tty_feed(<var> <watched file> <lines>...): a shell command that types
+# the lines into a terminal dialogue, the n-th line only after the n-th
+# password prompt ("assword:") is in the watched file (the typescript of
+# script -f, or the file stderr goes to), and a second later. readPass()
+# flushes what was typed before it switched the terminal mode, so a
+# fixed pause lost the line whenever the prompt came late, as under ASan
+# with parallel load (BTD-230). "-" is an empty line.
+function(tty_feed var watched)
+  set(feed "")
+  set(n 0)
+  foreach(line IN LISTS ARGN)
+    math(EXPR n "${n} + 1")
+    if(line STREQUAL "-")
+      set(line "")
+    endif()
+    string(APPEND feed "w=0; until [ \"$(grep -o 'assword:' '${watched}' 2>/dev/null | wc -l)\" -ge ${n} ] || [ $w -ge ${T60} ]; do sleep 1; w=$((w+1)); done; sleep 1; printf '%s\\n' '${line}'; ")
+  endforeach()
+  set(${var} "${feed}sleep 1" PARENT_SCOPE)
+endfunction()
+
 function(fail msg)
   message(FATAL_ERROR "${msg}\n(transcript: ${TRANSCRIPT})")
 endfunction()
