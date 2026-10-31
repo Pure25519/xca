@@ -1,5 +1,5 @@
 
-list(APPEND xcadoc_sources arguments.cpp arguments.h xcadoc.cpp)
+list(APPEND xcadoc_sources arguments.cpp arguments.h Passwd.cpp Passwd.h xcadoc.cpp)
 list(APPEND xcaexport_sources pki_export.cpp pki_export.h xcaexport.cpp)
 
 list(APPEND xcacore_sources

@@ -9,6 +9,7 @@
 #include <QDebug>
 
 #include "arguments.h"
+#include "Passwd.h"
 
 #include <stdio.h>
 #include <QCommandLineParser>
@@ -348,6 +349,20 @@ arguments::arguments(int argc, char *argv[])
 arguments::arguments(const arguments &a)
 {
 	*this = a;
+}
+
+arguments::~arguments()
+{
+	forgetSecrets();
+}
+
+void arguments::forgetSecrets()
+{
+	for (const QString &opt : secret_opts) {
+		auto it = found_options.find(opt);
+		if (it != found_options.end())
+			secretCleanse(*it);
+	}
 }
 
 arguments &arguments::operator = (const arguments &a)

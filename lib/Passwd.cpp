@@ -6,12 +6,41 @@
  */
 
 #include <QByteArray>
+#include <openssl/crypto.h>
 #include "Passwd.h"
+
+void secretWipe(QByteArray &b)
+{
+	if (!b.isEmpty())
+		OPENSSL_cleanse(b.data(), b.size());
+}
+
+void secretWipe(QString &s)
+{
+	if (!s.isEmpty())
+		OPENSSL_cleanse(s.data(), s.size() * sizeof(QChar));
+}
+
+void secretCleanse(QByteArray &b)
+{
+	secretWipe(b);
+	b.clear();
+}
+
+void secretCleanse(QString &s)
+{
+	secretWipe(s);
+	s.clear();
+}
+
+void Passwd::wipe()
+{
+	secretWipe(*this);
+}
 
 void Passwd::cleanse()
 {
-	memset(data(), 0, size());
-	clear();
+	secretCleanse(*this);
 }
 
 Passwd::~Passwd()

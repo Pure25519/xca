@@ -177,7 +177,7 @@ void test_service_secret_memory::argumentsForgetSecrets()
 	QByteArray pw = QByteArray("pass:") + SECRET;
 	char *argv[] = { (char *)"xca", (char *)"--password", pw.data(),
 		(char *)"--sqlpass", (char *)"env:BTD74_SQL",
-		(char *)"--verbose=all", nullptr };
+		(char *)"--database=btd74.xdb", nullptr };
 	arguments a(6, argv);
 	QCOMPARE(a["password"], QString(pw));
 	a.forgetSecrets();
@@ -185,7 +185,7 @@ void test_service_secret_memory::argumentsForgetSecrets()
 	QVERIFY(a["password"].isEmpty());
 	QVERIFY(a.has("sqlpass"));
 	QVERIFY(a["sqlpass"].isEmpty());
-	QCOMPARE(a["verbose"], QString("all"));
+	QCOMPARE(a["database"], QString("btd74.xdb"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_secret_memory)
