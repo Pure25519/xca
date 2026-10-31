@@ -139,6 +139,14 @@ add_test(NAME test_cli_audit_no_upgrade
 		-P ${SERVICE_TEST_DIR}/cli_audit_no_upgrade.cmake)
 set_tests_properties(test_cli_audit_no_upgrade PROPERTIES LABELS service)
 
+# --audit-verify with a pinned audit key and checkpoint (BTD-101)
+add_test(NAME test_cli_audit_key_pin
+	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		-DSQL_EXEC=$<TARGET_FILE:sql_exec>
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_audit_key_pin
+		-P ${SERVICE_TEST_DIR}/cli_audit_key_pin.cmake)
+set_tests_properties(test_cli_audit_key_pin PROPERTIES LABELS service)
+
 # The debug output of xca --no-gui never shows --password or --sqlpass values
 add_test(NAME test_cli_debug_secrets
 	COMMAND ${CMAKE_COMMAND} -DXCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>

@@ -136,12 +136,33 @@ ids in the order they signed) and `adopted_entries` (entries the first key adopt
 An `adopted_entries` param on any other announcement, or one that does not count exactly the
 unsigned entries before it, is `checkpoint_key`.
 
-Remaining limits: entries after the last checkpoint have the hash chain only; cutting off the
-newest entries including their checkpoints still verifies unless that removes a key announcement;
-deleting the whole log or its checkpoints together with the `audit_keys` rows verifies when the
-rest is at most interval + 1 entries long; an adopted log is only as trustworthy as the check
-before `--audit-adopt`; a log rewritten from the first key announcement with a new key verifies too. Keep the `key_id` of the
-first export somewhere else and compare it with `audit_keys`.
+Remaining limits without a trust anchor: entries after the last checkpoint have the hash chain
+only; cutting off the newest entries including their checkpoints still verifies unless that
+removes a key announcement; deleting the whole log or its checkpoints together with the
+`audit_keys` rows verifies when the rest is at most interval + 1 entries long; an adopted log is
+only as trustworthy as the check before `--audit-adopt`; a log rewritten from the first key
+announcement with a new key verifies too.
+
+## Trust anchor (BTD-101)
+
+The checks above use only what is in the database. Two options pin values from outside it, kept
+from an earlier `--audit-verify` report or export:
+
+```
+xca --no-gui --database pki.xdb --audit-verify --audit-key 3f2a… --audit-min-checkpoint 1204
+```
+
+| Option | Check | `reason` on failure |
+|---|---|---|
+| `--audit-key <key-id-list>` | the first entry of `audit_keys` is one of the comma separated ids; every later key must lead from it by rotation, so a rotation does not need a new pin | `untrusted_key` |
+| `--audit-min-checkpoint <seq>` | `last_checkpoint_seq` is at least `<seq>` | `checkpoint_truncated` |
+
+A chain or checkpoint error is reported first; the pin check only sets `reason` when the log is
+otherwise intact. The report always carries `pinned_keys` (empty without `--audit-key`) and
+`pinned_min_checkpoint` (null without `--audit-min-checkpoint`), so a stored report shows which
+anchor it was checked against. A rewritten log (new first key) and a log cut off with its newest
+checkpoints both fail with a pin. Keep the pins outside the database host, e.g. with the
+exports.
 
 ## Checking an export with the OpenSSL CLI
 

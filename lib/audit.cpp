@@ -331,6 +331,9 @@ QVariantMap AuditVerifyResult::toMap() const
 	m["unanchored_entries"] = unanchoredEntries;
 	m["audit_keys"] = auditKeys;
 	m["adopted_entries"] = adoptedEntries;
+	m["pinned_keys"] = pins.keys;
+	m["pinned_min_checkpoint"] = pins.minCheckpoint > 0 ?
+				QVariant(pins.minCheckpoint) : QVariant();
 	return m;
 }
 
@@ -1126,7 +1129,7 @@ class revocationState
 };
 }
 
-AuditVerifyResult AuditLog::verify()
+AuditVerifyResult AuditLog::verify(const AuditVerifyPins &pins)
 {
 	typedef QPair<qint64, QString> revKey;
 	AuditVerifyResult r;
@@ -1278,6 +1281,24 @@ AuditVerifyResult AuditLog::verify()
 		m.expected = "present";
 		m.actual = "absent";
 		r.mismatches << m;
+	}
+	/* The trust anchor from outside the database (BTD-101): the first
+	 * key of the log must be a pinned one (the chain check above makes
+	 * every later key lead from it), and the log must still have the
+	 * newest checkpoint an earlier export saw. A log rewritten from
+	 * scratch with a new key, or cut off with its newest checkpoints,
+	 * passes the checks above on its own. */
+	r.pins = pins;
+	if (!pins.keys.isEmpty() && (r.auditKeys.isEmpty() ||
+			!pins.keys.contains(r.auditKeys.first()))) {
+		r.pinsOk = false;
+		if (r.reason.isEmpty())
+			r.reason = "untrusted_key";
+	} else if (pins.minCheckpoint > 0 &&
+			r.lastCheckpointSeq < pins.minCheckpoint) {
+		r.pinsOk = false;
+		if (r.reason.isEmpty())
+			r.reason = "checkpoint_truncated";
 	}
 	return r;
 }
