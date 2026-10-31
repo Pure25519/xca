@@ -93,7 +93,7 @@ class test_service_importexport : public ServiceTestCase
 	QList<AuditEntry> entries(const QString &action);
 	void checkNoSecret(const QByteArray &secret);
 	/* An empty CRL of ca.pem with this CRL number, by openssl ca */
-	bool opensslCrl(const QString &name, int number, int days);
+	bool opensslCrl(const QString &name, qint64 number, int days);
 	pki_crl *importCrl(const QString &name);
 	/* authority.crlNo and crlExpire of the CA in the database */
 	QPair<qint64, QString> authorityCrl(pki_x509 *ca);
@@ -139,6 +139,7 @@ class test_service_importexport : public ServiceTestCase
 	void crlImportAuditsRevocations();
 	void crlImportRaisesCrlNumber();
 	void crlGeneratedAfterImport();
+	void crlNumberAbove32Bit();
 	void templateCopyExport();
 	void rejections();
 	void exportFailureKeepsFile();
@@ -835,7 +836,7 @@ void test_service_importexport::crlImportAuditsRevocations()
 #endif
 }
 
-bool test_service_importexport::opensslCrl(const QString &name, int number,
+bool test_service_importexport::opensslCrl(const QString &name, qint64 number,
 					int days)
 {
 	QFile index(file("crl-index.txt"));
@@ -846,8 +847,11 @@ bool test_service_importexport::opensslCrl(const QString &name, int number,
 	    !cnf.open(QIODevice::WriteOnly | QIODevice::Truncate))
 		return false;
 	index.close();
-	crlnumber.write(QString("%1\n").arg(number, 2, 16, QChar('0'))
-			.toUtf8());
+	/* openssl ca reads the number as hex in whole octets */
+	QString hex = QString::number(number, 16);
+	if (hex.size() % 2)
+		hex.prepend('0');
+	crlnumber.write((hex + "\n").toUtf8());
 	crlnumber.close();
 	cnf.write(QString("[ ca ]\ndefault_ca = CA_default\n"
 		"[ CA_default ]\ndatabase = %1\ncrlnumber = %2\n"
@@ -951,6 +955,65 @@ void test_service_importexport::crlGeneratedAfterImport()
 		"-noout", "-crlnumber" }).trimmed(), QString("crlNumber=0x06"));
 	QCOMPARE(authorityCrl(ca), qMakePair(6LL,
 		next->getNextUpdate().toPlain()));
+#endif
+}
+
+/* BTD-123: CRL numbers above 2^32-1 up to 2^53-1 (the JSON-safe limit of
+ * the audit parameters) are adopted on import and continued by newCrl;
+ * a larger one is imported but leaves the CA's number, with the warning
+ * crl_number_out_of_range in the audit entry. The CRL number of a
+ * revocation is kept in 64 bit too. */
+void test_service_importexport::crlNumberAbove32Bit()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	const qint64 big = Q_INT64_C(0x100000000);
+	QVERIFY(opensslCrl("big.crl", big, 7));
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA");
+	pki_x509 *leaf = cert("BTD34 Leaf");
+	QVERIFY(ca && leaf);
+	QVERIFY(importCrl("big.crl"));
+	QCOMPARE(authorityCrl(ca).first, big);
+	QCOMPARE(ca->getCrlNumber().toDec(), QString::number(big));
+
+	x509rev rev;
+	rev.setReason("Key Compromise");
+	Database.model<db_x509>()->revoke(ctx, leaf, rev);
+	pki_crl *next = Database.model<db_crl>()->newCrl(ctx, crljob(ca));
+	QVERIFY(next);
+	QFile der(file("next-big.crl"));
+	QVERIFY(der.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	der.write(next->i2d());
+	der.close();
+	QCOMPARE(opensslOk({ "crl", "-in", der.fileName(), "-inform", "DER",
+		"-noout", "-crlnumber" }).trimmed(),
+		QString("crlNumber=0x0100000001"));
+	QCOMPARE(authorityCrl(ca).first, big + 1);
+	x509revList revs = ca->getRevList();
+	QCOMPARE(revs.size(), 1);
+	QCOMPARE((qint64)revs[0].getCrlNo(), big + 1);
+
+	/* above 2^53-1: imported, the CA's number stays, a warning */
+	const qint64 huge = Q_INT64_C(1) << 53;
+	QVERIFY(opensslCrl("huge.crl", huge, 7));
+	ImportSpec spec;
+	spec.files << file("huge.crl");
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	QCOMPARE(r.warnings.size(), 1);
+	QVERIFY2(r.warnings[0].contains(QString::number(huge)) &&
+		 r.warnings[0].contains(QString::number(db_crl::maxCrlNumber)),
+		 qPrintable(r.warnings[0]));
+	QCOMPARE(authorityCrl(ca).first, big + 1);
+	AuditEntry e = entries("object.import").last();
+	QCOMPARE(e.params.value("authority_updated").toBool(), false);
+	QCOMPARE(e.params.value("warning").toString(),
+		QString("crl_number_out_of_range"));
+	QVERIFY(!e.params.contains("crl_number"));
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
 #endif
 }
 

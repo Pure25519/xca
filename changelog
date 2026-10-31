@@ -1,6 +1,15 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-123: CRL numbers up to 2^53-1 (the JSON-safe range of the audit
+   parameters, RFC 8785) are adopted on import and continued by the CRL
+   generation; before, 2^32-1 was the limit and a larger imported number
+   was dropped silently, so the next CRL could go below it. A larger
+   number is imported, the CA keeps its CRL number, the import shows a
+   warning naming the limit and audits warning crl_number_out_of_range;
+   the generation refuses it with invalid_crl_number. authority.crlNo and
+   the CRL number of a revocation are read and written as 64 bit; no
+   migration.
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an

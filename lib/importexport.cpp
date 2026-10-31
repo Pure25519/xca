@@ -170,20 +170,31 @@ pki_base *findExisting(db_base *db, pki_base *pki, pki_key **completes)
 
 /* A stored CRL: its CA, number and nextUpdate, and whether it raised the
  * CA's last CRL number (BTD-49) */
-bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p)
+bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p,
+			QStringList *warnings)
 {
 	pki_x509 *ca = crl->getIssuer();
 	a1int num;
 
 	if (ca && ca->getSqlItemId().isValid())
 		p.set("ca_id", ca->getSqlItemId().toLongLong());
-	bool numeric = crl->getCrlNumber(&num);
-	qint64 number = numeric ? num.toDec().toLongLong(&numeric) : 0;
-	if (numeric)
+	qint64 number = 0;
+	/* only a JSON-safe number goes into the audit entry (BTD-123) */
+	if (crl->getCrlNumber(&num) &&
+	    db_crl::crlNumberValue(num, &number))
 		p.set("crl_number", number);
 	p.set("next_update", (QDateTime)crl->getNextUpdate());
-	bool raised = db->raiseCrlNumber(crl);
+	bool outOfRange = false;
+	bool raised = db->raiseCrlNumber(crl, &outOfRange);
 	p.set("authority_updated", raised);
+	if (outOfRange) {
+		p.set("warning", "crl_number_out_of_range");
+		*warnings << QObject::tr("The CRL number %1 of '%2' is above "
+			"the limit %3: the CA '%4' keeps its CRL number")
+			.arg(num.toDec(), crl->getIntName())
+			.arg(db_crl::maxCrlNumber)
+			.arg(ca->getIntName());
+	}
 	return raised;
 }
 }
@@ -334,7 +345,8 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			result.created << stored;
 			auditRevocationChanges(ctx, before, readRevocations());
 			pki_crl *crl = dynamic_cast<pki_crl *>(stored);
-			if (crl && raiseCrlNumber(model<db_crl>(), crl, p))
+			if (crl && raiseCrlNumber(model<db_crl>(), crl, p,
+						&result.warnings))
 				raised << crl;
 
 			p.set("name", stored->getIntName());

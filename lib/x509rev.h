@@ -39,7 +39,10 @@ class x509rev
 		a1time date{}, ivalDate{};
 		/* the reasonCode of the entry, noReason without the extension
 		 * (BTD-170); an unknown code is kept as its number */
-		int reason{ noReason }, crlNo{};
+		int reason{ noReason };
+		/* the CRL number of the first CRL that listed it (BTD-123:
+		 * 64 bit, as authority.crlNo) */
+		qint64 crlNo{};
 		/* setReason() got a name that is not in crlreasons() */
 		bool reasonInvalid{};
 		void set(const x509rev &x);
@@ -121,7 +124,7 @@ class x509rev
 		/* "Unspecified" of the dialog and the command line is no
 		 * reason: XCA writes no extension for it */
 		void setReason(const QString &name);
-		void setCrlNo(int n)
+		void setCrlNo(qint64 n)
 		{
 			crlNo = n;
 		}
@@ -137,7 +140,7 @@ class x509rev
 		{
 			return ivalDate;
 		}
-		int getCrlNo() const
+		qint64 getCrlNo() const
 		{
 			return crlNo;
 		}

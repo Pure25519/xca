@@ -52,6 +52,9 @@ class ImportResult
 	QList<pki_base *> existing{};
 	/* Files (or dataName) that contained no PKI object */
 	QStringList failedFiles{};
+	/* Notes for the user, e.g. a CRL number above the limit that the
+	 * CA did not adopt (BTD-123) */
+	QStringList warnings{};
 
 	QList<pki_base *> all() const
 	{

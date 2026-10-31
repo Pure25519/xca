@@ -223,7 +223,7 @@ x509rev::x509rev(QSqlRecord rec, int offset)
 	serial.setHex(rec.value(offset).toString());
 	date.fromPlain(rec.value(offset +1).toString());
 	ivalDate.fromPlain(rec.value(offset +2).toString());
-	crlNo = rec.value(offset +3).toInt();
+	crlNo = rec.value(offset +3).toLongLong();
 	/* a stored 0 (or NULL) is no reason: XCA never stores an explicit
 	 * unspecified (adopted()), and rows older than BTD-170 used 0 for
 	 * it; an unknown code is kept */
