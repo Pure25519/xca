@@ -87,7 +87,7 @@ Column menu entries: `columns_reset`, `columns_hide`, `columns_details`, the sub
 | `dlg_pastePem_text` | text field of Import → Paste PEM |
 | `dlg_about_text` | text of the About dialog |
 | `dlg_warningV3_text` | text of the extension warning dialog |
-| `dlg_auditVerify`, `dlg_auditVerify_<field>` | Extra → Verify audit log (BTD-103) and its values: `ok`, `entries`, `firstBrokenSeq`, `reason`, `checkpoints`, `lastCheckpointSeq`, `unanchoredEntries`, `auditKeys`, `adoptedEntries`, `unauditedRevocations` (accessible name = label text); `dlg_auditVerify_mismatches` (table), `dlg_auditVerify_pinKeys`, `dlg_auditVerify_minCheckpoint`; buttons `btn_verify`, `btn_adopt`, `btn_close` |
+| `dlg_auditVerify`, `dlg_auditVerify_<field>` | Extra → Verify audit log (BTD-103) and its values: `ok`, `entries`, `firstBrokenSeq`, `reason`, `checkpoints`, `lastCheckpointSeq`, `unanchoredEntries`, `auditKeys`, `adoptedEntries`, `unauditedRevocations` (accessible name = the value shown, the caption is `dlg_auditVerify_label_<field>`); `dlg_auditVerify_mismatches` (table), `dlg_auditVerify_pinKeys`, `dlg_auditVerify_minCheckpoint`; buttons `btn_verify`, `btn_adopt`, `btn_close` |
 
 ## Accessible names
 

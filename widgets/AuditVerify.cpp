@@ -48,9 +48,10 @@ AuditVerify::AuditVerify(QWidget *parent) : QDialog(parent)
 		QLabel *value = new QLabel(this);
 		value->setObjectName("dlg_auditVerify_" + f.first);
 		value->setTextInteractionFlags(Qt::TextSelectableByMouse);
+		/* no accessible name: a label's name is its text, the value
+		 * the GUI harness reads; the caption is its own label */
 		QLabel *label = new QLabel(tr(f.second), this);
-		label->setBuddy(value);
-		value->setAccessibleName(label->text());
+		label->setObjectName("dlg_auditVerify_label_" + f.first);
 		form->addRow(label, value);
 		values[f.first] = value;
 	}
