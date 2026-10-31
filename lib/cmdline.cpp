@@ -106,6 +106,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 	}
+	/* An empty --password is most likely an unset variable: the command
+	 * ends before anything is opened instead of running as if the
+	 * option were missing (BTD-136) */
+	if (cmd_opts.has("password") && cmd_opts["password"].isEmpty()) {
+		report(serviceError("missing_password", QObject::tr(
+			"--password is empty; give a password source (pass:, env:, "
+			"file:, fd: or stdin) or leave the option out")));
+		return EXIT_FAILURE;
+	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
