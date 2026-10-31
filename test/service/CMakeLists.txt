@@ -183,3 +183,11 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
 	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
   Headless(test_service_importexport_cnf_${mode})
 endforeach()
+
+# The Windows packaging follows MSVC and OpenSSL 4 (BTD-252), checked on
+# every platform
+add_test(NAME test_windows_packaging
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/windows_packaging
+		-P ${SERVICE_TEST_DIR}/windows_packaging.cmake)
+set_tests_properties(test_windows_packaging PROPERTIES LABELS service)
