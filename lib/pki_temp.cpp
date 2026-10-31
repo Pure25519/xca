@@ -11,6 +11,7 @@
 #include "oid.h"
 #include "exception.h"
 #include "XcaPresentation.h"
+#include "staged_file.h"
 #include <QDir>
 #include <QBuffer>
 #include <QDataStream>
@@ -469,9 +470,11 @@ void pki_temp::writeTemp(QIODevice &file) const
 
 void pki_temp::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".xca"));
-	file.open_write();
-	writeTemp(file);
+	/* staged: a failed dump leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".xca"), false, false,
+		[this](QIODevice &file) {
+		writeTemp(file);
+		});
 }
 
 bool pki_temp::pem(BioByteArray &b, const ExportOptions &)

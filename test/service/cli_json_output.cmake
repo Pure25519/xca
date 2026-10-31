@@ -222,8 +222,10 @@ if(NOT out STREQUAL "")
   fail("wrong password: output on stdout:\n${out}")
 endif()
 
+# A missing directory is refused by StagedFile before it writes, with its
+# typed code (BTD-139; before: internal_error from XFile)
 run("index write error" 1 ${pw} --json --index "${WORK}/no-such-dir/i.json")
-error_object("index write error" internal_error)
+error_object("index write error" invalid_output)
 
 # Acceptance criterion 4: no key material and no secret anywhere
 foreach(secret "PRIVATE KEY" "ENCRYPTED" "${DB_PW}" "${OWN_PW}"

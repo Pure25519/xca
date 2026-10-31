@@ -10,6 +10,7 @@
  * cannot hold is refused with the field named, never dropped silently.
  */
 
+#include <QFile>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
@@ -104,8 +105,9 @@ QString test_service_template_migration::extensionsText(pki_x509 *cert)
 	return QString();
 #else
 	QString pem = dir.filePath(cert->getIntName() + ".pem");
-	XFile f(pem);
-	f.open_write();
+	QFile f(pem);
+	if (!f.open(QIODevice::WriteOnly))
+		return QString();
 	cert->writeCert(f, true);
 	f.close();
 	QProcess proc;

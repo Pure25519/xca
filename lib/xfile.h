@@ -43,16 +43,9 @@ class XFile : public QFile
 						.arg(strerror(errno)));
 			}
 		}
-		bool open_key()
-		{
-			bool o = open_write();
-			setPermissions(ReadOwner | WriteOwner);
-			return o;
-		}
-		bool open_write()
-		{
-			return open(ReadWrite | Truncate);
-		}
+		/* No open_write()/open_key(): files are written through
+		 * StagedFile (lib/staged_file.h), atomic and owner-only from
+		 * the creation on where they hold a secret (BTD-139) */
 		bool open_read()
 		{
 			return open(ReadOnly);

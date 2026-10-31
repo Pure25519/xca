@@ -925,8 +925,9 @@ void test_service_audit::cliExitCodes()
 	QCOMPARE(f.readAll().count('\n'), 5);
 	f.close();
 
-	/* Export that cannot be written (XFile::open_write() throws) */
-	warning->expectMessage("Error opening file");
+	/* Export that cannot be written (StagedFile refuses the target
+	 * before it writes, BTD-139) */
+	warning->expectMessage("does not exist");
 	QCOMPARE(xcaCli({ "--audit-export",
 			"/nonexistent-btd29-dir/audit.jsonl" }), EXIT_FAILURE);
 
