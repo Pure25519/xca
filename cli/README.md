@@ -8,7 +8,7 @@ prompts unless `--interactive` is given.
 ```
 bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
 bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --password env:PKI_PW
-bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
+bxc-pki request-cert --cn plc10 --ip 192.0.2.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
 bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server_EC --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
