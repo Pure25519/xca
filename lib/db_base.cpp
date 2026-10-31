@@ -428,7 +428,11 @@ QModelIndex db_base::index(int row, int column,
 	 * maps columns without a bounds check (BTD-227) */
 	if (column < 0 || column >= allHeaders.size())
 		return QModelIndex();
-	if (parent.isValid() && treeview)
+	/* Children hang below the first column of a row, and only in the
+	 * tree view (BTD-231): rowCount() of any other parent is 0 */
+	if (parent.isValid() && (!treeview || parent.column() != 0))
+		return QModelIndex();
+	if (parent.isValid())
 		parentItem = fromIndex(parent);
 
 	pki_base *childItem = parentItem->child(row);
@@ -461,7 +465,8 @@ int db_base::rowCount(const QModelIndex &parent) const
 	pki_base *parentItem = treeview ? treeItem : rootItem;
 
 	if (parent.isValid())
-		parentItem = treeview ? fromIndex(parent) : NULL;
+		parentItem = treeview && parent.column() == 0 ?
+				fromIndex(parent) : NULL;
 
 	return parentItem ? parentItem->childCount() : 0;
 }
