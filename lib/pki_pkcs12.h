@@ -48,19 +48,11 @@ class encAlgo
 	{
 		return encAlgo(builtin_encAlgo);
 	}
-	/* The algorithm of a PKCS#12 export: the one an ExportSpec names
-	 * while its export runs, else the setting pkcs12_enc_algo (BTD-52) */
+	/* The algorithm of a PKCS#12 export that names none: the setting
+	 * pkcs12_enc_algo (BTD-52) */
 	static const encAlgo forExport();
-	class ExportScope
-	{
-		QString saved{};
-	  public:
-		ExportScope(const QString &name);
-		~ExportScope();
-	};
-
-  private:
-	static QString exportName;
+	/* The algorithm of the options, or forExport() (BTD-183) */
+	static const encAlgo forExport(const ExportOptions &opts);
 };
 
 class pki_pkcs12: public pki_multi
@@ -89,9 +81,11 @@ class pki_pkcs12: public pki_multi
 		{
 			return cert;
 		}
-		/* No prompt: the caller provides the password (BTD-34) */
+		/* No prompt: the caller provides the password (BTD-34);
+		 * an ML-DSA key in the encoding of the options */
 		void writePKCS12(QIODevice &file, encAlgo &encAlgo,
-				const Passwd &pass) const;
+				const Passwd &pass,
+				const ExportOptions &opts = ExportOptions()) const;
 		void collect_properties(QMap<QString, QString> &prp) const;
 };
 #endif

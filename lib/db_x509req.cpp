@@ -165,7 +165,7 @@ pki_x509req *db_x509req::newRequest(const ServiceContext &ctx,
 }
 
 void db_x509req::writeItem(pki_base *pki, const pki_export *xport,
-		QIODevice &file, const Passwd &) const
+		QIODevice &file, const Passwd &, const ExportOptions &) const
 {
 	pki_x509req *req = dynamic_cast<pki_x509req *>(pki);
 	if (!req)

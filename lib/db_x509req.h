@@ -40,7 +40,8 @@ class db_x509req: public db_x509super
 				const RequestSpec &spec);
 		void setSigned(QModelIndex index, bool signe);
 		void writeItem(pki_base *pki, const pki_export *xport,
-				QIODevice &file, const Passwd &pass) const;
+				QIODevice &file, const Passwd &pass,
+				const ExportOptions &opts) const;
 };
 
 #endif

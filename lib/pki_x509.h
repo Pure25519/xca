@@ -163,7 +163,7 @@ class pki_x509 : public pki_x509super
 		void deleteFromToken(const slotid &slot);
 		QString getMsg(msg_type msg, int n = 1) const;
 		int renameOnToken(const slotid &slot, const QString &name);
-		bool pem(BioByteArray &);
+		bool pem(BioByteArray &b, const ExportOptions &opts);
 		QVariant bg_color(const dbheader *hd) const;
 		void mergeRevList(x509revList &l);
 		void setRevocations(const x509revList &rl);

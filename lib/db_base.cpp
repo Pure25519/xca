@@ -885,7 +885,8 @@ void db_base::writeVcalendar(QIODevice &file, QStringList vcal) const
 }
 
 void db_base::writeItems(const QList<pki_base *> &items,
-		const pki_export *xport, QIODevice &file, const Passwd &pass) const
+		const pki_export *xport, QIODevice &file, const Passwd &pass,
+		const ExportOptions &opts) const
 {
 	if (xport->match_all(F_JWK) && items.size() > 1) {
 		QJsonArray arr;
@@ -909,12 +910,12 @@ void db_base::writeItems(const QList<pki_base *> &items,
 		file.write(doc.toJson());
 	} else {
 		foreach(pki_base *pki, items)
-			writeItem(pki, xport, file, pass);
+			writeItem(pki, xport, file, pass, opts);
 	}
 }
 
 void db_base::writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &) const
+			QIODevice &file, const Passwd &, const ExportOptions &) const
 {
 	if (xport->match_all(F_JWK))
 		pki->exportToJWK(file, xport);

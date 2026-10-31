@@ -125,7 +125,7 @@ QByteArray pki_base::i2d() const
 	return QByteArray();
 }
 
-bool pki_base::pem(BioByteArray &)
+bool pki_base::pem(BioByteArray &, const ExportOptions &)
 {
 	return false;
 }
