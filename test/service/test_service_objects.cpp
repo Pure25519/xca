@@ -50,6 +50,15 @@ class TokenList : public db_token
 	{
 		rootItem->insert(pki);
 	}
+	/* rootItem does not own its children (the store or the token
+	 * dialog does) */
+	~TokenList()
+	{
+		for (pki_base *pki : rootItem->getChildItems()) {
+			rootItem->takeChild(pki);
+			delete pki;
+		}
+	}
 };
 
 class test_service_objects : public ServiceTestCase
