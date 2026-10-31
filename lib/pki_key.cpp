@@ -94,12 +94,13 @@ QByteArray pki_key::i2d() const
 	return i2d_bytearray(I2D_VOID(i2d_PUBKEY), key);
 }
 
-bool pki_key::pem(BioByteArray &b)
+bool pki_key::pem(BioByteArray &b, const ExportOptions &opts)
 {
-	return pem(b, pki_export::by_id(Settings["KeyFormat"]));
+	return pem(b, pki_export::by_id(Settings["KeyFormat"]), opts);
 }
 
-bool pki_key::pem(BioByteArray &b, const pki_export *xport)
+bool pki_key::pem(BioByteArray &b, const pki_export *xport,
+			const ExportOptions &)
 {
 	if (xport->match_all(F_PRIVATE))
 		return false;

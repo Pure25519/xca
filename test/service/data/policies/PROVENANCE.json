@@ -1,6 +1,6 @@
 {
   "description": "Name policies of bxc-pki (BTD-167), copied unchanged from the schema examples of schemas/policy.schema.json; test_service_names checks issued names against them. Change them in bxc-pki and copy them again; never edit them here.",
-  "source_repository": "https://github.com/Pure25519/bxc-pki",
+  "source_repository": "bxc-pki (private repository)",
   "source_path": "schemas/examples/policy/",
   "source_commit": "8e0ce25157e536a5edbedb18627338987e43dfbf",
   "files": "the 3 files of schemas/examples/policy/ at that commit"

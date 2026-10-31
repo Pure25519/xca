@@ -234,38 +234,49 @@ static void migratePkcs12Default(bool existing)
 }
 
 /* Rows the models left out on loading (BTD-95): one message naming
- * each, and after the unlock one audit entry, so that rows that vanish
- * from the views leave a trace in the log (BTD-209). The entry is best
- * effort: a failure is logged, the open goes on. */
+ * each, and after the unlock an audit entry, so that rows that vanish
+ * from the views leave a trace in the log (BTD-209). One entry per
+ * change of the skipped set, not per open: the newest entry decides,
+ * compared as a set, and the first open with every row loaded again
+ * closes it with count 0 (BTD-221). The entry is best effort: a
+ * failure is logged, the open goes on. */
 static void reportSkippedRows(bool unlocked)
 {
 	QList<db_base::SkippedRow> rows = db_base::takeSkippedRows();
-	if (rows.isEmpty())
-		return;
-	QString text = db_base::skippedRowsText(rows);
 	if (unlocked) {
 		QStringList items;
 		for (const db_base::SkippedRow &r : rows)
 			items << r.type + ":" + r.id;
+		items.sort();
 		try {
 			Transaction;
 			TransThrow();
-			AuditLog::append(ServiceContext::localUser(
-					ServiceContext::processChannel),
-				AuditLog::actionRowsSkipped, "database",
-				QString(), AuditParams()
-					.set("count", (qint64)rows.size())
-					.set("skipped_items", items.join(","))
-					.warn("rows_skipped"));
-			if (!TransCommit())
-				qWarning() << "Audit entry of the skipped rows "
-					"rolled back";
+			QStringList last = AuditLog::lastParams(
+				AuditLog::actionRowsSkipped)
+				.value("skipped_items").toString()
+				.split(",", Qt::SkipEmptyParts);
+			last.sort();
+			if (items != last) {
+				AuditParams params;
+				params.set("count", (qint64)rows.size())
+					.set("skipped_items", items.join(","));
+				if (!rows.isEmpty())
+					params.warn("rows_skipped");
+				AuditLog::append(ServiceContext::localUser(
+						ServiceContext::processChannel),
+					AuditLog::actionRowsSkipped, "database",
+					QString(), params);
+				if (!TransCommit())
+					qWarning() << "Audit entry of the "
+						"skipped rows rolled back";
+			}
 		} catch (errorEx &err) {
 			qWarning() << "Audit entry of the skipped rows failed:"
 				<< err.getString();
 		}
 	}
-	XCA_WARN(text);
+	if (!rows.isEmpty())
+		XCA_WARN(db_base::skippedRowsText(rows));
 }
 
 /* The file change counter of an SQLite file (bytes 24 to 27 of its

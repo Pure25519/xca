@@ -433,7 +433,11 @@ QModelIndex db_base::index(int row, int column,
 	 * maps columns without a bounds check (BTD-227) */
 	if (column < 0 || column >= allHeaders.size())
 		return QModelIndex();
-	if (parent.isValid() && treeview)
+	/* Children hang below the first column of a row, and only in the
+	 * tree view (BTD-231): rowCount() of any other parent is 0 */
+	if (parent.isValid() && (!treeview || parent.column() != 0))
+		return QModelIndex();
+	if (parent.isValid())
 		parentItem = fromIndex(parent);
 
 	pki_base *childItem = parentItem->child(row);
@@ -466,7 +470,8 @@ int db_base::rowCount(const QModelIndex &parent) const
 	pki_base *parentItem = treeview ? treeItem : rootItem;
 
 	if (parent.isValid())
-		parentItem = treeview ? fromIndex(parent) : NULL;
+		parentItem = treeview && parent.column() == 0 ?
+				fromIndex(parent) : NULL;
 
 	return parentItem ? parentItem->childCount() : 0;
 }
@@ -890,7 +895,8 @@ void db_base::writeVcalendar(QIODevice &file, QStringList vcal) const
 }
 
 void db_base::writeItems(const QList<pki_base *> &items,
-		const pki_export *xport, QIODevice &file, const Passwd &pass) const
+		const pki_export *xport, QIODevice &file, const Passwd &pass,
+		const ExportOptions &opts) const
 {
 	if (xport->match_all(F_JWK) && items.size() > 1) {
 		QJsonArray arr;
@@ -914,12 +920,12 @@ void db_base::writeItems(const QList<pki_base *> &items,
 		file.write(doc.toJson());
 	} else {
 		foreach(pki_base *pki, items)
-			writeItem(pki, xport, file, pass);
+			writeItem(pki, xport, file, pass, opts);
 	}
 }
 
 void db_base::writeItem(pki_base *pki, const pki_export *xport,
-			QIODevice &file, const Passwd &) const
+			QIODevice &file, const Passwd &, const ExportOptions &) const
 {
 	if (xport->match_all(F_JWK))
 		pki->exportToJWK(file, xport);

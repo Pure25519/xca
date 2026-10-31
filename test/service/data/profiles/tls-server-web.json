@@ -1,7 +1,7 @@
 {
   "schema": "urn:bxc-pki:schema:profile:v1",
   "id": "tls-server-web",
-  "description": "TLS server certificate for the web servers of SCALANCE switches and S7 PLCs: RFC 5280 rules only, exactly one dNSName plus an optional IP (more dNSNames only when the name policy allows them), serverAuth, never a URI, never keyEncipherment on EC keys (SMP-799).",
+  "description": "TLS server certificate for the web servers of SCALANCE switches and S7 PLCs: RFC 5280 rules only, exactly one dNSName plus an optional IP (more dNSNames only when the name policy allows them), serverAuth, never a URI, never keyEncipherment on EC keys.",
   "family": "tls",
   "key_source": "csr",
   "key_types": [
@@ -93,18 +93,12 @@
     {
       "id": "scalance-rsa-4096-slow",
       "devices": "SCALANCE XB208",
-      "text": "RSA-4096 makes TLS handshakes take 6 to 18 s; use RSA-2048.",
-      "references": [
-        "SMP-832"
-      ]
+      "text": "RSA-4096 makes TLS handshakes take 6 to 18 s; use RSA-2048."
     },
     {
       "id": "scalance-ec-firmware",
       "devices": "SCALANCE XB208 V04.01.00 to V04.06.x",
-      "text": "EC certificates only from V04.07.00 (P-256/384/521); older firmware falls back to the factory certificate.",
-      "references": [
-        "SMP-852"
-      ]
+      "text": "EC certificates only from V04.07.00 (P-256/384/521); older firmware falls back to the factory certificate."
     },
     {
       "id": "lpe9403-clock",

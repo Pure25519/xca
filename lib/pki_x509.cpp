@@ -762,7 +762,7 @@ QString pki_x509::getIndexEntry()
 		getSerial(), name);
 }
 
-bool pki_x509::pem(BioByteArray &b)
+bool pki_x509::pem(BioByteArray &b, const ExportOptions &opts)
 {
 	const pki_export *xport = pki_export::by_id(Settings["CertFormat"]);
 
@@ -781,7 +781,7 @@ bool pki_x509::pem(BioByteArray &b)
 			return false;
 		export_check(PEM_write_bio_X509(b, cert),
 				"PEM_write_bio_X509", what());
-		return key->pem(b, xport);
+		return key->pem(b, xport, opts);
 	} else {
 		export_check(PEM_write_bio_X509(b, cert),
 				"PEM_write_bio_X509", what());
