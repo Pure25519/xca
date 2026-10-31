@@ -112,13 +112,8 @@ QJsonObject JsonReport::dn(const x509name &name)
 {
 	QJsonObject o;
 	QJsonArray attributes;
-	BioByteArray bba;
 
-	/* RFC 4514: most significant RDN last; UTF-8 stays unescaped */
-	X509_NAME_print_ex(bba, name.get0(), 0,
-			XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB);
-	ign_openssl_error();
-	o["rfc4514"] = QString::fromUtf8(bba.byteArray());
+	o["rfc4514"] = name.rfc4514();
 
 	for (int i = 0; i < name.entryCount(); i++) {
 		const X509_NAME_ENTRY *ne = X509_NAME_get_entry(name.get0(), i);

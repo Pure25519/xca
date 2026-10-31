@@ -92,7 +92,7 @@ static AuditParams templateParams(const TemplateSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	return p;
 }
 

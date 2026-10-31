@@ -65,7 +65,7 @@ static AuditParams requestParams(const RequestSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	p.set("hash_algo", spec.hashAlgo.name());
 	if (spec.key)
 		db_key::keyParams(p, spec.key);
@@ -116,7 +116,7 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	GENERAL_NAMES_free(san);
 	req->setComment(spec.comment);
 
-	params.set("subject", req->getSubject().oneLine());
+	params.set("subject", req->getSubject().rfc4514());
 	params.set("fingerprint", fingerprint(req->i2d(), EVP_sha256()));
 	params.set("signature_algorithm",
 		OBJ_nid2ln(X509_REQ_get_signature_nid(req->getReq())));

@@ -280,7 +280,7 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 
 	if (cert) {
 		params.set("ca_id", cert->getSqlItemId().toLongLong());
-		params.set("issuer", cert->getSubject().oneLine());
+		params.set("issuer", cert->getSubject().rfc4514());
 	}
 	bool numeric;
 	qint64 number = task.crlNumber.toDec().toLongLong(&numeric);

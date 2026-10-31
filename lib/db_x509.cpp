@@ -408,9 +408,9 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	if (spec.signer) {
-		p.set("issuer", spec.signer->getSubject().oneLine());
+		p.set("issuer", spec.signer->getSubject().rfc4514());
 		p.set("ca_id", spec.signer->getSqlItemId().toLongLong());
 	}
 	p.set("not_before", (QDateTime)spec.notBefore);
@@ -1057,7 +1057,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert->pkiSource = spec.source;
 
 	params.set("serial", cert->getSerial().toHex());
-	params.set("subject", cert->getSubject().oneLine());
+	params.set("subject", cert->getSubject().rfc4514());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
 	/* what was signed with: hash_algo is what the spec asked for, a
