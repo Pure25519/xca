@@ -38,6 +38,7 @@
 #include "lib/db_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/sql.h"
+#include "lib/x509rev.h"
 
 #include "ServiceTestCase.h"
 
@@ -185,6 +186,7 @@ class test_service_importexport : public ServiceTestCase
 	void tlsAuthFileOwnerOnly_data();
 	void tlsAuthFileOwnerOnly();
 	void vcalendarCaObjects();
+	void vcalendarSkipsRevoked();
 	void jwkChainObjects();
 };
 
@@ -2657,6 +2659,65 @@ void test_service_importexport::vcalendarCaObjects()
 	QCOMPARE(exportedIds(all, before), expected);
 	foreach(const AuditEntry &e, all.mid(before))
 		QCOMPARE(e.params.value("count").toLongLong(), (qint64)4);
+}
+
+/* Format 18 lists only valid issued certificates (BTD-241): a revoked
+ * one is neither in the calendar nor in its object.export entries, and
+ * a revoked sub-CA still lists its valid certificates. Upstream XCA asked
+ * the CA whether it was revoked instead of each certificate. */
+void test_service_importexport::vcalendarSkipsRevoked()
+{
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *valid = certFor(newKey("EC:prime256v1", "vcal valid"), ca);
+	pki_x509 *gone = certFor(newKey("EC:prime256v1", "vcal revoked"), ca);
+	QVERIFY(valid && gone);
+	x509rev rev;
+	rev.setReason("Key Compromise");
+	Database.model<db_x509>()->revoke(ctx, gone, rev);
+	QVERIFY(gone->isRevoked());
+	crljob job(ca);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+
+	qsizetype before = entries("object.export").size();
+	QByteArray out = exportTo(Database.model<db_x509>(), ca,
+				certVcalendarCa, file("revoked.ics"));
+	QCOMPARE(out.count("BEGIN:VEVENT"), 3);
+	QVERIFY2(!out.contains("vcal revoked"), out.constData());
+	QVERIFY(out.contains("vcal valid"));
+	QStringList expected { idOf(ca, "certificate"),
+		idOf(valid, "certificate"), idOf(crl, "crl") };
+	expected.sort();
+	QCOMPARE(exportedIds(entries("object.export"), before), expected);
+
+	/* a revoked sub-CA: itself and its valid certificate */
+	IssuanceSpec spec;
+	spec.name = "vcal sub CA";
+	spec.subject.addEntryByNid(NID_commonName, spec.name);
+	spec.key = newKey("EC:prime256v1", "vcal sub key");
+	spec.signer = ca;
+	spec.notBefore = a1time();
+	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(20));
+	spec.hashAlgo = digest(NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_ca;
+	spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+	pki_x509 *sub = Database.model<db_x509>()->newCert(ctx, spec);
+	QVERIFY(sub);
+	pki_x509 *child = certFor(newKey("EC:prime256v1", "vcal child"), sub);
+	QVERIFY(child);
+	Database.model<db_x509>()->revoke(ctx, sub, rev);
+	QVERIFY(sub->isRevoked());
+
+	before = entries("object.export").size();
+	out = exportTo(Database.model<db_x509>(), sub, certVcalendarCa,
+			file("sub.ics"));
+	QCOMPARE(out.count("BEGIN:VEVENT"), 2);
+	QVERIFY(out.contains("vcal child"));
+	expected = QStringList { idOf(sub, "certificate"),
+		idOf(child, "certificate") };
+	expected.sort();
+	QCOMPARE(exportedIds(entries("object.export"), before), expected);
 }
 
 /* Format 43 writes the chain of the certificate in x5c: one
