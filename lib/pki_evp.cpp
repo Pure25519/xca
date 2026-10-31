@@ -721,7 +721,10 @@ bool pki_evp::isMlDsa(int keytype)
  * expanded key pass (BTD-16). They live as long as the process. */
 static OSSL_LIB_CTX *mlDsaContext(const QString &format)
 {
-	static QMap<QString, OSSL_LIB_CTX *> contexts;
+	/* never destroyed: a map destroyed at exit left its contexts
+	 * unreachable, a leak for LeakSanitizer (BTD-228) */
+	static QMap<QString, OSSL_LIB_CTX *> &contexts =
+		*new QMap<QString, OSSL_LIB_CTX *>;
 	static QMutex lock;
 	QMutexLocker locker(&lock);
 
