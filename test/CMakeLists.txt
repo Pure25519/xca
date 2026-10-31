@@ -1,9 +1,9 @@
 
-list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp renewalService.cpp nullHandlers.cpp dialogParent.cpp validity.cpp policy.cpp crlRefused.cpp kuByKeyType.cpp dnBounds.cpp issueInAccept.cpp ekuRows.cpp templateRoundTrip.cpp
-	automationIds.cpp issuanceExt.cpp exportMlDsa.cpp optionsChanged.cpp TestEnv.cpp TestEnv.h)
-
-list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)
+# Every source directly in test/ belongs to testxca (BTD-256): a new test
+# file needs no line here. Its slots go into test/main.h, see test/README.md.
+file(GLOB srcs CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/test/*.cpp
+	${PROJECT_SOURCE_DIR}/test/*.h)
+list(SORT srcs)
 
 add_executable(testxca img/imgres.qrc ${srcs}
 		${UI_FILES} ${PROJECT_BINARY_DIR}/local.h)

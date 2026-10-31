@@ -133,6 +133,9 @@ class db_x509: public db_x509super
 		QList<pki_key *> exportedPrivateKeys(
 				const QList<pki_base *> &items,
 				const pki_export *xport) const;
+		QList<pki_base *> exportedSecrets(
+				const QList<pki_base *> &items,
+				const pki_export *xport) const;
 		const pki_export *clipboardFormat() const;
 };
 
