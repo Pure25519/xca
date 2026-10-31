@@ -345,7 +345,9 @@ void test_service_json::timestamps()
 		QString("2026-10-28T21:35:42Z"));
 	QCOMPARE(JsonReport::revocationReason(10).toString(),
 		QString("aACompromise"));
-	QVERIFY(JsonReport::revocationReason(7).isNull());
+	/* a code RFC 5280 does not name is its number, no reason is null
+	 * (BTD-170) */
+	QCOMPARE(JsonReport::revocationReason(7).toInt(-1), 7);
 	QVERIFY(JsonReport::revocationReason(-1).isNull());
 
 	/* Serials of legacy objects (BTD-41): whole octets, "00" for zero,

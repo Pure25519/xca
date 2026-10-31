@@ -37,20 +37,41 @@ class x509rev
 	private:
 		a1int serial{};
 		a1time date{}, ivalDate{};
-		int reason_idx{}, crlNo{};
+		/* the reasonCode of the entry, noReason without the extension
+		 * (BTD-170); an unknown code is kept as its number */
+		int reason{ noReason }, crlNo{};
+		/* setReason() got a name that is not in crlreasons() */
+		bool reasonInvalid{};
 		void set(const x509rev &x);
 
 		X509_REVOKED *toREVOKED(bool withReason=true) const;
 		void fromREVOKED(const X509_REVOKED *rev);
 
 	public:
+		static const int noReason = -1;
 		operator QString() const;
 		static QStringList crlreasons();
 		void d2i(QByteArray &ba);
 		QByteArray i2d() const;
+		/* the name of crlreasons() for a known code, the number for
+		 * an unknown one, empty without a reason */
 		QString getReason() const;
-		/* RFC 5280 CRLReason code; -1 if setReason() got an unknown name */
+		/* the reasonCode, noReason without the extension */
+		int getReasonCode() const
+		{
+			return reason;
+		}
+		bool hasReason() const
+		{
+			return reason != noReason;
+		}
+		/* the stored value (revocations.reasonBit, audit reason_bit):
+		 * 0 without a reason, the code otherwise; -1 if setReason()
+		 * got an unknown name */
 		int getReasonBit() const;
+		/* as a revocation of the CA: an explicit unspecified (0) is
+		 * "no reason", which RFC 5280 5.3.1 asks for (BTD-170) */
+		x509rev adopted() const;
 		bool identical(const x509rev &x) const;
 
 		x509rev()
@@ -97,10 +118,9 @@ class x509rev
 		{
 			ivalDate = t;
 		}
-		void setReason(const QString &reason)
-		{
-			reason_idx = crlreasons().indexOf(reason);
-		}
+		/* "Unspecified" of the dialog and the command line is no
+		 * reason: XCA writes no extension for it */
+		void setReason(const QString &name);
 		void setCrlNo(int n)
 		{
 			crlNo = n;

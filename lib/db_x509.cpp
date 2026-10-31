@@ -1493,7 +1493,7 @@ static AuditParams revocationParams(const pki_x509 *ca, const QString &serial,
 	AuditParams p = AuditParams::revocation(
 		ca ? ca->getSqlItemId().toLongLong() : 0, serial,
 		rev.getReasonBit(), rev.getDate(), rev.getInvalDate());
-	if (rev.getReasonBit() >= 0)
+	if (rev.hasReason())
 		p.set("reason", rev.getReason());
 	if (rev.getCrlNo())
 		p.set("crl_number", (qint64)rev.getCrlNo());
