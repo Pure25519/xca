@@ -147,6 +147,8 @@ class test_service_importexport : public ServiceTestCase
 	void crlBeforeCaInTwoImports();
 	void templateCopyExport();
 	void rejections();
+	void pkcs12SourceFails_data();
+	void pkcs12SourceFails();
 	void exportFailureKeepsFile();
 	void exportOverwritesKeyOwnerOnly();
 	void exportNullItem();
@@ -1137,6 +1139,58 @@ void test_service_importexport::rejections()
 	QVERIFY(!QFile::exists(file("nopass.pk8")));
 	QCOMPARE(entries("key.export_private").size(), 0);
 	QVERIFY(AuditLog::verify().ok());
+#endif
+}
+
+/* A PKCS#12 import whose password source fails: a wrong password, a
+ * variable or a file without a value. The source throws secretError in
+ * the MAC loop of pki_pkcs12::parse(), which must free the PFX on that
+ * path (BTD-91; fixed by BTD-200, the LeakSanitizer run of dev.py asan
+ * reports the PKCS12 from d2i_PKCS12_bio otherwise). Each import fails
+ * with its typed code and one failure entry, and creates nothing. */
+void test_service_importexport::pkcs12SourceFails_data()
+{
+	QTest::addColumn<QString>("source");
+	QTest::addColumn<QString>("code");
+	QTest::addColumn<bool>("warns");
+
+	QTest::newRow("wrong") << "pass:wrong" << "wrong_password" << true;
+	QTest::newRow("unset variable") << "env:BTD91_UNSET_PASSWORD"
+		<< "missing_password" << false;
+	QTest::newRow("missing file") << "file:" + file("btd91-no-such-file")
+		<< "missing_password" << false;
+}
+
+void test_service_importexport::pkcs12SourceFails()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, source);
+	QFETCH(QString, code);
+	QFETCH(bool, warns);
+
+	qunsetenv("BTD91_UNSET_PASSWORD");
+	QFile p12(file("leaf.p12"));
+	QVERIFY(p12.open(QIODevice::ReadOnly));
+	ImportSpec in;
+	in.data = p12.readAll();
+	in.dataName = "leaf.p12";
+	in.passwordSource = source;
+	if (warns)
+		warning->expectMessage("Password verify error");
+	int before = Store.getAll<pki_x509>().size();
+	try {
+		Database.importItems(ctx, in);
+		QFAIL("importItems() did not throw");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, code);
+	}
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("object.import"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, code);
+	QCOMPARE(Store.getAll<pki_x509>().size(), before);
 #endif
 }
 
