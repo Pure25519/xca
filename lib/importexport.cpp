@@ -332,7 +332,27 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 					tr("The item could not be stored"));
 			/* in memory now: undone if the transaction fails */
 			result.created << stored;
+			/* CRLs stored before their CA are linked to it now
+			 * (db_x509::inToCont()); they get what a CRL of a
+			 * stored CA gets: revocations and CRL number (BTD-122) */
+			QList<pki_crl *> linked;
+			if (pki_x509 *ca = dynamic_cast<pki_x509 *>(stored)) {
+				for (pki_crl *c : Store.getAll<pki_crl>()) {
+					if (c->getIssuer() != ca)
+						continue;
+					model<db_crl>()->revokeCerts(c);
+					linked << c;
+				}
+			}
 			auditRevocationChanges(ctx, before, readRevocations());
+			for (pki_crl *c : linked) {
+				AuditParams lp;
+				lp.set("name", c->getIntName());
+				if (raiseCrlNumber(model<db_crl>(), c, lp))
+					raised << c;
+				AuditLog::append(ctx, "crl.link", auditObjectType(c),
+					itemId(c), lp);
+			}
 			pki_crl *crl = dynamic_cast<pki_crl *>(stored);
 			if (crl && raiseCrlNumber(model<db_crl>(), crl, p))
 				raised << crl;
