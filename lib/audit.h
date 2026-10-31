@@ -390,9 +390,13 @@ class AuditLog
 	 * Without a database password source it signs nothing and writes
 	 * nothing to the database (BTD-70); *unsignedEntries receives the
 	 * number of entries after the last checkpoint (0: all covered).
-	 * Throws errorEx for an entry without a canonical form and
-	 * serviceError when a checkpoint is due and cannot be signed
-	 * (audit_password_rejected, audit_chain_broken). */
+	 * A log that no checkpoint may sign (audit_chain_broken,
+	 * audit_key_missing, audit_checkpoint_missing) is exported read-only
+	 * too (BTD-112); *skipped receives the code and its text, also for
+	 * the missing password source (audit_key_unavailable). Throws
+	 * errorEx for an entry without a canonical form and serviceError
+	 * for a wrong password source (audit_password_rejected) or a
+	 * database error. */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
 			qint64 *unsignedEntries = nullptr,
 			AuditSkippedCheckpoint *skipped = nullptr);

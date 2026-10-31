@@ -48,16 +48,17 @@ if(NOT checkpoints EQUAL 0)
   fail("the base log has ${checkpoints} checkpoints already")
 endif()
 
-# A signed log: checkpoints after each entry, then one unsigned entry
+# A signed log: a key and a checkpoint, then one unsigned entry
 set(signed "${WORK}/signed.xdb")
-file(COPY_FILE "${tail}" "${signed}")
+run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s1)
 sql("${signed}" out -c "INSERT INTO settings (key_, value) VALUES ('audit_checkpoint_interval', '1')")
-run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-4)
+run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s2)
 sql("${signed}" out -c "UPDATE settings SET value='100' WHERE key_='audit_checkpoint_interval'")
-run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-5)
+run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s3)
+sql("${signed}" checkpoints -c "SELECT COUNT(*) FROM audit_log WHERE action='audit.checkpoint'")
 sql("${signed}" last -c "SELECT action FROM audit_log ORDER BY seq DESC LIMIT 1")
-if(NOT rc EQUAL 0 OR last STREQUAL "audit.checkpoint")
-  fail("signed log: exit ${rc}, newest entry ${last}:\n${out}${err}")
+if(NOT rc EQUAL 0 OR checkpoints EQUAL 0 OR last STREQUAL "audit.checkpoint")
+  fail("signed log: exit ${rc}, ${checkpoints} checkpoints, newest entry ${last}:\n${out}${err}")
 endif()
 
 # chain: the newest entry changed without recomputing the chain

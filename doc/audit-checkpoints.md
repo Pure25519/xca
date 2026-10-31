@@ -17,8 +17,18 @@ the checkpoint's params without `signature`. `key_id` is the lowercase hex SHA-2
 public key.
 
 The audit key lives in the table `audit_keys`, not in `items`, so no key list, dialog, export or
-delete function shows it. Its private part is encrypted with the database password like every
-other private key. Certificate issuance and renewal, CSR creation and CRL generation refuse a key
+delete function shows it. Its private part is encrypted with the database password: PKCS#8 with
+PBES2, AES-256-CBC and PBKDF2-HMAC-SHA256 with 600000 iterations (`AuditKey::pbkdf2Iterations`,
+BTD-112; OpenSSL's default is 2048). A key stored with another count stays readable, since the
+count is part of the stored DER; a change of the database password stores it with the current
+count. An empty database password works the same way. To check a stored key:
+
+```
+sqlite3 pki.xdb "SELECT private FROM audit_keys WHERE retired=0" | base64 -d > audit-key.der
+openssl asn1parse -inform DER -in audit-key.der   # PBKDF2, INTEGER :0927C0 (600000), hmacWithSHA256
+```
+
+Certificate issuance and renewal, CSR creation and CRL generation refuse a key
 whose public key is an audit key with the error code `audit_key` (for a key copied out of the
 database and imported). The guard sits where XCA signs, so every caller is covered:
 `pki_x509::sign()` (issuance and the renewal dialog), `pki_x509req::createReq()` and
@@ -63,7 +73,10 @@ checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it
 | with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0 |
 | without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries`, plus one when the log has a checkpoint (the checkpoint row itself, see below) |
 | with a wrong password source | `audit_password_rejected`, exit 1 |
-| a checkpoint is due and the entries since the last one do not chain | `audit_chain_broken`, exit 1 (only with a password; without one the export reads as it is) |
+| a log no checkpoint may sign: the entries since the last checkpoint do not chain (`audit_chain_broken`), the announced key is gone (`audit_key_missing`) or the unsigned part is too long (`audit_checkpoint_missing`) | read only for forensics (BTD-112): every entry is exported (file or standard output), no checkpoint, nothing written to the database; stderr gets `Warning: the audit log was exported read-only, no audit checkpoint signed: <code>: <reason>`; **exit 1**, so a script does not take it for a clean export. `--audit-verify` reports the break (a deleted key alone leaves the chain intact) |
+
+`AuditLog::exportJsonLines()` reports the skipped checkpoint in its `AuditSkippedCheckpoint`
+out-parameter (code and text), for the missing password source (`audit_key_unavailable`) too.
 
 ## Entries written on open
 

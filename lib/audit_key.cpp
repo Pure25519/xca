@@ -21,6 +21,8 @@
 #include <QObject>
 #include <QPair>
 
+#include <memory>
+
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/pkcs12.h>
@@ -65,10 +67,18 @@ Passwd AuditKey::password(bool ask)
 static QByteArray encryptPrivate(EVP_PKEY *pkey, const Passwd &pass)
 {
 	BioByteArray der;
+	/* PBES2 with an explicit count instead of OpenSSL's default 2048
+	 * (BTD-112); pbe_nid -1: PBES2 with the PRF of the cipher,
+	 * HMAC-SHA256 for AES */
+	PKCS8_PRIV_KEY_INFO *inf = EVP_PKEY2PKCS8(pkey);
+	X509_SIG *p8 = !inf ? nullptr : PKCS8_encrypt_ex(-1,
+			EVP_aes_256_cbc(), pass.constData(), pass.size(),
+			NULL, 0, AuditKey::pbkdf2Iterations, inf, NULL, NULL);
+	PKCS8_PRIV_KEY_INFO_free(inf);
+	int written = p8 ? i2d_PKCS8_bio(der, p8) : 0;
+	X509_SIG_free(p8);
 	/* openssl_error_msg() only prints: an empty key was stored (BTD-95) */
-	if (i2d_PKCS8PrivateKey_bio(der, pkey, EVP_aes_256_cbc(),
-			(char *)pass.constData(), pass.size(), NULL, NULL) <= 0 ||
-	    der.size() == 0)
+	if (written <= 0 || der.size() == 0)
 		throw serviceError("audit_key_failed", QString("%1\n%2")
 			.arg(QObject::tr("Failed to encrypt the audit key"),
 				take_openssl_errors()));
@@ -268,12 +278,12 @@ void AuditKey::reencrypt(const Passwd &newPass)
 
 QString AuditKey::keyId(const QByteArray &publicPem)
 {
-	EVP_PKEY *pkey = readPublic(publicPem);
+	/* Freed when spkiDer() throws too (BTD-112) */
+	std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> pkey(
+			readPublic(publicPem), EVP_PKEY_free);
 	if (!pkey)
 		return QString();
-	QString id = spkiId(spkiDer(pkey));
-	EVP_PKEY_free(pkey);
-	return id;
+	return spkiId(spkiDer(pkey.get()));
 }
 
 bool AuditKey::verify(const QByteArray &publicPem, const QByteArray &data,

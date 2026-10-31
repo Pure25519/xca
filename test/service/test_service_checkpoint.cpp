@@ -1366,7 +1366,9 @@ void test_service_checkpoint::forensicExport()
 	QVERIFY(!skipped.reason.isEmpty());
 	QVERIFY(unsignedEntries > 0);
 	QCOMPARE(tableRows(), before);
-	QVERIFY(!AuditLog::verify().ok());
+	/* verify reports the broken chain and the deleted checkpoints; a
+	 * deleted key leaves the chain intact, only signing is impossible */
+	QCOMPARE(AuditLog::verify().ok(), state == "key");
 
 	/* Without the out-parameter the same export */
 	QCOMPARE(AuditLog::exportJsonLines(ctx), out);
@@ -1421,6 +1423,13 @@ void test_service_checkpoint::oldKeyStillSigns()
 	QVERIFY2(r.ok(), r.toJson().constData());
 	/* Read as it is; only a password change stores it anew */
 	QCOMPARE(storedIterations(), PKCS5_DEFAULT_ITER);
+	Passwd same;
+	same = dbPassword;
+	AuditKey::reencrypt(same);
+	QCOMPARE(storedIterations(), 600000);
+	appendSample(1);
+	AuditLog::checkpoint(ctx);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 3);
 }
 
 void test_service_checkpoint::emptyPasswordSigns()
