@@ -100,7 +100,7 @@ if (APPLE)
                   OUTPUT_VARIABLE BREW_PREFIX ERROR_QUIET)
   # Preset the default brew paths....
   if (NOT CMAKE_PREFIX_PATH)
-    set(CMAKE_PREFIX_PATH ${BREW_PREFIX}/opt/qt@6/ ${BREW_PREFIX}/opt/openssl@3)
+    set(CMAKE_PREFIX_PATH ${BREW_PREFIX}/opt/qt@6/ ${BREW_PREFIX}/opt/openssl@4)
   endif()
 elseif(WIN32)
   if (NOT CMAKE_PREFIX_PATH)
