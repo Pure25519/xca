@@ -460,6 +460,8 @@ QString keyTypeOf(const EVP_PKEY *pkey)
 		if (job.compare(t.job, Qt::CaseInsensitive) == 0)
 			return t.name;
 	return QString();
+}
+
 QStringList keyTypeNames()
 {
 	QStringList l;
