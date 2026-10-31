@@ -128,8 +128,12 @@ if(OPENSSL)
       endif()
       string(JSON id GET "${line}" params key_id)
       string(JSON sig GET "${line}" params signature)
-      string(JSON params GET "${line}" params)
-      string(REGEX REPLACE ",\"signature\":\"[^\"]*\"" "" payload "${params}")
+      # the params as exported, RFC 8785: string(JSON GET) would print
+      # the object in its own layout; prev_hash follows params
+      if(NOT line MATCHES "\"params\":(\\{.*\\}),\"prev_hash\":")
+        fail("no params in the checkpoint line:\n${line}")
+      endif()
+      string(REGEX REPLACE ",\"signature\":\"[^\"]*\"" "" payload "${CMAKE_MATCH_1}")
       file(WRITE "${WORK}/payload.json" "${payload}")
       file(WRITE "${WORK}/sig.b64" "${sig}")
       execute_process(COMMAND "${OPENSSL}" base64 -d -A -in "${WORK}/sig.b64"
