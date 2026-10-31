@@ -579,6 +579,13 @@ static qint64 lastCheckpointSeq()
 	return q.next() ? q.value(0).toLongLong() : 0;
 }
 
+void AuditLog::setCheckpointInterval(const ServiceContext &ctx,
+				int interval)
+{
+	(void)ctx;
+	(void)interval;
+}
+
 int AuditLog::checkpointInterval()
 {
 	/* The setting is not signed: clamped, so that raising it cannot

@@ -381,6 +381,12 @@ class AuditLog
 	/* The setting audit_checkpoint_interval, default 100, at most
 	 * maxCheckpointInterval (1000) */
 	static int checkpointInterval();
+	/* Sets audit_checkpoint_interval (BTD-100) with one settings.update
+	 * entry of the old and the new value. serviceError invalid_value
+	 * outside 1..maxCheckpointInterval, missing_password without a
+	 * verified open; nothing is written then. */
+	static void setCheckpointInterval(const ServiceContext &ctx,
+				int interval);
 	/* The bytes a checkpoint signature covers */
 	static QByteArray checkpointPayload(const QVariantMap &params);
 
