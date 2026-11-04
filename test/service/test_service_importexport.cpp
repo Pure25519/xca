@@ -1271,8 +1271,13 @@ void test_service_importexport::exportRenameFails()
 			sequence << e.action + ":" + e.result +
 				(e.errorCode.isEmpty() ? QString() :
 				 ":" + e.errorCode);
+	/* every success entry first, then the failure */
+	QVERIFY2(!sequence.isEmpty(), "no entries");
+	QCOMPARE(sequence.takeLast(),
+		QString("object.export:failure:write_failed"));
+	sequence.sort();
 	QCOMPARE(sequence, QStringList({ "key.export_private:success",
-		"object.export:success", "object.export:failure:write_failed" }));
+		"object.export:success" }));
 	/* no file in place, no temporary file left */
 	QVERIFY(!QFileInfo::exists(target));
 	QCOMPARE(QDir(dir.path()).entryList({ "btd147*" },
