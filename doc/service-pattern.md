@@ -67,6 +67,8 @@ revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` en
 row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those
 entries; a rejection writes one `ca.set_revocations` failure entry.
 
+The import reads the revocation table before and after an object only if the object can change revocation rows: a CRL, a CA certificate, or any certificate while a CRL waits for its CA (BTD-115). Before, it read the table twice for every object, so an import cost O(objects x revocations).
+
 Memory follows the database (BTD-130): after a rollback the in-memory store and the views show
 what the database holds. A change of memory that later steps of the transaction need (a new object
 in the store and the views, a link set by `inToCont()`, a revocation flag) is made at once and
@@ -173,7 +175,7 @@ Import and export (BTD-34):
 - The import dialog (`ImportMulti`) and the detail dialog only read and show objects; storing
   goes through `importItems()` with the read objects. The export dialog fills an `ExportSpec`
   (`ExportDialog::exportSpec()`); Ctrl+C and dragging items out are exports with
-  `ExportSpec::clipboard`. `xca --import` uses `importItems()` with channel `cli`.
+  `ExportSpec::clipboard`. A drag writes its export entries when it starts, because Qt asks for the data (`db_base::mimeData()`) before anyone knows whether the drop will happen. So a drag that is cancelled, or dropped where nothing takes it, is still audited as an export (BTD-115). `xca --import` uses `importItems()` with channel `cli`.
 - `lib/` signatures of the group take `pki_base *` lists, no `QModelIndex`; only the Qt model
   override `db_base::mimeData(QModelIndexList)` remains and calls `exportItems()`.
 
