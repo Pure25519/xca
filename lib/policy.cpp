@@ -578,8 +578,9 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 	bool byIssuer = u["scope"].toString() == "issuer";
 	/* the certificates of the database, not the store of this process:
 	 * another process may have stored one since this one loaded the
-	 * database. db_x509::issue() holds the write lock, so none is stored
-	 * between this read and the insert (BTD-201). */
+	 * database. The issuance holds the write lock of its transaction
+	 * (BTD-274), so none is stored between this read and the insert
+	 * (BTD-201). */
 	QSet<QString> revoked;
 	XSqlQuery q;
 	SQL_PREPARE(q, "SELECT caId, serial FROM revocations");

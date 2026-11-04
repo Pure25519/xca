@@ -20,6 +20,17 @@
 
 class DbTransaction
 {
+	public:
+		/* What the outermost transaction may do (BTD-274). A write
+		 * transaction takes the write lock at BEGIN: BEGIN IMMEDIATE
+		 * on SQLite, lockForWrite() on the other drivers. Another
+		 * process then waits for the busy timeout, instead of failing
+		 * at its first write after it read under a deferred BEGIN. A
+		 * read transaction takes no lock and must not write. A nested
+		 * transaction is part of the outermost one: a write inside a read
+		 * transaction holds no lock. */
+		enum Kind { write, read };
+
 	private:
 		static int mutex;
 		static int error;
@@ -33,6 +44,7 @@ class DbTransaction
 		static void runActions(QList<std::function<void()> > &list,
 				bool lastFirst);
 		bool has_begun{};
+		Kind kind{write};
 		const char *beginFile{};
 		int beginLine{};
 		void debug(const char *func, const char *file, int line);
@@ -52,7 +64,7 @@ class DbTransaction
 		friend class test_service_memory;
 
 	public:
-		DbTransaction() { };
+		DbTransaction(Kind k = write) : kind(k) { };
 		~DbTransaction();
 		bool begin(const char *file, int line);
 		/* False when the outermost commit fails, and also when an
@@ -94,19 +106,13 @@ class DbTransaction
 		 * succeeded, never after a rollback; at once outside a
 		 * transaction */
 		static void afterCommit(std::function<void()> action);
-		/* Takes the write lock of the database now, inside the
-		 * current transaction, with a write that changes nothing
-		 * (BTD-201): what the transaction reads afterwards, no other
-		 * connection changes before the COMMIT. On SQLite it is the
-		 * first write of a deferred transaction, which waits for the
-		 * busy timeout instead of failing after reads; on PostgreSQL
-		 * and MariaDB it locks the settings row. Throws the typed
-		 * error of the driver, e.g. database_error when the lock is
-		 * not granted in time. */
-		static void lockForWrite();
+		/* The busy timeout of SQLite: how long a write transaction
+		 * waits at BEGIN for the write lock of another connection */
+		static const int busyTimeoutMs = 10000;
 };
 
 #define Transaction DbTransaction __trans
+#define ReadTransaction DbTransaction __trans(DbTransaction::read)
 #define TransBegin() __trans.begin(__FILE__, __LINE__)
 #define TransThrow() if (!__trans.begin(__FILE__, __LINE__)) { \
 	throwSqlError(DbTransaction::lastFailure(), \

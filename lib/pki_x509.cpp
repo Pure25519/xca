@@ -338,7 +338,7 @@ QString pki_x509::getTaKey()
 	if (owner != this)
 		return owner->getTaKey();
 
-	Transaction;
+	ReadTransaction;
 	TransThrow();
 
 	SQL_PREPARE(q, "SELECT value FROM takeys WHERE item = ?");
