@@ -69,6 +69,7 @@ class test_service_renewal : public ServiceTestCase
 	void keyCompromise();
 	void allOrNothing();
 	void keepSerial();
+	void renewReplace();
 	void issuerChecks_data();
 	void issuerChecks();
 	void opcChainRules();
@@ -460,6 +461,44 @@ void test_service_renewal::keepSerial()
 		true);
 	certs()->deleteItems(ctx, { old });
 	QCOMPARE(cert("plc16.example"), nu);
+}
+
+/* BTD-132: the dialog's "replace" is renew() and then deleteItems() of
+ * the predecessor. Both are audited, the successor takes its place, and
+ * the revocation rows of the CA are kept (they belong to the CA) */
+void test_service_renewal::renewReplace()
+{
+	pki_x509 *ca = rootCa("Replace Root CA");
+	pki_x509 *old = leaf("plc17.example", ca);
+	QVERIFY(ca && old);
+	QVariant oldId = old->getSqlItemId();
+	QString oldName = old->getIntName();
+	XSqlQuery rows("SELECT COUNT(*) FROM revocations");
+	QVERIFY(rows.first());
+	int revocations = rows.value(0).toInt();
+	int stored = Store.getAll<pki_x509>().size();
+	int before = AuditLog::entries().size();
+
+	pki_x509 *nu = certs()->renew(ctx, { renewal(old) })[0];
+	QVERIFY(nu);
+	certs()->deleteItems(ctx, { old });
+
+	QList<AuditEntry> added = AuditLog::entries().mid(before);
+	QCOMPARE(added.size(), 2);
+	QCOMPARE(added[0].action, QString("certificate.renew"));
+	QCOMPARE(added[0].result, QString("success"));
+	QCOMPARE(added[1].action, QString("object.delete"));
+	QCOMPARE(added[1].result, QString("success"));
+	QCOMPARE(added[1].objectId, oldId.toString());
+	QCOMPARE(added[1].params.value("name").toString(), oldName);
+	QVERIFY(Store.find(oldId.toULongLong()) == nullptr);
+	QCOMPARE(Store.getAll<pki_x509>().size(), stored);
+	QCOMPARE(cert("plc17.example"), nu);
+	QCOMPARE(nu->getSigner(), ca);
+	XSqlQuery after("SELECT COUNT(*) FROM revocations");
+	QVERIFY(after.first());
+	QCOMPARE(after.value(0).toInt(), revocations);
+	QVERIFY(AuditLog::verify().ok());
 }
 
 void test_service_renewal::issuerChecks_data()

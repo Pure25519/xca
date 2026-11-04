@@ -100,6 +100,7 @@ class test_service_objects : public ServiceTestCase
 	void renameKeyAndCertificate();
 	void renameRejected();
 	void updateProperties();
+	void updatePropertiesDatabaseError();
 	void deleteCertificate();
 	void deleteKeyWithDependents();
 	void deleteCaWithDependents();
@@ -559,6 +560,44 @@ void test_service_objects::deleteSuperRowError()
 		QVERIFY2(c.value(0).toInt() == 1, table);
 	}
 	QVERIFY(Store.find(id.toULongLong()) == ca);
+	verifyChain();
+}
+
+/* BTD-132: the UPDATE of items fails (a trigger refuses it): rolled
+ * back, one failure entry, name and comment unchanged in memory and in
+ * the database */
+void test_service_objects::updatePropertiesDatabaseError()
+{
+	pki_x509 *cert = issue("props error", newKey("props error key"),
+				nullptr);
+	QVERIFY(cert);
+	QVariant id = cert->getSqlItemId();
+	certs()->updateProperties(ctx, cert, "props error", "old comment");
+	int entries = AuditLog::entries().size();
+	XSqlQuery q;
+	QVERIFY(q.exec("CREATE TRIGGER refuse_items BEFORE UPDATE ON items "
+		"BEGIN SELECT RAISE(ABORT, 'items update refused'); END"));
+
+	QString code = "<updated>";
+	try {
+		certs()->updateProperties(ctx, cert, "props renamed",
+					"new comment");
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QVERIFY(q.exec("DROP TRIGGER refuse_items"));
+	QCOMPARE(code, QString("database_error"));
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	QCOMPARE(last().action, QString("object.rename"));
+	QCOMPARE(last().result, QString("failure"));
+	QCOMPARE(last().errorCode, QString("database_error"));
+	QCOMPARE(cert->getIntName(), QString("props error"));
+	QCOMPARE(cert->getComment(), QString("old comment"));
+
+	reopenDatabase();
+	cert = reread<pki_x509>(id);
+	QCOMPARE(cert->getIntName(), QString("props error"));
+	QCOMPARE(cert->getComment(), QString("old comment"));
 	verifyChain();
 }
 
