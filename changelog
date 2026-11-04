@@ -1,6 +1,16 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-237: a profile names in key_types only the key types of the
+   bootstrap vocabulary (lib/key_types.cpp, moved from the CLI); an
+   unknown value is invalid_profile with its JSON pointer. ku_by_key_type
+   knows the key families eddsa, ml-dsa and slh-dsa, which only sign
+   (no encryption or key agreement bit), and every family in key_types
+   needs its entry. A profile issues for Brainpool, EdDSA, ML-DSA and
+   SLH-DSA keys, and a digest-less issuer signs without a hash of the
+   profile; before, Brainpool keys never matched key_types and such a CA
+   failed with profile_signature. A stored profile with another value no
+   longer loads.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a

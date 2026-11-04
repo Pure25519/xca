@@ -15,6 +15,7 @@
 
 #include "exception.h"
 #include "issuance_checks.h"
+#include "key_types.h"
 #include "pki_key.h"
 #include "pki_x509.h"
 #include "pki_x509req.h"
@@ -33,9 +34,12 @@ static serviceError invalid(const QString &field)
 
 /* The key usage bits a profile may name: every bit for the family generic
  * (schema v1.1), the end-entity bits of the key family for opcua and tls
- * (never keyEncipherment on EC keys, PLAN.md 8.4 rule 3) */
+ * (never keyEncipherment on EC keys, PLAN.md 8.4 rule 3). Keys that only
+ * sign (EdDSA, ML-DSA, SLH-DSA) never get an encryption or key agreement
+ * bit (BTD-237). */
 static bool kuBitsAllowed(const QJsonObject &ku, bool generic)
 {
+	static const QStringList signing { "digitalSignature", "nonRepudiation" };
 	static const QMap<QString, QStringList> ot {
 		{ "rsa", { "digitalSignature", "nonRepudiation",
 			   "keyEncipherment", "dataEncipherment" } },
@@ -44,10 +48,15 @@ static bool kuBitsAllowed(const QJsonObject &ku, bool generic)
 	static const QStringList all { "digitalSignature", "nonRepudiation",
 		"keyEncipherment", "dataEncipherment", "keyAgreement",
 		"keyCertSign", "cRLSign", "encipherOnly", "decipherOnly" };
+	static const QStringList signingCa = signing +
+		QStringList{ "keyCertSign", "cRLSign" };
 	for (auto f = ku.begin(); f != ku.end(); ++f) {
-		if (!ot.contains(f.key()))
+		if (!keyFamilies().contains(f.key()))
 			return false;
-		const QStringList &allowed = generic ? all : ot[f.key()];
+		bool sigOnly = signatureOnlyFamily(f.key());
+		const QStringList &allowed = generic ?
+			(sigOnly ? signingCa : all) :
+			(sigOnly ? signing : ot[f.key()]);
 		const QJsonArray bits = f.value().toObject()["bits"].toArray();
 		if (bits.isEmpty())
 			return false;
@@ -114,9 +123,18 @@ Profile Profile::fromJson(const QJsonObject &doc)
 	p.keySource = doc["key_source"].toString();
 	if (p.keySource != "csr" && p.keySource != "server")
 		throw invalid("key_source");
-	for (const char *array : { "key_types" }) {
-		if (!doc[array].isArray() || doc[array].toArray().isEmpty())
-			throw invalid(array);
+	if (!doc["key_types"].isArray() || doc["key_types"].toArray().isEmpty())
+		throw invalid("key_types");
+	/* the names of the bootstrap vocabulary only (BTD-237) */
+	const QJsonArray types = doc["key_types"].toArray();
+	for (int i = 0; i < types.size(); i++) {
+		if (!keyTypeNames().contains(types[i].toString()))
+			throw serviceError("invalid_profile",
+				tr("The profile has the unknown key type %1 at "
+				"/key_types/%2").arg(QString::fromUtf8(
+				QJsonDocument(QJsonArray{ types[i] }).toJson(
+				QJsonDocument::Compact)).mid(1).chopped(1))
+				.arg(i));
 	}
 	for (const char *object : { "ku_by_key_type", "basic_constraints",
 			"san", "subject", "aki", "signature", "validity" }) {
@@ -132,6 +150,14 @@ Profile Profile::fromJson(const QJsonObject &doc)
 	}
 	if (!kuBitsAllowed(doc["ku_by_key_type"].toObject(), generic))
 		throw invalid("ku_by_key_type");
+	/* every key family of key_types has its key usage */
+	for (const QJsonValue &t : types) {
+		QString f = keyTypeFamily(t.toString());
+		if (!doc["ku_by_key_type"].toObject().contains(f))
+			throw serviceError("invalid_profile",
+				tr("The profile allows %1 keys, but ku_by_key_type "
+				"has no entry '%2'").arg(t.toString(), f));
+	}
 	/* opcua and tls: end entity, critical; generic: pathLen only for a CA */
 	QJsonObject bc = doc["basic_constraints"].toObject();
 	if (!bc["ca"].isBool() || !bc["critical"].isBool() ||
@@ -318,6 +344,10 @@ QString Profile::keyType(const EVP_PKEY *pkey)
 {
 	if (!pkey)
 		return QString();
+	/* a name of the vocabulary; else the best name for a message */
+	QString name = keyTypeOf(pkey);
+	if (!name.isEmpty())
+		return name;
 	if (EVP_PKEY_is_a(pkey, "RSA"))
 		return QString("rsa-%1").arg(EVP_PKEY_get_bits(pkey));
 	if (EVP_PKEY_is_a(pkey, "EC")) {
@@ -332,8 +362,8 @@ QString Profile::keyType(const EVP_PKEY *pkey)
 		};
 		return curves.value(QString::fromLatin1(group, len), "ec");
 	}
-	const char *name = EVP_PKEY_get0_type_name(pkey);
-	return name ? QString(name).toLower() : QString();
+	const char *typeName = EVP_PKEY_get0_type_name(pkey);
+	return typeName ? QString(typeName).toLower() : QString();
 }
 
 /* now plus or minus an ISO 8601 duration such as P1Y, P90D, PT1H */
@@ -419,7 +449,7 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 	if (!strings(doc["key_types"]).contains(type))
 		throw serviceError("profile_key_type",
 			tr("The profile '%1' does not allow a %2 key").arg(id, type));
-	QString keyFamily = type.section('-', 0, 0);
+	QString keyFamily = keyTypeFamily(type);
 	/* OPC UA: a CertificateType for the key (OPC 10000-12 7.8.4) */
 	if (family == "opcua" && !doc["opc_certificate_type"].toObject()
 			.contains(keyFamily == "rsa" ? QString("rsa") : type))
@@ -563,7 +593,10 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 	spec.signer = signer;
 	QString caType = signer ? keyType(X509_get0_pubkey(signer->getCert())) :
 				type;
-	QString hash = caType.startsWith("rsa") ?
+	/* a digest-less issuer (EdDSA, ML-DSA, SLH-DSA) signs without a
+	 * hash of the profile; the digest is ignored (BTD-164, BTD-237) */
+	bool digestLess = signatureOnlyFamily(keyTypeFamily(caType));
+	QString hash = digestLess ? QString() : caType.startsWith("rsa") ?
 		doc["signature"].toObject()["rsa"].toObject()["hashes"].toArray().first().toString() :
 		doc["signature"].toObject()["ec"].toObject()["hash_by_curve"].toObject()[caType].toString();
 	/* RSA-PSS is not implemented: refused, never signed as PKCS#1 v1.5 */
@@ -573,10 +606,11 @@ IssuanceSpec Profile::apply(pki_x509req *request, pki_key *key,
 			tr("The profile '%1' asks for RSA padding '%2', which is not supported; only pkcs1v15")
 			.arg(id, doc["signature"].toObject()["rsa"].toObject()["padding"].toString()));
 	int md = hash.isEmpty() ? NID_undef : OBJ_sn2nid(CCHAR(hash.toUpper()));
-	if (md == NID_undef)
+	if (md == NID_undef && !digestLess)
 		throw serviceError("profile_signature",
 			tr("The profile '%1' names no signature hash for a %2 CA").arg(id, caType));
-	spec.hashAlgo = digest(md);
+	if (!digestLess)
+		spec.hashAlgo = digest(md);
 
 	/* validity relative to now, backdated for device clocks */
 	QDateTime now = QDateTime::currentDateTimeUtc();
