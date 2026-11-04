@@ -547,30 +547,37 @@ void pki_x509::store_token(bool alwaysSelect)
 	p11.createObject(p11_atts);
 }
 
-bool pki_x509::deleteFromToken()
+TokenDeletion pki_x509::prepareTokenDeletion()
 {
 	pki_key *privkey = getRefKey();
 	pki_scard *card = dynamic_cast<pki_scard *>(privkey);
 	slotidList p11_slots;
-	bool deleted = false;
+	QList<std::function<void()> > steps;
 
 	if (!card || !pkcs11::libraries.loaded())
-		return false;
+		return TokenDeletion();
 
 	if (privkey && privkey->isToken()) {
 		slotid slot;
 		if (!card->prepare_card(&slot))
-			return false;
+			return TokenDeletion();
 		p11_slots << slot;
 	} else {
 		pkcs11 p11;
 		p11_slots = p11.getSlotList();
 	}
 	for (int i=0; i<p11_slots.count(); i++) {
-		if (deleteFromToken(p11_slots[i]))
-			deleted = true;
+		TokenDeletion d = prepareTokenDeletion(p11_slots[i]);
+		if (d.found)
+			steps << d.destroy;
 	}
-	return deleted;
+	TokenDeletion all;
+	all.found = !steps.isEmpty();
+	all.destroy = [steps]() {
+		for (const std::function<void()> &step : steps)
+			step();
+	};
+	return all;
 }
 
 pk11_attlist pki_x509::objectAttributes()
@@ -583,27 +590,30 @@ pk11_attlist pki_x509::objectAttributes()
 	return attrs;
 }
 
-bool pki_x509::deleteFromToken(const slotid &slot)
+TokenDeletion pki_x509::prepareTokenDeletion(const slotid &slot)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
+	/* the session stays open, and logged in, until destroy() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
 	pk11_attlist atts = objectAttributes();
-	QList<CK_OBJECT_HANDLE> objs = p11.objectList(atts);
+	QList<CK_OBJECT_HANDLE> objs = p11->objectList(atts);
 	if (!objs.count())
-		return false;
+		return TokenDeletion();
 
-	tkInfo ti = p11.tokenInfo();
+	tkInfo ti = p11->tokenInfo();
 	if (!XCA_YESNO("token.delete_certificate", tr("Delete the certificate '%1' from the token '%2 (#%3)'?").
 		arg(getIntName()).arg(ti.label()).arg(ti.serial())))
 	{
-		return false;
+		return TokenDeletion();
 	}
-	if (!p11.tokenLoginForModification())
-		return false;
+	if (!p11->tokenLoginForModification())
+		return TokenDeletion();
 
-	p11.deleteObjects(objs);
-	return true;
+	TokenDeletion d;
+	d.found = true;
+	d.destroy = [p11, objs]() { p11->deleteObjects(objs); };
+	return d;
 }
 
 int pki_x509::renameOnToken(const slotid &slot, const QString &name)

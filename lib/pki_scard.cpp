@@ -270,13 +270,13 @@ pk11_attr_data pki_scard::getIdAttr() const
 	return id;
 }
 
-bool pki_scard::deleteFromToken()
+TokenDeletion pki_scard::prepareTokenDeletion()
 {
 	slotid slot;
 
 	if (!prepare_card(&slot))
-		return false;
-	return deleteFromToken(slot);
+		return TokenDeletion();
+	return prepareTokenDeletion(slot);
 }
 
 /* A key type the token code cannot store, by its OpenSSL name: ML-DSA
@@ -340,27 +340,29 @@ pk11_attlist pki_scard::objectAttributes(bool priv) const
 	return attrs;
 }
 
-bool pki_scard::deleteFromToken(const slotid &slot)
+TokenDeletion pki_scard::prepareTokenDeletion(const slotid &slot)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
+	/* the session stays open, and logged in, until destroy() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	tkInfo ti = p11.tokenInfo();
+	tkInfo ti = p11->tokenInfo();
 	if (!XCA_YESNO("token.delete_key", tr("Delete the private key '%1' from the token '%2 (#%3)' ?").
 			arg(getIntName()).arg(ti.label()).arg(ti.serial())))
-		return false;
+		return TokenDeletion();
 
-	if (!p11.tokenLoginForModification())
-		return false;
+	if (!p11->tokenLoginForModification())
+		return TokenDeletion();
 
 	pk11_attlist atts = objectAttributes(true);
-	QList<CK_OBJECT_HANDLE> priv_objects = p11.objectList(atts);
+	QList<CK_OBJECT_HANDLE> objects = p11->objectList(atts);
 	atts = objectAttributes(false);
-	QList<CK_OBJECT_HANDLE> pub_objects = p11.objectList(atts);
+	objects += p11->objectList(atts);
 
-	p11.deleteObjects(priv_objects);
-	p11.deleteObjects(pub_objects);
-	return !priv_objects.isEmpty() || !pub_objects.isEmpty();
+	TokenDeletion d;
+	d.found = !objects.isEmpty();
+	d.destroy = [p11, objects]() { p11->deleteObjects(objects); };
+	return d;
 }
 
 int pki_scard::renameOnToken(const slotid &slot, const QString &name)

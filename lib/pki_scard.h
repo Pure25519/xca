@@ -91,8 +91,8 @@ class pki_scard: public pki_key
 		QList<int> possibleHashNids();
 		EVP_PKEY *load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const;
 		void generate(const keyjob &task);
-		bool deleteFromToken();
-		bool deleteFromToken(const slotid &slot);
+		TokenDeletion prepareTokenDeletion();
+		TokenDeletion prepareTokenDeletion(const slotid &slot);
 		void store_token(const slotid &slot, EVP_PKEY *pkey);
 		int renameOnToken(const slotid &slot, const QString &name);
 		QString getMsg(msg_type msg, int n = 1) const;

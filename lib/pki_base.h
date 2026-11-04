@@ -8,6 +8,8 @@
 #ifndef __PKI_BASE_H
 #define __PKI_BASE_H
 
+#include <functional>
+
 #include <QString>
 #include <QRegularExpression>
 #include <QVariant>
@@ -48,6 +50,20 @@ enum pki_source {
 #define VIEW_item_comment 5
 
 extern pki_lookup Store;
+
+/* Deleting an object on its token in two steps (BTD-272): prepare asks
+ * the user and logs in to the token and finds the objects; destroy()
+ * deletes them and throws errorEx on a failure. deleteItems() prepares
+ * before its database transaction and destroys after the COMMIT, so no
+ * prompt or PIN dialog runs inside the transaction (BTD-273) and a
+ * rollback leaves the token as it was. destroy() needs no pki_base
+ * object: it keeps the token session and the object handles itself.
+ * found is false when nothing is on a token or the user declined. */
+struct TokenDeletion
+{
+	bool found{};
+	std::function<void()> destroy{};
+};
 
 class pki_base : public QObject
 {
@@ -190,9 +206,13 @@ class pki_base : public QObject
 
 		/* Token handling */
 		/* true if objects were deleted on a token; false if there
-		 * was none or the user declined (BTD-128) */
-		virtual bool deleteFromToken();
-		virtual bool deleteFromToken(const slotid &);
+		 * was none or the user declined (BTD-128); prepares and
+		 * destroys at once */
+		bool deleteFromToken();
+		bool deleteFromToken(const slotid &slot);
+		/* the first step of deleting on the token, see TokenDeletion */
+		virtual TokenDeletion prepareTokenDeletion();
+		virtual TokenDeletion prepareTokenDeletion(const slotid &);
 		virtual int renameOnToken(const slotid &, const QString &);
 
 		/* Import / Export management */

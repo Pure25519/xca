@@ -66,6 +66,11 @@ class DbTransaction
 		{
 			return mutex > 0;
 		}
+		/* How many transactions are open; 1 inside the outermost */
+		static int level()
+		{
+			return mutex;
+		}
 		/* The SQL error of the last failed BEGIN or COMMIT; invalid if
 		 * a commit failed because an inner transaction rolled back */
 		static QSqlError lastFailure()

@@ -113,6 +113,8 @@ class test_service_objects : public ServiceTestCase
 	void deleteOnTokenRejected();
 	void deleteOnTokenFails();
 	void deleteOnTokenRolledBack();
+	void deleteOnTokenAfterCommitFails();
+	void deleteOnTokenDeclined();
 	void tokenRenameObjectId();
 	void tokenRenameDatabaseError();
 	void replaceKeyConfirmed();
@@ -125,6 +127,7 @@ class test_service_objects : public ServiceTestCase
 void test_service_objects::cleanup()
 {
 	db_base::tokenDeleteHook = nullptr;
+	db_base::tokenPrepareHook = nullptr;
 	db_token::tokenRenameHook = nullptr;
 	ServiceTestCase::cleanup();
 }
@@ -586,13 +589,29 @@ void test_service_objects::deleteOnToken()
 	pki_x509 *cert = issue("not on a token", newKey("cert key"), nullptr);
 	QString keyId = key->getSqlItemId().toString();
 	QList<pki_base *> called;
-	db_base::tokenDeleteHook = [&](pki_base *pki) {
+	int destroyed = 0;
+	bool committed = false;
+	/* BTD-272/273: prepared (question, login) outside the database
+	 * transaction, destroyed on the token after the COMMIT */
+	db_base::tokenPrepareHook = [&](pki_base *pki) {
 		called << pki;
-		return pki == key;
+		if (DbTransaction::active())
+			QTest::qFail("prepared inside a transaction",
+				__FILE__, __LINE__);
+		TokenDeletion d;
+		d.found = pki == key;
+		d.destroy = [&]() {
+			committed = !DbTransaction::active() &&
+				!keys()->isStored(key);
+			destroyed++;
+		};
+		return d;
 	};
 
 	keys()->deleteItems(ctx, { key }, true);
 	QCOMPARE(called.size(), 1);
+	QCOMPARE(destroyed, 1);
+	QVERIFY(committed);
 	AuditEntry e = last();
 	QCOMPARE(e.action, QString("object.delete"));
 	QCOMPARE(e.objectId, keyId);
@@ -600,6 +619,7 @@ void test_service_objects::deleteOnToken()
 
 	certs()->deleteItems(ctx, { cert }, true);
 	QCOMPARE(called.size(), 2);
+	QCOMPARE(destroyed, 1);
 	QVERIFY(!last().params.value("on_token").toBool());
 	verifyChain();
 }
@@ -610,9 +630,9 @@ void test_service_objects::deleteOnTokenRejected()
 	pki_key *key = newKey("token key");
 	pki_x509 *cert = issue("cert", newKey("other key"), nullptr);
 	bool called = false;
-	db_base::tokenDeleteHook = [&](pki_base *) {
+	db_base::tokenPrepareHook = [&](pki_base *) {
 		called = true;
-		return true;
+		return TokenDeletion();
 	};
 	int entries = AuditLog::entries().size();
 	try {
@@ -629,11 +649,11 @@ void test_service_objects::deleteOnTokenRejected()
 
 void test_service_objects::deleteOnTokenFails()
 {
-	/* A failure on the token is reported and recorded; the database
-	 * deletion goes on, as before */
+	/* A failure while preparing (token removed, login failed) is
+	 * reported and recorded; the database deletion goes on, as before */
 	pki_key *key = newKey("token gone");
 	QString keyId = key->getSqlItemId().toString();
-	db_base::tokenDeleteHook = [](pki_base *) -> bool {
+	db_base::tokenPrepareHook = [](pki_base *) -> TokenDeletion {
 		throw errorEx("the token was removed");
 	};
 	DeleteResult r = keys()->deleteItems(ctx, { key }, true);
@@ -659,9 +679,11 @@ void test_service_objects::deleteOnTokenRolledBack()
 	pki_key *second = newKey("second on a token");
 	QString secondId = second->getSqlItemId().toString();
 	int deleted = 0;
-	db_base::tokenDeleteHook = [&](pki_base *) {
-		deleted++;
-		return true;
+	db_base::tokenPrepareHook = [&](pki_base *) {
+		TokenDeletion d;
+		d.found = true;
+		d.destroy = [&]() { deleted++; };
+		return d;
 	};
 	QSqlQuery q;
 	QVERIFY2(q.exec(QString("CREATE TEMP TRIGGER btd272_fail_audit BEFORE "
@@ -679,6 +701,68 @@ void test_service_objects::deleteOnTokenRolledBack()
 	QVERIFY(Database.model<db_key>()->isStored(first));
 	QVERIFY(Database.model<db_key>()->isStored(second));
 	QCOMPARE(deleted, 0);
+	verifyChain();
+}
+
+/* BTD-272: a failure on the token after the COMMIT leaves the database
+ * deletion done; one failure entry token.delete names the object left
+ * on its token, and the caller gets the error in tokenErrors */
+void test_service_objects::deleteOnTokenAfterCommitFails()
+{
+	pki_key *gone = newKey("deleted on the token");
+	pki_key *left = newKey("left on the token");
+	QString goneId = gone->getSqlItemId().toString();
+	QString leftId = left->getSqlItemId().toString();
+	db_base::tokenPrepareHook = [&](pki_base *pki) {
+		TokenDeletion d;
+		d.found = true;
+		if (pki == left)
+			d.destroy = []() {
+				throw errorEx("the token was removed");
+			};
+		else
+			d.destroy = []() { };
+		return d;
+	};
+	int entries = AuditLog::entries().size();
+	DeleteResult r = keys()->deleteItems(ctx, { gone, left }, true);
+	QCOMPARE(r.deleted.size(), 2);
+	QCOMPARE(r.tokenErrors.size(), 1);
+	QVERIFY2(r.tokenErrors[0].contains("left on the token") &&
+		r.tokenErrors[0].contains("the token was removed"),
+		CCHAR(r.tokenErrors[0]));
+	QList<AuditEntry> all = AuditLog::entries();
+	QCOMPARE(all.size(), entries + 3);
+	QCOMPARE(all[entries].objectId, goneId);
+	QCOMPARE(all[entries].params.value("on_token").toBool(), true);
+	QCOMPARE(all[entries + 1].objectId, leftId);
+	QCOMPARE(all[entries + 1].result, QString("success"));
+	AuditEntry e = all[entries + 2];
+	QCOMPARE(e.action, QString("token.delete"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("token_error"));
+	QCOMPARE(e.objectId, leftId);
+	QCOMPARE(e.params.value("name").toString(),
+		QString("left on the token"));
+	verifyChain();
+}
+
+/* A "no" at the question of the token (or nothing found on it): the
+ * database deletion goes on, the object stays on its token, the entry
+ * says on_token false; the question item.delete of the caller already
+ * confirmed the database deletion */
+void test_service_objects::deleteOnTokenDeclined()
+{
+	pki_key *key = newKey("declined on the token");
+	db_base::tokenPrepareHook = [](pki_base *) { return TokenDeletion(); };
+	DeleteResult r = keys()->deleteItems(ctx, { key }, true);
+	QCOMPARE(r.deleted.size(), 1);
+	QVERIFY(r.tokenErrors.isEmpty());
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("success"));
+	QVERIFY(!e.params.value("on_token").toBool());
+	QVERIFY(e.params.value("warning").toString().isEmpty());
 	verifyChain();
 }
 

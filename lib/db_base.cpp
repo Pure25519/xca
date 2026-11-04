@@ -725,6 +725,34 @@ static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
 }
 
 std::function<bool(pki_base *)> db_base::tokenDeleteHook{};
+std::function<TokenDeletion(pki_base *)> db_base::tokenPrepareHook{};
+
+/* After the COMMIT of deleteItems(): the objects found on a token are
+ * deleted there; one failure entry token.delete per object left on its
+ * token (BTD-272) */
+struct TokenStep
+{
+	DeleteResult::Deleted object;
+	std::function<void()> destroy;
+};
+
+static void destroyOnToken(const ServiceContext &ctx,
+		const QList<TokenStep> &steps, QStringList *errors)
+{
+	for (const TokenStep &step : steps) {
+		try {
+			step.destroy();
+		} catch (errorEx &err) {
+			if (errors)
+				*errors << QString("%1: %2").arg(
+					step.object.name, err.getString());
+			AuditLog::appendFailure(ctx, "token.delete",
+				step.object.objectType, step.object.id,
+				AuditParams().set("name", step.object.name)
+					.set("on_token", true), "token_error");
+		}
+	}
+}
 
 DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			const QList<pki_base *> &items, bool fromToken)
@@ -733,10 +761,11 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 	DeleteResult::Deleted current;
 	QString action = "object.delete";
 	AuditParams params;
+	QMap<pki_base *, TokenDeletion> onToken;
+	QMap<pki_base *, QString> tokenFailed;
+	QList<TokenStep> tokenSteps;
 
 	try {
-		Transaction;
-		TransThrow();
 		if (items.isEmpty())
 			throw serviceError("nothing_to_delete",
 				tr("No item selected"));
@@ -753,6 +782,25 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 				throw serviceError("missing_object",
 					tr("The item is not in the database"));
 		}
+		/* After every check, so a rejected call never touches the
+		 * token, and before the transaction: the question and the
+		 * login of the token run while no database lock is held
+		 * (BTD-273). Nothing is deleted on the token yet. A failure
+		 * here is reported and recorded; the database deletion goes
+		 * on (BTD-128). */
+		if (fromToken) {
+			foreach(pki_base *pki, items) {
+				try {
+					onToken[pki] = tokenPrepareHook ?
+						tokenPrepareHook(pki) :
+						pki->prepareTokenDeletion();
+				} catch (errorEx &err) {
+					tokenFailed[pki] = err.getString();
+				}
+			}
+		}
+		Transaction;
+		TransThrow();
 		foreach(pki_base *pki, items) {
 			int revocations;
 			current.objectType = auditObjectType(pki);
@@ -776,21 +824,19 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			if (pki->getType() == x509)
 				params.set("revocations", revocations);
 
-			/* After every check, so a rejected call never touches
-			 * the token; a failure there is reported and recorded,
-			 * the database deletion goes on as before (BTD-128) */
 			if (fromToken) {
-				bool onToken = false;
-				try {
-					onToken = tokenDeleteHook ?
-						tokenDeleteHook(pki) :
-						pki->deleteFromToken();
-				} catch (errorEx &err) {
+				if (tokenFailed.contains(pki)) {
 					result.tokenErrors << QString("%1: %2")
-						.arg(current.name, err.getString());
+						.arg(current.name, tokenFailed[pki]);
 					params.set("warning", "token_delete_failed");
 				}
-				params.set("on_token", onToken);
+				/* found and confirmed: deleted on the token
+				 * after the COMMIT */
+				bool found = onToken.value(pki).found;
+				params.set("on_token", found);
+				if (found)
+					tokenSteps << TokenStep{ current,
+						onToken.value(pki).destroy };
 			}
 			removeItem(pki);
 			AuditLog::append(ctx, action, current.objectType,
@@ -798,7 +844,24 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			result.deleted << current;
 			result.revocations += revocations;
 		}
-		TransCommitThrow();
+		/* the token after the database: a rollback leaves every
+		 * object on its token (BTD-272). Inside a caller's
+		 * transaction this waits for the caller's COMMIT; the errors
+		 * then reach only the audit log. */
+		if (!tokenSteps.isEmpty()) {
+			auto errors = std::make_shared<QStringList>();
+			bool outermost = !DbTransaction::active() ||
+					DbTransaction::level() == 1;
+			DbTransaction::afterCommit([ctx, tokenSteps, errors,
+						outermost]() {
+				destroyOnToken(ctx, tokenSteps,
+					outermost ? errors.get() : nullptr);
+			});
+			TransCommitThrow();
+			result.tokenErrors << *errors;
+		} else {
+			TransCommitThrow();
+		}
 	} catch (serviceError &err) {
 		AuditLog::appendFailure(ctx, action, current.objectType, current.id,
 				params.getValues().isEmpty() ?
