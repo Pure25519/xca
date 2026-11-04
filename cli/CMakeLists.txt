@@ -58,10 +58,8 @@ if(BUILD_TESTING)
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_${name}
 		-P ${CLI_DIR}/test/${name}.cmake)
     set_tests_properties(test_${name} PROPERTIES LABELS cli)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-      set_property(TEST test_${name} APPEND PROPERTY
+    set_property(TEST test_${name} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-    endif()
   endmacro()
 
   CliTest(cli_flow)
@@ -103,4 +101,9 @@ if(BUILD_TESTING)
   CliTest(cli_bootstrap_errors)
   # a read-only command leaves the database file byte-identical (BTD-225)
   CliTest(cli_readonly)
+  # uniqueness under two parallel issuing processes (BTD-201)
+  CliTest(cli_unique_parallel)
+  # parallel writers and lost failure entries (BTD-274)
+  CliTest(cli_parallel_writes)
+  CliTest(cli_audit_lost)
 endif()

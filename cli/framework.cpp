@@ -298,7 +298,9 @@ static void runPlan(CommandContext &ctx,
 				QString(), params(), code);
 	};
 	try {
-		Transaction;
+		/* writes nothing: no write lock, so a plan runs beside a
+		 * writing process and on a read-only database (BTD-274) */
+		ReadTransaction;
 		TransThrow();
 		for (const auto &step : steps)
 			step(ctx);

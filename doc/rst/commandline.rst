@@ -26,6 +26,14 @@ with code 1.
 Before bxc-pki BTD-270, an import with an unreadable file exited with 0 and
 only printed a warning.
 
+Database password in the GUI
+----------------------------
+
+A password given with ``--password`` is always read and compared with the
+stored one, also in the GUI and also when the database has an empty password.
+If it does not match, XCA shows "Password verify error" and then the unlock
+dialog, instead of opening the database without checking the given password.
+
 JSON output
 -----------
 

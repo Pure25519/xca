@@ -5,6 +5,7 @@
  * All rights reserved.
  */
 
+#include <QFile>
 #include <QTest>
 #include <QDir>
 
@@ -139,8 +140,8 @@ void export_by_id(int id, const QString &name,
 {
 	const pki_export *xport = pki_export::by_id(id);
 	QVERIFY(xport != nullptr);
-	XFile F(name);
-	F.open_write();
+	QFile F(name);
+	QVERIFY(F.open(QIODevice::WriteOnly));
 	if (xport->match_all(F_PEM)) {
 		QString prefix = QString("%1\n").arg(xport->help);
 		foreach (pki_base *pki, list) {
