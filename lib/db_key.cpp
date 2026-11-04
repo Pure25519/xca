@@ -162,6 +162,22 @@ pki_key *db_key::insertKey(pki_key *lkey, pki_key *oldkey)
 	return dynamic_cast<pki_key *>(insertPKI(lkey));
 }
 
+pki_key *db_key::replaceWithToken(const ServiceContext &ctx, pki_key *key,
+				pki_key *card)
+{
+	/* One transaction (BTD-217): the delete of the software key and
+	 * its audit entry join it, the token key relinks its certificates
+	 * and requests by key hash when it is stored (inToCont()), and a
+	 * failed store rolls the delete back, in memory too (the delete
+	 * frees the key only after the COMMIT) */
+	Transaction;
+	TransThrow();
+	deleteItems(ctx, { key });
+	pki_key *stored = dynamic_cast<pki_key *>(insertPKI(card));
+	TransCommitThrow();
+	return stored;
+}
+
 void db_key::keyParams(AuditParams &params, pki_key *key)
 {
 	params.set("key_type", key->getKeyTypeString());

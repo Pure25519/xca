@@ -757,6 +757,8 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	return e;
 }
 
+static QStringList lostEntries;
+
 bool AuditLog::appendFailure(const ServiceContext &ctx,
 		const QString &action, const QString &objectType,
 		const QString &objectId, const AuditParams &params,
@@ -773,7 +775,30 @@ bool AuditLog::appendFailure(const ServiceContext &ctx,
 		qCritical().noquote() << "Audit entry lost:" << action << result
 			<< errorCode;
 	}
+	lostEntries << QString("%1 %2 (%3)").arg(action, result, errorCode);
 	return false;
+}
+
+QStringList AuditLog::takeLostEntries()
+{
+	QStringList lost;
+	lost.swap(lostEntries);
+	return lost;
+}
+
+serviceError AuditLog::lostEntriesError(const QStringList &lost,
+		const QString &originalCode, const QString &originalText)
+{
+	QString detail = QCoreApplication::translate("AuditLog",
+		"Audit entries could not be written: %1").arg(lost.join(", "));
+	if (originalCode == "read_only_database")
+		return serviceError(originalCode, QString("%1 (%2)")
+				.arg(originalText, detail));
+	if (!originalCode.isEmpty())
+		detail += QCoreApplication::translate("AuditLog",
+			"; the error of the command: %1 [%2]")
+			.arg(originalText, originalCode);
+	return serviceError("audit_entry_lost", detail);
 }
 
 /* True if the stored params text is exactly the canonical JSON of an

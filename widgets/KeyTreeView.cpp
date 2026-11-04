@@ -177,8 +177,17 @@ void KeyTreeView::toToken()
 		ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::gui);
 		if (xcaWarning::confirm(ctx, "token.replace_key", msg)) {
-			keys()->deleteItems(ctx, { key });
-			keys()->insertPKI(card);
+			/* all or nothing (BTD-217): on an error the software
+			 * key and its links are unchanged, the copy written to
+			 * the token stays there */
+			try {
+				keys()->replaceWithToken(ctx, key, card);
+			} catch (errorEx &err) {
+				err.appendString(tr("The key '%1' is unchanged in "
+					"the database; the copy on the token "
+					"remains.").arg(key->getIntName()));
+				throw;
+			}
 			card = NULL;
 		}
 	} catch (errorEx &err) {

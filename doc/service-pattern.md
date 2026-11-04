@@ -28,6 +28,28 @@ entry is lost and logged, and the wrapper rethrows its own error (BTD-138). Sinc
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
 
+A lost entry is not silent (BTD-274): `appendFailure()` keeps it, and the command lines (`bxc-pki`,
+`xca --no-gui`) end such a command with exit code 1 and the error `audit_entry_lost`, whose detail
+names the lost entries and the original error with its code; a command that succeeded otherwise
+fails too. A read-only database can hold no entry: there the code stays `read_only_database` and
+the detail names the lost entries. The GUI only logs the loss.
+
+Transaction kinds and the write lock (BTD-274): `Transaction` (kind `write`) takes the write lock
+of the database at its outermost BEGIN, `BEGIN IMMEDIATE` on SQLite and a no-op update of the
+`settings` row `schema` on PostgreSQL and MariaDB. A second process therefore waits at BEGIN
+instead of failing at its first write after it read under a deferred BEGIN, where SQLite returns
+"database is locked" at once to avoid a deadlock; nothing a transaction reads changes before its
+COMMIT (the uniqueness rule of policies relies on that, BTD-201). The wait is the busy timeout of
+SQLite, `DbTransaction::busyTimeoutMs` = 10 s, set when the database is opened; after it the
+command fails typed (`database_error`, "database is locked"). `ReadTransaction` (kind `read`)
+takes no lock and must not write: the bxc-pki `--plan` run and the TA key lookup use it; reading
+commands open no transaction at all. A nested transaction belongs to the outermost one, so a
+write inside a read transaction holds no lock. On a database file that cannot be written SQLite
+refuses `BEGIN IMMEDIATE` (SQLITE_READONLY); then the transaction begins deferred, the reads run
+and the first write fails with `read_only_database` as before. A write transaction holds the
+lock until its COMMIT, also while a dialog or PIN prompt inside it waits for the user (BTD-273):
+until that is fixed a parallel process waits up to the busy timeout and then fails.
+
 `TransCommit()` is false when the outermost commit fails and also when any inner transaction
 rolled back, e.g. a helper that returned without commit and whose caller carried on: the outermost
 transaction then rolls everything back (BTD-142; before, it returned the result of that rollback,
@@ -154,8 +176,10 @@ Templates, rename and delete (BTD-35):
   BTD-128); `object.update_comment` `name` (never the comment); `object.delete` and
   `template.delete` `name`, `dependents` (objects that stay and referred to it),
   `revocations` (certificates only: the revocation rows it had as a CA), `on_token` (the GUI
-  deletion also deleted it on a token) and `warning` `token_delete_failed` (the deletion on
-  the token failed, the database deletion went on).
+  deletion found it on a token and the user confirmed deleting it there) and `warning`
+  `token_delete_failed` (preparing the deletion on the token failed, the database deletion went
+  on); `token.delete` (failure, `token_error`) `name`, `on_token`: the deletion on the token
+  after the COMMIT failed, the object is left on its token (BTD-272).
 - `deleteItems()` deletes all objects of the call in one transaction or none. The objects that
   refer to a deleted one are handled as XCA always did and listed in `DeleteResult::dependents`:
   certificates and requests lose their private key; certificates lose their issuer (and move to
@@ -164,9 +188,23 @@ Templates, rename and delete (BTD-35):
   certificate as the removal of its revocation rows. The question `item.delete` stays with the
   GUI caller (`XcaTreeView::deleteItems`, `xcaWarning::confirmOkCancel()` records the answer in
   the `ServiceContext`). With `fromToken` (the GUI's delete) `deleteItems()` also deletes each
-  object on its token (`pki_base::deleteFromToken()`, which may ask), after all checks, so a
-  rejected call never touches a token (BTD-128). `db_token::rename()` updates the database
-  first and the label on the token last.
+  object on its token, in three steps (BTD-128, BTD-272, BTD-273): after all checks, so a
+  rejected call never touches a token, and before the transaction
+  `pki_base::prepareTokenDeletion()` asks (`token.delete_key`, `token.delete_certificate`), logs
+  in and finds the objects, so no question or PIN dialog runs while the database is locked;
+  inside the transaction each entry records `on_token`; after the COMMIT
+  (`DbTransaction::afterCommit()`) the found objects are deleted on the token, so a rollback
+  leaves every token unchanged. A "no" at the question of the token keeps the object there and
+  deletes the row (`on_token` false): `item.delete` already confirmed that. A failure on the
+  token after the COMMIT is one `token.delete` failure entry per object left on its token and a
+  line in `DeleteResult::tokenErrors`; inside a caller's transaction the token step waits for
+  the caller's COMMIT and its errors reach only the audit log. `db_token::rename()` updates the database
+  first and the label on the token last. Deleting on a token only, with the database row kept
+  (Delete from token of a certificate, the import dialog), goes through the static
+  `db_token::deleteOnToken()`: one `object.delete` with `on_token` and the token object as
+  `object_id` (CKA_ID or fingerprint, never a numeric item id, so `verify()` does not replay it
+  as a removed CA); nothing deleted is the failure `nothing_deleted`, a token error
+  `token_error` (BTD-248).
 - `lib/` signatures of the group take `pki_base *`; `db_base::remFromCont(pki_base *)` replaces
   the `QModelIndex` variant and `db_base::removeItem()` the old `deletePKI(QModelIndex)` (no
   audit, used by the import that completes a public key). Only the Qt model override

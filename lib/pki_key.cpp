@@ -9,6 +9,7 @@
 
 #include "pki_key.h"
 #include "pki_x509super.h"
+#include "sql.h"
 #include "func.h"
 #include "pkcs11.h"
 #include "pki_export.h"
@@ -441,7 +442,14 @@ QSqlError pki_key::insertSqlData()
 			continue;
 		}
 		if (x->compareRefKey(this)) {
+			/* the link in memory follows a rollback of the store
+			 * (BTD-217: the delete of the old key and this insert in
+			 * one transaction) */
+			pki_key *old = x->getRefKey();
 			x->setRefKey(this);
+			DbTransaction::onRollback([x, old]() {
+				x->setRefKey(old);
+			});
 			list << x;
 		}
 	}

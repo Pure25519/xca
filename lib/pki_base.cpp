@@ -78,8 +78,27 @@ void pki_base::autoIntName(const QString &file)
 	setIntName(rmslashdot(file));
 }
 
-bool pki_base::deleteFromToken() { return false; }
-bool pki_base::deleteFromToken(const slotid &) { return false; }
+TokenDeletion pki_base::prepareTokenDeletion() { return TokenDeletion(); }
+TokenDeletion pki_base::prepareTokenDeletion(const slotid &)
+{
+	return TokenDeletion();
+}
+
+bool pki_base::deleteFromToken()
+{
+	TokenDeletion d = prepareTokenDeletion();
+	if (d.found)
+		d.destroy();
+	return d.found;
+}
+
+bool pki_base::deleteFromToken(const slotid &slot)
+{
+	TokenDeletion d = prepareTokenDeletion(slot);
+	if (d.found)
+		d.destroy();
+	return d.found;
+}
 void pki_base::writeDefault(const QString&) const { }
 void pki_base::fromPEM_BIO(BIO *, const QString &) { }
 void pki_base::fload(const QString &fname)
