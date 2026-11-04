@@ -189,6 +189,18 @@ is recorded in the `ServiceContext`, and `AuditLog::append()` writes it as param
 changed. Service functions themselves still never ask; a caller without a GUI (REST, EST, CMP)
 passes its confirmations in the `ServiceContext`.
 
+A service function whose operation needs a confirmation checks it itself (BTD-116, decision of
+2026-11-04): `db_key::newKey(ctx, ...)` refuses an RSA/DSA size outside 1024..8192 unless
+`ctx.isConfirmed("key.size")`, with the `denied` entry `confirmation_required` and
+`confirmationError`, before anything is generated and before its transaction starts. So a caller
+collects its confirmations before the service call, never inside a transaction. The interactive
+wrapper still asks first and records the answer in the `ServiceContext`. `item.delete` and
+`token.replace_key` are GUI questions: the GUI caller asks before it calls `deleteItems()` or
+replaces a key, and the service functions do the requested change without a confirmation, the
+same as for REST. The `token.*` questions inside `pki_scard` and `pki_x509` concern the token
+in the reader. `xcaWarningCore::questionIds()` is the one list of question ids; `--confirm`
+trims each id and refuses an unknown one with the list (exit 1, nothing opened).
+
 OpenSSL errors are checked where they happen (BTD-95, decision of 2026-10-28). `_openssl_error()`
 in `lib/func_base.cpp` and the macros `openssl_error()`, `openssl_error_msg()` and
 `pki_openssl_error()` only print the OpenSSL error queue to stderr and never throw: upstream

@@ -164,6 +164,8 @@ class ServiceContext
 	{
 		return confirmed;
 	}
+	/* Whether question id was confirmed, from any source */
+	bool isConfirmed(const QString &id) const;
 };
 
 /* Parameter summary of an audit entry (PLAN.md 6.4).
