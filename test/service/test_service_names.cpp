@@ -405,11 +405,12 @@ void test_service_names::uniquenessWithStatusFilter()
 	QCOMPARE(attempt(second), QString());
 }
 
-/* BTD-201: with scope issuer, self-signed certificates do not share one
- * scope. Two roots with the same subject and different keys are separate
- * scopes (each certificate is its own issuer); a root issued again with
- * the same key is in the scope of the first. Before, spec.signer was
- * nullptr for both and every root blocked every other. */
+/* BTD-201: with scope issuer, the scope of a self-signed certificate is
+ * the self-signed certificates of the same key. Two roots with the same
+ * subject and different keys are separate scopes; a root issued again
+ * with the same key is in the scope of the first. Before, a root was in
+ * no other root's scope (its signer is itself, spec.signer was nullptr),
+ * so the root issued again was accepted. */
 void test_service_names::uniquenessSelfSignedScope()
 {
 	IssuanceSpec first = caSpec("Same Root", nullptr);
