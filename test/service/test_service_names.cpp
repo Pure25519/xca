@@ -249,29 +249,29 @@ void test_service_names::policyNames_data()
 	QTest::addColumn<QString>("code");
 
 	QString lab = "ot-lab-names", web = "web-wildcard", O = "BxC Security";
-	QTest::newRow("lab subtree") << lab << "DNS:plc10.lab.bxc-technology.de" << O << "";
+	QTest::newRow("lab subtree") << lab << "DNS:plc10.lab.example.org" << O << "";
 	QTest::newRow("lab single label") << lab << "DNS:plc10" << O << "";
 	QTest::newRow("lab single label, other pattern") << lab << "DNS:scalance" << O << "";
 	QTest::newRow("single label without explicit rule") << lab << "DNS:switch" << O
 		<< "policy_name_not_allowed";
 	QTest::newRow("single label not matching") << lab << "DNS:plc10x" << O
 		<< "policy_name_not_allowed";
-	QTest::newRow("denied exact") << lab << "DNS:ca.lab.bxc-technology.de" << O
+	QTest::newRow("denied exact") << lab << "DNS:ca.lab.example.org" << O
 		<< "policy_name_denied";
 	QTest::newRow("outside the subtree") << lab << "DNS:www.example.com" << O
 		<< "policy_name_not_allowed";
-	/* it covers the denied ca.lab.bxc-technology.de */
-	QTest::newRow("wildcard without flag") << lab << "DNS:*.lab.bxc-technology.de" << O
+	/* it covers the denied ca.lab.example.org */
+	QTest::newRow("wildcard without flag") << lab << "DNS:*.lab.example.org" << O
 		<< "policy_name_denied";
 	QTest::newRow("wildcard without flag, nothing denied below") << lab
-		<< "DNS:*.line1.lab.bxc-technology.de" << O << "policy_name_not_allowed";
-	QTest::newRow("lab network") << lab << "IP:192.168.0.10" << O << "";
+		<< "DNS:*.line1.lab.example.org" << O << "policy_name_not_allowed";
+	QTest::newRow("lab network") << lab << "IP:192.0.2.10" << O << "";
 	QTest::newRow("outside the networks") << lab << "IP:172.16.0.1" << O
 		<< "policy_name_not_allowed";
 	QTest::newRow("urn prefix") << lab << "URI:urn:bxc:lab:plc10" << O << "";
 	QTest::newRow("other urn") << lab << "URI:urn:other:plc10" << O
 		<< "policy_name_not_allowed";
-	QTest::newRow("no e-mail at all") << lab << "email:ops@bxc-technology.de" << O
+	QTest::newRow("no e-mail at all") << lab << "email:ops@example.org" << O
 		<< "policy_name_not_allowed";
 	QTest::newRow("other organisation") << lab << "DNS:plc10" << "Other"
 		<< "policy_name_not_allowed";
@@ -319,12 +319,12 @@ void test_service_names::policyNames()
 void test_service_names::policyIsTyped()
 {
 	pki_x509 *ca = issue(caSpec("Policy CA", nullptr));
-	IssuanceSpec spec = leafSpec("DNS:ca.lab.bxc-technology.de", ca);
+	IssuanceSpec spec = leafSpec("DNS:ca.lab.example.org", ca);
 	spec.policies << policy("ot-lab-names");
 	QString message;
 	QCOMPARE(attempt(spec, &message), QString("policy_name_denied"));
 	QVERIFY2(message.contains("ot-lab-names") &&
-		 message.contains("ca.lab.bxc-technology.de") &&
+		 message.contains("ca.lab.example.org") &&
 		 message.contains("\"type\":\"exact\""), CCHAR(message));
 	/* without the policy the same name is issued */
 	spec.policies.clear();
@@ -430,7 +430,7 @@ void test_service_names::invalidPolicy()
 		d["names"] = n;
 		return d;
 	};
-	bad << with("ip", "allow", "192.168.0.10")
+	bad << with("ip", "allow", "192.0.2.10")
 	    << with("ip", "deny", "10.0.0.0/33")
 	    << with("ip", "deny", QJsonObject{ { "network", "10.0.0.0/8" } })
 	    << with("dns", "deny", QJsonObject{ { "type", "subtree " },

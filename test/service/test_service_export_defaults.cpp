@@ -93,6 +93,11 @@ class test_service_export_defaults : public ServiceTestCase
 	void pkcs12RoundTrip();
 	void dumpWritesPkcs8();
 	void defaultsDoNotLeakAcrossDatabases();
+	void pkcs12Pbmac1();
+	void pkcs12IterationsPerExport();
+	void pkcs12IterationsSetting();
+	void pkcs12OptionErrors_data();
+	void pkcs12OptionErrors();
 };
 
 QString test_service_export_defaults::openssl(const QStringList &args,
@@ -785,6 +790,180 @@ void test_service_export_defaults::migrationNeedsUnlock()
 
 	reopenDatabase();
 	QCOMPARE(migrationEntries().size(), 1);
+}
+
+/* BTD-175: the PBKDF2 iteration counts of the encrypted certificates and
+ * the shrouded key bag, and the iteration count of the MAC data */
+static QList<long> pkcs12Iterations(const QByteArray &der, long *macIter)
+{
+	QList<long> iters;
+	const unsigned char *p = (const unsigned char *)der.constData();
+	PKCS12 *p12 = d2i_PKCS12(nullptr, &p, der.size());
+	if (!p12)
+		return iters;
+	const ASN1_INTEGER *mi;
+	PKCS12_get0_mac(nullptr, nullptr, nullptr, &mi, p12);
+	*macIter = mi ? ASN1_INTEGER_get(mi) : 1;
+	STACK_OF(PKCS7) *safes = PKCS12_unpack_authsafes(p12);
+	for (int i = 0; i < sk_PKCS7_num(safes); i++) {
+		PKCS7 *p7 = sk_PKCS7_value(safes, i);
+		int saltLen = 0;
+		long iter = 0;
+		if (PKCS7_type_is_encrypted(p7)) {
+			if (pbkdf2Params(p7->d.encrypted->enc_data->algorithm,
+					&saltLen, &iter))
+				iters << iter;
+			continue;
+		}
+		STACK_OF(PKCS12_SAFEBAG) *bags = PKCS12_unpack_p7data(p7);
+		for (int j = 0; j < sk_PKCS12_SAFEBAG_num(bags); j++) {
+			const PKCS12_SAFEBAG *bag =
+				sk_PKCS12_SAFEBAG_value(bags, j);
+			if (PKCS12_SAFEBAG_get_nid(bag) != NID_pkcs8ShroudedKeyBag)
+				continue;
+			const X509_ALGOR *alg;
+			X509_SIG_get0(PKCS12_SAFEBAG_get0_pkcs8(bag), &alg, nullptr);
+			if (pbkdf2Params(alg, &saltLen, &iter))
+				iters << iter;
+		}
+		sk_PKCS12_SAFEBAG_pop_free(bags, PKCS12_SAFEBAG_free);
+	}
+	sk_PKCS7_pop_free(safes, PKCS7_free);
+	PKCS12_free(p12);
+	return iters;
+}
+
+/* PBMAC1 (RFC 9579) only on request: openssl reads it, the audit entry
+ * names the MAC and the iteration count; the default stays HMAC-SHA256
+ * with 2048 iterations (BTD-175) */
+void test_service_export_defaults::pkcs12Pbmac1()
+{
+	NEED_OPENSSL();
+	pki_x509 *cert = leaf("EC:prime256v1");
+	QVERIFY(cert);
+	ExportSpec spec;
+	spec.items << cert;
+	spec.format = pki_export::by_id(15);
+	spec.fileName = file("pbmac1.p12");
+	spec.passwordSource = passin();
+	spec.pkcs12Mac = "pbmac1";
+	spec.pkcs12Iterations = 4096;
+	Database.model<db_x509>()->exportItems(ctx, spec);
+
+	QString info = opensslOk({ "pkcs12", "-in", spec.fileName, "-info",
+			"-noout", "-passin", passin() });
+	QVERIFY2(info.contains("MAC: PBMAC1 using PBKDF2, Iteration 4096"),
+		CCHAR(info));
+	QVERIFY2(info.contains("PBKDF2 PRF: hmacWithSHA256"), CCHAR(info));
+	QVERIFY2(info.contains("Shrouded Keybag: PBES2, PBKDF2, AES-256-CBC, "
+		"Iteration 4096"), CCHAR(info));
+	QVERIFY2(info.contains("PKCS7 Encrypted data: PBES2, PBKDF2, "
+		"AES-256-CBC, Iteration 4096"), CCHAR(info));
+	QVariantMap p = lastPrivateExport();
+	QCOMPARE(p.value("pkcs12_algorithm").toString(), QString("AES-256-CBC"));
+	QCOMPARE(p.value("pkcs12_mac").toString(), QString("pbmac1"));
+	QCOMPARE(p.value("pkcs12_iterations").toLongLong(), 4096LL);
+
+	/* the default export: HMAC-SHA256, 2048, also in the audit entry */
+	QString name = exportTo(cert, 15, "default-mac.p12");
+	info = opensslOk({ "pkcs12", "-in", name, "-info", "-noout",
+			"-passin", passin() });
+	QVERIFY2(info.contains("MAC: sha256, Iteration 2048"), CCHAR(info));
+	QVERIFY2(!info.contains("PBMAC1"), CCHAR(info));
+	p = lastPrivateExport();
+	QCOMPARE(p.value("pkcs12_mac").toString(), QString("hmac-sha256"));
+	QCOMPARE(p.value("pkcs12_iterations").toLongLong(), 2048LL);
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* The iteration count of one export: the key bag, the certificates and
+ * the MAC use it */
+void test_service_export_defaults::pkcs12IterationsPerExport()
+{
+	pki_x509 *cert = leaf("EC:prime256v1");
+	QVERIFY(cert);
+	ExportSpec spec;
+	spec.items << cert;
+	spec.format = pki_export::by_id(15);
+	spec.fileName = file("iter.p12");
+	spec.passwordSource = passin();
+	spec.pkcs12Iterations = 5000;
+	Database.model<db_x509>()->exportItems(ctx, spec);
+
+	long macIter = 0;
+	QList<long> iters = pkcs12Iterations(readFile(spec.fileName), &macIter);
+	QCOMPARE(iters, QList<long>({ 5000, 5000 }));
+	QCOMPARE(macIter, 5000L);
+	QCOMPARE(lastPrivateExport().value("pkcs12_iterations").toLongLong(),
+		5000LL);
+}
+
+/* The setting pkcs12_iterations is the default of every export of the
+ * database; an export may still set its own */
+void test_service_export_defaults::pkcs12IterationsSetting()
+{
+	pki_x509 *cert = leaf("EC:prime256v1");
+	QVERIFY(cert);
+	QCOMPARE((QString)Settings["pkcs12_iterations"], QString("2048"));
+	Settings["pkcs12_iterations"] = QString("10000");
+	long macIter = 0;
+	QList<long> iters = pkcs12Iterations(readFile(
+			exportTo(cert, 15, "setting.p12")), &macIter);
+	QCOMPARE(iters, QList<long>({ 10000, 10000 }));
+	QCOMPARE(macIter, 10000L);
+	QCOMPARE(lastPrivateExport().value("pkcs12_iterations").toLongLong(),
+		10000LL);
+}
+
+void test_service_export_defaults::pkcs12OptionErrors_data()
+{
+	QTest::addColumn<int>("format");
+	QTest::addColumn<QString>("algorithm");
+	QTest::addColumn<QString>("mac");
+	QTest::addColumn<int>("iterations");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("unknown MAC") << 15 << "" << "hmac-md5" << 0
+		<< "invalid_pkcs12_mac";
+	QTest::newRow("below the minimum") << 15 << "" << "" << 2047
+		<< "invalid_pkcs12_iterations";
+	QTest::newRow("above the maximum") << 15 << "" << "" << 10000001
+		<< "invalid_pkcs12_iterations";
+	QTest::newRow("PBMAC1 with legacy") << 15 << "PBE-SHA1-3DES"
+		<< "pbmac1" << 0 << "invalid_pkcs12_mac";
+	QTest::newRow("iterations with legacy") << 15 << "PBE-SHA1-3DES"
+		<< "" << 4096 << "invalid_pkcs12_iterations";
+	QTest::newRow("MAC with PKCS#8") << 28 << "" << "pbmac1" << 0
+		<< "format_not_applicable";
+	QTest::newRow("iterations with PKCS#8") << 28 << "" << "" << 4096
+		<< "format_not_applicable";
+}
+
+/* Typed errors before anything is written */
+void test_service_export_defaults::pkcs12OptionErrors()
+{
+	QFETCH(int, format);
+	QFETCH(QString, algorithm);
+	QFETCH(QString, mac);
+	QFETCH(int, iterations);
+	QFETCH(QString, code);
+	pki_x509 *cert = leaf("EC:prime256v1");
+	QVERIFY(cert);
+	ExportSpec spec;
+	spec.items << (format == 15 ? (pki_base *)cert :
+				(pki_base *)cert->getRefKey());
+	spec.format = pki_export::by_id(format);
+	spec.fileName = file("refused.out");
+	spec.passwordSource = passin();
+	spec.pkcs12Algorithm = algorithm;
+	spec.pkcs12Mac = mac;
+	spec.pkcs12Iterations = iterations;
+	try {
+		Database.modelForPki(spec.items[0])->exportItems(ctx, spec);
+		QFAIL("export accepted");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, code);
+	}
+	QVERIFY(!QFile::exists(spec.fileName));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_export_defaults)
