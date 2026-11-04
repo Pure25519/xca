@@ -2,11 +2,13 @@
 # (BTD-168): --print and --text show a marker, --list-items and the debug
 # output do not name it, and with --json the options that write plain
 # text are refused with the error object "usage".
-# cmake -DXCA=<xca> -DDATA=<data/json> -DWORK=<scratch dir>
+# cmake -DXCA=<xca> -DDATA=<test/service/data> -DWORK=<scratch dir>
 #       -P cli_challenge_password.cmake
 
 cmake_minimum_required(VERSION 3.19)   # string(JSON)
 
+# the fixtures of the JSON tests (BTD-256: DATA is the common data directory)
+set(DATA "${DATA}/json")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")

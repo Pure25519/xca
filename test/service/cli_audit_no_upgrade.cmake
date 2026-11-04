@@ -4,9 +4,12 @@
 # byte-identical; they used to migrate it and write the audit baseline.
 # A normal open of the same database migrates it, after a backup copy of
 # the old file.
-# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> -DDUMP=<schema8-fork.sql>
+# cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> [-DDUMP=<schema8-fork.sql>] -DDATA=<test/service/data>
 #       -DWORK=<scratch dir> -P cli_audit_no_upgrade.cmake
 
+if(NOT DUMP)
+  set(DUMP "${DATA}/schema8-fork.sql")
+endif()
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")

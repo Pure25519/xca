@@ -146,6 +146,7 @@ void StrictWarning::reset()
 				.arg(m));
 	answers.clear();
 	messages.clear();
+	notices.clear();
 	delegateTo(nullptr);
 	xcaWarningCore::setConfirmations(false, QStringList());
 }
@@ -183,6 +184,18 @@ void StrictWarning::information(const QString &msg)
 void StrictWarning::warning(const QString &msg)
 {
 	message("warning", msg);
+}
+
+void StrictWarning::notice(const QString &msg)
+{
+	notices << msg;
+}
+
+QStringList StrictWarning::takeNotices()
+{
+	QStringList n = notices;
+	notices.clear();
+	return n;
 }
 
 void StrictWarning::warningv3(const QString &msg, const extList &)

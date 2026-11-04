@@ -135,8 +135,9 @@ void pki_x509::restoreSql(const QSqlRecord &rec)
 		crlDays = rec.value(VIEW_x509_auth_crlDays).toInt();
 	else
 		crlDays = defaultCrlDays;
-	if (!rec.isNull(VIEW_x509_revocation))
-		revocation = x509rev(rec, VIEW_x509_revocation);
+	/* on a reload the object may be revoked from before (BTD-238) */
+	revocation = rec.isNull(VIEW_x509_revocation) ? x509rev() :
+			x509rev(rec, VIEW_x509_revocation);
 }
 
 QSqlError pki_x509::deleteSqlData()
@@ -322,13 +323,21 @@ pki_x509 *pki_x509::getBySerial(const a1int &a) const
 #define D5 "-----"
 #define OVPN_TA_KEY "OpenVPN Static key V1"
 
+pki_x509 *pki_x509::taKeyOwner()
+{
+	pki_x509 *issuer = getSigner();
+	if (!isCA() && issuer && issuer != this)
+		return issuer->taKeyOwner();
+	return this;
+}
+
 QString pki_x509::getTaKey()
 {
 	XSqlQuery q;
 	QByteArray b;
-	pki_x509 *issuer = getSigner();
-	if (!isCA() && issuer && issuer != this)
-		return issuer->getTaKey();
+	pki_x509 *owner = taKeyOwner();
+	if (owner != this)
+		return owner->getTaKey();
 
 	Transaction;
 	TransThrow();
@@ -1117,13 +1126,27 @@ void pki_x509::print(BioByteArray &bba, enum print_opt opt) const
 QStringList pki_x509::icsVEVENT_ca() const
 {
 	QStringList ics;
+
+	foreach(pki_base *pki, vcalendarObjects()) {
+		pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
+		if (crt)
+			ics << crt->icsVEVENT();
+		else
+			ics << static_cast<pki_crl *>(pki)->icsVEVENT();
+	}
+	return ics;
+}
+
+QList<pki_base *> pki_x509::vcalendarObjects() const
+{
+	QList<pki_base *> objects;
 	pki_crl *crl = NULL;
 
-	ics << icsVEVENT();
+	objects << const_cast<pki_x509 *>(this);
 	foreach(pki_base *p, childItems) {
 		pki_x509 *pki = static_cast<pki_x509 *>(p);
 		if (pki->getNotAfter() > a1time() && !isRevoked())
-			ics << pki->icsVEVENT();
+			objects << pki;
 	}
 
 	QList<pki_crl*> list = Store.sqlSELECTpki<pki_crl>(
@@ -1136,9 +1159,9 @@ QStringList pki_x509::icsVEVENT_ca() const
 			crl = pki;
 	}
 	if (crl)
-		ics << crl->icsVEVENT();
+		objects << crl;
 
-	return ics;
+	return objects;
 }
 
 QVariant pki_x509::getIcon(const dbheader *hd) const
