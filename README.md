@@ -33,8 +33,9 @@ To build XCA you need:
  - cmake: https://cmake.org (3.25 or higher)
  - Qt5 or Qt6: https://www.qt.io (5.10.1 or higher)
  - OpenSSL: https://www.openssl.org (4.1 or higher; this fork does not build
-   against OpenSSL 3 or LibreSSL). Point CMake to it with
-   `-DOPENSSL_ROOT_DIR=<prefix>` when the system OpenSSL is older.
+   against OpenSSL 3, and LibreSSL and BoringSSL are not supported). Point
+   CMake to it with `-DOPENSSL_ROOT_DIR=<prefix>` when the system OpenSSL is
+   older.
  - Sphinx-Build: https://www.sphinx-doc.org
 
 ### Linux / Unix
