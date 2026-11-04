@@ -260,6 +260,44 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
 					.arg(cmd_opts["hierarchy"]));
 	}
+	/* The audit controls (BTD-100), before the verification and the
+	 * export, so that both see their result */
+	if (cmd_opts.has("audit-checkpoint-interval")) {
+		QString value = cmd_opts["audit-checkpoint-interval"];
+		try {
+			QVariantMap m { { "setting", "audit_checkpoint_interval" } };
+			if (value == "current") {
+				m["value"] = AuditLog::checkpointInterval();
+			} else {
+				bool ok;
+				int n = value.toInt(&ok);
+				if (!ok)
+					throw serviceError("invalid_value", QObject::tr(
+						"The audit checkpoint interval must be a "
+						"number or 'current', not '%1'").arg(value));
+				m["old_value"] = AuditLog::checkpointInterval();
+				AuditLog::setCheckpointInterval(
+					ServiceContext::localUser(ServiceContext::cli), n);
+				m["new_value"] = AuditLog::checkpointInterval();
+			}
+			console_write(stdout, AuditLog::canonicalJson(m) + '\n');
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
+	if (cmd_opts.has("audit-rotate-key")) {
+		try {
+			AuditEntry e = AuditLog::rotateKey(
+				ServiceContext::localUser(ServiceContext::cli));
+			XCA_INFO(QObject::tr("Audit key rotated: checkpoint %1 hands "
+				"over to the new audit key %2")
+				.arg(e.seq).arg(e.params.value("next_key_id").toString()));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
 	/* Before the verification, so that it reports the adoption */
 	if (cmd_opts.has("audit-adopt")) {
 		try {
@@ -314,8 +352,11 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
 					"%1: %2\n")
 					.arg(skipped.code, skipped.reason).toUtf8());
-			/* Without --password the export only reads (BTD-70) */
-			else if (unsignedEntries > 0)
+			/* Without --password the export only reads (BTD-70);
+			 * a signed export leaves only its checkpoint row
+			 * unanchored and stays silent (BTD-134) */
+			else if (skipped.code == "audit_key_unavailable" &&
+				 unsignedEntries > 0)
 				console_write(stderr, QObject::tr(
 					"Warning: no database password given, no audit checkpoint signed; "
 					"the newest %1 audit entries are not covered by a checkpoint "
