@@ -113,8 +113,8 @@ do_qsql()
   otool -L $QT_DIR/plugins/sqldrivers/libqsqlmysql.dylib
 }
 
-OSSL_MAJOR="3"
-OSSL="openssl-3.4.1"
+OSSL_MAJOR="4"
+OSSL="openssl-4.1.0"
 XCA_DIR="$(cd `dirname $0`/.. && pwd)"
 TOP_DIR="`dirname $XCA_DIR`"
 QT_DIR="$TOP_DIR/6.8.3/macos"

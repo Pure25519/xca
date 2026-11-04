@@ -9,7 +9,7 @@ gap for every entry that a later checkpoint covers (PLAN.md section 6.3).
 | Entry action | When | Params |
 |---|---|---|
 | `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
-| `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100, at most 1000: the setting is not signed), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `signature` |
+| `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100, at most 1000; see below for a changed setting), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `checkpoint_interval` (BTD-133), `signature` |
 
 A checkpoint signs the entry just before it: `checkpoint_seq` and `checkpoint_hash` are that
 entry's `seq` and `hash`. The signature (Base64, Ed25519) covers the canonical JSON (RFC 8785) of
@@ -90,12 +90,30 @@ the number of entries it takes over without proof, and signs. The announcement i
 checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it as
 `adopted_entries`.
 
+## Interval and key rotation on the command line (BTD-100)
+
+```
+xca --no-gui --database pki.xdb --audit-checkpoint-interval current
+xca --no-gui --database pki.xdb --password file:db.pass --audit-checkpoint-interval 50
+xca --no-gui --database pki.xdb --password file:db.pass --audit-rotate-key
+```
+
+| Option | Effect |
+|---|---|
+| `--audit-checkpoint-interval current` | prints `{"setting":"audit_checkpoint_interval","value":N}`; needs no password |
+| `--audit-checkpoint-interval <n>` | sets the interval (`AuditLog::setCheckpointInterval()`), 1 to 1000 (the clamp of BTD-110); prints `{"new_value":…,"old_value":…,"setting":"audit_checkpoint_interval"}` and writes one `settings.update` entry with both values in clear text. Outside the range or not a number: `invalid_value`, exit 1; without a verified password: `missing_password`, exit 1; nothing is written then |
+| `--audit-rotate-key` | `AuditLog::rotateKey()`: announces a new key and signs a checkpoint with the old one that names it in `next_key_id`; the old key is retired. Without the password `audit_key_unavailable`, exit 1. `--audit-verify` afterwards lists both keys in `audit_keys` |
+
+The interval decides when the next automatic checkpoint is written. Both options run before
+`--audit-verify` and `--audit-export` of the same command. REST endpoints for both are a
+requirement for the REST work of Phase 3; there are none yet.
+
 ## Export with and without a password
 
 | `--audit-export` | Result |
 |---|---|
-| with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0 |
-| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. `--audit-verify` shows the same N as `unanchored_entries`, plus one when the log has a checkpoint (the checkpoint row itself, see below) |
+| with `--password` (or an unlocked database) | signs a checkpoint over the newest entry unless it is one, then exports; exit 0, no warning: only the checkpoint row itself is left unanchored, which carries no data of its own (`unanchored_entries` 1, BTD-134) |
+| without a password source | read only (BTD-70): no checkpoint, nothing written to the database; exports the log as it is, writes `Warning: no database password given, no audit checkpoint signed; the newest N audit entries are not covered …` to stderr; exit 0. N is `unanchored_entries` of `--audit-verify`, the checkpoint row of the last checkpoint included (BTD-134) |
 | with a wrong password source | `audit_password_rejected`, exit 1 |
 | a log no checkpoint may sign: the entries since the last checkpoint do not chain (`audit_chain_broken`), the announced key is gone (`audit_key_missing`) or the unsigned part is too long (`audit_checkpoint_missing`) | read only for forensics (BTD-112): every entry is exported (file or standard output), no checkpoint, nothing written to the database; stderr gets `Warning: the audit log was exported read-only, no audit checkpoint signed: <code>: <reason>`; **exit 1**, so a script does not take it for a clean export. `--audit-verify` reports the break (a deleted key alone leaves the chain intact) |
 
@@ -168,8 +186,15 @@ signed payload). At the first invalid checkpoint it reports
 A chain whose checkpoints all verify still fails with `reason` `checkpoint_missing`
 (`failed_checkpoint_seq` null, `first_broken_seq` the first entry that is not anchored) when
 checkpoints were deleted: `audit_keys` holds a key that no `audit.key_create` of the chain
-announces, or more than `audit_checkpoint_interval` + 1 entries are unanchored (a writer with the
-database password never leaves more). The revocation baseline written on the upgrade of an old
+announces, or more than interval + 1 entries are unanchored (a writer with the database password
+never leaves more). The interval is the `checkpoint_interval` the last valid checkpoint signed
+(BTD-133): the setting `audit_checkpoint_interval` lives unsigned in the same database, so raising
+it there cannot hide deleted checkpoints. Without a signed interval (no checkpoint yet, or only
+checkpoints written before BTD-133) the setting counts at most up to the default 100. A changed
+setting keeps the log valid: the writer checkpoints after the smaller of the setting and the
+signed interval, so a raise takes effect after one checkpoint signed it, a lowering at once. A log
+written without the password with the setting above 100 and no checkpoint yet fails after 101
+unsigned entries and needs `--audit-adopt`. The revocation baseline written on the upgrade of an old
 database does not count, but only when its `audit.init` counts exactly the `revocation.baseline`
 rows before it. A log written without the database password for longer than that fails the same
 way until it is adopted (above). An empty log with a row in `audit_keys` is a deleted log and

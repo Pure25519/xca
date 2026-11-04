@@ -49,7 +49,10 @@
 #ifndef __PROFILE_H
 #define __PROFILE_H
 
+#include <QDateTime>
 #include <QJsonObject>
+#include <QList>
+#include <QPair>
 #include <QString>
 #include <QStringList>
 
@@ -106,6 +109,16 @@ class Profile
 
 	/* The key type as the profile names it: rsa-2048, ec-p256, ... */
 	static QString keyType(const EVP_PKEY *pkey);
+
+	/* What of the profile contradicts a CA certificate with key type
+	 * keyType (as keyType() names it), pathLen (-1: none) and the
+	 * validity notBefore..notAfter (BTD-233): one pair (member, reason)
+	 * per mismatch of basic_constraints.ca, basic_constraints.path_len,
+	 * key_types and validity.max; empty when it fits. Compares only,
+	 * applies nothing. */
+	QList<QPair<QString, QString> > caMismatches(const QString &keyType,
+			int pathLen, const QDateTime &notBefore,
+			const QDateTime &notAfter) const;
 
 	/* request for key_source csr, key for key_source server; the
 	 * signer is the issuing CA. Throws serviceError for anything the

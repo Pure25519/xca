@@ -48,12 +48,13 @@ if(NOT checkpoints EQUAL 0)
   fail("the base log has ${checkpoints} checkpoints already")
 endif()
 
-# A signed log: a key and a checkpoint, then one unsigned entry
+# A signed log: a key and a checkpoint, then one unsigned entry. The
+# interval stays 2: a raised one would only count after a checkpoint
+# signed it (BTD-133), so the third key would be checkpointed at once.
 set(signed "${WORK}/signed.xdb")
 run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s1)
-sql("${signed}" out -c "INSERT INTO settings (key_, value) VALUES ('audit_checkpoint_interval', '1')")
+sql("${signed}" out -c "INSERT INTO settings (key_, value) VALUES ('audit_checkpoint_interval', '2')")
 run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s2)
-sql("${signed}" out -c "UPDATE settings SET value='100' WHERE key_='audit_checkpoint_interval'")
 run_xca("${signed}" rc out err ${pw} --keygen EC:prime256v1 --name fx-s3)
 sql("${signed}" checkpoints -c "SELECT COUNT(*) FROM audit_log WHERE action='audit.checkpoint'")
 sql("${signed}" last -c "SELECT action FROM audit_log ORDER BY seq DESC LIMIT 1")
