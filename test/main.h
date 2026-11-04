@@ -54,6 +54,9 @@ class test_main: public QObject
 	/* dialogParent.cpp */
 	void passwordDialogParent();
 
+	/* pinHexOption.cpp */
+	void pinHexOption();
+
 	/* dnBounds.cpp */
 	void dnUpperBounds();
 
