@@ -6,6 +6,10 @@
  * with the fixed expected JSON in the same folder. Only the creation date
  * is volatile: it is checked against the item and then set to the value
  * of the expected file. Ids are those of a fresh database in import order.
+ * The display text of extensions is not compared (BTD-182). gen.sh
+ * re-issues the certificates and the CRL with the same keys; afterwards
+ * the .actual files of a run in the temporary directory are the new
+ * expected files, after a review of their diff.
  */
 
 #include <QDir>
@@ -78,6 +82,7 @@ void test_service_json::importFixtures()
 	static const char * const files[] = {
 		"ca.crt", "ca.key", "device.crt", "device.csr", "ca.crl",
 		"device.pub", "rsa-enc.key", "ec.key", "own.key",
+		"rsa-pss.key",
 	};
 	for (const char *f : files) {
 		ImportSpec spec;
@@ -111,6 +116,41 @@ void test_service_json::noSecrets(const QJsonObject &doc)
 	}
 }
 
+/* The value of an extension is the display text of OpenSSL, which
+ * changes between OpenSSL versions (AKID with or without "keyid:", the
+ * names of extended key usages). It must be there but is not compared;
+ * name, oid, critical and everything else are (BTD-182). Returns the
+ * document without these texts; *missing names an extension without
+ * one. */
+static QJsonValue withoutExtensionText(const QJsonValue &v, QString *missing)
+{
+	if (v.isArray()) {
+		QJsonArray a;
+		for (const QJsonValue &e : v.toArray())
+			a.append(withoutExtensionText(e, missing));
+		return a;
+	}
+	if (!v.isObject())
+		return v;
+	QJsonObject o = v.toObject();
+	for (auto it = o.begin(); it != o.end(); ++it) {
+		if (it.key() != "extensions" || !it.value().isArray()) {
+			it.value() = withoutExtensionText(it.value(), missing);
+			continue;
+		}
+		QJsonArray exts;
+		for (const QJsonValue &e : it.value().toArray()) {
+			QJsonObject ext = e.toObject();
+			if (ext.value("value").toString().isEmpty())
+				*missing = ext.value("oid").toString();
+			ext.remove("value");
+			exts.append(ext);
+		}
+		it.value() = exts;
+	}
+	return o;
+}
+
 void test_service_json::compare(QJsonObject actual,
 			const QString &expectedFile, const pki_base *pki)
 {
@@ -140,13 +180,20 @@ void test_service_json::compare(QJsonObject actual,
 			.match(actual.value("created").toString()).hasMatch());
 		actual["created"] = expected.value("created");
 	}
+	QString missing;
+	QJsonObject full = actual;
+	actual = withoutExtensionText(actual, &missing).toObject();
+	QVERIFY2(missing.isEmpty(), CCHAR(QString("extension %1 has no value")
+		.arg(missing)));
+	QString ignored;
+	expected = withoutExtensionText(expected, &ignored).toObject();
 	if (actual != expected) {
 		QFile out(QDir::temp().filePath(expectedFile + ".actual"));
 		if (out.open(QIODevice::WriteOnly))
-			out.write(QJsonDocument(actual).toJson());
+			out.write(QJsonDocument(full).toJson());
 		QFAIL(CCHAR(QString("%1 differs, actual in %2:\n%3")
 			.arg(expectedFile).arg(out.fileName())
-			.arg(QString(QJsonDocument(actual).toJson()))));
+			.arg(QString(QJsonDocument(full).toJson()))));
 	}
 }
 
@@ -334,6 +381,8 @@ void test_service_json::keys()
 		{ "rsa-enc", "rsa-enc.key.json" },
 		{ "ec", "ec.key.json" },
 		{ "own", "own.key.json" },
+		/* MINOR 10 of the review of BTD-39 (BTD-182) */
+		{ "rsa-pss", "rsa-pss.key.json" },
 	};
 	for (const auto &k : keys) {
 		pki_key *key = dynamic_cast<pki_key *>(item("key", k.name));

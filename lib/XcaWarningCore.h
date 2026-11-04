@@ -129,14 +129,7 @@ class xcaWarning
 		if (err.isValid())
 			gui->sqlerror(err);
 	}
-	static void error(const errorEx &err)
-	{
-		if (err.isEmpty())
-			return;
-		QString msg = QObject::tr("The following error occurred:") +
-			"\n" + err.getString();
-		gui->error(msg);
-	}
+	static void error(const errorEx &err);
 	static void setGui(class xcaWarning_i *g)
 	{
 		delete gui;

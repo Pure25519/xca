@@ -83,7 +83,7 @@ macro(CliScriptTest name)
 endmacro()
 
 # Scripts that need the openssl program; without it they are skipped
-set(cli_needs_openssl password_sources)
+set(cli_needs_openssl password_sources json_output)
 
 file(GLOB cli_scripts CONFIGURE_DEPENDS ${SERVICE_TEST_DIR}/cli_*.cmake)
 list(SORT cli_scripts)

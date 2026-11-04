@@ -14,6 +14,20 @@
 
 class xcaWarning_i *xcaWarning::gui;
 
+void xcaWarning::error(const errorEx &err)
+{
+	if (err.isEmpty())
+		return;
+	/* --json: the error object of the exception, with its code and
+	 * without the prefix of the GUI (BTD-182) */
+	if (JsonReport::active()) {
+		JsonReport::write(stderr, JsonReport::error(err));
+		return;
+	}
+	gui->error(QObject::tr("The following error occurred:") + "\n" +
+		err.getString());
+}
+
 bool xcaWarning::confirm(ServiceContext &ctx, const QString &id,
 			const QString &msg)
 {

@@ -376,8 +376,16 @@ QJsonObject JsonReport::crl(const pki_crl *crl)
 	o["this_update"] = timestamp(crl->getLastUpdate());
 	const ASN1_TIME *next = X509_CRL_get0_nextUpdate(c);
 	o["next_update"] = next ? timestamp(a1time(next)) : QJsonValue();
-	o["crl_number"] = crl->getCrlNumber(&number) ?
-			QJsonValue(number.toDec().toLongLong()) : QJsonValue();
+	/* exact: an integer up to 2^53-1, which every JSON parser keeps,
+	 * the decimal string beyond (BTD-182) */
+	if (crl->getCrlNumber(&number)) {
+		bool ok;
+		qint64 n = number.toDec().toLongLong(&ok);
+		o["crl_number"] = ok && n <= (Q_INT64_C(1) << 53) - 1 ?
+			QJsonValue(n) : QJsonValue(number.toDec());
+	} else {
+		o["crl_number"] = QJsonValue();
+	}
 	X509_CRL_get0_signature(c, nullptr, &alg);
 	o["signature_algorithm"] = algorithm(alg);
 
@@ -623,9 +631,20 @@ void JsonReport::writeTo(const QString &path, const QJsonObject &doc)
 		write(stdout, doc);
 		return;
 	}
+	/* every failure is write_failed, also the errorEx of XFile when it
+	 * cannot open the file (BTD-182) */
 	QByteArray data = line(doc);
 	XFile file(path);
-	if (!file.open_write() || file.write(data) != data.size())
-		throw errorEx(QObject::tr("Failed to write '%1'").arg(path));
+	bool ok;
+	QString why;
+	try {
+		ok = file.open_write() && file.write(data) == data.size();
+	} catch (errorEx &err) {
+		ok = false;
+		why = err.getString();
+	}
+	if (!ok)
+		throw serviceError("write_failed", why.isEmpty() ?
+			QObject::tr("Failed to write '%1'").arg(path) : why);
 	file.close();
 }
