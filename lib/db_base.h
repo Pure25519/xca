@@ -216,19 +216,31 @@ class db_base: public QAbstractItemModel
 		 * deleted or none, then one failure entry names the object
 		 * that failed and memory is unchanged (BTD-130). The
 		 * confirmation (question item.delete) belongs to the caller.
-		 * fromToken: after the checks each object is also deleted on
-		 * its token (pki_base::deleteFromToken(), which may ask), and
-		 * its entry records on_token; a failure on the token is
-		 * returned in tokenErrors and recorded as warning
-		 * token_delete_failed (BTD-128). The pointers in items are
-		 * invalid after a successful call. */
+		 * fromToken: each object is also deleted on its token, in
+		 * this order (BTD-272, BTD-273): after the checks and before
+		 * the transaction pki_base::prepareTokenDeletion() asks, logs
+		 * in and finds the objects; the entry of each object records
+		 * on_token (found and confirmed); after the COMMIT the found
+		 * objects are deleted on the token, so a rollback leaves the
+		 * token unchanged. A failure while preparing is returned in
+		 * tokenErrors and recorded as warning token_delete_failed on
+		 * the entry (BTD-128); a failure on the token after the COMMIT
+		 * is returned in tokenErrors and recorded as one failure entry
+		 * token.delete (error token_error) per object left on its
+		 * token. Called inside a transaction, the token step waits for
+		 * the outermost COMMIT and its errors reach only the audit log.
+		 * The pointers in items are invalid after a successful call. */
 		DeleteResult deleteItems(const ServiceContext &ctx,
 				const QList<pki_base *> &items,
 				bool fromToken = false);
 		/* Tests only (BTD-128): replaces pki_base::deleteFromToken()
-		 * in deleteItems(); true if the object was deleted on a token,
-		 * an exception is a failure on the token */
+		 * in db_token::deleteOnToken(); true if the object was deleted
+		 * on a token, an exception is a failure on the token */
 		static std::function<bool(pki_base *)> tokenDeleteHook;
+		/* Tests only (BTD-272): replaces
+		 * pki_base::prepareTokenDeletion() in deleteItems(); an
+		 * exception is a failure while preparing */
+		static std::function<TokenDeletion(pki_base *)> tokenPrepareHook;
 		static pki_base *fromIndex(const QModelIndex &index)
 		{
 			if (!index.isValid())

@@ -176,8 +176,10 @@ Templates, rename and delete (BTD-35):
   BTD-128); `object.update_comment` `name` (never the comment); `object.delete` and
   `template.delete` `name`, `dependents` (objects that stay and referred to it),
   `revocations` (certificates only: the revocation rows it had as a CA), `on_token` (the GUI
-  deletion also deleted it on a token) and `warning` `token_delete_failed` (the deletion on
-  the token failed, the database deletion went on).
+  deletion found it on a token and the user confirmed deleting it there) and `warning`
+  `token_delete_failed` (preparing the deletion on the token failed, the database deletion went
+  on); `token.delete` (failure, `token_error`) `name`, `on_token`: the deletion on the token
+  after the COMMIT failed, the object is left on its token (BTD-272).
 - `deleteItems()` deletes all objects of the call in one transaction or none. The objects that
   refer to a deleted one are handled as XCA always did and listed in `DeleteResult::dependents`:
   certificates and requests lose their private key; certificates lose their issuer (and move to
@@ -186,8 +188,17 @@ Templates, rename and delete (BTD-35):
   certificate as the removal of its revocation rows. The question `item.delete` stays with the
   GUI caller (`XcaTreeView::deleteItems`, `xcaWarning::confirmOkCancel()` records the answer in
   the `ServiceContext`). With `fromToken` (the GUI's delete) `deleteItems()` also deletes each
-  object on its token (`pki_base::deleteFromToken()`, which may ask), after all checks, so a
-  rejected call never touches a token (BTD-128). `db_token::rename()` updates the database
+  object on its token, in three steps (BTD-128, BTD-272, BTD-273): after all checks, so a
+  rejected call never touches a token, and before the transaction
+  `pki_base::prepareTokenDeletion()` asks (`token.delete_key`, `token.delete_certificate`), logs
+  in and finds the objects, so no question or PIN dialog runs while the database is locked;
+  inside the transaction each entry records `on_token`; after the COMMIT
+  (`DbTransaction::afterCommit()`) the found objects are deleted on the token, so a rollback
+  leaves every token unchanged. A "no" at the question of the token keeps the object there and
+  deletes the row (`on_token` false): `item.delete` already confirmed that. A failure on the
+  token after the COMMIT is one `token.delete` failure entry per object left on its token and a
+  line in `DeleteResult::tokenErrors`; inside a caller's transaction the token step waits for
+  the caller's COMMIT and its errors reach only the audit log. `db_token::rename()` updates the database
   first and the label on the token last. Deleting on a token only, with the database row kept
   (Delete from token of a certificate, the import dialog), goes through the static
   `db_token::deleteOnToken()`: one `object.delete` with `on_token` and the token object as
