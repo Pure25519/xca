@@ -173,8 +173,18 @@ void KeyTreeView::toToken()
 		QString msg = tr("Shall the original key '%1' be replaced by the key on the token?\nThis will delete the key '%1' and make it unexportable").
 			arg(key->getIntName());
 		if (XCA_YESNO("token.replace_key", msg)) {
-			keys()->replaceWithToken(ServiceContext::localUser(
-				ServiceContext::gui), key, card);
+			/* all or nothing (BTD-217): on an error the software
+			 * key and its links are unchanged, the copy written to
+			 * the token stays there */
+			try {
+				keys()->replaceWithToken(ServiceContext::localUser(
+					ServiceContext::gui), key, card);
+			} catch (errorEx &err) {
+				err.appendString(tr("The key '%1' is unchanged in "
+					"the database; the copy on the token "
+					"remains.").arg(key->getIntName()));
+				throw;
+			}
 			card = NULL;
 		}
 	} catch (errorEx &err) {
