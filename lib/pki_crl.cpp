@@ -278,7 +278,7 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 			tr("There is no private key to sign the revocation list"));
 	AuditKey::refuseSigning(key);
 	X509_CRL_sort(crl);
-	pkey = key->decryptKey();
+	pkey = KeyUnlock::decrypt(key);
 	/* 0 leaves the CRL unsigned (BTD-171) */
 	int size = X509_CRL_sign(crl, pkey, key->signatureDigest(digest));
 	EVP_PKEY_free(pkey);

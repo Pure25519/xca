@@ -89,6 +89,25 @@ revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` en
 row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those
 entries; a rejection writes one `ca.set_revocations` failure entry.
 
+No user interaction inside a transaction (BTD-273): a question (`XCA_YESNO`, `XCA_OKCANCEL`,
+`xcaWarning::confirm`), a password or PIN prompt (`PwDialogCore::execute`, `pkcs11::tokenLogin`,
+PIN pad) runs before the transaction that needs its answer, never while the database is locked;
+a REST request of Phase 3 cannot answer a dialog at all. The patterns: `KeyUnlock` decrypts the
+signing key before the transaction of an issuance, a renewal (every signer), a CRL and a request,
+and `pki_x509::sign()`, `pki_crl::sign()` and `pki_x509req::createReq()` take that key without
+asking again (`KeyUnlock::decrypt()`); `auditedTransaction()` takes a prepare step that runs
+before the transaction and is audited like the work; the token steps are prepared (question,
+login, finding the objects) before the transaction and applied inside it or after the COMMIT
+(`TokenDeletion` for `deleteItems()`, BTD-272; `TokenRename` for `db_token::rename()`; the token
+session stays open in the prepared step, because closing the last session logs out). The service
+tests enforce it: the strict password dialog and the strict questions of
+`test/service/ServiceTestCase.cpp` record a violation when they run inside a transaction.
+Known exceptions with their own tickets: bxc-pki runs every writing command inside one outer
+transaction (`runInTransaction`), so with `--interactive` a password or PIN read from the terminal
+waits with the lock held; information boxes (`XCA_INFO`) inside the import transaction; key
+encryption and decryption with an unverified database password (import, change of the database
+password).
+
 Memory follows the database (BTD-130): after a rollback the in-memory store and the views show
 what the database holds. A change of memory that later steps of the transaction need (a new object
 in the store and the views, a link set by `inToCont()`, a revocation flag) is made at once and

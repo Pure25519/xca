@@ -109,9 +109,18 @@ void pki_base::fload(const QString &fname)
 }
 
 void pki_base::fromBytes(const QByteArray &, const QString &) { }
-int pki_base::renameOnToken(const slotid &, const QString &)
+TokenRename pki_base::prepareTokenRename(const slotid &, const QString &)
 {
-	return 0;
+	return TokenRename();
+}
+
+int pki_base::renameOnToken(const slotid &slot, const QString &name)
+{
+	TokenRename r = prepareTokenRename(slot, name);
+	if (!r.found)
+		return 0;
+	r.apply();
+	return 1;
 }
 
 QString pki_base::getUnderlinedName() const
