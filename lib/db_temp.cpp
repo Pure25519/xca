@@ -13,6 +13,7 @@
 #include "audit.h"
 #include "exception.h"
 #include "template.h"
+#include "issuance_checks.h"
 #include "XcaWarningCore.h"
 #include <QDir>
 #include <QFileInfo>
@@ -113,6 +114,9 @@ pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
 	try {
 		auditedTransaction(ctx, "template.create", "template",
 				QString(), params, [&]() {
+			/* the rule of the issuance, already when it is stored
+			 * (BTD-131) */
+			IssuanceChecks::pathLength(spec.extensions);
 			QSqlError e = temp->insertSql();
 			if (e.isValid())
 				throw serviceError("database_error",
@@ -150,8 +154,18 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			if (!isStored(temp))
 				throw serviceError("missing_template",
 					tr("The template is not in the database"));
+			IssuanceChecks::pathLength(spec.extensions);
 			XSqlQuery q;
+			QByteArray before = temp->toB64Data();
+			QString beforeName = temp->getIntName();
+			QString beforeComment = temp->getComment();
 			spec.toTemplate(temp);
+			/* nothing changed: no write and no template.update entry
+			 * (BTD-131) */
+			if (temp->toB64Data() == before &&
+			    temp->getIntName() == beforeName &&
+			    temp->getComment() == beforeComment)
+				return;
 			DbTransaction::onRollback([temp, old]() {
 				old.toTemplate(temp);
 			});

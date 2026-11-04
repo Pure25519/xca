@@ -1,6 +1,10 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-131: saving a template without a change writes nothing and no
+   template.update entry, and the EKUs are stored in one order; a CA
+   template with a path length that is not a number of 0 or more is
+   refused with invalid_path_length when it is stored.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a
