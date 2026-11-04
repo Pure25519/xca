@@ -66,11 +66,23 @@ set(CMAKE_AUTOUIC_SEARCH_PATHS "${PROJECT_SOURCE_DIR}/ui")
 set(CMAKE_AUTOUIC ON)
 add_compile_definitions(QT_MESSAGELOGCONTEXT)
 
-add_compile_options(-Wall -Wextra -Wno-unknown-pragmas)
-if (ADDRESS_SANITIZER)
-  add_compile_options(-fsanitize=address -O1 -fno-omit-frame-pointer -g)
-  set(ASAN_LIB -fsanitize=address)
+# Warning flags per compiler (BTD-252): MSVC takes its own spelling, and
+# /utf-8 because the sources are UTF-8
+if(MSVC)
+  add_compile_options(/W3 /utf-8)
+else()
+  add_compile_options(-Wall -Wextra -Wno-unknown-pragmas)
 endif()
+if (ADDRESS_SANITIZER)
+  if(MSVC)
+    add_compile_options(/fsanitize=address)
+  else()
+    add_compile_options(-fsanitize=address -O1 -fno-omit-frame-pointer -g)
+    set(ASAN_LIB -fsanitize=address)
+  endif()
+endif()
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 if (CMAKE_CXX_COMPILER_ID MATCHES Clang|GNU)
   add_compile_options(-fmacro-prefix-map=${PROJECT_SOURCE_DIR}=.)
   # Keep the build free of deprecated OpenSSL calls (BTD-20); Qt
@@ -104,6 +116,8 @@ if (APPLE)
   endif()
 elseif(WIN32)
   if (NOT CMAKE_PREFIX_PATH)
+    # release/build-openssl-msvc.ps1 installs OpenSSL 4.1 there; an older
+    # OpenSSL found in that place is refused by find_package below
     set(CMAKE_PREFIX_PATH $ENV{UserProfile} $ENV{PROGRAMFILES}/OpenSSL-Win64)
   endif()
   file(TO_CMAKE_PATH $ENV{WINDIR}/system32 SYSTEM32)
@@ -120,6 +134,9 @@ find_package(${QT} REQUIRED COMPONENTS Core Widgets Sql Help LinguistTools)
 find_package(${QT} QUIET COMPONENTS Test)
 
 include(cmake/openssl_v_err.cmake)
+include(cmake/openssl_dll.cmake)
+# the libcrypto DLL the Windows packages ship (install step, misc/dynamic.wxs)
+xca_openssl_crypto_dll(OPENSSL_CRYPTO_DLL ${OPENSSL_VERSION} ${CMAKE_SYSTEM_PROCESSOR})
 if (${QT_VERSION} VERSION_LESS 5.10.0)
   message(FATAL_ERROR "Qt-${QT_VERSION} not supported, please use at least Qt-5.10.1")
 endif()
@@ -288,7 +305,8 @@ elseif(WIN32)
      ${CMAKE_BINARY_DIR}/misc/misc.wxs
      ${CMAKE_BINARY_DIR}/misc/dynamic.wxs
   )
-  target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -mwindows -MD)
+  # a GUI program without a console window, for MSVC and MinGW alike (BTD-252)
+  set_target_properties(${CMAKE_PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
   install(DIRECTORY
       ${CMAKE_BINARY_DIR}/platforms
       ${CMAKE_BINARY_DIR}/sqldrivers
@@ -300,13 +318,19 @@ elseif(WIN32)
         ${CMAKE_BINARY_DIR}/${QT}Help.dll
         ${CMAKE_BINARY_DIR}/${QT}Sql.dll
         ${CMAKE_BINARY_DIR}/${QT}Widgets.dll
-        ${CMAKE_BINARY_DIR}/libgcc_s_seh-1.dll
-        ${CMAKE_BINARY_DIR}/libstdc++-6.dll
-        ${CMAKE_BINARY_DIR}/libwinpthread-1.dll
         ${SYSTEM32}/vcruntime140.dll
-        ${OPENSSL_ROOT_DIR}/bin/libcrypto-3-x64.dll
+        ${OPENSSL_ROOT_DIR}/bin/${OPENSSL_CRYPTO_DLL}
       DESTINATION ${RUNTIME_DEST}
   )
+  # the runtime of the MinGW compiler, which windeployqt copies next to
+  # the program; an MSVC build has none of these files
+  if(MINGW)
+    install(FILES ${CMAKE_BINARY_DIR}/libgcc_s_seh-1.dll
+          ${CMAKE_BINARY_DIR}/libstdc++-6.dll
+          ${CMAKE_BINARY_DIR}/libwinpthread-1.dll
+        DESTINATION ${RUNTIME_DEST}
+    )
+  endif()
   install(CODE "execute_process(COMMAND cmake -E chdir \${CMAKE_INSTALL_PREFIX} tar cvf ${RUNTIME_DEST}.zip --format=zip -- ${RUNTIME_DEST})")
   set(CMAKE_INSTALL_PREFIX ${CMAKE_BINARY_DIR})
 
