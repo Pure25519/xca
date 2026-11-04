@@ -162,7 +162,8 @@ class pki_x509 : public pki_x509super
 		TokenDeletion prepareTokenDeletion();
 		TokenDeletion prepareTokenDeletion(const slotid &slot);
 		QString getMsg(msg_type msg, int n = 1) const;
-		int renameOnToken(const slotid &slot, const QString &name);
+		TokenRename prepareTokenRename(const slotid &slot,
+				const QString &name);
 		bool pem(BioByteArray &b, const ExportOptions &opts);
 		QVariant bg_color(const dbheader *hd) const;
 		void mergeRevList(x509revList &l);

@@ -65,6 +65,18 @@ struct TokenDeletion
 	std::function<void()> destroy{};
 };
 
+/* Renaming an object on its token in two steps (BTD-273): prepare
+ * logs in to the token and finds the objects, before the database
+ * transaction; apply() writes the label, inside the transaction after
+ * the database, and throws errorEx on a failure. apply() keeps the token
+ * session (and so the login) itself. found is false when the object is
+ * not on the token or the login failed. */
+struct TokenRename
+{
+	bool found{};
+	std::function<void()> apply{};
+};
+
 class pki_base : public QObject
 {
 		Q_OBJECT
@@ -213,7 +225,12 @@ class pki_base : public QObject
 		/* the first step of deleting on the token, see TokenDeletion */
 		virtual TokenDeletion prepareTokenDeletion();
 		virtual TokenDeletion prepareTokenDeletion(const slotid &);
-		virtual int renameOnToken(const slotid &, const QString &);
+		/* 1 if the object was renamed on the token; prepares and
+		 * applies at once */
+		int renameOnToken(const slotid &slot, const QString &name);
+		/* the first step of renaming on the token, see TokenRename */
+		virtual TokenRename prepareTokenRename(const slotid &,
+				const QString &name);
 
 		/* Import / Export management */
 		/* The clipboard text; a private key with the ML-DSA encoding of

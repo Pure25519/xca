@@ -138,7 +138,7 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	}
 	pki_openssl_error();
 
-	privkey = key->decryptKey();
+	privkey = KeyUnlock::decrypt(key);
 	/* 0 leaves the request unsigned (BTD-171) */
 	int size = X509_REQ_sign(request, privkey,
 				key->signatureDigest(digest));

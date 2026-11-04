@@ -508,12 +508,15 @@ class AuditFailureCapture
  * "failure" with the serviceError code (internal_error for any other
  * exception) is appended and the exception is rethrown. params is read
  * only then, so work() may complete it. */
-template <class Work>
+template <class Prepare, class Work>
 void auditedTransaction(const ServiceContext &ctx, const QString &action,
 		const QString &objectType, const QString &objectId,
-		const AuditParams &params, Work work)
+		const AuditParams &params, Prepare prepare, Work work)
 {
 	try {
+		/* questions, passwords and PINs before the transaction
+		 * (BTD-273); a failure here is audited like one of work() */
+		prepare();
 		Transaction;
 		TransThrow();
 		work();
@@ -527,6 +530,15 @@ void auditedTransaction(const ServiceContext &ctx, const QString &action,
 				params, "internal_error");
 		throw;
 	}
+}
+
+template <class Work>
+void auditedTransaction(const ServiceContext &ctx, const QString &action,
+		const QString &objectType, const QString &objectId,
+		const AuditParams &params, Work work)
+{
+	auditedTransaction(ctx, action, objectType, objectId, params,
+			[]() { }, work);
 }
 
 #endif

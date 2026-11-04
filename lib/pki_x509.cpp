@@ -616,22 +616,27 @@ TokenDeletion pki_x509::prepareTokenDeletion(const slotid &slot)
 	return d;
 }
 
-int pki_x509::renameOnToken(const slotid &slot, const QString &name)
+TokenRename pki_x509::prepareTokenRename(const slotid &slot,
+			const QString &name)
 {
+	/* the session stays open, and logged in, until apply() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	pkcs11 p11;
-	p11.startSession(slot, true);
 	pk11_attlist attrs = objectAttributes();
-
-	QList<CK_OBJECT_HANDLE> objs = p11.objectList(attrs);
+	QList<CK_OBJECT_HANDLE> objs = p11->objectList(attrs);
 	if (!objs.count())
-		return 0;
+		return TokenRename();
+	if (!p11->tokenLoginForModification())
+		return TokenRename();
 
-	pk11_attr_data label(CKA_LABEL, name.toUtf8());
-	if (!p11.tokenLoginForModification())
-		return 0;
-	p11.storeAttribute(label, objs[0]);
-	return 1;
+	TokenRename r;
+	r.found = true;
+	r.apply = [p11, objs, name]() {
+		pk11_attr_data label(CKA_LABEL, name.toUtf8());
+		p11->storeAttribute(label, objs[0]);
+	};
+	return r;
 }
 
 void pki_x509::setNotBefore(const a1time &a)
@@ -732,7 +737,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 		my_error(tr("There is no key for signing !"));
 	}
 	AuditKey::refuseSigning(signkey);
-	tkey = signkey->decryptKey();
+	tkey = KeyUnlock::decrypt(signkey);
 	pki_openssl_error();
 	/* X509_sign() returns the signature size or 0: a failure leaves
 	 * the certificate unsigned and its DER empty (BTD-171) */

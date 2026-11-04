@@ -365,31 +365,34 @@ TokenDeletion pki_scard::prepareTokenDeletion(const slotid &slot)
 	return d;
 }
 
-int pki_scard::renameOnToken(const slotid &slot, const QString &name)
+TokenRename pki_scard::prepareTokenRename(const slotid &slot,
+			const QString &name)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
-	QList<CK_OBJECT_HANDLE> objs;
+	/* the session stays open, and logged in, until apply() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	if (!p11.tokenLoginForModification())
-		return 0;
-	pk11_attr_data label(CKA_LABEL, name.toUtf8());
+	if (!p11->tokenLoginForModification())
+		return TokenRename();
 
 	/* Private key */
 	pk11_attlist attrs = objectAttributes(true);
-
-	objs = p11.objectList(attrs);
-	if (!objs.count())
-		return 0;
-	p11.storeAttribute(label, objs[0]);
-
+	QList<CK_OBJECT_HANDLE> priv = p11->objectList(attrs);
+	if (!priv.count())
+		return TokenRename();
 	/* Public key */
 	attrs = objectAttributes(false);
-	objs = p11.objectList(attrs);
-	if (objs.count())
-		p11.storeAttribute(label, objs[0]);
+	QList<CK_OBJECT_HANDLE> pub = p11->objectList(attrs);
 
-	return 1;
+	TokenRename r;
+	r.found = true;
+	r.apply = [p11, priv, pub, name]() {
+		pk11_attr_data label(CKA_LABEL, name.toUtf8());
+		p11->storeAttribute(label, priv[0]);
+		if (pub.count())
+			p11->storeAttribute(label, pub[0]);
+	};
+	return r;
 }
 
 void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)

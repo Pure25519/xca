@@ -116,6 +116,7 @@ class test_service_objects : public ServiceTestCase
 	void deleteOnTokenAfterCommitFails();
 	void deleteOnTokenDeclined();
 	void tokenRenameObjectId();
+	void tokenRenameLoginFirst();
 	void tokenRenameDatabaseError();
 	void replaceKeyConfirmed();
 	void deleteOnlyOnToken();
@@ -129,6 +130,7 @@ void test_service_objects::cleanup()
 	db_base::tokenDeleteHook = nullptr;
 	db_base::tokenPrepareHook = nullptr;
 	db_token::tokenRenameHook = nullptr;
+	db_token::tokenRenamePrepareHook = nullptr;
 	ServiceTestCase::cleanup();
 }
 
@@ -784,6 +786,42 @@ void test_service_objects::tokenRenameObjectId()
 	QCOMPARE(e.result, QString("success"));
 	QCOMPARE(e.objectId, QString("c0ffee"));
 	QCOMPARE(e.params.value("on_token").toBool(), true);
+	verifyChain();
+}
+
+/* BTD-273: the login of the token (prepare) runs before the transaction,
+ * the label is written inside it, after the database. Before, both ran
+ * inside the transaction. */
+void test_service_objects::tokenRenameLoginFirst()
+{
+	TokenList tokens;
+	TokenObject *obj = new TokenObject("on the token", "c0ffee");
+	tokens.add(obj);
+	bool preparedOutside = false, appliedInside = false;
+	db_token::tokenRenamePrepareHook = [&](pki_base *, const QString &) {
+		preparedOutside = !DbTransaction::active();
+		TokenRename r;
+		r.found = true;
+		r.apply = [&]() { appliedInside = DbTransaction::active(); };
+		return r;
+	};
+	tokens.rename(ctx, obj, "renamed after the login");
+	QVERIFY(preparedOutside);
+	QVERIFY(appliedInside);
+	QCOMPARE(last().result, QString("success"));
+
+	/* not on the token or the login failed: nothing renamed */
+	db_token::tokenRenamePrepareHook = [](pki_base *, const QString &) {
+		return TokenRename();
+	};
+	try {
+		tokens.rename(ctx, obj, "not renamed");
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("token_error"));
+	}
+	QCOMPARE(obj->getIntName(), QString("renamed after the login"));
+	QCOMPARE(last().errorCode, QString("token_error"));
 	verifyChain();
 }
 

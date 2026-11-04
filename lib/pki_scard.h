@@ -94,7 +94,8 @@ class pki_scard: public pki_key
 		TokenDeletion prepareTokenDeletion();
 		TokenDeletion prepareTokenDeletion(const slotid &slot);
 		void store_token(const slotid &slot, EVP_PKEY *pkey);
-		int renameOnToken(const slotid &slot, const QString &name);
+		TokenRename prepareTokenRename(const slotid &slot,
+				const QString &name);
 		QString getMsg(msg_type msg, int n = 1) const;
 		bool visible() const;
 		QSqlError insertSqlData();

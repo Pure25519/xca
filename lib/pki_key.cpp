@@ -821,3 +821,30 @@ void pki_key::print(BioByteArray &bba, enum print_opt opt) const
 		break;
 	}
 }
+
+QHash<const pki_key *, EVP_PKEY *> KeyUnlock::unlocked;
+
+void KeyUnlock::add(const pki_key *key)
+{
+	if (!key || key->isPubKey() || unlocked.contains(key))
+		return;
+	EVP_PKEY *pkey = key->decryptKey();
+	if (!pkey)
+		return;
+	unlocked[key] = pkey;
+	keys << key;
+}
+
+KeyUnlock::~KeyUnlock()
+{
+	for (const pki_key *key : keys)
+		EVP_PKEY_free(unlocked.take(key));
+}
+
+EVP_PKEY *KeyUnlock::decrypt(const pki_key *key)
+{
+	EVP_PKEY *pkey = unlocked.value(key);
+	if (pkey && EVP_PKEY_up_ref(pkey) == 1)
+		return pkey;
+	return key->decryptKey();
+}

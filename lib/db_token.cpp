@@ -9,6 +9,8 @@
 #include "XcaWarningCore.h"
 
 std::function<bool(pki_base *, const QString &)> db_token::tokenRenameHook{};
+std::function<TokenRename(pki_base *, const QString &)>
+	db_token::tokenRenamePrepareHook{};
 
 db_token::db_token() : db_base("manageTokens")
 {
@@ -107,11 +109,31 @@ void db_token::rename(const ServiceContext &ctx, pki_base *pki,
 	params.set("name", name);
 	params.set("old_name", oldName);
 	params.set("on_token", true);
+	TokenRename change;
+	auto notRenamed = [oldName]() {
+		return serviceError("token_error",
+			tr("The object '%1' was not renamed on the token")
+				.arg(oldName));
+	};
 	auditedTransaction(ctx, "object.rename", auditObjectType(pki),
 				objectId, params, [&]() {
 		if (!pki || rootItem->indexOf(pki) == -1)
 			throw serviceError("missing_object",
 				tr("The item is not on the token"));
+		/* the login of the token before the transaction: no PIN
+		 * dialog while the database is locked (BTD-273) */
+		if (tokenRenamePrepareHook) {
+			change = tokenRenamePrepareHook(pki, name);
+		} else if (tokenRenameHook) {
+			change.found = true;
+			change.apply = [pki, name, notRenamed]() {
+				if (!tokenRenameHook(pki, name))
+					throw notRenamed();
+			};
+		} else {
+			change = pki->prepareTokenRename(slot, name);
+		}
+	}, [&]() {
 		/* The database first and the label on the token last: a
 		 * database failure leaves the token as it was, a token
 		 * failure rolls the database back (BTD-128) */
@@ -120,11 +142,9 @@ void db_token::rename(const ServiceContext &ctx, pki_base *pki,
 			pki->setIntName(oldName);
 		});
 		rename_token_in_database(dynamic_cast<pki_scard*>(pki));
-		if (!(tokenRenameHook ? tokenRenameHook(pki, name) :
-				pki->renameOnToken(slot, name)))
-			throw serviceError("token_error",
-				tr("The object '%1' was not renamed on the token")
-					.arg(oldName));
+		if (!change.found)
+			throw notRenamed();
+		change.apply();
 		AuditLog::append(ctx, "object.rename", auditObjectType(pki),
 				objectId, params);
 	});
