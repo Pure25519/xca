@@ -123,9 +123,12 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 			c.item->getSqlItemId().toLongLong(), c.ext);
 	bool encrypted = xport->match_all(F_CRYPT);
 
-	if (o.has("pkcs12-algorithm") && format != "p12")
-		throw usageError("conflicting_options", QObject::tr(
-			"--pkcs12-algorithm needs --format p12"));
+	for (const char *p12opt : { "pkcs12-algorithm", "pkcs12-mac",
+				    "pkcs12-iterations" }) {
+		if (o.has(p12opt) && format != "p12")
+			throw usageError("conflicting_options", QObject::tr(
+				"--%1 needs --format p12").arg(p12opt));
+	}
 	if ((o.has("key-unencrypted") || o.has("legacy-key-pem")) &&
 	    format != "pkcs8")
 		throw usageError("conflicting_options", QObject::tr(
@@ -137,6 +140,8 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 	spec.format = xport;
 	spec.publishedFile = path;
 	spec.pkcs12Algorithm = o.value("pkcs12-algorithm");
+	spec.pkcs12Mac = o.value("pkcs12-mac");
+	spec.pkcs12Iterations = o.value("pkcs12-iterations").toInt();
 	spec.privateKeyFormat = o.value("mldsa-key-format");
 	db_base *model = Database.modelForPki(c.item);
 	/* --plan: the option checks of the export service, so that it
@@ -175,9 +180,13 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 	QJsonObject info;
 	info["format"] = format;
 	info["encrypted"] = encrypted;
-	if (xport->match_all(F_PKCS12))
-		info["pkcs12_algorithm"] = spec.pkcs12Algorithm.isEmpty() ?
-			encAlgo::forExport().name() : spec.pkcs12Algorithm;
+	if (xport->match_all(F_PKCS12)) {
+		/* as the audit entry names them */
+		Pkcs12Protection p12 = pkcs12Protection(spec);
+		info["pkcs12_algorithm"] = p12.algorithm;
+		info["pkcs12_mac"] = p12.mac;
+		info["pkcs12_iterations"] = p12.iterations;
+	}
 	if (!mlDsa.isEmpty())
 		info["ml_dsa_encoding"] = mlDsa.values().join(",");
 	ctx.files->add(path, c.kind, c.item, data, c.secret, info);
@@ -754,6 +763,16 @@ void registerExportCommands(Registry &r)
 			QObject::tr("p12: another encryption, e.g. "
 			"PBE-SHA1-3DES for a legacy reader (default "
 			"AES-256-CBC)")),
+		opt("pkcs12-mac", OptionSpec::string, "<mac>",
+			QObject::tr("p12: hmac-sha256 (default) or pbmac1 "
+			"(RFC 9579; OpenSSL 3.4 and newer read it, older "
+			"OpenSSL, Windows, Java and many devices do not)")),
+		opt("pkcs12-iterations", OptionSpec::integer, "<n>",
+			QObject::tr("p12: PBKDF2 iterations of encryption and "
+			"MAC, %1 to %2 (default: the setting "
+			"pkcs12_iterations, %1)")
+			.arg(pki_pkcs12::minIterations)
+			.arg(pki_pkcs12::maxIterations)),
 		opt("mldsa-key-format", OptionSpec::string, "<encoding>",
 			QObject::tr("ML-DSA private key encoding of pkcs8 and "
 			"p12 (RFC 9881): both, seed, expanded (default: both, "

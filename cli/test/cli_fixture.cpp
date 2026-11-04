@@ -22,6 +22,10 @@
  *     channel) and prints "<thisUpdate> <nextUpdate> <seconds between>"
  *     (BTD-211)
  *
+ * cli_fixture <database> <password source> retire <profile|policy> <id>
+ *     retires the profile or policy (ProfileStore::retire); bootstrap
+ *     never retires (BTD-232)
+ *
  * Exit code 1 and the message on stderr on any error.
  */
 
@@ -38,6 +42,7 @@
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
+#include "lib/profile_store.h"
 #include "lib/PwDialogCore.h"
 #include "lib/settings.h"
 #include "lib/template.h"
@@ -48,7 +53,8 @@ static int usage(QTextStream &err)
 {
 	err << "usage: cli_fixture <db> <password source> template <name> "
 		"<eku,...> [<ku,...>] | ownpass <key> [<key password source>] "
-		"| revocations <ca> <count> | guicrl <ca>\n";
+		"| revocations <ca> <count> | guicrl <ca> "
+		"| retire <profile|policy> <id>\n";
 	return 1;
 }
 
@@ -65,7 +71,9 @@ int main(int argc, char *argv[])
 	    (cmd == "ownpass" && (args.size() < 4 || args.size() > 5)) ||
 	    (cmd == "revocations" && args.size() != 5) ||
 	    (cmd == "guicrl" && args.size() != 4) ||
-	    !QStringList({ "template", "ownpass", "revocations", "guicrl" })
+	    (cmd == "retire" && args.size() != 5) ||
+	    !QStringList({ "template", "ownpass", "revocations", "guicrl",
+			"retire" })
 			.contains(cmd))
 		return usage(err);
 	xcaWarning::setGui(new xcaWarningCore());
@@ -109,6 +117,8 @@ int main(int argc, char *argv[])
 			QTextStream(stdout) << t.toString(Qt::ISODate) << " "
 				<< n.toString(Qt::ISODate) << " "
 				<< t.secsTo(n) << "\n";
+		} else if (cmd == "retire") {
+			ProfileStore::retire(ctx, args[3], args[4]);
 		} else if (cmd == "revocations") {
 			pki_x509 *ca = nullptr;
 			for (pki_x509 *c : Store.getAll<pki_x509>())
