@@ -77,6 +77,8 @@ class test_main: public QObject
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
+	void importCommitFailsKeepsItems();
+	void importFailuresKeepRows();
 	void tokenDialogClosedDatabase();
 
 	/* issuanceExt.cpp */
