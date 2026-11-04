@@ -66,6 +66,8 @@ class test_service_names : public ServiceTestCase
 	void minimumContent();
 	void strictIssuerKeyUsage();
 	void uniquenessWithStatusFilter();
+	void uniquenessSelfSignedScope();
+	void uniquenessNotYetValid();
 	void invalidPolicy();
 	void otherNameForms_data();
 	void otherNameForms();
@@ -401,6 +403,56 @@ void test_service_names::uniquenessWithStatusFilter()
 	rev.setReason("Key Compromise");
 	Database.model<db_x509>()->revoke(ctx, cert, rev);
 	QCOMPARE(attempt(second), QString());
+}
+
+/* BTD-201: with scope issuer, self-signed certificates do not share one
+ * scope. Two roots with the same subject and different keys are separate
+ * scopes (each certificate is its own issuer); a root issued again with
+ * the same key is in the scope of the first. Before, spec.signer was
+ * nullptr for both and every root blocked every other. */
+void test_service_names::uniquenessSelfSignedScope()
+{
+	IssuanceSpec first = caSpec("Same Root", nullptr);
+	first.policies << policy("strict-content");
+	pki_x509 *root = issue(first);
+	QVERIFY(root);
+	IssuanceSpec other = caSpec("Same Root", nullptr);
+	other.name = "Same Root (new key)";
+	other.policies << policy("strict-content");
+	QCOMPARE(attempt(other), QString());
+
+	IssuanceSpec again = caSpec("Same Root", nullptr);
+	again.name = "Same Root (same key)";
+	again.key = first.key;
+	again.policies << policy("strict-content");
+	QString message;
+	QCOMPARE(attempt(again, &message), QString("policy_not_unique"));
+	QVERIFY2(message.contains("subject_dn"), CCHAR(message));
+}
+
+/* BTD-201: a certificate whose notBefore is in the future has the status
+ * not_yet_valid, not valid: a rule on valid certificates lets the same
+ * subject be issued, a rule that names not_yet_valid does not */
+void test_service_names::uniquenessNotYetValid()
+{
+	pki_x509 *ca = issue(caSpec("Future CA", nullptr));
+	IssuanceSpec future = leafSpec("DNS:future.example", ca);
+	future.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(10));
+	future.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(40));
+	future.policies << policy("strict-content");
+	QVERIFY(issue(future));
+	IssuanceSpec now = leafSpec("DNS:now.example", ca);
+	now.policies << policy("strict-content");
+	QCOMPARE(attempt(now), QString());
+
+	QJsonObject doc = policy("strict-content").document();
+	QJsonObject u = doc["uniqueness"].toObject();
+	u["status"] = QJsonArray{ "valid", "not_yet_valid" };
+	doc["uniqueness"] = u;
+	doc["id"] = "strict-future";
+	IssuanceSpec blocked = leafSpec("DNS:blocked.example", ca);
+	blocked.policies << Policy::fromJson(doc);
+	QCOMPARE(attempt(blocked), QString("policy_not_unique"));
 }
 
 void test_service_names::invalidPolicy()
