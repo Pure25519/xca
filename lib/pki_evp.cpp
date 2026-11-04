@@ -993,6 +993,9 @@ QSqlError pki_evp::insertSqlData()
 void pki_evp::restoreSql(const QSqlRecord &rec)
 {
 	pki_key::restoreSql(rec);
+	/* read again from the row when needed: a reload may follow a
+	 * password change by another process (BTD-238) */
+	encKey.clear();
 	isPub = rec.isNull(VIEW_private_ownpass);
 	if (!isPub)
 		ownPass =(enum passType)rec.value(VIEW_private_ownpass).toInt();
@@ -1028,7 +1031,6 @@ QSqlError pki_evp::deleteSqlData()
 	return q.lastError();
 }
 
-#ifndef LIBRESSL_VERSION_NUMBER
 int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
                                          const EVP_CIPHER *enc,
                                          unsigned char *kstr, int klen,
@@ -1039,7 +1041,6 @@ int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
 	return PEM_ASN1_write_bio((i2d_of_void *)i2d_PrivateKey,
 			pem.toLatin1(), bp, (char*)x, enc, kstr, klen, cb, u);
 }
-#endif
 
 bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
 			const ExportOptions &opts)

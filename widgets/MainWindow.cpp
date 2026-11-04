@@ -87,6 +87,13 @@ MainWindow::MainWindow() : QMainWindow()
 	pki_export::init_elements();
 
 	statusBar()->addWidget(dbindex, 1);
+	/* permanent: a temporary status message would hide it, and it must
+	 * not hide the database name or the search field */
+	auditNotice = new QLabel();
+	auditNotice->setObjectName("dlg_main_auditNotice");
+	auditNotice->setMargin(6);
+	auditNotice->hide();
+	statusBar()->addPermanentWidget(auditNotice);
 	/* once per start of the GUI, not of the command line (BTD-215) */
 	if (extkeyuse_builtin) {
 		qWarning() << "eku.txt not found in the data directories"
@@ -603,6 +610,15 @@ enum open_result MainWindow::init_database(const QString &name,
 	return pw_ok;
 }
 
+/* The first line in the status bar, all of it as tooltip. No dialog: the
+ * work goes on (BTD-148). */
+void MainWindow::showAuditNotice(const QString &msg)
+{
+	auditNotice->setText(msg.section('\n', 0, 0));
+	auditNotice->setToolTip(msg);
+	auditNotice->show();
+}
+
 void MainWindow::showDatabaseName()
 {
 	if (Database.isOpen())
@@ -698,6 +714,9 @@ void MainWindow::close_database()
 
 	setItemEnabled(false);
 	dbindex->clear();
+	auditNotice->clear();
+	auditNotice->setToolTip(QString());
+	auditNotice->hide();
 	update_history_menu();
 	enableTokenMenu(pkcs11::libraries.loaded());
 }

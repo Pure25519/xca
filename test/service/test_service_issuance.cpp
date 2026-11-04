@@ -413,7 +413,16 @@ void test_service_issuance::auditOnRejectedSpec()
 	QVERIFY(AuditLog::verify().ok());
 }
 
-/* 1000 serials of CAs and end entities */
+/* 1000 serials of CAs and end entities; 250 in the AddressSanitizer
+ * run, where the 1000 took 70 % of its 20 minutes per test function
+ * under parallel load (BTD-230). The checks are the same: the format of
+ * every serial, and no serial twice under one of the 10 issuers. */
+#if defined(__SANITIZE_ADDRESS__)
+static const int serialCount = 250;
+#else
+static const int serialCount = 1000;
+#endif
+
 void test_service_issuance::serials()
 {
 	QMap<QString, QSet<QString> > perIssuer;
@@ -426,7 +435,7 @@ void test_service_issuance::serials()
 		QVERIFY(ca);
 		cas << ca;
 	}
-	for (int i = 0; i < 990; i++) {
+	for (int i = 0; i < serialCount - 10; i++) {
 		pki_x509 *signer = cas[i % 2];
 		IssuanceSpec spec = caSpec(QString("ee-%1").arg(i), eeKey,
 					signer, 30);
@@ -434,7 +443,7 @@ void test_service_issuance::serials()
 		QVERIFY(issue(spec));
 	}
 	QList<pki_x509 *> all = Store.getAll<pki_x509>();
-	QCOMPARE(all.size(), 1000);
+	QCOMPARE(all.size(), serialCount);
 	for (pki_x509 *c : all) {
 		checkSerial(c->getSerial());
 		QVERIFY(c->getSerial() != a1int(1L));

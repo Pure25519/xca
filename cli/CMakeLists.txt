@@ -58,10 +58,8 @@ if(BUILD_TESTING)
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_${name}
 		-P ${CLI_DIR}/test/${name}.cmake)
     set_tests_properties(test_${name} PROPERTIES LABELS cli)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-      set_property(TEST test_${name} APPEND PROPERTY
+    set_property(TEST test_${name} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-    endif()
   endmacro()
 
   CliTest(cli_flow)
@@ -94,6 +92,8 @@ if(BUILD_TESTING)
   CliTest(cli_default_templates)
   # RFC 5280 upper bounds of DN values (BTD-202)
   CliTest(cli_dn_bounds)
+  # renewal and re-key (BTD-56)
+  CliTest(cli_renew)
   # bootstrap (BTD-166): CAs, profiles and policies from one file
   CliTest(cli_bootstrap)
   CliTest(cli_bootstrap_errors)

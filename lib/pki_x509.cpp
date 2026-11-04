@@ -134,14 +134,19 @@ void pki_x509::restoreSql(const QSqlRecord &rec)
 		crlDays = rec.value(VIEW_x509_auth_crlDays).toInt();
 	else
 		crlDays = defaultCrlDays;
-	if (!rec.isNull(VIEW_x509_revocation))
-		revocation = x509rev(rec, VIEW_x509_revocation);
+	/* on a reload the object may be revoked from before (BTD-238) */
+	revocation = rec.isNull(VIEW_x509_revocation) ? x509rev() :
+			x509rev(rec, VIEW_x509_revocation);
 }
 
 QSqlError pki_x509::deleteSqlData()
 {
 	XSqlQuery q;
 	QSqlError e = pki_x509super::deleteSqlData();
+	/* the loop below reuses e: a failed x509super delete must not be
+	 * overwritten by the next statement's success (BTD-129) */
+	if (e.isValid())
+		return e;
 	QStringList tasks; tasks
 		<< "DELETE FROM certs WHERE item=?"
 		<< "DELETE FROM authority WHERE item=?"
@@ -150,6 +155,7 @@ QSqlError pki_x509::deleteSqlData()
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
 		<< "DELETE FROM issued_profiles WHERE item=?"
+		<< "DELETE FROM renewals WHERE item=?"
 		;
 	foreach(QString task, tasks) {
 		SQL_PREPARE(q, task);
@@ -316,13 +322,21 @@ pki_x509 *pki_x509::getBySerial(const a1int &a) const
 #define D5 "-----"
 #define OVPN_TA_KEY "OpenVPN Static key V1"
 
+pki_x509 *pki_x509::taKeyOwner()
+{
+	pki_x509 *issuer = getSigner();
+	if (!isCA() && issuer && issuer != this)
+		return issuer->taKeyOwner();
+	return this;
+}
+
 QString pki_x509::getTaKey()
 {
 	XSqlQuery q;
 	QByteArray b;
-	pki_x509 *issuer = getSigner();
-	if (!isCA() && issuer && issuer != this)
-		return issuer->getTaKey();
+	pki_x509 *owner = taKeyOwner();
+	if (owner != this)
+		return owner->getTaKey();
 
 	Transaction;
 	TransThrow();
@@ -1114,13 +1128,27 @@ void pki_x509::print(BioByteArray &bba, enum print_opt opt) const
 QStringList pki_x509::icsVEVENT_ca() const
 {
 	QStringList ics;
+
+	foreach(pki_base *pki, vcalendarObjects()) {
+		pki_x509 *crt = dynamic_cast<pki_x509 *>(pki);
+		if (crt)
+			ics << crt->icsVEVENT();
+		else
+			ics << static_cast<pki_crl *>(pki)->icsVEVENT();
+	}
+	return ics;
+}
+
+QList<pki_base *> pki_x509::vcalendarObjects() const
+{
+	QList<pki_base *> objects;
 	pki_crl *crl = NULL;
 
-	ics << icsVEVENT();
+	objects << const_cast<pki_x509 *>(this);
 	foreach(pki_base *p, childItems) {
 		pki_x509 *pki = static_cast<pki_x509 *>(p);
 		if (pki->getNotAfter() > a1time() && !isRevoked())
-			ics << pki->icsVEVENT();
+			objects << pki;
 	}
 
 	QList<pki_crl*> list = Store.sqlSELECTpki<pki_crl>(
@@ -1133,9 +1161,9 @@ QStringList pki_x509::icsVEVENT_ca() const
 			crl = pki;
 	}
 	if (crl)
-		ics << crl->icsVEVENT();
+		objects << crl;
 
-	return ics;
+	return objects;
 }
 
 QVariant pki_x509::getIcon(const dbheader *hd) const
@@ -1331,10 +1359,8 @@ int pki_x509::name_constraint_check(pki_x509 *issuer) const
 	NAME_CONSTRAINTS *nc = (NAME_CONSTRAINTS *)e.d2i();
 	Q_CHECK_PTR(nc);
 	rc = NAME_CONSTRAINTS_check(cert, nc);
-#ifndef LIBRESSL_VERSION_NUMBER
 	if (!isCA() && rc == X509_V_OK)
 		rc = NAME_CONSTRAINTS_check_CN(cert, nc);
-#endif
 	NAME_CONSTRAINTS_free(nc);
 	pki_openssl_error();
 	qDebug() << getIntName() << issuer->getIntName() << get_ossl_verify_error(rc);

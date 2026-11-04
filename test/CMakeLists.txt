@@ -1,9 +1,9 @@
 
-list(APPEND srcs PwDialogMock.h importPEM.cpp main.cpp main.h
-	newKey.cpp pem.cpp export.cpp renewal.cpp dialogParent.cpp validity.cpp policy.cpp crlRefused.cpp kuByKeyType.cpp dnBounds.cpp issueInAccept.cpp ekuRows.cpp templateRoundTrip.cpp
-	automationIds.cpp issuanceExt.cpp exportMlDsa.cpp optionsChanged.cpp TestEnv.cpp TestEnv.h)
-
-list(TRANSFORM srcs PREPEND ${PROJECT_SOURCE_DIR}/test/)
+# Every source directly in test/ belongs to testxca (BTD-256): a new test
+# file needs no line here. Its slots go into test/main.h, see test/README.md.
+file(GLOB srcs CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/test/*.cpp
+	${PROJECT_SOURCE_DIR}/test/*.h)
+list(SORT srcs)
 
 add_executable(testxca img/imgres.qrc ${srcs}
 		${UI_FILES} ${PROJECT_BINARY_DIR}/local.h)
@@ -31,7 +31,7 @@ add_test(NAME test_no_worker_threads
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
 		-P ${PROJECT_SOURCE_DIR}/test/no_worker_threads.cmake)
 set_tests_properties(test_no_worker_threads PROPERTIES LABELS service)
-target_link_options(testxca PRIVATE -pthread)
+target_link_libraries(testxca Threads::Threads)
 
 if (APPLE)
   target_link_libraries(testxca

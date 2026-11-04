@@ -6,6 +6,7 @@
  */
 
 #include <algorithm>
+#include <memory>
 
 #include <openssl/evp.h>
 #include <openssl/objects.h>
@@ -522,6 +523,114 @@ static void cmdSign(CommandContext &ctx)
 	reissueIfDue(ctx, ca, CrlPolicy::of(ca));
 }
 
+/* --- renew ------------------------------------------------------------ */
+
+/* BTD-56: subject, extensions and issuer of the predecessor through
+ * db_x509::renew(); the predecessor stays (revoke is its own command) */
+static void cmdRenew(CommandContext &ctx)
+{
+	const Options &o = ctx.opts;
+	checkCertificateSelectors(o, "renew");
+	if (o.has("key") && !o.has("rekey"))
+		throw usageError("missing_option", QObject::tr(
+			"--key needs --rekey"));
+	bool rekey = o.has("rekey") || o.has("use-key");
+	checkOutOptions(ctx, o.has("rekey"));
+
+	pki_x509 *ca = nullptr, *old = nullptr;
+	try {
+		old = selectedCertificate(o, &ca);
+	} catch (serviceError &err) {
+		AuditParams p;
+		selectorParams(o, ca, p);
+		auditRefusal(ctx, "certificate.renew", old, p, err.code);
+		throw;
+	}
+	RenewalSpec r;
+	r.predecessor = old;
+	r.name = o.value("name", old->getIntName());
+	/* rule 6 as sign; without options the period of the predecessor */
+	IssuanceSpec period;
+	period.notBefore = old->getNotBefore();
+	period.notAfter = old->getNotAfter();
+	applyValidity(o, period, IsoDuration(), true);
+	r.notBefore = period.notBefore;
+	r.notAfter = period.notAfter;
+	r.validity = period.validity;
+	pki_x509 *issuer = old->getSigner();
+
+	pki_multi fileItems;
+	/* --plan of a re-key: the new key is made in memory only, never
+	 * stored, so the plan runs every check of the real run on it */
+	std::unique_ptr<pki_evp> probe;
+	if (rekey) {
+		QString type = o.value("key", keyTypeOf(X509_get0_pubkey(
+						old->getCert())));
+		if (type.isEmpty() && !o.has("use-key"))
+			throw usageError("missing_option", QObject::tr(
+				"The key type of '%1' has no --key name; give "
+				"--key").arg(old->getIntName()));
+		r.newKey = obtainKey(ctx, r.name, type, &fileItems);
+		if (!r.newKey) {
+			probe.reset(new pki_evp(r.name));
+			probe->generate(keyjob(keyJobText(type)));
+			r.newKey = probe.get();
+		}
+	}
+	/* the default digest of the key that signs: the issuer's, or the
+	 * subject key of a self-signed certificate */
+	r.hashAlgo = hashFrom(o, issuer != old ? (issuer ?
+			issuer->getRefKey() : nullptr) :
+			r.newKey ? r.newKey : old->getRefKey());
+
+	QJsonObject renewal;
+	auto ref = [](const pki_x509 *c) {
+		QJsonObject j;
+		j["id"] = c->getSqlItemId().toLongLong();
+		j["name"] = c->getIntName();
+		j["serial"] = JsonReport::serial(c->getSerial());
+		return j;
+	};
+	renewal["predecessor"] = ref(old);
+	renewal["rekey"] = r.rekey();
+	ctx.step = QObject::tr("renewal of '%1'").arg(old->getIntName());
+	if (old->isRevoked() && r.rekey() &&
+	    old->getRevocation().getReasonBit() == CRL_REASON_KEY_COMPROMISE)
+		ctx.result->warning("predecessor_key_compromised", QObject::tr(
+			"'%1' is revoked for key compromise; it is renewed "
+			"with a new key").arg(old->getIntName()));
+	if (ctx.plan) {
+		/* every check of the real run (review of the CLI chain on
+		 * BTD-56: a green plan must not fail for real): renew() runs
+		 * inside the transaction --plan rolls back; the result
+		 * carries no document */
+		IssuanceSpec spec = r.issuanceSpec();
+		Database.model<db_x509>()->renew(ctx.svc, { r });
+		ctx.result->plannedCertificate(spec);
+		renewal["successor"] = QJsonValue();
+		ctx.result->set("renewal", renewal);
+		if (o.has("rekey"))
+			writeOut(ctx, nullptr, "key", r.name);
+		writeOut(ctx, nullptr, "crt", r.name);
+		if (spec.signer)
+			reissueIfDue(ctx, spec.signer,
+					CrlPolicy::of(spec.signer));
+		return;
+	}
+	pki_x509 *cert = Database.model<db_x509>()->renew(ctx.svc, { r })[0];
+	/* the spec it was issued from, for the cap (validity_capped) */
+	IssuanceSpec spec = r.issuanceSpec();
+	ctx.result->writtenCertificate(cert, spec);
+	renewal["successor"] = ref(cert);
+	ctx.result->set("renewal", renewal);
+	if (o.has("rekey"))
+		writeOut(ctx, r.newKey, "key");
+	writeOut(ctx, cert, "crt");
+	/* rule 7 as sign */
+	if (spec.signer)
+		reissueIfDue(ctx, spec.signer, CrlPolicy::of(spec.signer));
+}
+
 /* --- list and show (read only) --------------------------------------- */
 
 static const QStringList objectTypes { "key", "certificate", "request",
@@ -713,6 +822,49 @@ void registerCommands(Registry &r)
 	c.minArgs = c.maxArgs = 1;
 	c.writes = true;
 	c.handler = cmdSign;
+	r.add(c);
+
+	c = Command();
+	c.name = "renew";
+	c.usage = "[<certificate>]";
+	c.summary = QObject::tr("renew a certificate, with --rekey for a new "
+				"key");
+	c.description = QObject::tr(
+		"  Subject, extensions and issuer of the predecessor, a new "
+		"serial; the same\n  checks as sign. The certificate is "
+		"chosen as by revoke: a reference, --serial\n  with --ca, or "
+		"--fingerprint. Default validity: the period of the "
+		"predecessor,\n  from now. A key revoked for keyCompromise is "
+		"never used again: --rekey.\n  The predecessor stays; revoke "
+		"it with 'bxc-pki revoke'.");
+	c.options = QList<OptionSpec> {
+		opt("serial", OptionSpec::string, "<serial>", QObject::tr(
+			"the serial number of the certificate, hex or "
+			"dec:<digits> (needs --ca)")),
+		opt("fingerprint", OptionSpec::string, "<sha256>",
+			QObject::tr("the SHA-256 fingerprint of the "
+			"certificate")),
+		opt("ca", OptionSpec::reference, "<ca>", QObject::tr(
+			"the issuing CA; the certificate must be one of its")),
+		opt("rekey", OptionSpec::flag, QString(), QObject::tr(
+			"a new key of the type --key (default: the type of "
+			"the predecessor's key)")),
+		opt("name", OptionSpec::string, "<name>", QObject::tr(
+			"internal name of the new certificate (default: the "
+			"predecessor's)")),
+	} + keyOptions(QObject::tr("the predecessor's"), false) +
+		validityOptions(QObject::tr("the predecessor's period")) +
+		outOptions(true);
+	for (OptionSpec &s : c.options)
+		if (s.name == "use-key")
+			s.help = QObject::tr("re-key with this key of the "
+				"database instead of a new one");
+	c.conflicts = QList<QPair<QString, QString> > {
+		{ "rekey", "use-key" }, { "key", "use-key" },
+		{ "key-unencrypted", "no-key-file" } } + validityConflicts();
+	c.maxArgs = 1;
+	c.writes = true;
+	c.handler = cmdRenew;
 	r.add(c);
 
 	registerLifecycleCommands(r);

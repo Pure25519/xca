@@ -472,7 +472,10 @@ void test_service_secrets::keySlotNeedsInteractive()
 	}
 }
 
-/* The chosen slot gives the CKA_ID of its entry, no choice none */
+/* The chosen slot gives the CKA_ID of its entry. No valid choice (an
+ * empty, non-numeric or out-of-range answer on the terminal is -1) stops
+ * with a typed error naming the token and the range, before select_id()
+ * hands an empty CKA_ID to generateKey() or store_token() (BTD-176). */
 void test_service_secrets::keySlotSelected()
 {
 	class Answer : public PwDialogUI_i
@@ -513,10 +516,21 @@ void test_service_secrets::keySlotSelected()
 			<< "9c: Digital Signature" << "9d: Key Management");
 	QVERIFY(id == pk11_attr_data(CKA_ID, 3UL));
 
-	a->answer = -1;
-	id = pki_scard::fixedSlotId("YubiKey YK5", ids);
-	const unsigned char *value;
-	QCOMPARE(id.getValue(&value), 0UL);
+	for (int answer : { -1, 3 }) {
+		a->answer = answer;
+		try {
+			id = pki_scard::fixedSlotId("YubiKey YK5", ids);
+			const unsigned char *value;
+			QFAIL(qPrintable(QString("answer %1: no error, CKA_ID "
+				"of %2 bytes").arg(answer)
+				.arg(id.getValue(&value))));
+		} catch (secretError &e) {
+			QCOMPARE(e.why, secretError::rejected);
+			QVERIFY2(e.getString().contains("YubiKey YK5") &&
+				 e.getString().contains("1-3"),
+				 CCHAR(e.getString()));
+		}
+	}
 }
 
 void test_service_secrets::importDerPassword()

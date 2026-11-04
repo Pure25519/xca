@@ -88,6 +88,11 @@ void KeyTreeView::changePin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));
@@ -106,6 +111,11 @@ void KeyTreeView::initPin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));
@@ -124,6 +134,11 @@ void KeyTreeView::changeSoPin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));

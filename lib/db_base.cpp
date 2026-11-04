@@ -6,6 +6,8 @@
  */
 
 #include "db_base.h"
+
+#include <typeinfo>
 #include "func.h"
 #include "exception.h"
 #include "XcaWarningCore.h"
@@ -48,6 +50,7 @@ db_base::~db_base()
 	qDeleteAll(allHeaders);
 	delete rootItem;
 	delete treeItem;
+	qDeleteAll(retired);
 }
 
 pki_base *db_base::newPKI(enum pki_type)
@@ -140,13 +143,28 @@ void db_base::loadContainer()
 		QSqlRecord rec = q.record();
 		t = (enum pki_type)q.value(VIEW_item_type).toInt();
 		pki_base *pki = newPKI(t);
+		/* a reload refreshes the object of a known row in place, so
+		 * a pointer held across it stays the object of its row
+		 * (BTD-238); restoreSql() replaces every loaded field */
+		quint64 id = q.value(VIEW_item_id).toULongLong();
+		pki_base *known = Store.find(id);
+		bool reuse = known && typeid(*known) == typeid(*pki);
+		if (reuse) {
+			delete pki;
+			pki = known;
+			pki->clear();
+			pki->setParent(nullptr);
+		}
 		try {
 			pki->restoreSql(rec);
 		} catch (errorEx &ex) {
 			/* a row that does not decode is left out, never
 			 * loaded as an empty object (BTD-95); reported once
 			 * per load with the others (BTD-209) */
-			delete pki;
+			if (reuse)
+				retire(pki);
+			else
+				delete pki;
 			skippedRows << SkippedRow{ rowType(t),
 				q.value(VIEW_item_id).toString(),
 				ex.getString() };
@@ -154,7 +172,8 @@ void db_base::loadContainer()
 		}
 		rootItem->insert(pki);
 		treeItem->insert(pki);
-		Store.add(q.value(VIEW_item_id), pki);
+		if (!reuse)
+			Store.add(q.value(VIEW_item_id), pki);
 	}
 
 	QString view = Settings[class_name + "_hdView"];
@@ -167,6 +186,18 @@ void db_base::loadContainer()
 	}
 	restart_timer();
 	emit columnsContentChanged();
+}
+
+/* An object whose row is gone: out of the Store, but kept until the
+ * database closes, because a handler may still hold it across a dialog
+ * (BTD-238); the services refuse it as missing_object */
+void db_base::retire(pki_base *pki)
+{
+	Store.remove(pki->getSqlItemId());
+	pki->clear();
+	pki->setParent(nullptr);
+	if (!retired.contains(pki))
+		retired << pki;
 }
 
 void db_base::reloadContainer(const QList<enum pki_type> &typelist)
@@ -182,12 +213,19 @@ void db_base::reloadContainer(const QList<enum pki_type> &typelist)
 	if (!match)
 		return;
 	qDebug() << "RELOAD" << class_name << all_types << typelist;
+	QList<pki_base *> before = rootItem->getChildItems();
+	/* the rows load inside the reset bracket: views and proxies read
+	 * the new rows at modelReset (BTD-239) */
 	beginResetModel();
 	rootItem->clear();
 	treeItem->clear();
-	endResetModel();
-
 	loadContainer();
+	/* the objects whose row is gone: out of the Store and the model */
+	for (pki_base *pki : before)
+		if (rootItem->indexOf(pki) == -1 &&
+		    Store.find(pki->getSqlItemId().toULongLong()) == pki)
+			retire(pki);
+	endResetModel();
 	QList<SkippedRow> rows = takeSkippedRows();
 	if (!rows.isEmpty())
 		XCA_WARN(skippedRowsText(rows));

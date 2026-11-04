@@ -22,6 +22,7 @@ class pki_temp;
 class pki_crl;
 class AuditParams;
 class IssuanceSpec;
+class RenewalSpec;
 class ServiceContext;
 
 class db_x509: public db_x509super
@@ -31,7 +32,9 @@ class db_x509: public db_x509super
 		static void writeTaggedPEM(const BioByteArray &b,
 						const QString &tag, QIODevice &file);
 		pki_x509 *issue(const IssuanceSpec &spec, AuditParams &params,
-				const ServiceContext &ctx);
+				const ServiceContext &ctx, const QString &action);
+		pki_x509 *issueAudited(const ServiceContext &ctx,
+				const IssuanceSpec &spec, const QString &action);
 	protected:
 		dbheaderList getHeaders();
 		void dereferenceIssuer();
@@ -60,6 +63,16 @@ class db_x509: public db_x509super
 		 * caller's transaction would be rolled back with it. */
 		pki_x509 *newCert(const ServiceContext &ctx,
 				const IssuanceSpec &spec);
+		/* Renews or re-keys certificates (BTD-56), all in one
+		 * transaction: one entry certificate.renew per certificate
+		 * (the parameters of certificate.issue plus the predecessor),
+		 * or nothing stored and one failure entry for the refused
+		 * one. The predecessors stay as they are; revoking or
+		 * deleting them is the caller's next step, after this
+		 * returned. Throws like newCert(), plus the errors of
+		 * RenewalSpec::issuanceSpec(). */
+		QList<pki_x509 *> renew(const ServiceContext &ctx,
+				const QList<RenewalSpec> &specs);
 		/* The PKCS#12 algorithm and ML-DSA encoding of the
 		 * options; by default the setting pkcs12_enc_algo and
 		 * OpenSSL's encoding */
@@ -118,6 +131,9 @@ class db_x509: public db_x509super
 				const QList<pki_base *> &items,
 				const pki_export *xport) const;
 		QList<pki_key *> exportedPrivateKeys(
+				const QList<pki_base *> &items,
+				const pki_export *xport) const;
+		QList<pki_base *> exportedSecrets(
 				const QList<pki_base *> &items,
 				const pki_export *xport) const;
 		const pki_export *clipboardFormat() const;

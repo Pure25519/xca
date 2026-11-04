@@ -258,23 +258,66 @@ static pki_x509 *byFingerprint(const QString &given)
 	return hits[0];
 }
 
-static void cmdRevoke(CommandContext &ctx)
+void checkCertificateSelectors(const Options &o, const QString &command)
 {
-	const Options &o = ctx.opts;
 	int selectors = (o.args().isEmpty() ? 0 : 1) +
 		(o.has("serial") ? 1 : 0) + (o.has("fingerprint") ? 1 : 0);
 	if (selectors == 0)
 		throw usageError("missing_argument", QObject::tr(
-			"revoke needs a certificate, --serial with --ca or "
-			"--fingerprint"));
+			"%1 needs a certificate, --serial with --ca or "
+			"--fingerprint").arg(command));
 	if (selectors > 1)
 		throw usageError("conflicting_options", QObject::tr(
-			"revoke takes one of a certificate reference, --serial "
-			"and --fingerprint"));
+			"%1 takes one of a certificate reference, --serial "
+			"and --fingerprint").arg(command));
 	if (o.has("serial") && !o.has("ca"))
 		throw usageError("missing_option", QObject::tr(
 			"--serial needs --ca: a serial number is unique per "
 			"issuer only"));
+}
+
+pki_x509 *selectedCertificate(const Options &o, pki_x509 **ca)
+{
+	db_x509 *certs = Database.model<db_x509>();
+	pki_x509 *cert;
+	if (o.has("ca"))
+		*ca = resolveAs<pki_x509>(o.value("ca"), "certificate",
+					"--ca");
+	if (o.has("serial"))
+		/* hex (digits only too) or dec:<decimal>; unknown_serial */
+		cert = certs->certBySerial(*ca, o.value("serial"));
+	else if (o.has("fingerprint"))
+		cert = byFingerprint(o.value("fingerprint"));
+	else
+		cert = resolveAs<pki_x509>(o.args()[0], "certificate",
+					"<certificate>");
+	pki_x509 *issuer = cert->getSigner();
+	if (*ca && issuer != *ca)
+		throw serviceError("wrong_issuer", QObject::tr(
+			"'%1' is issued by %2, not by --ca '%3'")
+			.arg(cert->getIntName())
+			.arg(issuer ? QString("'%1'").arg(
+				issuer->getIntName()) :
+				QObject::tr("a CA outside the database"))
+			.arg((*ca)->getIntName()));
+	return cert;
+}
+
+void selectorParams(const Options &o, const pki_x509 *ca, AuditParams &p)
+{
+	for (const QString &n : { QString("serial"), QString("fingerprint") })
+		if (o.has(n))
+			p.set(n, o.value(n));
+	if (!o.args().isEmpty())
+		p.set("name", o.args()[0]);
+	if (ca)
+		p.set("issuer", ca->getIntName());
+}
+
+static void cmdRevoke(CommandContext &ctx)
+{
+	const Options &o = ctx.opts;
+	checkCertificateSelectors(o, "revoke");
 	QString rfcReason;
 	QString reason = reasonName(o.value("reason"), &rfcReason);
 	checkOutOptions(ctx, false);
@@ -296,40 +339,14 @@ static void cmdRevoke(CommandContext &ctx)
 					.arg(inval.toPrettyGMT())
 					.arg(a1time(revDate).toPrettyGMT()));
 		}
-		if (o.has("ca"))
-			ca = resolveAs<pki_x509>(o.value("ca"), "certificate",
-						"--ca");
-		if (o.has("serial"))
-			/* hex (digits only too) or dec:<decimal>;
-			 * unknown_serial */
-			cert = certs->certBySerial(ca, o.value("serial"));
-		else if (o.has("fingerprint"))
-			cert = byFingerprint(o.value("fingerprint"));
-		else
-			cert = resolveAs<pki_x509>(o.args()[0], "certificate",
-						"<certificate>");
+		cert = selectedCertificate(o, &ca);
 		issuer = cert->getSigner();
-		if (ca && issuer != ca)
-			throw serviceError("wrong_issuer", QObject::tr(
-				"'%1' is issued by %2, not by --ca '%3'")
-				.arg(cert->getIntName())
-				.arg(issuer ? QString("'%1'").arg(
-					issuer->getIntName()) :
-					QObject::tr("a CA outside the database"))
-				.arg(ca->getIntName()));
 	} catch (serviceError &err) {
 		AuditParams p;
 		p.set("reason", reason);
-		for (const QString &n : { QString("serial"),
-					QString("fingerprint") })
-			if (o.has(n))
-				p.set(n, o.value(n));
-		if (!o.args().isEmpty())
-			p.set("name", o.args()[0]);
+		selectorParams(o, ca, p);
 		if (o.has("invalidity-date"))
 			p.set("invalidity_date", o.value("invalidity-date"));
-		if (ca)
-			p.set("issuer", ca->getIntName());
 		auditRefusal(ctx, "certificate.revoke", cert, p, err.code);
 		throw;
 	}

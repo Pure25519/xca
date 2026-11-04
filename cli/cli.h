@@ -30,6 +30,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <openssl/types.h>
+
 #include "lib/audit.h"
 #include "lib/crl_policy.h"
 #include "lib/digest.h"
@@ -384,6 +386,15 @@ digest hashFrom(const Options &o, const pki_key *signKey);
 void unlockCheck(const pki_key *key);
 
 void registerLifecycleCommands(Registry &r);  // revoke, crl
+/* The certificate of revoke and renew: a reference, --serial with --ca
+ * or --fingerprint. checkCertificateSelectors() throws the usage
+ * errors (missing_argument, conflicting_options, missing_option);
+ * selectedCertificate() resolves (unknown_reference, unknown_serial,
+ * wrong_issuer) and sets *ca from --ca; selectorParams() puts the
+ * selection into the parameters of a refusal. */
+void checkCertificateSelectors(const Options &o, const QString &command);
+pki_x509 *selectedCertificate(const Options &o, pki_x509 **ca);
+void selectorParams(const Options &o, const pki_x509 *ca, AuditParams &p);
 void registerExportCommands(Registry &r);     // export
 void registerBootstrapCommand(Registry &r);   // bootstrap (BTD-166)
 
@@ -477,6 +488,8 @@ IsoDuration parseDuration(const QString &text, const QString &option);
  * Size and curve are checked by the key generation service. */
 QString keyJobText(const QString &keyType);
 QStringList supportedKeyTypes();
+/* The --key name of a key's type; empty when the vocabulary has none */
+QString keyTypeOf(const EVP_PKEY *pkey);
 /* Every name of the vocabulary, also those this build cannot generate */
 QStringList keyTypeNames();
 

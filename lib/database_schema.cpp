@@ -432,6 +432,18 @@
 << "UPDATE settings SET value='4' WHERE key_='bxc_schema'"
 	;
 
+	bxc_schemas[4]
+// The predecessor of a renewed certificate (BTD-56). No foreign key to
+// the predecessor: a renewal with "replace" deletes it, its serial stays.
+<< "CREATE TABLE IF NOT EXISTS renewals ("
+	"item INTEGER UNIQUE, "         // items(id) of the new certificate
+	"predecessor INTEGER, "         // items(id) of the predecessor
+	"predecessor_serial VARCHAR(64), "
+	"rekey SMALLINT, "              // 1: a new key, 0: the same key
+	"FOREIGN KEY (item) REFERENCES items (id))"
+<< "UPDATE settings SET value='5' WHERE key_='bxc_schema'"
+	;
+
 /* When adding new tables or views, also add them to the list
  * in XSqlQuery::rewriteQuery(QString) in lib/sql.cpp
  */
