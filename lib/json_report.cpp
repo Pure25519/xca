@@ -27,6 +27,7 @@
 #include "x509name.h"
 #include "x509rev.h"
 #include "xfile.h"
+#include "staged_file.h"
 
 #define SCHEMA(kind) QString("urn:bxc-pki:schema:" kind ":v1")
 
@@ -631,20 +632,6 @@ void JsonReport::writeTo(const QString &path, const QJsonObject &doc)
 		write(stdout, doc);
 		return;
 	}
-	/* every failure is write_failed, also the errorEx of XFile when it
-	 * cannot open the file (BTD-182) */
-	QByteArray data = line(doc);
-	XFile file(path);
-	bool ok;
-	QString why;
-	try {
-		ok = file.open_write() && file.write(data) == data.size();
-	} catch (errorEx &err) {
-		ok = false;
-		why = err.getString();
-	}
-	if (!ok)
-		throw serviceError("write_failed", why.isEmpty() ?
-			QObject::tr("Failed to write '%1'").arg(path) : why);
-	file.close();
+	/* staged: a failed write keeps an old file (BTD-139) */
+	StagedFile::writeFile(path, line(doc), false, true);
 }

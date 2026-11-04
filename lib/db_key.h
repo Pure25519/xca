@@ -38,6 +38,13 @@ class db_key: public db_base
 		 * database that lkey completes (it takes over its name and
 		 * comment and replaces it). NULL if storing failed. */
 		pki_key *insertKey(pki_key *lkey, pki_key *oldkey);
+		/* Replaces the software key by its copy on a token (card,
+		 * written by pki_scard::store_token() before): deletes key
+		 * and stores card, whose certificates and requests then
+		 * link to it (BTD-217). Throws the typed error of the store
+		 * step; card stays with the caller then. */
+		pki_key *replaceWithToken(const ServiceContext &ctx,
+				pki_key *key, pki_key *card);
 		void setOwnPass(QModelIndex idx, enum pki_key::passType);
 		void loadContainer();
 		/* Generates one key pair (BTD-32). Throws serviceError for a

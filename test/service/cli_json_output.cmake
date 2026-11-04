@@ -244,12 +244,14 @@ if(NOT out STREQUAL "")
 endif()
 
 # MINOR 7 of the review of BTD-39 (BTD-182): a write error of --index or
-# --hierarchy is write_failed, like --pem-file, and the later options
-# still run (--issuers comes after them in read_cmdline())
+# --hierarchy is an error object, and the later options still run
+# (--issuers comes after them in read_cmdline()). A missing directory is
+# refused by StagedFile before it writes, with its typed code (BTD-139;
+# before: internal_error from XFile)
 foreach(opt index hierarchy)
   run("${opt} write error" 1 ${pw} --json --${opt}
       "${WORK}/no-such-dir/${opt}.json" --issuers)
-  error_object("${opt} write error" write_failed)
+  error_object("${opt} write error" invalid_output)
   json_lines("${opt} write error" "${out}" list)
 endforeach()
 
