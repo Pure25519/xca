@@ -16,6 +16,7 @@
 #include <cerrno>
 #include <cstring>
 
+#include <QBuffer>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
@@ -162,6 +163,25 @@ void StagedFile::writeFile(const QString &target, const QByteArray &data,
 	StagedFile f(target, secretFile, replaceTarget);
 	f.stage(data);
 	f.publish();
+}
+
+void StagedFile::writeWith(const QString &target, bool secretFile,
+		bool replaceTarget, const std::function<void(QIODevice &)> &fill)
+{
+	QByteArray data;
+	{
+		QBuffer buf(&data);
+		buf.open(QIODevice::WriteOnly);
+		fill(buf);
+	}
+	try {
+		writeFile(target, data, secretFile, replaceTarget);
+	} catch (...) {
+		data.fill(0);
+		throw;
+	}
+	/* a secret does not stay in freed memory */
+	data.fill(0);
 }
 
 /* The length that counts against the limit of a file name: bytes on POSIX

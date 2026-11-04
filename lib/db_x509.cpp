@@ -27,6 +27,7 @@
 
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
+#include "staged_file.h"
 
 #include <QCoreApplication>
 #include <algorithm>
@@ -272,18 +273,20 @@ void db_x509::writeIndex(const QString &fname, bool hierarchy) const
 		QList<pki_x509*> issuers = Store.sqlSELECTpki<pki_x509>(
 			"SELECT DISTINCT issuer FROM certs WHERE issuer != item");
 		foreach(pki_x509 *ca, issuers) {
-			XFile file(dir + ca->getUnderlinedName() + ".txt");
-			file.open_write();
-			writeIndex(file, Store.sqlSELECTpki<pki_x509>(
+			QList<pki_x509*> certs = Store.sqlSELECTpki<pki_x509>(
 				"SELECT item FROM certs WHERE issuer=?",
-				QList<QVariant>()<<QVariant(ca->getSqlItemId()))
-			);
+				QList<QVariant>()<<QVariant(ca->getSqlItemId()));
+			StagedFile::writeWith(dir + ca->getUnderlinedName() +
+				".txt", false, true, [&](QIODevice &file) {
+					writeIndex(file, certs);
+				});
 		}
 	} else {
-		XFile file(fname);
-		file.open_write();
-		writeIndex(file, Store.sqlSELECTpki<pki_x509>(
-					"SELECT item FROM certs"));
+		QList<pki_x509*> certs = Store.sqlSELECTpki<pki_x509>(
+					"SELECT item FROM certs");
+		/* staged: a failed write keeps an old index (BTD-139) */
+		StagedFile::writeWith(fname, false, true,
+			[&](QIODevice &file) { writeIndex(file, certs); });
 	}
 }
 
