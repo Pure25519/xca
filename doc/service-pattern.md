@@ -91,6 +91,45 @@ Who owns an object that a rollback took out of the store (BTD-228): the undo of
   server of BTD-154) and when the database closes. Not at the next transaction: the failure entry
   of `auditedTransaction()` is one, written before the caller's catch block deletes its object.
 
+## Requests refused before the service
+
+Decision of the boss, 2026-10-28 (BTD-106):
+
+- A command line write request may fail before any service function runs. If the database is already open, it writes one `failure` entry. The entry has the action the service would have written, the error code as `error_code`, and no secrets.
+- If the database is not open, there is nothing to write into. The request fails with its message on stderr and an exit code other than 0.
+- Read requests write nothing.
+- The rule holds for every channel. A later REST server applies it to its own checks (BTD-154).
+
+Where a check can live in the service, it lives there, and the service audits it. A lookup that only the command line does (a name or id given on the command line) audits its own refusal with `AuditLog::appendFailure()`.
+
+How each command handles it:
+
+| Command | Check before the service | Handling |
+|---|---|---|
+| `xca --keygen` | key type | none left: `db_key::newKey(ctx, ...)` checks type, size and curve and audits `key.generate` failure (`invalid_key_type`, `invalid_key_size`, `invalid_curve`). The interactive wrapper asks the key-size question only for a known type, so an unknown type with a large size stays `invalid_key_type`. The message names the type as given. |
+| `xca --crlgen` | CA by name or id | `crl.generate` failure `unknown_issuer`, parameter `issuer` = the given reference (`lib/cmdline.cpp`) |
+| `xca --migrate-template` | template by name or id | `profile.migrate` failure `unknown_template` (BTD-167, already so) |
+| `xca --import` | none: the import service audits a run with no object (`nothing_to_import`) | see the open point below |
+| `xca --list-items`, `--issuers`, `--index`, `--hierarchy`, `--print`, `--select`, `--audit-verify`, `--audit-export` | reads | no entry |
+| `xca --audit-adopt` | none | the audit function writes its own entry |
+| `bxc-pki init`, `sign` | options, references, keys | `certificate.issue` |
+| `bxc-pki request-cert` | options, key type, `--hash` | `request.create` |
+| `bxc-pki renew` | references, options | `certificate.renew`; the handler's own refusal entry (`auditRefusal`) as before |
+| `bxc-pki revoke` | selectors, reason, dates | `certificate.revoke`; `auditRefusal` as before |
+| `bxc-pki crl` | `--ca`, `--this-update`, CRL options, `--out` | `crl.generate` |
+| `bxc-pki export` | reference, format options, budgets | `object.export`; `auditRefusal` as before |
+| `bxc-pki bootstrap` | file, schema, references | its own `bootstrap.apply` failure entry (BTD-166); file errors before the database is open write none |
+| `bxc-pki list`, `show` | reads | no entry |
+| any bxc-pki command | `--plan` | the `cli.plan` entry, success or failure (BTD-41) |
+
+For the bxc-pki commands the runner does it, not every handler. `Command::auditAction` and `auditObject` declare the intended action and object type. `runInTransaction()` writes their failure entry after the rollback, with the parameter `command`, but only when the failed run left no failure entry of a service call or an `auditRefusal()`. Its `AuditFailureCapture` sees those entries, so no request is audited twice.
+
+The runner also writes this entry for a failure after a service call whose `success` entry the rollback took back, such as a file `--out` cannot stage. The entry for the request is then the `failure`.
+
+Option parsing (unknown option, missing value) and the opening of the database come before it, so they write nothing. Tests: `test_cli_precheck_audit` (xca), `test_cli_refusal_audit` (bxc-pki).
+
+Open point, its own ticket: when some of the files of `xca --import` cannot be read, the command warns, imports the rest and exits 0. The unreadable files are in no entry.
+
 ## Service functions so far
 
 | Ticket | Service function | Value object | Audit action | Error codes |

@@ -271,8 +271,10 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name,
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
 
-	if (!task.isEC() && !task.isFixed() && task.size >= 32 &&
-	    (task.size < 1024 || task.size > 8192))
+	/* an unknown type is rejected by the service, not asked about
+	 * (BTD-106) */
+	if (task.ktype.isValid() && !task.isEC() && !task.isFixed() &&
+	    task.size >= 32 && (task.size < 1024 || task.size > 8192))
 	{
 		try {
 			if (!xcaWarning::confirm(ctx, "key.size",

@@ -349,16 +349,20 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 
 	if (cmd_opts.has("keygen")) {
 		keyjob task(cmd_opts["keygen"]);
-		/* Only the type here: size and curve are checked by the
-		 * key generation service, which audits a rejection (BTD-41) */
-		if (!task.ktype.isValid()) {
-			Database.close();
-			throw serviceError("invalid_key_type",
+		db_key *keys = Database.model<db_key>();
+		pki_key *pki;
+		/* type, size and curve are checked by the key generation
+		 * service, which audits a rejection (BTD-41, BTD-106); the
+		 * message names the type as given */
+		try {
+			pki = keys->newKey(task, cmd_opts["name"], false);
+		} catch (serviceError &err) {
+			if (err.code != "invalid_key_type")
+				throw;
+			throw serviceError(err.code,
 				QObject::tr("Unknown key type %1")
 					.arg(cmd_opts["keygen"]));
 		}
-		db_key *keys = Database.model<db_key>();
-		pki_key *pki = keys->newKey(task, cmd_opts["name"], false);
 		if (pki)
 			cmdline_items->append_item(pki);
 	}
@@ -434,6 +438,13 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 		if (!issuer) {
+			/* the lookup is the command line's own: it audits
+			 * the refusal like the service would (BTD-106) */
+			AuditParams params;
+			params.set("issuer", ca);
+			AuditLog::appendFailure(ServiceContext::localUser(
+				ServiceContext::cli), AuditLog::actionCrlGenerate,
+				"crl", QString(), params, "unknown_issuer");
 			report(serviceError("unknown_issuer",
 				QString("Issuer '%1' not found")
 					.arg(cmd_opts["crlgen"])));
