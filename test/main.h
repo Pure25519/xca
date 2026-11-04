@@ -114,6 +114,9 @@ class test_main: public QObject
 	void renewalThroughService();
 	void renewalAllOrNothing();
 
+	/* revokeInvalidity.cpp */
+	void revokeInvalidityDate();
+
 	/* staleReload.cpp */
 	void staleReloadInDelete();
 	void reloadProxyRows();
