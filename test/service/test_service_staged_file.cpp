@@ -16,6 +16,7 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
 #include "lib/exception.h"
@@ -57,6 +58,7 @@ class test_service_staged_file : public ServiceTestCase
 	void trustListKeepsDirectoryMode();
 	void unsupportedFileSystemMessage();
 	void staleCleanupSparesLiveRun();
+	void staleCleanupRemovesDeadRun();
 };
 
 void test_service_staged_file::cleanup()
@@ -182,6 +184,40 @@ void test_service_staged_file::staleCleanupSparesLiveRun()
 	QVERIFY(QFileInfo::exists(dir.filePath("slow.pem")));
 	for (const StagedFile::warning &w : second.warnings())
 		QVERIFY2(w.first != "stale_temp_removed", CCHAR(w.second));
+}
+
+/* BTD-213 (6): the temporary file of a run that is gone (its pid does not
+ * exist) and older than the age limit is removed and reported */
+void test_service_staged_file::staleCleanupRemovesDeadRun()
+{
+	pid_t child = fork();
+	if (child == 0)
+		_exit(0);
+	QVERIFY(child > 0);
+	QVERIFY(waitpid(child, nullptr, 0) == child);
+	QString dead = dir.filePath(QString(".gone.pem.bxc-tmp-p%1s1-"
+				"0123456789abcdef").arg(child));
+	QFile f(dead);
+	QVERIFY(f.open(QIODevice::WriteOnly));
+	f.write("left by a killed run\n");
+	f.close();
+	setAge(dead, 3600);
+	/* young and dead: kept, the age limit still applies */
+	QString young = dir.filePath(QString(".young.pem.bxc-tmp-p%1s1-"
+				"fedcba9876543210").arg(child));
+	QFile y(young);
+	QVERIFY(y.open(QIODevice::WriteOnly));
+	y.close();
+
+	StagedFile next(dir.filePath("next.pem"), false, false);
+	next.stage("next run\n");
+	QVERIFY(!QFileInfo::exists(dead));
+	QVERIFY(QFileInfo::exists(young));
+	bool reported = false;
+	for (const StagedFile::warning &w : next.warnings())
+		reported |= w.first == "stale_temp_removed";
+	QVERIFY(reported);
+	next.publish();
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_staged_file)
