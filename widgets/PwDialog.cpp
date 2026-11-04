@@ -130,7 +130,7 @@ PwDialog::PwDialog(pass_info *p, bool write)
 		setWindowTitle(pi->getTitle());
 	else
 		setWindowTitle(XCA_TITLE);
-	if (pi->getType() != "PIN")
+	if (!pi->isPin())
 		takeHex->hide();
 	setRW(write);
 }

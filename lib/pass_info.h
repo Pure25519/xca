@@ -68,6 +68,13 @@ class pass_info: public QObject
 	{
 		return purpose;
 	}
+	/* A token PIN or SO PIN, also a new one; by the purpose, since the
+	 * type text is translated (BTD-73) */
+	bool isPin() const
+	{
+		return purpose == TokenPin || purpose == TokenSoPin ||
+			purpose == NewTokenPin || purpose == NewTokenSoPin;
+	}
 	/* How often this request has been answered, the current one included */
 	int getAttempts() const
 	{

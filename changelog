@@ -1,6 +1,9 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-73: the password dialog shows the hex option for token PINs by
+   their purpose; before, it compared the translated word "PIN", so in
+   French ("NIP") the option was hidden for every PIN.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a
