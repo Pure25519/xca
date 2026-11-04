@@ -87,7 +87,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* --json (BTD-39): the outputs as JSON Lines, errors as JSON on stderr */
 	bool json = cmd_opts.has("json");
 	JsonReport::setActive(json);
-	auto report = [json](const errorEx &err) {
+	/* a failure entry that was not written turns the error into
+	 * audit_entry_lost, which keeps the original in its detail
+	 * (BTD-274) */
+	auto report = [json](const errorEx &error) {
+		QStringList lost = AuditLog::takeLostEntries();
+		serviceError lostError = AuditLog::lostEntriesError(lost,
+			JsonReport::error(error)["code"].toString(),
+			error.getString());
+		const errorEx &err = lost.isEmpty() ? error : lostError;
 		if (json)
 			JsonReport::write(stderr, JsonReport::error(err));
 		else
@@ -561,6 +569,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			report(err);
 			exitcode = EXIT_FAILURE;
 		}
+	}
+	/* a lost failure entry no error reported yet: never exit 0 */
+	QStringList lost = AuditLog::takeLostEntries();
+	if (!lost.isEmpty()) {
+		report(AuditLog::lostEntriesError(lost));
+		exitcode = EXIT_FAILURE;
 	}
 	return exitcode;
 }

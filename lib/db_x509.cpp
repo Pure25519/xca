@@ -900,12 +900,11 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	X509V3_CTX ext_ctx{};
 
     try {
+	/* the write lock is taken at the outermost BEGIN (BTD-274): the
+	 * uniqueness rule reads the certificates of the database, and no
+	 * other process stores one until this issuance commits (BTD-201) */
 	Transaction;
 	TransThrow();
-	/* the write lock before anything is read: the uniqueness rule
-	 * reads the certificates of the database, and no other process
-	 * stores one until this issuance commits (BTD-201) */
-	DbTransaction::lockForWrite();
 
 	IssuanceChecks::spec(spec);
 

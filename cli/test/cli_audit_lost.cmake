@@ -1,7 +1,7 @@
 # A failure entry that cannot be written (BTD-274): a trigger on audit_log
 # refuses every failure entry. A refused issuance (bxc-pki sign by a CA
-# that is no CA) and a refused key generation (xca --keygen with a size
-# below the minimum) then fail with audit_entry_lost, exit code 1, and
+# that is no CA) and a refused key generation (xca --keygen with an
+# unknown curve) then fail with audit_entry_lost, exit code 1, and
 # the detail still names the original error. Success entries are not
 # affected.
 
@@ -32,9 +32,9 @@ endfunction()
 bxc("sign by a non-CA" 1 sign victim --db "${DB}" ${PW} --ca not-a-ca)
 lost("sign by a non-CA" issuer_not_ca)
 
-xca_run("keygen too small" 1 --database "${DB}" ${PW} --json
-    --keygen RSA:512 --name too-small)
-lost("keygen too small" invalid_key_size)
+xca_run("keygen unknown curve" 1 --database "${DB}" ${PW} --json
+    --keygen EC:nocurve --name no-curve)
+lost("keygen unknown curve" invalid_curve)
 
 # a success entry is still written: the trigger refuses failures only
 bxc("sign by the root" 0 sign victim --db "${DB}" ${PW} --ca "Lost Root")

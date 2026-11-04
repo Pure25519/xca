@@ -13,6 +13,7 @@
 #include <openssl/ui.h>
 
 #include "local.h"
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/debug_info.h"
 #include "lib/entropy.h"
@@ -144,8 +145,15 @@ static QString defaultDatabase()
 }
 
 /* The error document or text on stderr; returns the exit code */
-static int report(const errorEx &err, const CommandContext &ctx)
+static int report(const errorEx &error, const CommandContext &ctx)
 {
+	/* a failure entry that was not written makes the command fail
+	 * with audit_entry_lost; its own error stays in the detail
+	 * (BTD-274) */
+	QStringList lost = AuditLog::takeLostEntries();
+	serviceError lostError = AuditLog::lostEntriesError(lost,
+		JsonReport::error(error)["code"].toString(), error.getString());
+	const errorEx &err = lost.isEmpty() ? error : lostError;
 	QJsonObject doc = JsonReport::error(err);
 	QString code = doc["code"].toString();
 	QString detail = err.getString();
@@ -253,6 +261,16 @@ static void openDatabase(const Command &cmd, CommandContext &ctx)
 	ctx.svc = ServiceContext::localUser(ServiceContext::cli);
 }
 
+/* After a command that succeeded: exit 0, or audit_entry_lost when a
+ * failure entry on the way was not written (BTD-274) */
+static int lostEntries(const CommandContext &ctx)
+{
+	QStringList lost = AuditLog::takeLostEntries();
+	if (lost.isEmpty())
+		return exitOk;
+	return report(AuditLog::lostEntriesError(lost), ctx);
+}
+
 static int run(const QStringList &argv)
 {
 	Registry &reg = Registry::instance();
@@ -302,7 +320,7 @@ static int run(const QStringList &argv)
 
 		if (!cmd->writes) {
 			cmd->handler(ctx);
-			return exitOk;
+			return lostEntries(ctx);
 		}
 		ResultCollector result(cmd->name, ctx.plan);
 		ctx.result = &result;
@@ -316,7 +334,7 @@ static int run(const QStringList &argv)
 			console_write(stdout, result.text().toUtf8());
 		else
 			JsonReport::write(stdout, result.document());
-		return exitOk;
+		return lostEntries(ctx);
 	} catch (errorEx &err) {
 		return report(err, ctx);
 	} catch (enum open_result r) {
