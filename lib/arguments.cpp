@@ -83,7 +83,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("select", "id-list", required_argument, true, true,
 		"Selects all items in the comma separated id-list to be shown with 'print', 'text' or 'pem'."),
 	arg_option("sqlpass", "password", required_argument, false, false,
-		"Password to access the remote SQL server. See below for password format options."),
+		"Password to access the remote SQL server. An empty value (--sqlpass \"\") is an error and nothing is opened. See below for password format options."),
 	arg_option("text", NULL, no_argument, true, false,
 		"Print the content of provided files as OpenSSL does."),
 	arg_option("verbose", NULL, no_argument, false, false,
