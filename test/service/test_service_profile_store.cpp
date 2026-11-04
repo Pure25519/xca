@@ -20,8 +20,10 @@
 #include "lib/db_x509.h"
 #include "lib/db_x509req.h"
 #include "lib/exception.h"
+#include "lib/issuance.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
+#include "lib/policy.h"
 #include "lib/profile.h"
 #include "lib/profile_store.h"
 
@@ -63,6 +65,9 @@ class test_service_profile_store : public ServiceTestCase
 	void assignmentChecksSignature();
 	void retiredIsNotAssigned();
 	void issuedUnderProfileAndPolicy();
+	void deletedCertificateKeepsVersion();
+	void caOnlyPolicyIsRecorded();
+	void updateChecksAssignedCas();
 };
 
 pki_x509 *test_service_profile_store::ca(const QString &job)
@@ -211,6 +216,94 @@ void test_service_profile_store::versionInUseIsKept()
 	QCOMPARE(code([&]() { ProfileStore::issue(ctx, c, "xca-tls-client", again,
 				nullptr, Registration()); }),
 		QString("profile_not_assigned"));
+}
+
+/* BTD-201: the record of an issuance outlives the certificate. Deleting
+ * the only certificate of a profile version left it deletable, because
+ * the delete removed the issued_profiles row. */
+void test_service_profile_store::deletedCertificateKeepsVersion()
+{
+	ProfileStore::importFile(ctx, "profile",
+		SERVICE_TEST_DATA "/profiles/generic/xca-tls-client.json");
+	pki_x509 *c = ca("EC:prime256v1");
+	ProfileStore::assign(ctx, c, "profile", "xca-tls-client");
+	pki_x509req *req = csr("/CN=deleted-client", "");
+	QVERIFY(req);
+	pki_x509 *cert = ProfileStore::issue(ctx, c, "xca-tls-client", req,
+				nullptr, Registration());
+	QVERIFY(cert);
+	Database.model<db_x509>()->deleteItems(ctx, { cert });
+	QCOMPARE(code([&]() { ProfileStore::remove(ctx, "profile",
+				"xca-tls-client", 1); }),
+		QString("profile_in_use"));
+}
+
+/* BTD-201: an issuance under policies but without a stored profile (the
+ * policies of the CA only) is recorded with the policy names, so a used
+ * policy cannot be deleted */
+void test_service_profile_store::caOnlyPolicyIsRecorded()
+{
+	ProfileStore::importFile(ctx, "policy",
+		SERVICE_TEST_DATA "/policies/strict-content.json");
+	pki_x509 *c = ca("EC:prime256v1");
+	IssuanceSpec s;
+	s.name = "policy only";
+	x509name n;
+	n.addEntryByNid(NID_organizationName, "BxC Security");
+	n.addEntryByNid(NID_commonName, "policy only");
+	s.subject = n;
+	s.key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+						s.name);
+	s.signer = c;
+	s.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(-1));
+	s.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(30));
+	s.hashAlgo = digest(NID_sha256);
+	s.extensions.basicCA = ExtensionSpec::bc_not_ca;
+	s.extensions.subjectKeyId = true;
+	s.extensions.keyUsage << "digitalSignature";
+	/* assigned to the CA, not named by the spec */
+	ProfileStore::assign(ctx, c, "policy", "strict-content");
+	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, s);
+	QVERIFY(cert);
+	QCOMPARE(code([&]() { ProfileStore::remove(ctx, "policy",
+				"strict-content", 1); }),
+		QString("profile_in_use"));
+
+	/* the record has no profile; a renewal does not look one up */
+	RenewalSpec r;
+	r.predecessor = cert;
+	r.notBefore = a1time(QDateTime::currentDateTimeUtc());
+	r.validity = IsoDuration::parse("P1Y");
+	r.hashAlgo = digest(NID_sha256);
+	QCOMPARE(code([&]() { Database.model<db_x509>()->renew(ctx, { r }); }),
+		QString());
+}
+
+/* BTD-201: an update of an assigned profile is checked against the key
+ * of every CA it is assigned to, like the assignment (OpenXPKI #960); an
+ * RSA-PSS-only version on an EC CA is refused, naming the CA */
+void test_service_profile_store::updateChecksAssignedCas()
+{
+	ProfileStore::importFile(ctx, "profile",
+		SERVICE_TEST_DATA "/profiles/generic/xca-tls-client.json");
+	pki_x509 *ec = ca("EC:prime256v1");
+	ProfileStore::assign(ctx, ec, "profile", "xca-tls-client");
+	QJsonObject pss = ProfileStore::show("profile", "xca-tls-client").document;
+	pss["signature"] = QJsonObject{ { "rsa", QJsonObject{
+		{ "padding", "pss" }, { "hashes", QJsonArray{ "sha256" } } } } };
+	QString message;
+	try {
+		ProfileStore::update(ctx, "profile", pss);
+	} catch (serviceError &err) {
+		message = err.code + ": " + err.getString();
+	}
+	QVERIFY2(message.startsWith("profile_signature_mismatch"),
+		CCHAR(message));
+	QVERIFY2(message.contains(ec->getIntName()), CCHAR(message));
+	QCOMPARE(ProfileStore::show("profile", "xca-tls-client").version, 1);
+	/* a fitting update still works */
+	QCOMPARE(ProfileStore::update(ctx, "profile",
+		ProfileStore::show("profile", "xca-tls-client").document).version, 2);
 }
 
 /* OpenXPKI #960: a profile whose signature does not fit the CA key is
