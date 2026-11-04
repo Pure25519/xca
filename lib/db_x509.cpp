@@ -470,8 +470,9 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 	SQL_PREPARE(q, "INSERT INTO issued_profiles (item, profile, version, "
 		"policy_names) VALUES (?, ?, ?, ?)");
 	q.bindValue(0, cert->getSqlItemId());
-	q.bindValue(1, spec.profile);
-	q.bindValue(2, spec.profileVersion);
+	q.bindValue(1, spec.profileVersion ? QVariant(spec.profile) : QVariant());
+	q.bindValue(2, spec.profileVersion ? QVariant(spec.profileVersion) :
+						QVariant());
 	q.bindValue(3, policies.join(","));
 	q.exec();
 	if (q.lastError().isValid())
@@ -1078,7 +1079,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	delete tempkey;
 	tempkey = nullptr;
 	markRequestSigned(spec.request, stored);
-	if (spec.profileVersion)
+	/* every issuance under a profile or a policy, also policies of the
+	 * CA only, so that a used policy cannot be deleted (BTD-201) */
+	if (spec.profileVersion || !spec.policies.isEmpty())
 		recordProfile(named, stored);
 	if (spec.predecessor)
 		recordRenewal(spec, stored);

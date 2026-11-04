@@ -154,7 +154,6 @@ QSqlError pki_x509::deleteSqlData()
 		<< "UPDATE certs SET issuer=NULL WHERE issuer=?"
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
-		<< "DELETE FROM issued_profiles WHERE item=?"
 		<< "DELETE FROM renewals WHERE item=?"
 		;
 	foreach(QString task, tasks) {

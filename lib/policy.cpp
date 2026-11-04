@@ -416,12 +416,23 @@ const QMap<QString, QString> &formNames()
 	return names;
 }
 
-/* The certificate's status as the uniqueness rule names it */
+/* The certificate's status as the uniqueness rule names it. A notBefore
+ * in the future is not_yet_valid, not valid (BTD-201): a rule that wants
+ * such certificates counted names that status. */
 QString status(const pki_x509 *c)
 {
 	if (c->isRevoked())
 		return "revoked";
-	return c->getNotAfter() < a1time() ? "expired" : "valid";
+	a1time now;
+	if (c->getNotAfter() < now)
+		return "expired";
+	return c->getNotBefore() > now ? "not_yet_valid" : "valid";
+}
+
+/* A certificate that signed itself */
+static bool selfSigned(X509 *c)
+{
+	return X509_check_issued(c, c) == X509_V_OK;
 }
 
 bool sameSan(X509 *a, X509 *b)
@@ -549,10 +560,16 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 		statuses << v.toString();
 	bool byIssuer = u["scope"].toString() == "issuer";
 	for (pki_x509 *other : Store.getAll<pki_x509>()) {
-		if (other == cert || (byIssuer && other->getSigner() != spec.signer) ||
-		    !statuses.contains(status(other)))
+		if (other == cert || !statuses.contains(status(other)))
 			continue;
 		X509 *o = other->getCert();
+		/* the scope of a self-signed certificate is itself: the roots
+		 * of the same key (a root issued again), not every certificate
+		 * whose signer is unknown (BTD-201) */
+		if (byIssuer && (spec.signer ? other->getSigner() != spec.signer :
+		    !selfSigned(o) || EVP_PKEY_eq(X509_get0_pubkey(o),
+					X509_get0_pubkey(x)) != 1))
+			continue;
 		QString field;
 		if (fields.contains("subject_dn") &&
 		    !X509_NAME_cmp(X509_get_subject_name(o), subject))
