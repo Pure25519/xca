@@ -18,13 +18,12 @@ void xcaWarning::error(const errorEx &err)
 {
 	if (err.isEmpty())
 		return;
-	/* --json: the error object of the exception, with its code and
-	 * without the prefix of the GUI (BTD-182) */
-	if (JsonReport::active()) {
-		JsonReport::write(stderr, JsonReport::error(err));
-		return;
-	}
-	gui->error(QObject::tr("The following error occurred:") + "\n" +
+	/* --json: the message alone, which the console turns into an error
+	 * object; the prefix belongs to the GUI (BTD-182). Through gui in
+	 * both cases, so a collecting console (bxc-pki's OID check) still
+	 * sees it. */
+	gui->error(JsonReport::active() ? err.getString() :
+		QObject::tr("The following error occurred:") + "\n" +
 		err.getString());
 }
 
