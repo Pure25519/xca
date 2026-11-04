@@ -20,6 +20,7 @@
 #include "lib/db_x509.h"
 #include "lib/db_x509req.h"
 #include "lib/exception.h"
+#include "lib/issuance.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
 #include "lib/policy.h"
@@ -262,10 +263,20 @@ void test_service_profile_store::caOnlyPolicyIsRecorded()
 	s.extensions.keyUsage << "digitalSignature";
 	s.policies << Policy::fromJson(
 		ProfileStore::show("policy", "strict-content").document);
-	QVERIFY(Database.model<db_x509>()->newCert(ctx, s));
+	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, s);
+	QVERIFY(cert);
 	QCOMPARE(code([&]() { ProfileStore::remove(ctx, "policy",
 				"strict-content", 1); }),
 		QString("profile_in_use"));
+
+	/* the record has no profile; a renewal does not look one up */
+	RenewalSpec r;
+	r.predecessor = cert;
+	r.notBefore = a1time(QDateTime::currentDateTimeUtc());
+	r.validity = IsoDuration::parse("P1Y");
+	r.hashAlgo = digest(NID_sha256);
+	QCOMPARE(code([&]() { Database.model<db_x509>()->renew(ctx, { r }); }),
+		QString());
 }
 
 /* BTD-201: an update of an assigned profile is checked against the key
