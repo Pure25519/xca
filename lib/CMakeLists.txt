@@ -103,7 +103,8 @@ if(BUILD_TESTING)
   set_tests_properties(test_takey PROPERTIES LABELS "console;lib")
 
   Test(test_asn1time asn1time.cpp asn1time.h func_base.h func_base.cpp)
-  Test(test_entropy entropy.cpp entropy.h func.h func_base.cpp xfile.h)
+  Test(test_entropy entropy.cpp entropy.h func.h func_base.cpp xfile.h
+	staged_file.cpp staged_file.h)
   Test(test_x509name x509name.cpp x509name.h func_base.h func_base.cpp
                                     BioByteArray.h BioByteArray.cpp )
   Test(test_digest digest.cpp digest.h func_base.cpp func_base.h)

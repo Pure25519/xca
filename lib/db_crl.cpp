@@ -292,9 +292,13 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 	if (!task.trigger.isEmpty())
 		params.set("trigger", task.trigger);
 
+	/* the key of the CA before the transaction (BTD-273) */
+	KeyUnlock unlock;
 	try {
 		auditedTransaction(ctx, AuditLog::actionCrlGenerate, "crl",
 					QString(), params, [&]() {
+			unlock.add(cert ? cert->getRefKey() : nullptr);
+		}, [&]() {
 			pki_crl *crl = nullptr;
 			x509v3ext e;
 			X509V3_CTX ext_ctx;

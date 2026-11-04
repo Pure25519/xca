@@ -426,13 +426,14 @@ IssuanceSpec RenewalSpec::issuanceSpec() const
 
 	/* the stored profile the predecessor was issued under: its
 	 * policies and, for family opcua, the OPC UA chain rules apply
-	 * again, and the successor records it (BTD-167) */
+	 * again, and the successor records it (BTD-167); an issuance under
+	 * CA-only policies is recorded without a profile (BTD-201) */
 	XSqlQuery q;
 	SQL_PREPARE(q, "SELECT profile, version FROM issued_profiles "
 			"WHERE item=?");
 	q.bindValue(0, predecessor->getSqlItemId());
 	q.exec();
-	if (q.first()) {
+	if (q.first() && !q.value(0).isNull()) {
 		spec.profile = q.value(0).toString();
 		spec.profileVersion = q.value(1).toInt();
 		Profile profile = Profile::fromJson(ProfileStore::show(
