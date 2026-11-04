@@ -9,6 +9,8 @@
 
 #include <QDateTime>
 #include <QSignalSpy>
+#include <QSqlError>
+#include <QSqlQuery>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -110,6 +112,7 @@ class test_service_objects : public ServiceTestCase
 	void deleteOnToken();
 	void deleteOnTokenRejected();
 	void deleteOnTokenFails();
+	void deleteOnTokenRolledBack();
 	void tokenRenameObjectId();
 	void tokenRenameDatabaseError();
 	void replaceKeyConfirmed();
@@ -643,6 +646,39 @@ void test_service_objects::deleteOnTokenFails()
 	QVERIFY(!e.params.value("on_token").toBool());
 	QCOMPARE(e.params.value("warning").toString(),
 		QString("token_delete_failed"));
+	verifyChain();
+}
+
+/* BTD-272: a failure after the first object, here the audit entry of
+ * the second, rolls the database back: no object may be gone from its
+ * token. Before, the token deletion of the first object ran inside the
+ * transaction and stayed done. */
+void test_service_objects::deleteOnTokenRolledBack()
+{
+	pki_key *first = newKey("first on a token");
+	pki_key *second = newKey("second on a token");
+	QString secondId = second->getSqlItemId().toString();
+	int deleted = 0;
+	db_base::tokenDeleteHook = [&](pki_base *) {
+		deleted++;
+		return true;
+	};
+	QSqlQuery q;
+	QVERIFY2(q.exec(QString("CREATE TEMP TRIGGER btd272_fail_audit BEFORE "
+		"INSERT ON audit_log WHEN NEW.action = 'object.delete' "
+		"AND NEW.result = 'success' AND NEW.object_id = '%1' BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-272 test: audit refused'); END")
+		.arg(secondId)), CCHAR(q.lastError().text()));
+	try {
+		keys()->deleteItems(ctx, { first, second }, true);
+		QFAIL("deleteItems() did not throw");
+	} catch (errorEx &) {
+	}
+	QVERIFY2(q.exec("DROP TRIGGER btd272_fail_audit"),
+		CCHAR(q.lastError().text()));
+	QVERIFY(Database.model<db_key>()->isStored(first));
+	QVERIFY(Database.model<db_key>()->isStored(second));
+	QCOMPARE(deleted, 0);
 	verifyChain();
 }
 
