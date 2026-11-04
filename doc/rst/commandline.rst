@@ -10,6 +10,22 @@ Arguments
 
 .. include:: arguments.rst
 
+Import
+------
+
+``--import`` stores every item it can read from the given files. If a file
+cannot be read (it is missing or unreadable, or holds no PKI data), the readable
+items are still imported. The command then reports each failed file and exits
+with code 1.
+
+- The report is an error with the code ``unreadable_input`` or ``no_pki_data``.
+  With ``--json`` it is one error object per file on standard error.
+- The audit log has one ``object.import`` entry with result ``failure`` for
+  each failed file, with the file and the code.
+
+Before bxc-pki BTD-270, an import with an unreadable file exited with 0 and
+only printed a warning.
+
 JSON output
 -----------
 

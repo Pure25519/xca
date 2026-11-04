@@ -180,7 +180,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!name.isEmpty())
 			pki->setIntName(name);
 	}
-	if (cmdline_items->failed_files.size() > 0) {
+	/* --import audits and reports them itself (BTD-270) */
+	if (cmdline_items->failed_files.size() > 0 && !cmd_opts.has("import")) {
 		XCA_WARN(QString("Failed to import from '%1'")
 			.arg(cmdline_items->failed_files.join("' '")));
 	}
@@ -521,15 +522,38 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	}
 	if (cmd_opts.has("import")) {
 		ImportSpec spec;
+		/* importItems() audits the files it could not read and stores
+		 * the rest; each failed file is reported with its code and
+		 * the command exits 1 (BTD-270) */
+		QStringList failed = cmdline_items->failed_files;
+		spec.failedFiles = failed;
 		/* importItems() takes the items over */
 		spec.items << cmdline_items;
 		*_cmdline_items = nullptr;
+		auto reportFailed = [&]() {
+			for (const QString &f : failed) {
+				QString code = importFailureCode(f);
+				report(serviceError(code, code == "no_pki_data" ?
+					QObject::tr("No PKI data found in '%1'").arg(f) :
+					QObject::tr("Cannot read '%1'").arg(f)));
+			}
+			if (!failed.isEmpty())
+				exitcode = EXIT_FAILURE;
+		};
 		try {
 			ImportResult result = Database.importItems(
 				ServiceContext::localUser(ServiceContext::cli),
 				spec);
 			foreach(pki_base *pki, result.existing)
 				XCA_INFO(importExistsMessage(pki));
+			reportFailed();
+		} catch (serviceError &err) {
+			/* nothing readable: the files are the error */
+			if (err.code == "no_pki_data" && !failed.isEmpty())
+				reportFailed();
+			else
+				report(err);
+			exitcode = EXIT_FAILURE;
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;

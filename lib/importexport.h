@@ -41,6 +41,9 @@ class ImportSpec
 	 * PwDialogCore asks (the GUI dialog, or the headless source of
 	 * the purpose ImportPassword) */
 	QString passwordSource{};
+	/* Files the caller probed itself and could not read (the xca
+	 * command line, BTD-270): audited like the files of files */
+	QStringList failedFiles{};
 };
 
 class ImportResult
@@ -50,7 +53,9 @@ class ImportResult
 	QList<pki_base *> created{};
 	/* Already in the database; the imported copy was dropped */
 	QList<pki_base *> existing{};
-	/* Files (or dataName) that contained no PKI object */
+	/* Files (or dataName) that contained no PKI object, also those of
+	 * ImportSpec::failedFiles; each has one object.import failure
+	 * entry with the code of importFailureCode() (BTD-270) */
 	QStringList failedFiles{};
 
 	QList<pki_base *> all() const
@@ -58,6 +63,11 @@ class ImportResult
 		return created + existing;
 	}
 };
+
+/* The error code of a file no loader could read (BTD-270):
+ * unreadable_input when it is missing or not readable, otherwise
+ * no_pki_data. data is true for ImportSpec::data, which has no file. */
+QString importFailureCode(const QString &file, bool data = false);
 
 /* What to export */
 /* How a PKCS#12 export protects its content, as written (BTD-175) */

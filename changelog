@@ -1,6 +1,13 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-270: xca --import with a file it cannot read (missing,
+   unreadable, no PKI data) still imports the readable items, but now
+   reports each failed file (unreadable_input or no_pki_data; with
+   --json one error object per file) and exits 1; before, it warned and
+   exited 0. Each failed file has its own object.import failure entry
+   in the audit log, written by importItems().
+
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,

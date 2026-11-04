@@ -109,7 +109,7 @@ How each command handles it:
 | `xca --keygen` | key type | none left: `db_key::newKey(ctx, ...)` checks type, size and curve and audits `key.generate` failure (`invalid_key_type`, `invalid_key_size`, `invalid_curve`). The interactive wrapper asks the key-size question only for a known type, so an unknown type with a large size stays `invalid_key_type`. The message names the type as given. |
 | `xca --crlgen` | CA by name or id | `crl.generate` failure `unknown_issuer`, parameter `issuer` = the given reference (`lib/cmdline.cpp`) |
 | `xca --migrate-template` | template by name or id | `profile.migrate` failure `unknown_template` (BTD-167, already so) |
-| `xca --import` | none: the import service audits a run with no object (`nothing_to_import`) | see the open point below |
+| `xca --import` | none: the files the command line could not read go to `importItems()` (`ImportSpec::failedFiles`) | one `object.import` failure entry per file with `file` and `unreadable_input` or `no_pki_data`, written by the service; the readable items are imported; exit code 1 (BTD-270) |
 | `xca --list-items`, `--issuers`, `--index`, `--hierarchy`, `--print`, `--select`, `--audit-verify`, `--audit-export` | reads | no entry |
 | `xca --audit-adopt` | none | the audit function writes its own entry |
 | `bxc-pki init`, `sign` | options, references, keys | `certificate.issue` |
@@ -128,7 +128,7 @@ The runner also writes this entry for a failure after a service call whose `succ
 
 Option parsing (unknown option, missing value) and the opening of the database come before it, so they write nothing. Tests: `test_cli_precheck_audit` (xca), `test_cli_refusal_audit` (bxc-pki).
 
-Open point, its own ticket: when some of the files of `xca --import` cannot be read, the command warns, imports the rest and exits 0. The unreadable files are in no entry.
+Files that cannot be read (BTD-270): `importItems()` writes one `object.import` failure entry per file before it stores anything. The entry has object type `object`, the parameter `file`, and the error code `unreadable_input` (missing or not readable) or `no_pki_data`. This covers its own files and those of `ImportSpec::failedFiles`. The readable objects are stored and audited as before. When nothing is readable, the import fails with `no_pki_data`, and there is no second entry for the run as a whole. A file whose reading throws (BTD-115) still aborts the import with `unreadable_input`.
 
 ## Service functions so far
 
