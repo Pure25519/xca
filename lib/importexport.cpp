@@ -26,6 +26,8 @@
 #include <QMap>
 #include <QSaveFile>
 
+#include <openssl/pkcs12.h>
+
 QString auditObjectType(const pki_base *pki)
 {
 	switch (pki ? pki->getType() : none) {
@@ -441,6 +443,44 @@ void db_base::checkExportSpec(const ExportSpec &spec) const
 		throw serviceError("invalid_pkcs12_algorithm",
 			tr("Unknown PKCS#12 algorithm '%1'")
 			.arg(spec.pkcs12Algorithm));
+	/* MAC and iterations: PKCS#12 only, not with a legacy algorithm,
+	 * which stays one explicit choice with its fixed parameters; the
+	 * iteration count of the setting is checked like one of the
+	 * export (BTD-175) */
+	if ((!spec.pkcs12Mac.isEmpty() || spec.pkcs12Iterations) &&
+	    (spec.clipboard || !xport->match_all(F_PKCS12)))
+		throw serviceError("format_not_applicable",
+			tr("A PKCS#12 MAC or iteration count needs a PKCS#12 "
+			   "format"));
+	if (!spec.pkcs12Mac.isEmpty() &&
+	    !pki_pkcs12::macs.contains(spec.pkcs12Mac))
+		throw serviceError("invalid_pkcs12_mac",
+			tr("Unknown PKCS#12 MAC '%1', expected one of %2")
+			.arg(spec.pkcs12Mac).arg(pki_pkcs12::macs.join(", ")));
+	if (!spec.clipboard && xport->match_all(F_PKCS12)) {
+		ExportOptions opts;
+		opts.pkcs12Iterations = spec.pkcs12Iterations;
+		int iter = pki_pkcs12::iterationsForExport(opts);
+		if (iter < pki_pkcs12::minIterations ||
+		    iter > pki_pkcs12::maxIterations)
+			throw serviceError("invalid_pkcs12_iterations",
+				tr("The PKCS#12 iteration count %1 is not "
+				   "between %2 and %3").arg(spec.pkcs12Iterations ?
+				   QString::number(spec.pkcs12Iterations) :
+				   (QString)Settings["pkcs12_iterations"])
+				.arg(pki_pkcs12::minIterations)
+				.arg(pki_pkcs12::maxIterations));
+		encAlgo algo = spec.pkcs12Algorithm.isEmpty() ?
+			encAlgo::forExport() : encAlgo(spec.pkcs12Algorithm);
+		if (algo.legacy() && spec.pkcs12Mac == "pbmac1")
+			throw serviceError("invalid_pkcs12_mac",
+				tr("PBMAC1 is not possible with the legacy "
+				   "algorithm %1").arg(algo.name()));
+		if (algo.legacy() && spec.pkcs12Iterations)
+			throw serviceError("invalid_pkcs12_iterations",
+				tr("An iteration count is not possible with "
+				   "the legacy algorithm %1").arg(algo.name()));
+	}
 	/* Only for a format that writes an ML-DSA private key */
 	if (!spec.privateKeyFormat.isEmpty()) {
 		if (!pki_evp::mlDsaFormats.contains(spec.privateKeyFormat))
@@ -453,6 +493,24 @@ void db_base::checkExportSpec(const ExportSpec &spec) const
 				tr("An ML-DSA private key format needs a "
 				   "private key export of an ML-DSA key"));
 	}
+}
+
+Pkcs12Protection pkcs12Protection(const ExportSpec &spec)
+{
+	Pkcs12Protection p;
+	encAlgo algo = spec.pkcs12Algorithm.isEmpty() ? encAlgo::forExport() :
+						encAlgo(spec.pkcs12Algorithm);
+	ExportOptions opts;
+	opts.pkcs12Iterations = spec.pkcs12Iterations;
+	p.algorithm = algo.name();
+	p.legacy = algo.legacy();
+	/* a legacy algorithm: a SHA-1 MAC of one iteration and OpenSSL's
+	 * count for the encryption (pki_pkcs12::writePKCS12) */
+	p.mac = p.legacy ? QString("hmac-sha1") : spec.pkcs12Mac.isEmpty() ?
+				pki_pkcs12::macs[0] : spec.pkcs12Mac;
+	p.iterations = p.legacy ? PKCS12_DEFAULT_ITER :
+				pki_pkcs12::iterationsForExport(opts);
+	return p;
 }
 
 QByteArray db_base::exportItems(const ServiceContext &ctx,
@@ -485,13 +543,19 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 			encAlgo::forExport() : encAlgo(spec.pkcs12Algorithm))
 			.getEncAlgoNid();
 		opts.mlDsaFormat = spec.privateKeyFormat;
+		opts.pkcs12Mac = spec.pkcs12Mac.isEmpty() ?
+			pki_pkcs12::macs[0] : spec.pkcs12Mac;
+		opts.pkcs12Iterations = spec.pkcs12Iterations;
+		opts.pkcs12Iterations = pki_pkcs12::iterationsForExport(opts);
 		/* How the key material is protected, where a legacy method is
 		 * possible: the PKCS#12 algorithm, and the legacy marker for
 		 * it and for RFC 1423 PEM encryption (BTD-52) */
 		if (!spec.clipboard && xport->match_all(F_PKCS12)) {
-			encAlgo used = encAlgo::forExport(opts);
-			params.set("pkcs12_algorithm", used.name());
-			if (used.legacy())
+			Pkcs12Protection p12 = pkcs12Protection(spec);
+			params.set("pkcs12_algorithm", p12.algorithm);
+			params.set("pkcs12_mac", p12.mac);
+			params.set("pkcs12_iterations", (qint64)p12.iterations);
+			if (p12.legacy)
 				params.set("legacy", true);
 		} else if (!spec.clipboard &&
 			   xport->match_all(F_TRADITION | F_CRYPT)) {

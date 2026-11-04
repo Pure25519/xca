@@ -134,8 +134,9 @@ void pki_x509::restoreSql(const QSqlRecord &rec)
 		crlDays = rec.value(VIEW_x509_auth_crlDays).toInt();
 	else
 		crlDays = defaultCrlDays;
-	if (!rec.isNull(VIEW_x509_revocation))
-		revocation = x509rev(rec, VIEW_x509_revocation);
+	/* on a reload the object may be revoked from before (BTD-238) */
+	revocation = rec.isNull(VIEW_x509_revocation) ? x509rev() :
+			x509rev(rec, VIEW_x509_revocation);
 }
 
 QSqlError pki_x509::deleteSqlData()

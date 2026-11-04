@@ -220,14 +220,16 @@ Passwd PwDialogHeadless::readSource(const QString &source)
 		chompLine(pass);
 	} else if (source.startsWith("file:")) {
 		QFile f(source.mid(5));
-		f.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
+		/* a failed open is reported by readFirstLine() (isOpen) */
+		(void)f.open(QIODevice::ReadOnly | QIODevice::Unbuffered);
 		pass = readFirstLine(f, source);
 	} else if (source.startsWith("fd:") || source == "stdin") {
 		bool ok = true;
 		int fd = source == "stdin" ? 0 : source.mid(3).toInt(&ok);
 		QFile f;
 		if (ok)
-			f.open(fd, QIODevice::ReadOnly | QIODevice::Unbuffered);
+			(void)f.open(fd, QIODevice::ReadOnly |
+					QIODevice::Unbuffered);
 		pass = readFirstLine(f, source);
 	} else {
 		throw secretError(secretError::unreadable,

@@ -1,8 +1,9 @@
 # xca --no-gui on a database whose password is empty (BTD-117): a given
 # --password is read and compared, so every source is rejected (no source
 # delivers an empty password), nothing is generated and the old database
-# is neither upgraded nor given an audit baseline. Without --password it
-# opens as upstream allows, unchecked.
+# is neither upgraded nor given an audit baseline. Without --password the
+# old database is refused as well: an upgrade needs the verified password
+# (BTD-137, Variante A).
 # The xca command line cannot create such a database (the GUI can): the
 # schema 8 fixture gets the stored hash of the empty password.
 # cmake -DXCA=<xca> -DSQL_EXEC=<sql_exec> [-DDUMP=<schema8-fork.sql>] -DDATA=<test/service/data>
@@ -82,21 +83,20 @@ if(NOT out STREQUAL "0\n0\n0\n")
   fail("a rejected open wrote to the database (audit_log, bxc_schema, key):\n${out}")
 endif()
 
-# Without --password: listed as upstream allows, upgraded, unchecked
+# Without --password: the old database needs an upgrade, which needs the
+# verified password, so the open is refused and nothing is written
+# (BTD-137). Before, it was upgraded and given a baseline, unchecked.
 run_xca(rc out --list-items)
-if(NOT rc EQUAL 0 OR NOT out MATCHES "fixture-rsa")
-  fail("no password: expected exit 0 and the fixture items, got '${rc}':\n${out}")
+if(rc EQUAL 0 OR NOT out MATCHES "schema_upgrade_needs_password|needs the database password")
+  fail("no password: expected a refusal of the upgrade, got '${rc}':\n${out}")
 endif()
-run_xca(rc out --audit-export -)
+if(out MATCHES "fixture-rsa")
+  fail("no password: the refused open listed items:\n${out}")
+endif()
+sql(out -c "SELECT count(*) FROM sqlite_master WHERE name='audit_log'"
+        -c "SELECT count(*) FROM settings WHERE key_='bxc_schema'")
 file(REMOVE_RECURSE "${WORK}")
-if(NOT rc EQUAL 0 OR NOT out MATCHES "\"action\":\"audit.init\"")
-  message(FATAL_ERROR "no password: expected the baseline in the export, got '${rc}':\n${out}")
+if(NOT out STREQUAL "0\n0\n")
+  message(FATAL_ERROR "no password: the refused open wrote to the database:\n${out}")
 endif()
-if(out MATCHES "\"db_unlock_verified\":true" OR out MATCHES "intruder-key")
-  message(FATAL_ERROR "the export claims a checked password or the key:\n${out}")
-endif()
-# The baseline records the unchecked open (BTD-135)
-if(NOT out MATCHES "\"action\":\"audit.init\",[^\n]*\"db_unlock_verified\":false")
-  message(FATAL_ERROR "no password: audit.init lacks db_unlock_verified=false:\n${out}")
-endif()
-message(STATUS "xca --no-gui: empty-password database rejects every given source, writes nothing")
+message(STATUS "xca --no-gui: empty-password database rejects every given source and the open without one, writes nothing")

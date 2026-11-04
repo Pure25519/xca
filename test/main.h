@@ -46,6 +46,7 @@ class test_main: public QObject
 
 	/* automationIds.cpp */
 	void automationIds();
+	void keyboardContextMenu();
 
 	/* crlRefused.cpp */
 	void crlRefusedWithoutCrlSign();
@@ -68,6 +69,9 @@ class test_main: public QObject
 
 	/* exportMlDsa.cpp */
 	void exportMlDsaEncoding();
+
+	/* exportPkcs12Mac.cpp */
+	void exportPkcs12Mac();
 
 	/* importPEM.cpp */
 	void importPEM();
@@ -93,6 +97,9 @@ class test_main: public QObject
 	void keyDetailFixed();
 	void digestLessSigner();
 
+	/* nullHandlers.cpp */
+	void tokenHandlersWithoutToken();
+
 	/* optionsChanged.cpp */
 	void optionsStoreChangedOnly();
 	void optionsAudited();
@@ -107,6 +114,10 @@ class test_main: public QObject
 	/* renewalService.cpp */
 	void renewalThroughService();
 	void renewalAllOrNothing();
+
+	/* staleReload.cpp */
+	void staleReloadInDelete();
+	void reloadProxyRows();
 
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();

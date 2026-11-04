@@ -16,7 +16,7 @@
  * "audit_checkpoint_interval", default 100) and before each export,
  * append() adds an entry "audit.checkpoint" whose params hold
  *   checkpoint_seq, checkpoint_hash, checkpoint_time, key_id,
- *   [next_key_id,] signature
+ *   [next_key_id,] checkpoint_interval, signature
  * The signature (Base64) covers checkpointPayload(), the canonical JSON
  * of these params without "signature", and is made with the audit key
  * (lib/audit_key.h). checkpoint_seq/checkpoint_hash name the entry just
@@ -42,9 +42,16 @@
  * checkpoints are reported as checkpoint_missing: a key in audit_keys that
  * no audit.key_create of the chain announces, or more than interval + 1
  * unanchored entries (the revocation baseline at the start excepted, when
- * audit.init counts exactly its rows). The interval is the setting
- * audit_checkpoint_interval clamped to maxCheckpointInterval, because the
- * setting is not signed. Once a key was announced, a missing current key
+ * audit.init counts exactly its rows). The interval is the one the last
+ * valid checkpoint signed as checkpoint_interval (BTD-133, decision A of
+ * the ticket: sign the interval instead of only capping the setting),
+ * because the setting audit_checkpoint_interval is not signed and lives
+ * in the same database. Without a signed one (no checkpoint yet, or only
+ * checkpoints from before BTD-133) it is the setting clamped to the
+ * default. append() writes the next checkpoint after the smaller of the
+ * setting and that interval: a raised setting takes effect once a
+ * checkpoint signed it, a lowered one at once, and a raise in the
+ * settings table alone changes nothing for verify(). Once a key was announced, a missing current key
  * fails the checkpoint with audit_key_missing instead of announcing a new
  * key. The first key is not announced over a log with too long an
  * unsigned tail either (audit_checkpoint_missing), so that the next
@@ -248,6 +255,28 @@ class AuditStateMismatch
 	QVariantMap toMap() const;
 };
 
+/* The checkpoint an export could not sign (BTD-112): the error code and
+ * its text; an empty code if it signed one or none was due */
+class AuditSkippedCheckpoint {
+  public:
+	QString code{};
+	QString reason{};
+};
+
+/* A trust anchor from outside the database (BTD-101): the audit key ids
+ * of an earlier export and the newest checkpoint seen then */
+class AuditVerifyPins
+{
+  public:
+	QStringList keys{};          // the first key of the log is one of them
+	qint64 minCheckpoint{};      // 0: none; else the log has a valid
+	                             // checkpoint at this seq or later
+	bool isEmpty() const
+	{
+		return keys.isEmpty() && minCheckpoint <= 0;
+	}
+};
+
 class AuditVerifyResult
 {
   public:
@@ -268,6 +297,10 @@ class AuditVerifyResult
 	QList<AuditStateMismatch> mismatches{};
 	qint64 unauditedRevocations{};   // also listed in mismatches
 	qint64 adoptedEntries{};   // unsigned entries the first key adopted
+	/* The trust anchor of the call (BTD-101) and whether the log meets
+	 * it: reason untrusted_key or checkpoint_truncated otherwise */
+	AuditVerifyPins pins{};
+	bool pinsOk{ true };
 
 	bool chainOk() const
 	{
@@ -275,7 +308,7 @@ class AuditVerifyResult
 	}
 	bool ok() const
 	{
-		return chainOk() && mismatches.isEmpty();
+		return chainOk() && mismatches.isEmpty() && pinsOk;
 	}
 	QVariantMap toMap() const;
 	QByteArray toJson() const;
@@ -342,6 +375,13 @@ class AuditLog
 	 * audit log, so that verify() can tell them from rows added later
 	 * without an entry. Called by database_model::initSqlDB(). */
 	static void writeBaseline();
+	/* A skipped automatic checkpoint is shown to the user once per
+	 * error code (BTD-148); a newly opened database shows it again */
+	static void resetCheckpointNotices();
+	/* The next automatic checkpoint is tried again even if the last
+	 * one failed over the same head (BTD-144): after a change of the
+	 * audit keys or the password, and on open */
+	static void retryFailedCheckpoint();
 
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),
@@ -376,19 +416,28 @@ class AuditLog
 	 * table; a row no entry knows is a mismatch. Never throws for a
 	 * tampered entry: an entry without a canonical form is reported as
 	 * broken. */
-	static AuditVerifyResult verify();
+	static AuditVerifyResult verify(const AuditVerifyPins &pins =
+				AuditVerifyPins());
 	/* Signs a checkpoint unless the newest entry is one, then writes
 	 * one canonical JSON object per line, including prev_hash and hash.
 	 * Without a database password source it signs nothing and writes
 	 * nothing to the database (BTD-70); *unsignedEntries receives the
-	 * number of entries after the last checkpoint (0: all covered).
-	 * Throws errorEx for an entry without a canonical form and
-	 * serviceError when a checkpoint is due and cannot be signed
-	 * (audit_password_rejected, audit_chain_broken). */
+	 * number of entries after the checkpoint_seq of the last
+	 * checkpoint, the checkpoint row included, as unanchored_entries of
+	 * verify() counts them (BTD-134).
+	 * A log that no checkpoint may sign (audit_chain_broken,
+	 * audit_key_missing, audit_checkpoint_missing) is exported read-only
+	 * too (BTD-112); *skipped receives the code and its text, also for
+	 * the missing password source (audit_key_unavailable). Throws
+	 * errorEx for an entry without a canonical form and serviceError
+	 * for a wrong password source (audit_password_rejected) or a
+	 * database error. */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
-			qint64 *unsignedEntries = nullptr);
+			qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 	/* The same for the local user on the channel of this process */
-	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);
