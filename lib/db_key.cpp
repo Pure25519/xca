@@ -162,6 +162,13 @@ pki_key *db_key::insertKey(pki_key *lkey, pki_key *oldkey)
 	return dynamic_cast<pki_key *>(insertPKI(lkey));
 }
 
+pki_key *db_key::replaceWithToken(const ServiceContext &ctx, pki_key *key,
+				pki_key *card)
+{
+	deleteItems(ctx, { key });
+	return dynamic_cast<pki_key *>(insertPKI(card));
+}
+
 void db_key::keyParams(AuditParams &params, pki_key *key)
 {
 	params.set("key_type", key->getKeyTypeString());

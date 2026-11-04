@@ -173,9 +173,8 @@ void KeyTreeView::toToken()
 		QString msg = tr("Shall the original key '%1' be replaced by the key on the token?\nThis will delete the key '%1' and make it unexportable").
 			arg(key->getIntName());
 		if (XCA_YESNO("token.replace_key", msg)) {
-			keys()->deleteItems(ServiceContext::localUser(
-				ServiceContext::gui), { key });
-			keys()->insertPKI(card);
+			keys()->replaceWithToken(ServiceContext::localUser(
+				ServiceContext::gui), key, card);
 			card = NULL;
 		}
 	} catch (errorEx &err) {
