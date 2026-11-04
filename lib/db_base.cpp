@@ -724,8 +724,10 @@ static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
 	return list;
 }
 
+std::function<bool(pki_base *)> db_base::tokenDeleteHook{};
+
 DeleteResult db_base::deleteItems(const ServiceContext &ctx,
-			const QList<pki_base *> &items)
+			const QList<pki_base *> &items, bool fromToken)
 {
 	DeleteResult result;
 	DeleteResult::Deleted current;
@@ -774,6 +776,22 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			if (pki->getType() == x509)
 				params.set("revocations", revocations);
 
+			/* After every check, so a rejected call never touches
+			 * the token; a failure there is reported and recorded,
+			 * the database deletion goes on as before (BTD-128) */
+			if (fromToken) {
+				bool onToken = false;
+				try {
+					onToken = tokenDeleteHook ?
+						tokenDeleteHook(pki) :
+						pki->deleteFromToken();
+				} catch (errorEx &err) {
+					result.tokenErrors << QString("%1: %2")
+						.arg(current.name, err.getString());
+					params.set("warning", "token_delete_failed");
+				}
+				params.set("on_token", onToken);
+			}
 			removeItem(pki);
 			AuditLog::append(ctx, action, current.objectType,
 					current.id, params);
