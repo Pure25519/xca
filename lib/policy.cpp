@@ -560,7 +560,10 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 		statuses << v.toString();
 	bool byIssuer = u["scope"].toString() == "issuer";
 	for (pki_x509 *other : Store.getAll<pki_x509>()) {
-		if (other == cert || !statuses.contains(status(other)))
+		/* the certificate a renewal or rekey replaces does not count
+		 * (schema policy, uniqueness; BTD-201) */
+		if (other == cert || other == spec.predecessor ||
+		    !statuses.contains(status(other)))
 			continue;
 		X509 *o = other->getCert();
 		/* the scope of a self-signed certificate is itself: the roots

@@ -261,8 +261,8 @@ void test_service_profile_store::caOnlyPolicyIsRecorded()
 	s.extensions.basicCA = ExtensionSpec::bc_not_ca;
 	s.extensions.subjectKeyId = true;
 	s.extensions.keyUsage << "digitalSignature";
-	s.policies << Policy::fromJson(
-		ProfileStore::show("policy", "strict-content").document);
+	/* assigned to the CA, not named by the spec */
+	ProfileStore::assign(ctx, c, "policy", "strict-content");
 	pki_x509 *cert = Database.model<db_x509>()->newCert(ctx, s);
 	QVERIFY(cert);
 	QCOMPARE(code([&]() { ProfileStore::remove(ctx, "policy",

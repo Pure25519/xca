@@ -1081,7 +1081,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	markRequestSigned(spec.request, stored);
 	/* every issuance under a profile or a policy, also policies of the
 	 * CA only, so that a used policy cannot be deleted (BTD-201) */
-	if (spec.profileVersion || !spec.policies.isEmpty())
+	if (spec.profileVersion || !named.policies.isEmpty())
 		recordProfile(named, stored);
 	if (spec.predecessor)
 		recordRenewal(spec, stored);
