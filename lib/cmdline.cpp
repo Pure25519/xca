@@ -170,7 +170,18 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 
 	foreach(QString file, cmd_opts.getFiles()) {
 		qDebug() << "Probe" << file;
-		cmdline_items->probeAnything(file);
+		/* --import: a file that cannot be opened is a failed file of
+		 * the import, audited by importItems(), not the end of the
+		 * command (BTD-270) */
+		try {
+			cmdline_items->probeAnything(file);
+		} catch (secretError &) {
+			throw;
+		} catch (errorEx &) {
+			if (!cmd_opts.has("import"))
+				throw;
+			cmdline_items->failed_files << file;
+		}
 	}
 	QStringList names = cmd_opts["import-names"].split(";");
 	foreach(pki_base *pki, cmdline_items->get()) {
