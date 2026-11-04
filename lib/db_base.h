@@ -228,6 +228,7 @@ class db_base: public QAbstractItemModel
 			return dynamic_cast<T*>(fromIndex(index));
 		}
 		void insertChild(pki_base *child, pki_base *parent = NULL);
+		void insertChildAt(pki_base *child, int row);
 		int rownumber(const pki_base *child) const;
 		void createSuccess(const pki_base *pki) const;
 		bool columnHidden(int col) const;

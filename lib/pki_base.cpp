@@ -282,6 +282,14 @@ void pki_base::insert(pki_base *item)
 	}
 }
 
+void pki_base::insertAt(int row, pki_base *item)
+{
+	if (!childItems.contains(item)) {
+		childItems.insert(qBound(0, row, childItems.size()), item);
+		item->setParent(this);
+	}
+}
+
 int pki_base::childCount() const
 {
 	return childItems.size();

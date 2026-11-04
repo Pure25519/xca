@@ -399,6 +399,23 @@ void db_base::insertChild(pki_base *child, pki_base *parent)
 		 << "Count tree" << treeItem->childCount();
 }
 
+/* An item back at the top-level row it had, e.g. one the import dialog
+ * got back from a failed store step (BTD-147); insertChild() prepends */
+void db_base::insertChildAt(pki_base *child, int row)
+{
+	pki_base *parent = treeview ? treeItem : rootItem;
+	row = qBound(0, row, parent->childCount());
+	beginInsertRows(QModelIndex(), row, row);
+	if (treeview) {
+		rootItem->insert(child);
+		treeItem->insertAt(row, child);
+	} else {
+		rootItem->insertAt(row, child);
+		treeItem->insert(child);
+	}
+	endInsertRows();
+}
+
 int db_base::rownumber(const pki_base *child) const
 {
 	pki_base *parent = treeview ? child->getParent() : rootItem;
