@@ -41,6 +41,8 @@ class tokenCopy : public pki_scard
 		unsigned char *der = nullptr;
 		int len = i2d_PUBKEY(software->getPubKey(), &der);
 		const unsigned char *p = der;
+		/* pki_key() starts with an empty EVP_PKEY */
+		EVP_PKEY_free(key);
 		key = d2i_PUBKEY(nullptr, &p, len);
 		OPENSSL_free(der);
 		card_label = "BTD-217 card";
