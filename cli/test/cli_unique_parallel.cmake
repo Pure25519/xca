@@ -59,3 +59,12 @@ foreach(round 1 2 3)
   endif()
   message(STATUS "round ${round}: one certificate, the other refused")
 endforeach()
+
+# the refused issuances wrote their failure entries after the other
+# process committed: the audit chain has no fork (no seq twice) and
+# verifies
+sql("audit seq" "SELECT COUNT(*) FROM (SELECT seq FROM audit_log GROUP BY seq HAVING COUNT(*) > 1)")
+if(NOT out MATCHES "^0")
+  fail("audit log: '${out}' sequence numbers used twice")
+endif()
+xca_run("audit verify" 0 --database "${DB}" ${PW} --audit-verify)

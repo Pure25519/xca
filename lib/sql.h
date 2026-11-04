@@ -94,6 +94,16 @@ class DbTransaction
 		 * succeeded, never after a rollback; at once outside a
 		 * transaction */
 		static void afterCommit(std::function<void()> action);
+		/* Takes the write lock of the database now, inside the
+		 * current transaction, with a write that changes nothing
+		 * (BTD-201): what the transaction reads afterwards, no other
+		 * connection changes before the COMMIT. On SQLite it is the
+		 * first write of a deferred transaction, which waits for the
+		 * busy timeout instead of failing after reads; on PostgreSQL
+		 * and MariaDB it locks the settings row. Throws the typed
+		 * error of the driver, e.g. database_error when the lock is
+		 * not granted in time. */
+		static void lockForWrite();
 };
 
 #define Transaction DbTransaction __trans
