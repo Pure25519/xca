@@ -29,13 +29,14 @@ function(fail msg)
 endfunction()
 
 # run(<label> <expected exit code> <args>...): xca --no-gui; stdout in
-# ${out}, stderr in ${err}; both are kept for the secret check at the end
+# ${out}, stderr in ${err}; both are kept for the secret check at the end.
+# Expected code "any" accepts every code.
 set(ALL "")
 function(run label code)
   execute_process(COMMAND "${XCA}" --no-gui ${db} ${ARGN}
     WORKING_DIRECTORY "${WORK}"
     RESULT_VARIABLE rc OUTPUT_VARIABLE o ERROR_VARIABLE e TIMEOUT 30)
-  if(NOT rc EQUAL code)
+  if(NOT code STREQUAL "any" AND NOT rc EQUAL code)
     fail("${label}: expected exit code ${code}, got '${rc}':\n${o}\n${e}")
   endif()
   set(out "${o}" PARENT_SCOPE)
@@ -224,8 +225,43 @@ if(NOT out STREQUAL "")
   fail("wrong password: output on stdout:\n${out}")
 endif()
 
-run("index write error" 1 ${pw} --json --index "${WORK}/no-such-dir/i.json")
-error_object("index write error" internal_error)
+# MINOR 7 of the review of BTD-39 (BTD-182): a write error of --index or
+# --hierarchy is write_failed, like --pem-file, and the later options
+# still run
+foreach(opt index hierarchy)
+  run("${opt} write error" 1 ${pw} --json --${opt}
+      "${WORK}/no-such-dir/${opt}.json" --list-items)
+  error_object("${opt} write error" write_failed)
+  json_lines("${opt} write error" "${out}" list)
+endforeach()
+
+# MINOR 8 (BTD-182): an error reported while reading (a damaged item of a
+# PEM file) is an error object without the GUI prefix
+file(WRITE "${WORK}/damaged.pem"
+  "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n")
+run("damaged item" any --json --print "${WORK}/damaged.pem")
+if(NOT err MATCHES "\"schema\":\"urn:bxc-pki:schema:error:v1\"")
+  fail("damaged item: no error object on stderr:\n${err}")
+endif()
+if(err MATCHES "The following error occurred")
+  fail("damaged item: the error object carries the GUI prefix:\n${err}")
+endif()
+
+# A document with a ";" stays one document (BTD-182, side finding D of
+# BTD-41): the comment of the CA
+execute_process(COMMAND "${SQL_EXEC}" "${WORK}/json.xdb" -c
+    "UPDATE items SET comment='lab; rack 3' WHERE id=1"
+  RESULT_VARIABLE rc ERROR_VARIABLE e)
+if(NOT rc EQUAL 0)
+  fail("sql_exec: ${e}")
+endif()
+run("semicolon" 0 ${pw} --json --print --select 1)
+json_lines("semicolon" "${out}" certificate)
+string(STRIP "${out}" doc)
+string(JSON comment GET "${doc}" comment)
+if(NOT comment STREQUAL "lab; rack 3")
+  fail("semicolon: comment '${comment}':\n${out}")
+endif()
 
 # Acceptance criterion 4: no key material and no secret anywhere
 foreach(secret "PRIVATE KEY" "ENCRYPTED" "${DB_PW}" "${OWN_PW}"

@@ -14,6 +14,11 @@
 #include <QJsonDocument>
 #include <QRegularExpression>
 
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
+
 #include "lib/asn1int.h"
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -46,6 +51,7 @@ class test_service_json : public ServiceTestCase
 	static void compare(QJsonObject actual, const QString &expectedFile,
 				const pki_base *pki);
 	static void noSecrets(const QJsonObject &doc);
+	static pki_crl *makeCrl(const char *number, bool nextUpdate);
 
   private slots:
 	void certificate();
@@ -53,6 +59,9 @@ class test_service_json : public ServiceTestCase
 	void request();
 	void requestWithoutChallenge();
 	void crl();
+	void crlNumberRange_data();
+	void crlNumberRange();
+	void crlWithoutNextUpdate();
 	void keys();
 	void templates();
 	void lists();
@@ -220,6 +229,92 @@ void test_service_json::crl()
 	QCOMPARE(doc.value("revoked_count").toInt(),
 		doc.value("revoked").toArray().size());
 	compare(doc, "ca.crl.json", c);
+}
+
+/* A CRL of its own key, signed here, with the given cRLNumber (decimal,
+ * or none for nullptr) and with or without nextUpdate (BTD-182) */
+pki_crl *test_service_json::makeCrl(const char *number, bool nextUpdate)
+{
+	EVP_PKEY *key = EVP_EC_gen("P-256");
+	X509_CRL *c = X509_CRL_new();
+	X509_NAME *name = X509_NAME_new();
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_UTF8,
+		(const unsigned char *)"JSON Range CA", -1, -1, 0);
+	X509_CRL_set_version(c, X509_CRL_VERSION_2);
+	X509_CRL_set_issuer_name(c, name);
+	ASN1_TIME *t = ASN1_TIME_new();
+	ASN1_TIME_set_string_X509(t, "20261101000000Z");
+	X509_CRL_set1_lastUpdate(c, t);
+	if (nextUpdate) {
+		ASN1_TIME_set_string_X509(t, "20261108000000Z");
+		X509_CRL_set1_nextUpdate(c, t);
+	}
+	if (number) {
+		BIGNUM *bn = nullptr;
+		BN_dec2bn(&bn, number);
+		ASN1_INTEGER *n = BN_to_ASN1_INTEGER(bn, nullptr);
+		X509_CRL_add1_ext_i2d(c, NID_crl_number, n, 0, 0);
+		ASN1_INTEGER_free(n);
+		BN_free(bn);
+	}
+	X509_CRL_sign(c, key, EVP_sha256());
+	BIO *bio = BIO_new(BIO_s_mem());
+	PEM_write_bio_X509_CRL(bio, c);
+	pki_crl *crl = new pki_crl("range");
+	crl->fromPEM_BIO(bio, "range");
+	BIO_free(bio);
+	ASN1_TIME_free(t);
+	X509_NAME_free(name);
+	X509_CRL_free(c);
+	EVP_PKEY_free(key);
+	return crl;
+}
+
+/* MINOR 4 of the review of BTD-39 (BTD-182): a cRLNumber is exact, an
+ * integer up to 2^53-1 (what a JSON parser keeps exactly) and the
+ * decimal string beyond, never 0 or a rounded number */
+void test_service_json::crlNumberRange_data()
+{
+	QTest::addColumn<QString>("number");
+	QTest::addColumn<bool>("asInteger");
+	QTest::newRow("1") << "1" << true;
+	QTest::newRow("2^53-1") << "9007199254740991" << true;
+	QTest::newRow("2^53") << "9007199254740992" << false;
+	QTest::newRow("2^63") << "9223372036854775808" << false;
+	QTest::newRow("2^159") <<
+		"730750818665451459101842416358141509827966271488" << false;
+}
+
+void test_service_json::crlNumberRange()
+{
+	QFETCH(QString, number);
+	QFETCH(bool, asInteger);
+	pki_crl *c = makeCrl(CCHAR(number), true);
+	QJsonValue v = JsonReport::crl(c).value("crl_number");
+	delete c;
+	if (asInteger) {
+		QVERIFY2(v.isDouble(), CCHAR(QString("type %1").arg(v.type())));
+		QCOMPARE(QString::number(v.toInteger()), number);
+	} else {
+		QVERIFY2(v.isString(), CCHAR(QString("type %1, value %2")
+			.arg(v.type()).arg(v.toVariant().toString())));
+		QCOMPARE(v.toString(), number);
+	}
+}
+
+/* MINOR 10 (BTD-182): a CRL without nextUpdate has next_update null; the
+ * document goes to schemas/examples/crl of bxc-pki */
+void test_service_json::crlWithoutNextUpdate()
+{
+	pki_crl *c = makeCrl("7", false);
+	QJsonObject doc = JsonReport::crl(c);
+	delete c;
+	QVERIFY(doc.contains("next_update"));
+	QVERIFY(doc.value("next_update").isNull());
+	QCOMPARE(doc.value("crl_number"), QJsonValue(7));
+	QFile out(QDir::temp().filePath("crl-without-next-update.json"));
+	if (out.open(QIODevice::WriteOnly))
+		out.write(QJsonDocument(doc).toJson());
 }
 
 /* Acceptance criterion 4: an encrypted key and one with its own
