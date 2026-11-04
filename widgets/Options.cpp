@@ -13,6 +13,9 @@
 #include "Help.h"
 #include "lib/pki_scard.h"
 #include "lib/oid.h"
+#include "lib/audit.h"
+#include "lib/pki_pkcs12.h"
+#include "lib/settings.h"
 #include <openssl/objects.h>
 #include <QFileDialog>
 #include <QToolTip>
@@ -71,6 +74,11 @@ Options::Options(QWidget *parent)
 	cert_expiry_num->setText(x);
 
 	serial_len->setValue(Settings["serial_len"]);
+	/* the default of PKCS#12 exports (BTD-175) */
+	pkcs12Iterations->setRange(pki_pkcs12::minIterations,
+				pki_pkcs12::maxIterations);
+	pkcs12Iterations->setValue(
+		((QString)Settings["pkcs12_iterations"]).toInt());
 
 	pkcs11List->setModel(&pkcs11::libraries);
 	pkcs11List->showDropIndicator();
@@ -106,6 +114,8 @@ QMap<QString, QString> Options::shown()
 		{ "ical_expiry", ical_expiry_num->text() +
 			ical_expiry_unit->currentItemData().toString() },
 		{ "serial_len", QString::number(serial_len->value()) },
+		{ "pkcs12_iterations",
+			QString::number(pkcs12Iterations->value()) },
 	};
 }
 
@@ -168,19 +178,22 @@ int Options::exec()
 	if (QDialog::exec() == QDialog::Rejected)
 		return QDialog::Rejected;
 
-	Transaction;
-	if (!TransBegin())
-		return QDialog::Rejected;
-
 	/* Only what the user changed is stored: a stored setting is a
-	 * choice, not the default the dialog showed (BTD-52, BTD-187) */
-	QMap<QString, QString> now = shown();
+	 * choice, not the default the dialog showed (BTD-52, BTD-187),
+	 * each with its settings.update entry (BTD-224) */
+	QMap<QString, QString> now = shown(), changed;
 	for (auto i = now.cbegin(); i != now.cend(); ++i) {
 		if (loaded.value(i.key()) != i.value())
-			Settings[i.key()] = i.value();
+			changed[i.key()] = i.value();
 	}
-
-	return TransCommit() ? QDialog::Accepted : QDialog::Rejected;
+	try {
+		Settings.update(ServiceContext::localUser(
+				ServiceContext::gui), changed);
+	} catch (errorEx &err) {
+		XCA_ERROR(err);
+		return QDialog::Rejected;
+	}
+	return QDialog::Accepted;
 }
 
 void Options::on_addButton_clicked(void)

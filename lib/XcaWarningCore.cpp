@@ -52,6 +52,11 @@ void xcaWarningCore::warning(const QString &msg)
 	print_cmdline(COL_RED "Warning", msg);
 }
 
+void xcaWarningCore::notice(const QString &msg)
+{
+	print_cmdline(COL_YELL "Notice", msg);
+}
+
 bool xcaWarningCore::confirmAll = false;
 QStringList xcaWarningCore::confirmed{};
 

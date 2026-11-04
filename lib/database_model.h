@@ -38,6 +38,7 @@ class database_model: public QObject
 		void openSqlDB();
 
 		QSqlError initSqlDB();
+		void backupBeforeMigration();
 		const QString &detect_provider();
 		bool checkForOldDbFormat(const QString &dbfile) const;
 		enum open_result verifyOldDbPass(const QString &dbname) const;
@@ -59,6 +60,10 @@ class database_model: public QObject
 
 	public:
 		static bool open_without_password;
+		/* An audit check (--audit-verify, --audit-export) refuses to
+		 * migrate an older database: schema_upgrade_required, nothing
+		 * written (BTD-70) */
+		static bool refuse_schema_upgrade;
 		database_model(const QString &dbName,
 				const Passwd &pass = Passwd());
 		~database_model();
