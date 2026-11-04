@@ -894,8 +894,12 @@ void test_service_revocation::invalidityDate()
 	QCOMPARE(revocationRows(), 1);
 	XSqlQuery q("SELECT invaldate FROM revocations");
 	QVERIFY(q.first());
-	QVERIFY2(q.value(0).toString().isEmpty(),
-		CCHAR(q.value(0).toString()));
+	/* the table keeps "no date" as XCA's undefined time, as for
+	 * every other optional date; it reads back as undefined */
+	QCOMPARE(q.value(0).toString(), a1time().setUndefined().toPlain());
+	a1time stored;
+	stored.fromPlain(q.value(0).toString());
+	QVERIFY(stored.isUndefined());
 	QVERIFY(without->getRevocation().getInvalDate().isUndefined());
 
 	a1time inval("20261001120000Z");
