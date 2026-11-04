@@ -191,7 +191,8 @@ passes its confirmations in the `ServiceContext`.
 
 A service function whose operation needs a confirmation checks it itself (BTD-116, decision of
 2026-11-04): `db_key::newKey(ctx, ...)` refuses an RSA/DSA size outside 1024..8192 unless
-`ctx.isConfirmed("key.size")`, with the `denied` entry `confirmation_required` and
+`ctx.isConfirmed("key.size")` (sizes above 16384 bit, and DSA below 512 bit, fail with
+`invalid_key_size` without a question, BTD-113), with the `denied` entry `confirmation_required` and
 `confirmationError`, before anything is generated and before its transaction starts. So a caller
 collects its confirmations before the service call, never inside a transaction. The interactive
 wrapper still asks first and records the answer in the `ServiceContext`. `item.delete` and
