@@ -106,7 +106,9 @@ QJsonObject crlReport(const pki_crl *crl, const CrlPolicy &policy,
 	r["reissue_fraction"] = policy.reissueFraction;
 	r["reissue_at"] = JsonReport::timestamp(
 				a1time(policy.reissueAt(crl)));
-	qint64 left = now.secsTo(crl->getNextUpdate());
+	/* 0 once expired, like remaining_validity PT0S: a CRL issued
+	 * expired with --allow-stale-crl (BTD-220) */
+	qint64 left = qMax(qint64(0), now.secsTo(crl->getNextUpdate()));
 	r["remaining_seconds"] = left;
 	r["remaining_validity"] = CrlPolicy::durationText(left);
 	r["reissue_due"] = policy.reissueDue(crl, now);
