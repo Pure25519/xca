@@ -138,9 +138,17 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::SqlPassword, sqlpass);
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
-		/* Questions likewise: "yes" only if confirmed here */
-		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
-				cmd_opts["confirm"].split(","));
+		/* Questions likewise: "yes" only if confirmed here; a
+		 * mistyped id would leave its question unanswered (BTD-116) */
+		QStringList unknown = xcaWarningCore::setConfirmations(
+			cmd_opts.has("yes"), cmd_opts["confirm"].split(","));
+		if (!unknown.isEmpty()) {
+			report(serviceError("usage", QObject::tr(
+				"--confirm: unknown question id %1; the ids are: %2")
+				.arg(unknown.join(", "))
+				.arg(xcaWarningCore::questionIds().join(", "))));
+			return EXIT_FAILURE;
+		}
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())

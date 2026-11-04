@@ -35,7 +35,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("audit-verify", NULL, no_argument, true, true,
 		"Verify the hash chain of the audit log and the revocations against it. Prints a JSON report and exits with 1 if the check fails."),
 	arg_option("confirm", "id-list", required_argument, false, false,
-		"Answer the questions in the comma separated id-list with 'yes' (e.g. key.size for an RSA or DSA key outside 1024..8192 bit). Without GUI any other question ends the command with an error; the error names the id."),
+		"Answer the questions in the comma separated id-list with 'yes' (e.g. key.size for an RSA or DSA key outside 1024..8192 bit). Without GUI any other question ends the command with an error; the error names the id. An unknown id is an error and nothing is opened."),
 	arg_option("crlgen", "ca-identifier", required_argument, true, true,
 		"Generate CRL for <ca>. Use the 'name' option to set the internal name of the new CRL."),
 	arg_option("database", "database", file_argument, false, false,

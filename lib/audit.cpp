@@ -71,6 +71,14 @@ void ServiceContext::confirm(const QString &id, const QString &source)
 		confirmed << c;
 }
 
+bool ServiceContext::isConfirmed(const QString &id) const
+{
+	for (const QString &c : confirmed)
+		if (c.section(':', 0, 0) == id)
+			return true;
+	return false;
+}
+
 ServiceContext ServiceContext::localUser(enum channel c)
 {
 	ServiceContext ctx(c, "os:" + osUser());

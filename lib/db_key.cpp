@@ -261,9 +261,33 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
     return stored;
 }
 
+/* RSA and DSA outside 1024..8192 bit need the confirmation "key.size" */
+static bool unusualSize(const keyjob &task)
+{
+	return !task.isEC() && !task.isFixed() && task.size >= 32 &&
+		(task.size < 1024 || task.size > 8192);
+}
+
+/* The denied entry of an unconfirmed key size; nothing is generated */
+[[noreturn]] static void refuseSize(const ServiceContext &ctx, const keyjob &task,
+			const QString &name, const confirmationError &err)
+{
+	AuditParams params = keyjobParams(task, name);
+	params.set("question", err.question);
+	AuditLog::appendFailure(ctx, "key.generate", "key", QString(),
+				params, "confirmation_required", "denied");
+	throw err;
+}
+
 pki_key *db_key::newKey(const ServiceContext &ctx, const keyjob &task,
 			const QString &name)
 {
+	/* the caller asked, or passes the answer of its own caller
+	 * (REST, EST, CMP) in ctx (BTD-116) */
+	if (unusualSize(task) && !ctx.isConfirmed("key.size"))
+		refuseSize(ctx, task, name, confirmationError("key.size",
+			tr("The key size %1 needs the confirmation 'key.size'")
+			.arg(task.size)));
 	AuditParams params = keyjobParams(task, name);
 	try {
 		return generate(task, name, params, ctx);
@@ -287,20 +311,15 @@ pki_key *db_key::newKey(const keyjob &task, const QString &name,
 	ServiceContext ctx = ServiceContext::localUser(
 				ServiceContext::processChannel);
 
-	if (!task.isEC() && !task.isFixed() && task.size >= 32 &&
-	    (task.size < 1024 || task.size > 8192))
-	{
+	if (unusualSize(task)) {
 		try {
 			if (!xcaWarning::confirm(ctx, "key.size",
 				tr("You are sure to create a key of the size: %1 ?").arg(task.size)))
 				return NULL;
 		} catch (confirmationError &err) {
-			/* xca --no-gui without --yes: nothing is generated */
-			AuditParams params = keyjobParams(task, name);
-			params.set("question", err.question);
-			AuditLog::appendFailure(ctx, "key.generate", "key", QString(),
-				params, "confirmation_required", "denied");
-			throw;
+			/* xca --no-gui without --yes: the message names
+			 * --yes and --confirm */
+			refuseSize(ctx, task, name, err);
 		}
 	}
 	try {
