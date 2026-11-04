@@ -130,10 +130,12 @@ static void budgetWarning(CommandContext &ctx, const QJsonObject &r)
 }
 
 pki_crl *issueCrl(CommandContext &ctx, pki_x509 *ca, const CrlPolicy &policy,
-		const QString &trigger, const QDateTime &thisUpdate, bool report)
+		const QString &trigger, const QDateTime &thisUpdate, bool report,
+		const QString &allowStale)
 {
 	crljob job(ca);
 	job.trigger = trigger;
+	job.allowStale = allowStale;
 	QDateTime t = thisUpdate.isValid() ? thisUpdate : nowSeconds();
 	job.lastUpdate = a1time(t);
 	job.nextUpdate = a1time(policy.nextUpdate(t));
@@ -400,35 +402,48 @@ static void cmdRevoke(CommandContext &ctx)
 
 /* --this-update: not in the future (beyond the clock skew); not before
  * the thisUpdate of the CA's latest CRL and no CRL that is expired when
- * it is issued, unless --allow-stale-crl (BTD-211) */
-static void checkThisUpdate(const Options &o, pki_x509 *ca,
+ * it is issued, unless --allow-stale-crl (BTD-211). A rule the flag
+ * overrides is a warning of the result; the comma list of the overridden
+ * rules is returned for the audit entry of the CRL (BTD-220). */
+static QString checkThisUpdate(CommandContext &ctx, pki_x509 *ca,
 		const CrlPolicy &policy, const QDateTime &thisUpdate)
 {
+	bool allow = ctx.opts.has("allow-stale-crl");
+	QStringList overridden;
 	QDateTime now = nowSeconds();
 	QString given = a1time(thisUpdate).toPrettyGMT();
 	if (thisUpdate > now.addSecs(clockSkew))
 		throw usageError("invalid_this_update", QObject::tr(
 			"--this-update %1 is more than %2 minutes in the "
 			"future").arg(given).arg(clockSkew / 60));
-	if (o.has("allow-stale-crl"))
-		return;
 	QDateTime next = policy.nextUpdate(thisUpdate);
-	if (now >= next)
-		throw usageError("invalid_this_update", QObject::tr(
-			"--this-update %1 gives a CRL that expired on %2 "
-			"(--allow-stale-crl issues it anyway)").arg(given)
-			.arg(a1time(next).toPrettyGMT()));
+	if (now >= next) {
+		QString why = QObject::tr("--this-update %1 gives a CRL that "
+			"expired on %2").arg(given)
+			.arg(a1time(next).toPrettyGMT());
+		if (!allow)
+			throw usageError("invalid_this_update", why + QObject::tr(
+				" (--allow-stale-crl issues it anyway)"));
+		ctx.result->warning("crl_expired_at_issue",
+			why + QObject::tr(", issued with --allow-stale-crl"));
+		overridden << "expired_at_issue";
+	}
 	pki_crl *latest = CrlPolicy::latestCrl(ca);
 	if (latest && thisUpdate < (QDateTime)latest->getLastUpdate()) {
 		a1int no(0L);
 		latest->getCrlNumber(&no);
-		throw usageError("invalid_this_update", QObject::tr(
-			"--this-update %1 is before the thisUpdate %2 of the "
-			"latest CRL (number %3) of '%4' (--allow-stale-crl "
-			"issues it anyway)").arg(given)
-			.arg(latest->getLastUpdate().toPrettyGMT())
-			.arg(no.toDec()).arg(ca->getIntName()));
+		QString why = QObject::tr("--this-update %1 is before the "
+			"thisUpdate %2 of the latest CRL (number %3) of '%4'")
+			.arg(given).arg(latest->getLastUpdate().toPrettyGMT())
+			.arg(no.toDec()).arg(ca->getIntName());
+		if (!allow)
+			throw usageError("invalid_this_update", why + QObject::tr(
+				" (--allow-stale-crl issues it anyway)"));
+		ctx.result->warning("crl_this_update_before_latest",
+			why + QObject::tr(", issued with --allow-stale-crl"));
+		overridden << "this_update_before_latest";
 	}
+	return overridden.join(",");
 }
 
 static void cmdCrl(CommandContext &ctx)
@@ -442,10 +457,11 @@ static void cmdCrl(CommandContext &ctx)
 					"--ca");
 	CrlPolicy policy = crlPolicy(o, ca);
 	QDateTime thisUpdate;
+	QString allowStale;
 	if (o.has("this-update")) {
 		thisUpdate = parseTimestamp(o.value("this-update"),
 					"this-update");
-		checkThisUpdate(o, ca, policy, thisUpdate);
+		allowStale = checkThisUpdate(ctx, ca, policy, thisUpdate);
 	}
 	/* the given settings become the CA's */
 	if (hasCrlOptions(o) && !ctx.plan) {
@@ -453,7 +469,8 @@ static void cmdCrl(CommandContext &ctx)
 				.arg(ca->getIntName());
 		policy.store(ctx.svc, ca);
 	}
-	pki_crl *crl = issueCrl(ctx, ca, policy, "command", thisUpdate);
+	pki_crl *crl = issueCrl(ctx, ca, policy, "command", thisUpdate, true,
+				allowStale);
 	writeOut(ctx, crl, "crl", ca->getIntName());
 }
 

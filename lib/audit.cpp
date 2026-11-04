@@ -94,6 +94,8 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
+		/* the thisUpdate checks a CRL overrode (BTD-220) */
+		"allow_stale",
 		"authority_updated", "ca_id", "confirmed", "count",
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
