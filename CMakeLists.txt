@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.13.0)
+cmake_minimum_required(VERSION 3.25)
 
 project(xca
     DESCRIPTION "X Certificate and Key management"
@@ -110,7 +110,10 @@ elseif(WIN32)
 endif()
 
 set(QTFIXEDVERSION Qt6 Qt5 CACHE STRING "Force a specific QT version 'Qt5' or 'Qt6'")
-find_package(OpenSSL REQUIRED)
+# OpenSSL 4.1 is the only supported version (BTD-253): PQC, PBMAC1 and the
+# size_t ASN1_STRING API. An older OpenSSL found first, such as the system
+# OpenSSL 3 without OPENSSL_ROOT_DIR, stops the configuration here.
+find_package(OpenSSL 4.1 REQUIRED)
 find_package(QT NAMES ${QTFIXEDVERSION} REQUIRED COMPONENTS Core)
 set(QT Qt${QT_VERSION_MAJOR})
 find_package(${QT} REQUIRED COMPONENTS Core Widgets Sql Help LinguistTools)

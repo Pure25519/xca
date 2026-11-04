@@ -58,10 +58,8 @@ if(BUILD_TESTING)
 		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/cli_${name}
 		-P ${CLI_DIR}/test/${name}.cmake)
     set_tests_properties(test_${name} PROPERTIES LABELS cli)
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-      set_property(TEST test_${name} APPEND PROPERTY
+    set_property(TEST test_${name} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-    endif()
   endmacro()
 
   CliTest(cli_flow)

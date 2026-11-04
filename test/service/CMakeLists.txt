@@ -21,10 +21,8 @@ target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcacore)
 # without a platform plugin, so the QT_QPA_PLATFORM of the environment
 # (offscreen in the build image) is removed for them
 macro(Headless test)
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-    set_property(TEST ${test} APPEND PROPERTY
+  set_property(TEST ${test} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-  endif()
 endmacro()
 
 find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
@@ -117,8 +115,7 @@ add_test(NAME test_core_sources
 set_tests_properties(test_core_sources PROPERTIES LABELS service)
 
 find_program(READELF_PROGRAM NAMES readelf ${CMAKE_READELF})
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
-   CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM)
   add_executable(xcacore_linkcheck ${SERVICE_TEST_DIR}/xcacore_linkcheck.cpp)
   target_link_libraries(xcacore_linkcheck
 	"$<LINK_LIBRARY:WHOLE_ARCHIVE,xcacore>")
@@ -136,7 +133,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
 		-P ${SERVICE_TEST_DIR}/core_link.cmake)
   set_tests_properties(test_core_link PROPERTIES LABELS service)
 else()
-  message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
+  message(STATUS "readelf or Linux missing: test_core_link skipped")
+endif()
+
+# configuring against OpenSSL 3 stops with the version message (BTD-253);
+# the stand-in prefix uses the Unix library names
+if(UNIX)
+  add_test(NAME test_openssl_minimum
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		"-DGENERATOR=${CMAKE_GENERATOR}"
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openssl_minimum
+		-P ${SERVICE_TEST_DIR}/openssl_minimum.cmake)
+  set_tests_properties(test_openssl_minimum PROPERTIES LABELS service)
 endif()
 
 # no internal references in the public fork (BTD-236)
