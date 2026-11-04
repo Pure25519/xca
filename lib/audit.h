@@ -363,13 +363,26 @@ class AuditLog
 	/* The failure (or denied) entry of a service function, after its
 	 * rollback: best effort, it never throws. When the database is the
 	 * reason of the failure the entry may not be writable either; then
-	 * it is lost and logged, and the caller rethrows its own error,
-	 * which always wins (BTD-138). Returns whether it was written. */
+	 * it is lost and logged, and the caller rethrows its own error
+	 * (BTD-138). The loss is kept for lostEntries(): a command line must
+	 * not end successfully, or only with the original error, when an
+	 * entry was lost (BTD-274). Returns whether it was written. */
 	static bool appendFailure(const ServiceContext &ctx,
 			const QString &action, const QString &objectType,
 			const QString &objectId, const AuditParams &params,
 			const QString &errorCode,
 			const QString &result = "failure");
+	/* The entries appendFailure() lost since the last call, as
+	 * "action result (code)"; clears the list */
+	static QStringList takeLostEntries();
+	/* audit_entry_lost: names the lost entries and, if given, the
+	 * error of the command (its code and text), which is kept in the
+	 * detail instead of being replaced. A read-only database can hold
+	 * no entry at all: its read_only_database stays the code and the
+	 * detail names the lost entries. */
+	static serviceError lostEntriesError(const QStringList &lost,
+			const QString &originalCode = QString(),
+			const QString &originalText = QString());
 
 	/* Records the revocation rows of a database that existed before the
 	 * audit log, so that verify() can tell them from rows added later

@@ -28,6 +28,28 @@ entry is lost and logged, and the wrapper rethrows its own error (BTD-138). Sinc
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
 
+A lost entry is not silent (BTD-274): `appendFailure()` keeps it, and the command lines (`bxc-pki`,
+`xca --no-gui`) end such a command with exit code 1 and the error `audit_entry_lost`, whose detail
+names the lost entries and the original error with its code; a command that succeeded otherwise
+fails too. A read-only database can hold no entry: there the code stays `read_only_database` and
+the detail names the lost entries. The GUI only logs the loss.
+
+Transaction kinds and the write lock (BTD-274): `Transaction` (kind `write`) takes the write lock
+of the database at its outermost BEGIN, `BEGIN IMMEDIATE` on SQLite and a no-op update of the
+`settings` row `schema` on PostgreSQL and MariaDB. A second process therefore waits at BEGIN
+instead of failing at its first write after it read under a deferred BEGIN, where SQLite returns
+"database is locked" at once to avoid a deadlock; nothing a transaction reads changes before its
+COMMIT (the uniqueness rule of policies relies on that, BTD-201). The wait is the busy timeout of
+SQLite, `DbTransaction::busyTimeoutMs` = 10 s, set when the database is opened; after it the
+command fails typed (`database_error`, "database is locked"). `ReadTransaction` (kind `read`)
+takes no lock and must not write: the bxc-pki `--plan` run and the TA key lookup use it; reading
+commands open no transaction at all. A nested transaction belongs to the outermost one, so a
+write inside a read transaction holds no lock. On a database file that cannot be written SQLite
+refuses `BEGIN IMMEDIATE` (SQLITE_READONLY); then the transaction begins deferred, the reads run
+and the first write fails with `read_only_database` as before. A write transaction holds the
+lock until its COMMIT, also while a dialog or PIN prompt inside it waits for the user (BTD-273):
+until that is fixed a parallel process waits up to the busy timeout and then fails.
+
 `TransCommit()` is false when the outermost commit fails and also when any inner transaction
 rolled back, e.g. a helper that returned without commit and whose caller carried on: the outermost
 transaction then rolls everything back (BTD-142; before, it returned the result of that rollback,
