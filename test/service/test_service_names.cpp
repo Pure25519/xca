@@ -11,7 +11,9 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -68,6 +70,7 @@ class test_service_names : public ServiceTestCase
 	void uniquenessWithStatusFilter();
 	void uniquenessSelfSignedScope();
 	void uniquenessNotYetValid();
+	void uniquenessReadsDatabase();
 	void invalidPolicy();
 	void otherNameForms_data();
 	void otherNameForms();
@@ -425,6 +428,44 @@ void test_service_names::uniquenessSelfSignedScope()
 	IssuanceSpec again = caSpec("Same Root", nullptr);
 	again.name = "Same Root (same key)";
 	again.key = first.key;
+	again.policies << policy("strict-content");
+	QString message;
+	QCOMPARE(attempt(again, &message), QString("policy_not_unique"));
+	QVERIFY2(message.contains("subject_dn"), CCHAR(message));
+}
+
+/* BTD-201: the uniqueness rule reads the certificates of the database,
+ * not the store of this process. A certificate another process stored
+ * after this one loaded the database is in the database only; here it
+ * is made so by deleting it (out of the store and the database) and
+ * writing its rows back behind the store's back. */
+void test_service_names::uniquenessReadsDatabase()
+{
+	pki_x509 *ca = issue(caSpec("Shared CA", nullptr));
+	IssuanceSpec first = leafSpec("DNS:first.example", ca);
+	first.policies << policy("strict-content");
+	pki_x509 *other = issue(first);
+	QVERIFY(other);
+	QVariant id = other->getSqlItemId();
+	QSqlQuery q;
+	q.prepare("SELECT hash, iss_hash, serial, issuer, ca, cert FROM certs "
+		"WHERE item=?");
+	q.addBindValue(id);
+	QVERIFY2(q.exec() && q.next(), CCHAR(q.lastError().text()));
+	QSqlRecord row = q.record();
+	Database.model<db_x509>()->deleteItems(ctx, { other });
+	q.prepare("UPDATE items SET del=0 WHERE id=?");
+	q.addBindValue(id);
+	QVERIFY2(q.exec(), CCHAR(q.lastError().text()));
+	q.prepare("INSERT INTO certs (item, hash, iss_hash, serial, issuer, ca, "
+		"cert) VALUES (?, ?, ?, ?, ?, ?, ?)");
+	q.addBindValue(id);
+	for (int i = 0; i < row.count(); i++)
+		q.addBindValue(row.value(i));
+	QVERIFY2(q.exec(), CCHAR(q.lastError().text()));
+	QVERIFY(!Store.lookupPki<pki_x509>(id));
+
+	IssuanceSpec again = leafSpec("DNS:again.example", ca);
 	again.policies << policy("strict-content");
 	QString message;
 	QCOMPARE(attempt(again, &message), QString("policy_not_unique"));

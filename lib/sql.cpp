@@ -245,6 +245,13 @@ void throwSqlError(const QSqlError &e, const QString &what)
 				QString("%1: %2").arg(what, reason));
 }
 
+void DbTransaction::lockForWrite()
+{
+	XSqlQuery q;
+	SQL_PREPARE(q, "UPDATE settings SET value=value WHERE key_='schema'");
+	execOrThrow(q, QObject::tr("The database could not be locked for writing"));
+}
+
 void execOrThrow(XSqlQuery &q, const QString &what)
 {
 	if (!q.exec())
