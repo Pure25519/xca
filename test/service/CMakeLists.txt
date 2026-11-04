@@ -114,6 +114,14 @@ add_test(NAME test_core_sources
 		-P ${SERVICE_TEST_DIR}/core_sources.cmake)
 set_tests_properties(test_core_sources PROPERTIES LABELS service)
 
+# A skipped test_core_link is a warning, not a STATUS line that nobody
+# reads: without it ctest is all green and the main guarantee of BTD-36
+# is not checked. XCA_REQUIRE_CORE_LINK makes the skip an error; the
+# bxc-pki build image and its ASan build set it (BTD-178). Windows has
+# no readelf: the skip stays visible there until BTD-13 decides on an
+# equivalent check (dumpbin /dependents).
+option(XCA_REQUIRE_CORE_LINK
+	"Fail the configure if test_core_link cannot be registered" OFF)
 find_program(READELF_PROGRAM NAMES readelf ${CMAKE_READELF})
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM)
   add_executable(xcacore_linkcheck ${SERVICE_TEST_DIR}/xcacore_linkcheck.cpp)
@@ -133,7 +141,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM)
 		-P ${SERVICE_TEST_DIR}/core_link.cmake)
   set_tests_properties(test_core_link PROPERTIES LABELS service)
 else()
-  message(STATUS "readelf or Linux missing: test_core_link skipped")
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(core_link_missing "the system is ${CMAKE_SYSTEM_NAME}, not Linux")
+  else()
+    set(core_link_missing "readelf was not found")
+  endif()
+  if(XCA_REQUIRE_CORE_LINK)
+    message(FATAL_ERROR "test_core_link cannot be registered: "
+	"${core_link_missing} (XCA_REQUIRE_CORE_LINK is ON)")
+  endif()
+  message(WARNING "test_core_link skipped: ${core_link_missing}; "
+	"nothing checks that xcacore links no Qt Gui, Widgets or Help")
 endif()
 
 # configuring against OpenSSL 3 stops with the version message (BTD-253);

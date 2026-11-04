@@ -1,8 +1,9 @@
 /* vi: set sw=4 ts=4:
  *
  * Headless secrets (BTD-30): passwords from pass:/env:/file:/fd:
- * sources through PwDialogHeadless, a typed secretError instead of
- * a prompt when no source is given, and no dialog at any time.
+ * sources through PwDialogHeadless, and a typed secretError instead of
+ * a prompt when no source is given. That the core can show no dialog
+ * is checked by test_core_link and test_core_sources (BTD-36).
  */
 
 #include <QFile>

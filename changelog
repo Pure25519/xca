@@ -1,6 +1,9 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-178: a skipped test_core_link (not Linux, or no readelf) is a
+   CMake warning instead of a STATUS line; -DXCA_REQUIRE_CORE_LINK=ON
+   makes it a configure error.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a
