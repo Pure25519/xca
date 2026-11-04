@@ -58,10 +58,16 @@ To build XCA you need:
 
 ### Apple macos
 
+Untested in this fork: no build on macOS has been run since it requires
+OpenSSL 4.1 (BTD-253). Homebrew's `openssl@4` formula provides it, and
+CMake finds it under `$(brew --prefix)/opt/openssl@4`. Homebrew's `qt6` links
+`openssl@3` for its own TLS backend, so check with `otool -L` that XCA itself
+only links `libcrypto.4.dylib`.
+
 - Install the dependencies
   ```
   xcode-select --install
-  brew install openssl@3 qt6 python3 cmake
+  brew install openssl@4 qt6 python3 cmake
   pip3 install sphinx
   ```
 - Clone: `git clone https://github.com/chris2511/xca.git`
