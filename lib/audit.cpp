@@ -71,6 +71,14 @@ void ServiceContext::confirm(const QString &id, const QString &source)
 		confirmed << c;
 }
 
+bool ServiceContext::isConfirmed(const QString &id) const
+{
+	for (const QString &c : confirmed)
+		if (c.section(':', 0, 0) == id)
+			return true;
+	return false;
+}
+
 ServiceContext ServiceContext::localUser(enum channel c)
 {
 	ServiceContext ctx(c, "os:" + osUser());
@@ -614,6 +622,22 @@ static qint64 lastCheckpointSeq(int *interval = nullptr)
 	return q.value(0).toLongLong();
 }
 
+void AuditLog::setCheckpointInterval(const ServiceContext &ctx,
+				int interval)
+{
+	if (interval < 1 || interval > maxCheckpointInterval)
+		throw serviceError("invalid_value", QObject::tr(
+			"The audit checkpoint interval must be between 1 and %1, "
+			"not %2").arg(maxCheckpointInterval).arg(interval));
+	/* Writes only after a verified unlock (BTD-137) */
+	if (!ServiceContext::processPasswordVerified)
+		throw serviceError("missing_password", QObject::tr(
+			"Changing the audit checkpoint interval needs the "
+			"database password (--password)"));
+	Settings.update(ctx, { { "audit_checkpoint_interval",
+				QString::number(interval) } });
+}
+
 int AuditLog::checkpointInterval()
 {
 	/* The setting is not signed: clamped, so that raising it cannot
@@ -733,6 +757,8 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	return e;
 }
 
+static QStringList lostEntries;
+
 bool AuditLog::appendFailure(const ServiceContext &ctx,
 		const QString &action, const QString &objectType,
 		const QString &objectId, const AuditParams &params,
@@ -749,7 +775,30 @@ bool AuditLog::appendFailure(const ServiceContext &ctx,
 		qCritical().noquote() << "Audit entry lost:" << action << result
 			<< errorCode;
 	}
+	lostEntries << QString("%1 %2 (%3)").arg(action, result, errorCode);
 	return false;
+}
+
+QStringList AuditLog::takeLostEntries()
+{
+	QStringList lost;
+	lost.swap(lostEntries);
+	return lost;
+}
+
+serviceError AuditLog::lostEntriesError(const QStringList &lost,
+		const QString &originalCode, const QString &originalText)
+{
+	QString detail = QCoreApplication::translate("AuditLog",
+		"Audit entries could not be written: %1").arg(lost.join(", "));
+	if (originalCode == "read_only_database")
+		return serviceError(originalCode, QString("%1 (%2)")
+				.arg(originalText, detail));
+	if (!originalCode.isEmpty())
+		detail += QCoreApplication::translate("AuditLog",
+			"; the error of the command: %1 [%2]")
+			.arg(originalText, originalCode);
+	return serviceError("audit_entry_lost", detail);
 }
 
 /* True if the stored params text is exactly the canonical JSON of an

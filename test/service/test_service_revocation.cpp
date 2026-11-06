@@ -29,6 +29,8 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 
+#include "lib/db_x509req.h"
+#include "lib/request.h"
 #include "ServiceTestCase.h"
 
 class test_service_revocation : public ServiceTestCase
@@ -865,6 +867,22 @@ void test_service_revocation::passwordProtectedCaKey()
 	pki_crl *c = crl(ca);
 	QVERIFY(c);
 	QVERIFY(crlText(c, ca).contains(ee->getSerial().toHex()));
+
+	/* BTD-273: the key password is asked before the transaction of
+	 * the issuance, the CRL, the request and the renewal (the strict
+	 * dialog fails a prompt inside a transaction) */
+	RequestSpec rs;
+	rs.name = "protected request";
+	rs.subject.addEntryByNid(NID_commonName, "protected request");
+	rs.key = key;
+	rs.hashAlgo = digest(NID_sha256);
+	QVERIFY(Database.model<db_x509req>()->newRequest(ctx, rs));
+	RenewalSpec r;
+	r.predecessor = ca;
+	r.notBefore = a1time(QDateTime::currentDateTimeUtc());
+	r.validity = IsoDuration::parse("P1Y");
+	r.hashAlgo = digest(NID_sha256);
+	QCOMPARE(certs()->renew(ctx, { r }).size(), 1);
 
 	/* without the key password nothing is generated */
 	h->clearSources();

@@ -83,6 +83,26 @@ static int newestVersion(const QString &kind, const QString &name)
 	return q.next() ? q.value(0).toInt() : 0;
 }
 
+static void signatureFits(const QJsonObject &profile, pki_x509 *ca);
+
+/* A new version of a profile fits the key of every CA it is assigned to,
+ * as the assignment checked (BTD-201): refused naming the CA, before it
+ * is stored, instead of failing later at issuance */
+static void fitsAssignedCas(const QJsonObject &profile)
+{
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT owner FROM assignments WHERE owner_type='ca' "
+			"AND kind='profile' AND name=?");
+	q.bindValue(0, profile["id"].toString());
+	q.exec();
+	throwOnError(q);
+	while (q.next()) {
+		pki_x509 *ca = Store.lookupPki<pki_x509>(q.value(0));
+		if (ca)
+			signatureFits(profile, ca);
+	}
+}
+
 static ProfileStore::Document store(const ServiceContext &ctx,
 		const QString &kind, const QJsonObject &doc, const QString &action,
 		bool newName, const QString &file = QString(),
@@ -111,6 +131,8 @@ static ProfileStore::Document store(const ServiceContext &ctx,
 		if (!newName && !newest)
 			throw serviceError("document_not_found",
 				tr("There is no %1 '%2' to update").arg(kind, d.name));
+		if (!newName && kind == "profile")
+			fitsAssignedCas(doc);
 		d.version = newest + 1;
 		d.document = doc;
 		d.created = AuditLog::rfc3339(QDateTime::currentDateTimeUtc());

@@ -113,6 +113,10 @@ class test_service_checkpoint : public ServiceTestCase
 	void unannouncedKeyAlone();
 	void forgedDeletionNotSigned();
 	void intervalClamped();
+	void setInterval();
+	void setIntervalRange_data();
+	void setIntervalRange();
+	void setIntervalNeedsVerifiedOpen();
 	void intervalSigned();
 	void raisedIntervalHidesNoDeletion();
 	void intervalChangeKeepsLogValid();
@@ -992,6 +996,67 @@ void test_service_checkpoint::intervalClamped()
 	QVERIFY(!r.ok());
 	QCOMPARE(r.reason, QString("checkpoint_missing"));
 	QCOMPARE(r.unanchoredEntries, qint64(1010));
+}
+
+void test_service_checkpoint::setInterval()
+{
+	/* The audit control of BTD-100: one settings.update entry with the
+	 * old and the new value in clear text */
+	appendSample(1);
+	AuditLog::setCheckpointInterval(ctx, 3);
+	QCOMPARE(AuditLog::checkpointInterval(), 3);
+	QList<AuditEntry> updates = byAction("settings.update");
+	QCOMPARE(updates.size(), 1);
+	QCOMPARE(updates[0].params.value("setting").toString(),
+		QString("audit_checkpoint_interval"));
+	QCOMPARE(updates[0].params.value("new_value").toString(), QString("3"));
+	QVERIFY(!updates[0].params.contains("redacted"));
+	/* the next checkpoint comes at the new interval */
+	appendSample(1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+}
+
+void test_service_checkpoint::setIntervalRange_data()
+{
+	QTest::addColumn<int>("interval");
+	QTest::newRow("0") << 0;
+	QTest::newRow("negative") << -1;
+	QTest::newRow("above the clamp") << AuditLog::maxCheckpointInterval + 1;
+}
+
+void test_service_checkpoint::setIntervalRange()
+{
+	QFETCH(int, interval);
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	QCOMPARE(errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, interval);
+	}), QString("invalid_value"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
+	/* the bounds themselves are valid */
+	AuditLog::setCheckpointInterval(ctx, AuditLog::maxCheckpointInterval);
+	AuditLog::setCheckpointInterval(ctx, 1);
+	QCOMPARE(AuditLog::checkpointInterval(), 1);
+}
+
+void test_service_checkpoint::setIntervalNeedsVerifiedOpen()
+{
+	/* An open without the verified password writes nothing (BTD-137) */
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	ServiceContext::processPasswordVerified = false;
+	QString code = errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, 5);
+	});
+	ServiceContext::processPasswordVerified = true;
+	QCOMPARE(code, QString("missing_password"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
 }
 
 void test_service_checkpoint::intervalSigned()

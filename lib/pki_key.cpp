@@ -9,6 +9,7 @@
 
 #include "pki_key.h"
 #include "pki_x509super.h"
+#include "sql.h"
 #include "func.h"
 #include "pkcs11.h"
 #include "pki_export.h"
@@ -309,11 +310,7 @@ QList<int> pki_key::possibleHashNids()
 {
 	QList<int> nids;
 	QList<int> allSha2 = { NID_sha224, NID_sha256, NID_sha384, NID_sha512 };
-#ifndef LIBRESSL_VERSION_NUMBER
 	QList<int> allSha3 = { NID_sha3_224, NID_sha3_256, NID_sha3_384, NID_sha3_512 };
-#else
-	QList<int> allSha3;
-#endif
 
 	/* no digest to choose (BTD-164) */
 	if (digestLess())
@@ -445,7 +442,14 @@ QSqlError pki_key::insertSqlData()
 			continue;
 		}
 		if (x->compareRefKey(this)) {
+			/* the link in memory follows a rollback of the store
+			 * (BTD-217: the delete of the old key and this insert in
+			 * one transaction) */
+			pki_key *old = x->getRefKey();
 			x->setRefKey(this);
+			DbTransaction::onRollback([x, old]() {
+				x->setRefKey(old);
+			});
 			list << x;
 		}
 	}
@@ -734,7 +738,6 @@ void pki_key::writeSSH2public(QIODevice &file) const
 
 bool pki_key::verify(EVP_PKEY *pkey) const
 {
-#ifndef LIBRESSL_VERSION_NUMBER
 	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, pkey, nullptr);
 	Q_CHECK_PTR(ctx);
 	int verify = EVP_PKEY_public_check(ctx);
@@ -745,10 +748,6 @@ bool pki_key::verify(EVP_PKEY *pkey) const
 	}
 	pki_openssl_error();
 	return verify != 0;
-#else
-	(void)pkey;
-	return true;
-#endif
 }
 
 QString pki_key::fingerprint(const QString &format) const
@@ -829,4 +828,31 @@ void pki_key::print(BioByteArray &bba, enum print_opt opt) const
 	case print_coloured:
 		break;
 	}
+}
+
+QHash<const pki_key *, EVP_PKEY *> KeyUnlock::unlocked;
+
+void KeyUnlock::add(const pki_key *key)
+{
+	if (!key || key->isPubKey() || unlocked.contains(key))
+		return;
+	EVP_PKEY *pkey = key->decryptKey();
+	if (!pkey)
+		return;
+	unlocked[key] = pkey;
+	keys << key;
+}
+
+KeyUnlock::~KeyUnlock()
+{
+	for (const pki_key *key : keys)
+		EVP_PKEY_free(unlocked.take(key));
+}
+
+EVP_PKEY *KeyUnlock::decrypt(const pki_key *key)
+{
+	EVP_PKEY *pkey = unlocked.value(key);
+	if (pkey && EVP_PKEY_up_ref(pkey) == 1)
+		return pkey;
+	return key->decryptKey();
 }
