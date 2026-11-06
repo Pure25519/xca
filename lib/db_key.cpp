@@ -188,6 +188,10 @@ void db_key::keyParams(AuditParams &params, pki_key *key)
 #endif
 }
 
+/* RSA and DSA above it fail at once (BTD-113): RSA:65536 runs for hours,
+ * and OpenSSL refuses public-key operations with keys above 16384 bit */
+static const int maxKeySize = 16384;
+
 static AuditParams keyjobParams(const keyjob &task, const QString &name)
 {
 	AuditParams p;
@@ -219,6 +223,15 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 			.arg(task.ktype.name));
 	if (!task.isEC() && !task.isFixed() && task.size < 32)
 		throw serviceError("invalid_key_size", tr("Key size too small !"));
+	if (!task.isEC() && !task.isFixed() && task.size > maxKeySize)
+		throw serviceError("invalid_key_size",
+			tr("The key size %1 bit is above the limit of %2 bit")
+			.arg(task.size).arg(maxKeySize));
+	/* OpenSSL's DSA paramgen fails below 512 bit with nothing but
+	 * "provider keymgmt failure", so the service names it (BTD-113) */
+	if (task.ktype.type == EVP_PKEY_DSA && task.size < 512)
+		throw serviceError("invalid_key_size",
+			tr("DSA keys need at least 512 bit"));
 	if (!keyjob(task).isValid())    /* isValid() is not const */
 		throw serviceError("invalid_curve", tr("Unknown EC curve"));
 
@@ -262,11 +275,13 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 }
 
 /* RSA and DSA outside 1024..8192 bit need the confirmation "key.size";
+ * a size the service refuses anyway is not asked about (BTD-113), and
  * an unknown type is rejected by the service, not asked about (BTD-106) */
 static bool unusualSize(const keyjob &task)
 {
 	return task.ktype.isValid() && !task.isEC() && !task.isFixed() &&
-		task.size >= 32 && (task.size < 1024 || task.size > 8192);
+		task.size >= 32 && task.size <= maxKeySize &&
+		(task.size < 1024 || task.size > 8192);
 }
 
 /* The denied entry of an unconfirmed key size; nothing is generated */
