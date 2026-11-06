@@ -80,6 +80,9 @@ pki_x509req *db_x509req::create(const RequestSpec &spec, AuditParams &params,
 	pki_x509req *req = nullptr, *stored = nullptr;
 
     try {
+	/* the password or PIN of the key before the transaction (BTD-273) */
+	KeyUnlock unlock;
+	unlock.add(spec.key);
 	Transaction;
 	TransThrow();
 

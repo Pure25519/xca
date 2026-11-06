@@ -21,10 +21,8 @@ target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcacore)
 # without a platform plugin, so the QT_QPA_PLATFORM of the environment
 # (offscreen in the build image) is removed for them
 macro(Headless test)
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-    set_property(TEST ${test} APPEND PROPERTY
+  set_property(TEST ${test} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-  endif()
 endmacro()
 
 find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
@@ -37,7 +35,7 @@ find_program(SERVICE_SETPRIV setpriv)
 macro(ServiceTest name)
   add_executable(${name} ${SERVICE_TEST_DIR}/${name}.cpp)
   target_link_libraries(${name} xcaservicetest)
-  target_link_options(${name} PRIVATE -pthread)
+  target_link_libraries(${name} Threads::Threads)
   target_compile_definitions(${name} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -117,8 +115,7 @@ add_test(NAME test_core_sources
 set_tests_properties(test_core_sources PROPERTIES LABELS service)
 
 find_program(READELF_PROGRAM NAMES readelf ${CMAKE_READELF})
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
-   CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM)
   add_executable(xcacore_linkcheck ${SERVICE_TEST_DIR}/xcacore_linkcheck.cpp)
   target_link_libraries(xcacore_linkcheck
 	"$<LINK_LIBRARY:WHOLE_ARCHIVE,xcacore>")
@@ -136,7 +133,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
 		-P ${SERVICE_TEST_DIR}/core_link.cmake)
   set_tests_properties(test_core_link PROPERTIES LABELS service)
 else()
-  message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
+  message(STATUS "readelf or Linux missing: test_core_link skipped")
+endif()
+
+# configuring against OpenSSL 3 stops with the version message (BTD-253);
+# the stand-in prefix uses the Unix library names
+if(UNIX)
+  add_test(NAME test_openssl_minimum
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		"-DGENERATOR=${CMAKE_GENERATOR}"
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openssl_minimum
+		-P ${SERVICE_TEST_DIR}/openssl_minimum.cmake)
+  set_tests_properties(test_openssl_minimum PROPERTIES LABELS service)
 endif()
 
 # no internal references in the public fork (BTD-236)
@@ -175,3 +183,11 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
 	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
   Headless(test_service_importexport_cnf_${mode})
 endforeach()
+
+# The Windows packaging follows MSVC and OpenSSL 4 (BTD-252), checked on
+# every platform
+add_test(NAME test_windows_packaging
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/windows_packaging
+		-P ${SERVICE_TEST_DIR}/windows_packaging.cmake)
+set_tests_properties(test_windows_packaging PROPERTIES LABELS service)
