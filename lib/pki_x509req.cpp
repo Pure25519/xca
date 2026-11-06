@@ -18,6 +18,7 @@
 #include "audit_key.h"
 #include "XcaPresentation.h"
 #include "openssl_compat.h"
+#include "staged_file.h"
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
@@ -137,7 +138,7 @@ void pki_x509req::createReq(pki_key *key, const x509name &dn,
 	}
 	pki_openssl_error();
 
-	privkey = key->decryptKey();
+	privkey = KeyUnlock::decrypt(key);
 	/* 0 leaves the request unsigned (BTD-171) */
 	int size = X509_REQ_sign(request, privkey,
 				key->signatureDigest(digest));
@@ -261,9 +262,11 @@ void pki_x509req::setSubject(const x509name &n)
 
 void pki_x509req::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".csr"));
-	file.open_write();
-	writeReq(file, true);
+	/* staged: a failed dump leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".csr"), false, false,
+		[this](QIODevice &file) {
+		writeReq(file, true);
+		});
 }
 
 void pki_x509req::writeReq(QIODevice &file, bool pem) const

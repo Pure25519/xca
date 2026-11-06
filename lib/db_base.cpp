@@ -6,6 +6,8 @@
  */
 
 #include "db_base.h"
+
+#include <typeinfo>
 #include "func.h"
 #include "exception.h"
 #include "XcaWarningCore.h"
@@ -48,6 +50,7 @@ db_base::~db_base()
 	qDeleteAll(allHeaders);
 	delete rootItem;
 	delete treeItem;
+	qDeleteAll(retired);
 }
 
 pki_base *db_base::newPKI(enum pki_type)
@@ -140,13 +143,28 @@ void db_base::loadContainer()
 		QSqlRecord rec = q.record();
 		t = (enum pki_type)q.value(VIEW_item_type).toInt();
 		pki_base *pki = newPKI(t);
+		/* a reload refreshes the object of a known row in place, so
+		 * a pointer held across it stays the object of its row
+		 * (BTD-238); restoreSql() replaces every loaded field */
+		quint64 id = q.value(VIEW_item_id).toULongLong();
+		pki_base *known = Store.find(id);
+		bool reuse = known && typeid(*known) == typeid(*pki);
+		if (reuse) {
+			delete pki;
+			pki = known;
+			pki->clear();
+			pki->setParent(nullptr);
+		}
 		try {
 			pki->restoreSql(rec);
 		} catch (errorEx &ex) {
 			/* a row that does not decode is left out, never
 			 * loaded as an empty object (BTD-95); reported once
 			 * per load with the others (BTD-209) */
-			delete pki;
+			if (reuse)
+				retire(pki);
+			else
+				delete pki;
 			skippedRows << SkippedRow{ rowType(t),
 				q.value(VIEW_item_id).toString(),
 				ex.getString() };
@@ -154,7 +172,8 @@ void db_base::loadContainer()
 		}
 		rootItem->insert(pki);
 		treeItem->insert(pki);
-		Store.add(q.value(VIEW_item_id), pki);
+		if (!reuse)
+			Store.add(q.value(VIEW_item_id), pki);
 	}
 
 	QString view = Settings[class_name + "_hdView"];
@@ -167,6 +186,18 @@ void db_base::loadContainer()
 	}
 	restart_timer();
 	emit columnsContentChanged();
+}
+
+/* An object whose row is gone: out of the Store, but kept until the
+ * database closes, because a handler may still hold it across a dialog
+ * (BTD-238); the services refuse it as missing_object */
+void db_base::retire(pki_base *pki)
+{
+	Store.remove(pki->getSqlItemId());
+	pki->clear();
+	pki->setParent(nullptr);
+	if (!retired.contains(pki))
+		retired << pki;
 }
 
 void db_base::reloadContainer(const QList<enum pki_type> &typelist)
@@ -182,12 +213,19 @@ void db_base::reloadContainer(const QList<enum pki_type> &typelist)
 	if (!match)
 		return;
 	qDebug() << "RELOAD" << class_name << all_types << typelist;
+	QList<pki_base *> before = rootItem->getChildItems();
+	/* the rows load inside the reset bracket: views and proxies read
+	 * the new rows at modelReset (BTD-239) */
 	beginResetModel();
 	rootItem->clear();
 	treeItem->clear();
-	endResetModel();
-
 	loadContainer();
+	/* the objects whose row is gone: out of the Store and the model */
+	for (pki_base *pki : before)
+		if (rootItem->indexOf(pki) == -1 &&
+		    Store.find(pki->getSqlItemId().toULongLong()) == pki)
+			retire(pki);
+	endResetModel();
 	QList<SkippedRow> rows = takeSkippedRows();
 	if (!rows.isEmpty())
 		XCA_WARN(skippedRowsText(rows));
@@ -686,17 +724,48 @@ static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
 	return list;
 }
 
+std::function<bool(pki_base *)> db_base::tokenDeleteHook{};
+std::function<TokenDeletion(pki_base *)> db_base::tokenPrepareHook{};
+
+/* After the COMMIT of deleteItems(): the objects found on a token are
+ * deleted there; one failure entry token.delete per object left on its
+ * token (BTD-272) */
+struct TokenStep
+{
+	DeleteResult::Deleted object;
+	std::function<void()> destroy;
+};
+
+static void destroyOnToken(const ServiceContext &ctx,
+		const QList<TokenStep> &steps, QStringList *errors)
+{
+	for (const TokenStep &step : steps) {
+		try {
+			step.destroy();
+		} catch (errorEx &err) {
+			if (errors)
+				*errors << QString("%1: %2").arg(
+					step.object.name, err.getString());
+			AuditLog::appendFailure(ctx, "token.delete",
+				step.object.objectType, step.object.id,
+				AuditParams().set("name", step.object.name)
+					.set("on_token", true), "token_error");
+		}
+	}
+}
+
 DeleteResult db_base::deleteItems(const ServiceContext &ctx,
-			const QList<pki_base *> &items)
+			const QList<pki_base *> &items, bool fromToken)
 {
 	DeleteResult result;
 	DeleteResult::Deleted current;
 	QString action = "object.delete";
 	AuditParams params;
+	QMap<pki_base *, TokenDeletion> onToken;
+	QMap<pki_base *, QString> tokenFailed;
+	QList<TokenStep> tokenSteps;
 
 	try {
-		Transaction;
-		TransThrow();
 		if (items.isEmpty())
 			throw serviceError("nothing_to_delete",
 				tr("No item selected"));
@@ -713,6 +782,25 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 				throw serviceError("missing_object",
 					tr("The item is not in the database"));
 		}
+		/* After every check, so a rejected call never touches the
+		 * token, and before the transaction: the question and the
+		 * login of the token run while no database lock is held
+		 * (BTD-273). Nothing is deleted on the token yet. A failure
+		 * here is reported and recorded; the database deletion goes
+		 * on (BTD-128). */
+		if (fromToken) {
+			foreach(pki_base *pki, items) {
+				try {
+					onToken[pki] = tokenPrepareHook ?
+						tokenPrepareHook(pki) :
+						pki->prepareTokenDeletion();
+				} catch (errorEx &err) {
+					tokenFailed[pki] = err.getString();
+				}
+			}
+		}
+		Transaction;
+		TransThrow();
 		foreach(pki_base *pki, items) {
 			int revocations;
 			current.objectType = auditObjectType(pki);
@@ -736,13 +824,44 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 			if (pki->getType() == x509)
 				params.set("revocations", revocations);
 
+			if (fromToken) {
+				if (tokenFailed.contains(pki)) {
+					result.tokenErrors << QString("%1: %2")
+						.arg(current.name, tokenFailed[pki]);
+					params.set("warning", "token_delete_failed");
+				}
+				/* found and confirmed: deleted on the token
+				 * after the COMMIT */
+				bool found = onToken.value(pki).found;
+				params.set("on_token", found);
+				if (found)
+					tokenSteps << TokenStep{ current,
+						onToken.value(pki).destroy };
+			}
 			removeItem(pki);
 			AuditLog::append(ctx, action, current.objectType,
 					current.id, params);
 			result.deleted << current;
 			result.revocations += revocations;
 		}
-		TransCommitThrow();
+		/* the token after the database: a rollback leaves every
+		 * object on its token (BTD-272). Inside a caller's
+		 * transaction this waits for the caller's COMMIT; the errors
+		 * then reach only the audit log. */
+		if (!tokenSteps.isEmpty()) {
+			auto errors = std::make_shared<QStringList>();
+			bool outermost = !DbTransaction::active() ||
+					DbTransaction::level() == 1;
+			DbTransaction::afterCommit([ctx, tokenSteps, errors,
+						outermost]() {
+				destroyOnToken(ctx, tokenSteps,
+					outermost ? errors.get() : nullptr);
+			});
+			TransCommitThrow();
+			result.tokenErrors << *errors;
+		} else {
+			TransCommitThrow();
+		}
 	} catch (serviceError &err) {
 		AuditLog::appendFailure(ctx, action, current.objectType, current.id,
 				params.getValues().isEmpty() ?

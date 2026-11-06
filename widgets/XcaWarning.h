@@ -36,5 +36,6 @@ class xcaWarningGui : public QObject, public xcaWarning_i
 	bool okcancel(const QString &id, const QString &msg);
 	void sqlerror(QSqlError err);
 	void error(const QString &msg);
+	void notice(const QString &msg);
 };
 #endif

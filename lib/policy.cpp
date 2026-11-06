@@ -11,6 +11,7 @@
 #include <QJsonDocument>
 #include <QMap>
 #include <QRegularExpression>
+#include <QSet>
 #include <QUrl>
 
 #include <openssl/err.h>
@@ -20,6 +21,7 @@
 #include "issuance.h"
 #include "pki_base.h"
 #include "pki_x509.h"
+#include "sql.h"
 
 static QString tr(const char *text)
 {
@@ -225,7 +227,7 @@ QString ia5(const ASN1_IA5STRING *s)
 				ASN1_STRING_get_length(s));
 }
 
-/* 192.168.0.10 or 2001:db8:0:0:0:0:0:1, for messages only */
+/* 192.0.2.10 or 2001:db8:0:0:0:0:0:1, for messages only */
 QString ipText(const QByteArray &b)
 {
 	QStringList parts;
@@ -416,12 +418,23 @@ const QMap<QString, QString> &formNames()
 	return names;
 }
 
-/* The certificate's status as the uniqueness rule names it */
-QString status(const pki_x509 *c)
+/* The certificate's status as the uniqueness rule names it. A notBefore
+ * in the future is not_yet_valid, not valid (BTD-201): a rule that wants
+ * such certificates counted names that status. */
+static QString status(X509 *c, bool revoked)
 {
-	if (c->isRevoked())
+	if (revoked)
 		return "revoked";
-	return c->getNotAfter() < a1time() ? "expired" : "valid";
+	a1time now;
+	if (a1time(X509_get0_notAfter(c)) < now)
+		return "expired";
+	return a1time(X509_get0_notBefore(c)) > now ? "not_yet_valid" : "valid";
+}
+
+/* A certificate that signed itself */
+static bool selfSigned(X509 *c)
+{
+	return X509_check_issued(c, c) == X509_V_OK;
 }
 
 bool sameSan(X509 *a, X509 *b)
@@ -442,6 +455,21 @@ bool sameSan(X509 *a, X509 *b)
 }
 
 } // namespace
+
+/* The first field of a uniqueness rule in which two certificates are
+ * equal, empty if none */
+static QString sameField(const QStringList &fields, X509 *a, X509 *b)
+{
+	if (fields.contains("subject_dn") && !X509_NAME_cmp(
+			X509_get_subject_name(a), X509_get_subject_name(b)))
+		return "subject_dn";
+	if (fields.contains("public_key") &&
+	    EVP_PKEY_eq(X509_get0_pubkey(a), X509_get0_pubkey(b)) == 1)
+		return "public_key";
+	if (fields.contains("san") && sameSan(a, b))
+		return "san";
+	return QString();
+}
 
 void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 			const QList<const pki_x509 *> &chain) const
@@ -548,23 +576,52 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 	for (const QJsonValue &v : u["status"].toArray())
 		statuses << v.toString();
 	bool byIssuer = u["scope"].toString() == "issuer";
-	for (pki_x509 *other : Store.getAll<pki_x509>()) {
-		if (other == cert || (byIssuer && other->getSigner() != spec.signer) ||
-		    !statuses.contains(status(other)))
+	/* the certificates of the database, not the store of this process:
+	 * another process may have stored one since this one loaded the
+	 * database. The issuance holds the write lock of its transaction
+	 * (BTD-274), so none is stored between this read and the insert
+	 * (BTD-201). */
+	QSet<QString> revoked;
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT caId, serial FROM revocations");
+	execOrThrow(q);
+	while (q.next())
+		revoked << q.value(0).toString() + ":" + q.value(1).toString();
+	qlonglong predecessor = spec.predecessor ?
+			spec.predecessor->getSqlItemId().toLongLong() : 0;
+	qlonglong signer = spec.signer ?
+			spec.signer->getSqlItemId().toLongLong() : 0;
+	SQL_PREPARE(q, "SELECT c.item, c.issuer, c.serial, c.cert, i.name "
+			"FROM certs c JOIN items i ON i.id = c.item "
+			"WHERE i.del = 0");
+	execOrThrow(q);
+	while (q.next()) {
+		/* the certificate a renewal or rekey replaces does not count
+		 * (schema policy, uniqueness; BTD-201) */
+		if (predecessor && q.value(0).toLongLong() == predecessor)
 			continue;
-		X509 *o = other->getCert();
-		QString field;
-		if (fields.contains("subject_dn") &&
-		    !X509_NAME_cmp(X509_get_subject_name(o), subject))
-			field = "subject_dn";
-		else if (fields.contains("public_key") &&
-			 EVP_PKEY_eq(X509_get0_pubkey(o), X509_get0_pubkey(x)) == 1)
-			field = "public_key";
-		else if (fields.contains("san") && sameSan(o, x))
-			field = "san";
+		/* the scope of a CA's certificate: its issuer column */
+		if (byIssuer && signer && q.value(1).toLongLong() != signer)
+			continue;
+		QByteArray der = QByteArray::fromBase64(q.value(3).toByteArray());
+		const unsigned char *p =
+			reinterpret_cast<const unsigned char *>(der.constData());
+		X509 *o = d2i_X509(nullptr, &p, der.size());
+		if (!o)
+			continue;
+		QString st = status(o, revoked.contains(q.value(1).toString() +
+					":" + q.value(2).toString()));
+		/* the scope of a self-signed certificate is itself: the roots
+		 * of the same key (a root issued again), not every certificate
+		 * whose signer is unknown (BTD-201) */
+		bool counted = statuses.contains(st) && (!byIssuer ||
+			signer || (selfSigned(o) && EVP_PKEY_eq(
+				X509_get0_pubkey(o), X509_get0_pubkey(x)) == 1));
+		QString field = counted ? sameField(fields, o, x) : QString();
+		X509_free(o);
 		if (!field.isEmpty())
 			throw serviceError("policy_not_unique",
 				tr("Policy '%1': '%2' (%3) has the same %4 (rule uniqueness)")
-				.arg(id, other->getIntName(), status(other), field));
+				.arg(id, q.value(4).toString(), st, field));
 	}
 }

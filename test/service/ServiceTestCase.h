@@ -68,6 +68,7 @@ class StrictWarning : public xcaWarning_i
 {
 	QList<bool> answers{};
 	QStringList messages{};
+	QStringList notices{};
 	xcaWarning_i *delegate{};
 
 	void message(const char *kind, const QString &msg);
@@ -80,6 +81,8 @@ class StrictWarning : public xcaWarning_i
 	void expectMessage(const QString &substring);
 	void delegateTo(xcaWarning_i *d);
 	void reset();
+	/* The notices shown since the last call; notices are not strict */
+	QStringList takeNotices();
 
 	void information(const QString &msg) override;
 	void warning(const QString &msg) override;
@@ -88,6 +91,7 @@ class StrictWarning : public xcaWarning_i
 	bool okcancel(const QString &id, const QString &msg) override;
 	void sqlerror(QSqlError err) override;
 	void error(const QString &msg) override;
+	void notice(const QString &msg) override;
 	QString answerSource(const QString &id) const override;
 };
 

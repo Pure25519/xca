@@ -209,10 +209,13 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 			MBSTRING_ASC, (const unsigned char*)csp.constData(), csp.size());
 	}
 
+	/* A legacy algorithm keeps OpenSSL's default count; the MAC is
+	 * set below (mac_iter -1: none yet) */
+	int iter = encAlgo.legacy() ? 0 : iterationsForExport(opts);
 	std::unique_ptr<PKCS12, decltype(&PKCS12_free)> pkcs12(
 		PKCS12_create(pass.constData(), getIntName().toUtf8().data(),
 				pkey.get(), cert->getCert(), certstack.get(),
-				keyAlgoNid, certAlgoNid, 0, 0, 0),
+				keyAlgoNid, certAlgoNid, iter, -1, 0),
 		&PKCS12_free);
 	pkey.reset();
 	/* e.g. a key that does not belong to the certificate; before,
@@ -223,14 +226,22 @@ void pki_pkcs12::writePKCS12(QIODevice &file, encAlgo &encAlgo,
 	pki_openssl_error();
 
 	/* The MAC set explicitly, not left to OpenSSL's default: SHA-1 for
-	 * legacy readers only, else HMAC-SHA256 (BTD-52). Not PBMAC1
-	 * (RFC 9579): Windows, Java and OpenSSL before 3.4 cannot check it */
+	 * legacy readers only, else HMAC-SHA256 (BTD-52). PBMAC1 (RFC 9579)
+	 * only on request: Windows, Java and OpenSSL before 3.4 cannot
+	 * check it (BTD-175) */
 	if (encAlgo.legacy())
 		export_check(PKCS12_set_mac(pkcs12.get(), pass.constData(), -1,
 				NULL, 0, 1, EVP_sha1()), "PKCS12_set_mac", what());
+	/* The salt length explicitly: with 0, OpenSSL 4.1.0 writes a
+	 * 16-byte salt but computes a MAC that no reader verifies */
+	else if (opts.pkcs12Mac == "pbmac1")
+		export_check(PKCS12_set_pbmac1_pbkdf2(pkcs12.get(),
+				pass.constData(), -1, NULL, 16, iter,
+				EVP_sha256(), "SHA256"),
+				"PKCS12_set_pbmac1_pbkdf2", what());
 	else
 		export_check(PKCS12_set_mac(pkcs12.get(), pass.constData(), -1,
-				NULL, 0, PKCS12_DEFAULT_ITER, EVP_sha256()),
+				NULL, 0, iter, EVP_sha256()),
 				"PKCS12_set_mac", what());
 
 	BioByteArray b;
@@ -312,6 +323,14 @@ const encAlgo encAlgo::getDefault()
 void encAlgo::setDefault(const QString &def)
 {
 	default_encAlgo = encAlgo(def).encAlgo_nid;
+}
+
+const QStringList pki_pkcs12::macs { "hmac-sha256", "pbmac1" };
+
+int pki_pkcs12::iterationsForExport(const ExportOptions &opts)
+{
+	return opts.pkcs12Iterations ? opts.pkcs12Iterations :
+		((QString)Settings["pkcs12_iterations"]).toInt();
 }
 
 const encAlgo encAlgo::forExport()

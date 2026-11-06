@@ -8,7 +8,7 @@ prompts unless `--interactive` is given.
 ```
 bxc-pki init --cn "BxC Lab Root" --key rsa-4096 --validity P20Y --password env:PKI_PW
 bxc-pki init --cn "BxC OT Issuing" --parent "BxC Lab Root" --path-len 0 --key rsa-3072 --password env:PKI_PW
-bxc-pki request-cert --cn plc10 --ip 192.168.0.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
+bxc-pki request-cert --cn plc10 --ip 192.0.2.10 --dns plc10.lab --key ec-p256 --password env:PKI_PW
 bxc-pki sign plc10 --ca "BxC OT Issuing" --template TLS_server_EC --validity P1Y --password env:PKI_PW
 bxc-pki list --password env:PKI_PW
 bxc-pki show plc10 --type certificate
@@ -267,6 +267,12 @@ Encrypted formats take their password from `--export-pass` only; without it the 
 with `missing_password` and writes no file. Legacy only on request: `--pkcs12-algorithm
 <name>` (e.g. `PBE-SHA1-3DES`, audited with `legacy`), `--key-unencrypted` (unencrypted
 PKCS#8), `--legacy-key-pem` (OpenSSL traditional PEM with RFC 1423 encryption, PKCS#1 for RSA).
+`--pkcs12-mac hmac-sha256|pbmac1` selects the PKCS#12 MAC (PBMAC1, RFC 9579, is read by
+OpenSSL 3.4 and newer, not by Windows, Java, older OpenSSL and many devices) and
+`--pkcs12-iterations <n>` the PBKDF2 count of encryption and MAC, 2048 to 10000000 (default: the
+setting `pkcs12_iterations`, 2048); both only with `--format p12` (`conflicting_options`) and not
+with a legacy algorithm (`invalid_pkcs12_mac`, `invalid_pkcs12_iterations`). The result names
+`pkcs12_algorithm`, `pkcs12_mac` and `pkcs12_iterations` as written, like the audit entry.
 `--mldsa-key-format both|seed|expanded` selects the RFC 9881 encoding of an ML-DSA private key
 (`ExportSpec::privateKeyFormat`); the result (`files[].ml_dsa_encoding`) and the audit entry
 `key.export_private` name it; on another key it is `format_not_applicable`. To check the stored
@@ -405,7 +411,12 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   `issued_with` (one id) names the profile the CA's own certificate is issued with. Every id
   must name a profile (`issued_with`, `profiles`) or a policy (`policies`) of the file or of the
   database; otherwise `unknown_reference` at the pointer of the id (`/cas/1/profiles/0: there
-  is no profile 'x' in the file or the database`). `issued_with` is recorded and compared, not
+  is no profile 'x' in the file or the database`). A profile or policy in `profiles` or
+  `policies` that exists only in the database and is retired is refused with
+  `document_retired`, the code of `ProfileStore::assign` (BTD-232): a retired document never
+  takes effect. A retired document that the file defines is stored as a new version first and
+  stays assignable; `issued_with` may name a retired profile, since it only records how the
+  CA was issued. `issued_with` is recorded and compared, not
   applied: the certificate is made from the CA's own members (key, subject, validity,
   `path_len`, `name_constraints`, `key_usage`, the parent's CDP), and bootstrap does not run
   the profile over it, because a CA profile cannot carry name constraints or a CDP, caps the
@@ -413,8 +424,16 @@ transaction (all or nothing) and is idempotent (bxc-pki PLAN.md 8.2).
   override or refuse the values of the file. What it does: the id must exist, it is stored in
   the definition of the CA (mapping row, `definition_sha256`) and shown in the result
   (`issued_with`), and a different `issued_with` for an existing CA is `bootstrap_conflict`,
-  like every member the certificate was made from. What it does not do: it does not check the
-  certificate against the profile, it records no profile version for the CA certificate
+  like every member the certificate was made from. It is also compared with the CA definition
+  (BTD-233; `Profile::caMismatches()`): a profile with `basic_constraints.ca` false, a fixed
+  `basic_constraints.path_len` other than the CA's `path_len`, `key_types` without the CA's
+  `key`, or a `validity.max` shorter than the CA's validity (from `not_before` or now to
+  `not_after` or `validity`, default P10Y for a root and P5Y below) gives one warning
+  `issued_with_mismatch` per member at the pointer
+  (`/cas/1/issued_with: the profile 'tls-server' issues no CA certificates (basic_constraints.ca
+  false) (basic_constraints.ca)`), in the real run and in `--plan`. A warning, not an error:
+  the profile is not applied, so the certificate is the same either way. What it does not do:
+  it does not check the issued certificate against the profile, it records no profile version for the CA certificate
   (`issued_profiles`) and it does not assign the profile to the CA or its parent.
 - **CAs**: init's code path (`createCa()` in `commands.cpp`) with the file's values: key type
   (the vocabulary of `--key`), subject from `cn` plus `subject` (order C, ST, L, O, OU, CN) or
@@ -514,10 +533,11 @@ ca ot-p256-issuing: update, id 9 (changed: profiles, policies)
 skipped /server: the server TLS of xca-server comes in Phase 3 (BTD-160)
 unchecked database: '/data/lab.xdb' does not exist: every object would be created, ...
 ```
+- **Warning codes**: `issued_with_mismatch` (above), besides the warnings of every command.
 - **Error codes**: `invalid_bootstrap_file`, `bootstrap_conflict`,
   `unresolved_secret_reference`; from the checks above `invalid_validity`, `invalid_value`,
   `invalid_uri`, `invalid_subject`, `missing_password`, `unknown_reference`,
-  `path_length_exceeded`, `not_supported`, `invalid_profile`, `invalid_policy`, and the codes of
+  `document_retired`, `path_length_exceeded`, `not_supported`, `invalid_profile`, `invalid_policy`, and the codes of
   the services, each with the pointer of the object in front of the detail. A subject that
   `parseDn()` refuses names the pointer of its member (`/cas/2/dn`, `/cas/2/cn`, or
   `/cas/2/subject` for an attribute of `subject`): `/cas/2/subject: 'CN=R,O=' is no RFC 4514

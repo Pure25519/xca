@@ -159,10 +159,11 @@ class pki_x509 : public pki_x509super
 		a1time column_a1time(const dbheader *hd) const;
 		QByteArray i2d() const;
 		void d2i(QByteArray &ba);
-		void deleteFromToken();
-		void deleteFromToken(const slotid &slot);
+		TokenDeletion prepareTokenDeletion();
+		TokenDeletion prepareTokenDeletion(const slotid &slot);
 		QString getMsg(msg_type msg, int n = 1) const;
-		int renameOnToken(const slotid &slot, const QString &name);
+		TokenRename prepareTokenRename(const slotid &slot,
+				const QString &name);
 		bool pem(BioByteArray &b, const ExportOptions &opts);
 		QVariant bg_color(const dbheader *hd) const;
 		void mergeRevList(x509revList &l);
@@ -178,6 +179,12 @@ class pki_x509 : public pki_x509super
 		void restoreSql(const QSqlRecord &rec);
 		QStringList icsVEVENT() const;
 		QStringList icsVEVENT_ca() const;
+		/* The objects of icsVEVENT_ca(): the CA, its valid issued
+		 * certificates and its latest CRL */
+		QList<pki_base *> vcalendarObjects() const;
+		/* The certificate whose tls-auth key getTaKey() returns: an
+		 * end-entity certificate shares the one of its issuer */
+		pki_x509 *taKeyOwner();
 		QString getTaKey();
 		bool importTaKey(const QByteArray &takey);
 		QList<int> ossl_verify() const;
