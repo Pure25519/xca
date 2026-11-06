@@ -17,6 +17,14 @@ Certificate issuance is the reference implementation.
 | GUI caller | the dialog only fills the value object (`NewX509::getIssuanceSpec()`), calls the service function with `ServiceContext::localUser(ServiceContext::gui)` and shows the `serviceError` with `XCA_ERROR` | `widgets/NewX509_issue.cpp` |
 | Tests | `test/service/test_service_<area>.cpp` on the harness of BTD-28; check the result with openssl where possible, the audit entry of success and of every rejection, and `AuditLog::verify()` | `test/service/test_service_issuance.cpp` |
 
+DN parameters of audit entries (`subject`, `issuer`) are RFC 4514 strings from `x509name::rfc4514()`
+(BTD-104): most significant RDN last, the members of a multi-valued RDN joined with `+`, special
+characters escaped with `\`, UTF-8 as it is, e.g. `CN=device.example,O=BxC Security,C=DE`. It is
+the same form as `rfc4514` in the JSON reports. Entries written before BTD-104 keep the OpenSSL
+one-line form (`C = DE, O = BxC Security, CN = device.example`, non-ASCII escaped as `\C3\BC`);
+the hash chain forbids rewriting them, and `--audit-verify` does not read DNs, so a log with both
+forms verifies.
+
 Structure of the service function: a public wrapper builds the audit parameters, calls a private
 worker that does the work in one `Transaction`, and appends the `failure` entry when the worker
 throws (the worker's transaction is rolled back by then). The worker appends the `success` entry

@@ -27,6 +27,11 @@ class x509name
 		x509name &set(const X509_NAME *n);
 		x509name &set(const STACK_OF(X509_NAME_ENTRY) *entries);
 		QString oneLine(unsigned long flags = XN_FLAG_ONELINE) const;
+		/* RFC 4514: most significant RDN last, the members of a
+		 * multi-valued RDN joined with '+', special characters
+		 * escaped with '', UTF-8 as it is. The one text form of a
+		 * DN in JSON: audit parameters (BTD-104) and reports. */
+		QString rfc4514() const;
 		int nid(int i) const;
 		QString getOid(int i) const;
 		QByteArray i2d() const;
