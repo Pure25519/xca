@@ -151,6 +151,9 @@ class CommandContext
 	/* The files of --out and export (BTD-42): staged by the handlers
 	 * before the commit, published by the runner after it */
 	OutputFiles *files{};
+	/* The warnings of the files of a command that failed, e.g.
+	 * stale_temp_removed: they go into its error object (BTD-213) */
+	QList<QPair<QString, QString> > errorWarnings{};
 };
 
 class Command
@@ -278,6 +281,8 @@ class OutputFiles
 
   private:
 	QList<entry> files{};
+	/* the warnings of a file whose stage() failed (BTD-213) */
+	QList<QPair<QString, QString> > failedWarnings{};
 	bool force{};
 	bool plan{};
 	bool done{};
