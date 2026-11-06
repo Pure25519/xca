@@ -9,7 +9,9 @@
  * A failing automatic checkpoint never takes the caller's change with
  * it, and never asks for the password (BTD-111). An export of a log in
  * one of those states is read-only instead of failing, and the audit key
- * is stored with an explicit PBKDF2 count (BTD-112).
+ * is stored with an explicit PBKDF2 count (BTD-112). The tail rule takes
+ * its interval from the last signed checkpoint, not from the setting
+ * (BTD-133).
  */
 
 #include <QThread>
@@ -111,6 +113,13 @@ class test_service_checkpoint : public ServiceTestCase
 	void unannouncedKeyAlone();
 	void forgedDeletionNotSigned();
 	void intervalClamped();
+	void setInterval();
+	void setIntervalRange_data();
+	void setIntervalRange();
+	void setIntervalNeedsVerifiedOpen();
+	void intervalSigned();
+	void raisedIntervalHidesNoDeletion();
+	void intervalChangeKeepsLogValid();
 	void adoptUnanchored_data();
 	void adoptUnanchored();
 	void baselineException_data();
@@ -120,6 +129,7 @@ class test_service_checkpoint : public ServiceTestCase
 	void auditKeyNotUsableForSigning();
 	void exportSignsCheckpoint();
 	void exportWithoutPassword();
+	void exportCountMatchesVerify();
 	void exportWithWrongPassword();
 	void noPasswordKeepsEntry();
 	void checkpointFailureAfterWrite();
@@ -637,7 +647,8 @@ void test_service_checkpoint::checkpointEveryN()
 	QCOMPARE(cp.value("checkpoint_hash").toString().toLatin1(), list[5].hash);
 	QVERIFY(!cp.contains("next_key_id"));
 	QCOMPARE(QStringList(cp.keys()), QStringList({ "checkpoint_hash",
-		"checkpoint_seq", "checkpoint_time", "key_id", "signature" }));
+		"checkpoint_interval", "checkpoint_seq", "checkpoint_time",
+		"key_id", "signature" }));
 	QVERIFY(AuditKey::verify(list[5].params.value("public_key").toString()
 		.toLatin1(), AuditLog::checkpointPayload(cp),
 		QByteArray::fromBase64(cp.value("signature").toByteArray())));
@@ -698,8 +709,8 @@ void test_service_checkpoint::checkpointAfterConfirmedOperation()
 	QVERIFY(!list[5].params.contains("db_unlock_verified"));
 	QCOMPARE(list[6].action, QString(AuditLog::actionCheckpoint));
 	QCOMPARE(QStringList(list[6].params.keys()), QStringList({
-		"checkpoint_hash", "checkpoint_seq", "checkpoint_time",
-		"key_id", "signature" }));
+		"checkpoint_hash", "checkpoint_interval", "checkpoint_seq",
+		"checkpoint_time", "key_id", "signature" }));
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY2(r.ok(), r.toJson().constData());
 	QCOMPARE(r.checkpoints, qint64(1));
@@ -985,6 +996,140 @@ void test_service_checkpoint::intervalClamped()
 	QVERIFY(!r.ok());
 	QCOMPARE(r.reason, QString("checkpoint_missing"));
 	QCOMPARE(r.unanchoredEntries, qint64(1010));
+}
+
+void test_service_checkpoint::setInterval()
+{
+	/* The audit control of BTD-100: one settings.update entry with the
+	 * old and the new value in clear text */
+	appendSample(1);
+	AuditLog::setCheckpointInterval(ctx, 3);
+	QCOMPARE(AuditLog::checkpointInterval(), 3);
+	QList<AuditEntry> updates = byAction("settings.update");
+	QCOMPARE(updates.size(), 1);
+	QCOMPARE(updates[0].params.value("setting").toString(),
+		QString("audit_checkpoint_interval"));
+	QCOMPARE(updates[0].params.value("new_value").toString(), QString("3"));
+	QVERIFY(!updates[0].params.contains("redacted"));
+	/* the next checkpoint comes at the new interval */
+	appendSample(1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+}
+
+void test_service_checkpoint::setIntervalRange_data()
+{
+	QTest::addColumn<int>("interval");
+	QTest::newRow("0") << 0;
+	QTest::newRow("negative") << -1;
+	QTest::newRow("above the clamp") << AuditLog::maxCheckpointInterval + 1;
+}
+
+void test_service_checkpoint::setIntervalRange()
+{
+	QFETCH(int, interval);
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	QCOMPARE(errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, interval);
+	}), QString("invalid_value"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
+	/* the bounds themselves are valid */
+	AuditLog::setCheckpointInterval(ctx, AuditLog::maxCheckpointInterval);
+	AuditLog::setCheckpointInterval(ctx, 1);
+	QCOMPARE(AuditLog::checkpointInterval(), 1);
+}
+
+void test_service_checkpoint::setIntervalNeedsVerifiedOpen()
+{
+	/* An open without the verified password writes nothing (BTD-137) */
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	ServiceContext::processPasswordVerified = false;
+	QString code = errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, 5);
+	});
+	ServiceContext::processPasswordVerified = true;
+	QCOMPARE(code, QString("missing_password"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
+}
+
+void test_service_checkpoint::intervalSigned()
+{
+	/* Each checkpoint signs the interval it was written with (BTD-133) */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(5);
+	QList<AuditEntry> cps = byAction(AuditLog::actionCheckpoint);
+	QCOMPARE(cps.size(), 1);
+	QCOMPARE(cps[0].params.value("checkpoint_interval").toInt(), 5);
+	QVERIFY(AuditLog::checkpointPayload(cps[0].params)
+			.contains("\"checkpoint_interval\":5"));
+	/* a changed value no longer verifies */
+	QVariantMap p = cps[0].params;
+	p["checkpoint_interval"] = 1000;
+	setParams(cps[0].seq, p);
+	recomputeFrom(cps[0].seq);
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_signature"));
+}
+
+void test_service_checkpoint::raisedIntervalHidesNoDeletion()
+{
+	/* Interval 5, the newest checkpoint deleted and the chain
+	 * recomputed: 9 unsigned entries, more than 5 + 1 */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(13);
+	QList<AuditEntry> cps = byAction(AuditLog::actionCheckpoint);
+	QCOMPARE(cps.size(), 2);
+	sql(QString("DELETE FROM audit_log WHERE seq=%1").arg(cps[1].seq));
+	renumber();
+	recomputeFrom(1);
+	AuditVerifyResult r = AuditLog::verify();
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+	QCOMPARE(r.unanchoredEntries, qint64(9));
+
+	/* Raising the unsigned setting within the clamp does not hide it:
+	 * the last valid checkpoint signed interval 5 (BTD-133) */
+	Settings["audit_checkpoint_interval"] = 1000;
+	r = AuditLog::verify();
+	QVERIFY(!r.ok());
+	QCOMPARE(r.reason, QString("checkpoint_missing"));
+}
+
+void test_service_checkpoint::intervalChangeKeepsLogValid()
+{
+	/* Legitimate changes in both directions, each followed by new
+	 * entries: verify stays ok throughout */
+	Settings["audit_checkpoint_interval"] = 5;
+	appendSample(12);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+
+	Settings["audit_checkpoint_interval"] = 20;
+	for (int i = 0; i < 45; i++) {
+		appendSample(1);
+		r = AuditLog::verify();
+		QVERIFY2(r.ok(), CCHAR(QString("raised, entry %1: %2")
+			.arg(i).arg(QString::fromUtf8(r.toJson()))));
+	}
+	/* The raise takes effect after a checkpoint signed it */
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).last()
+		.params.value("checkpoint_interval").toInt(), 20);
+
+	Settings["audit_checkpoint_interval"] = 5;
+	for (int i = 0; i < 15; i++) {
+		appendSample(1);
+		r = AuditLog::verify();
+		QVERIFY2(r.ok(), CCHAR(QString("lowered, entry %1: %2")
+			.arg(i).arg(QString::fromUtf8(r.toJson()))));
+	}
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).last()
+		.params.value("checkpoint_interval").toInt(), 5);
 }
 
 void test_service_checkpoint::adoptUnanchored_data()
@@ -1381,15 +1526,35 @@ void test_service_checkpoint::exportWithoutPassword()
 				QString("pass:") + dbPassword);
 	out = AuditLog::exportJsonLines(ctx, &unsignedEntries);
 	QCOMPARE(out.count('\n'), 4);
-	QCOMPARE(unsignedEntries, qint64(0));
 	QVERIFY(QByteArray(out.split('\n')[3]).contains(
 			"\"action\":\"audit.checkpoint\""));
-	/* verify counts the checkpoint row itself (BTD-110) */
+	/* Counted like verify, the checkpoint row itself (BTD-110, BTD-134) */
+	QCOMPARE(unsignedEntries, qint64(1));
 	QCOMPARE(AuditLog::verify().unanchoredEntries, qint64(1));
 
 	/* Covered already: nothing to sign */
 	QCOMPARE(AuditLog::exportJsonLines(ctx, &unsignedEntries), out);
-	QCOMPARE(unsignedEntries, qint64(0));
+	QCOMPARE(unsignedEntries, qint64(1));
+}
+
+void test_service_checkpoint::exportCountMatchesVerify()
+{
+	/* A checkpoint, then unsigned entries, exported without a
+	 * password: the count of the warning is unanchored_entries of
+	 * verify, the checkpoint row included (BTD-134) */
+	appendSample(3);
+	AuditLog::checkpoint(ctx);
+	appendSample(2);
+	pki_evp::passwd.cleanse();
+	pwdialog->delegateTo(new PwDialogHeadless());
+	qint64 unsignedEntries = -1;
+	AuditSkippedCheckpoint skipped;
+	AuditLog::exportJsonLines(ctx, &unsignedEntries, &skipped);
+	QCOMPARE(skipped.code, QString("audit_key_unavailable"));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.unanchoredEntries, qint64(3));
+	QCOMPARE(unsignedEntries, r.unanchoredEntries);
 }
 
 void test_service_checkpoint::exportWithWrongPassword()

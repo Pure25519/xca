@@ -774,6 +774,11 @@ void database_model::openLocalDatabase(const QString &connName,
 	f.close();
 
 	db.setDatabaseName(descriptor);
+	/* how long a write transaction waits for the write lock of another
+	 * process at BEGIN IMMEDIATE (BTD-274), set here rather than left to
+	 * the default of the Qt driver */
+	db.setConnectOptions(QString("QSQLITE_BUSY_TIMEOUT=%1")
+			.arg(DbTransaction::busyTimeoutMs));
 	db.open();
 	QSqlError e = db.lastError();
 	if (e.isValid()) {
