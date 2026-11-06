@@ -56,6 +56,8 @@ class x509rev
 		x509rev()
 		{
 			date.setUndefined();
+			/* no invalidity date unless one is set (BTD-206) */
+			ivalDate.setUndefined();
 		}
 		x509rev(X509_REVOKED *n)
 		{

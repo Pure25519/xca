@@ -17,11 +17,13 @@
 #include <cstring>
 
 #include <QBuffer>
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -37,6 +39,7 @@
 #include <aclapi.h>
 #include <sddl.h>
 #else
+#include <csignal>
 #include <cstdio>
 #include <ctime>
 #include <dirent.h>
@@ -62,6 +65,7 @@ QString StagedFile::stepName(enum step s)
 	case probe: return "probe";
 	case noreplace: return "noreplace";
 	case unlink_temp: return "unlink";
+	case subdir: return "subdir";
 	}
 	return "unknown";
 }
@@ -195,13 +199,40 @@ static int nameLength(const QString &name)
 #endif
 }
 
-/* ".<name>.bxc-tmp-<16 hex>"; where that is longer than a file name may be
- * (255), a prefix of the name and the first 16 hex digits of the SHA-256
- * of the whole name stand for it (BTD-210 d), so a long target name still
- * gets a temporary file of the form the clean-up looks for */
+/* The start of process pid in clock ticks since boot (/proc/<pid>/stat,
+ * field 22); empty where it is not known */
+static QString processStart(qint64 pid)
+{
+	QFile f(QString("/proc/%1/stat").arg(pid));
+	if (!f.open(QIODevice::ReadOnly))
+		return QString();
+	QByteArray s = f.readAll();
+	int close = s.lastIndexOf(')');
+	if (close < 0)
+		return QString();
+	/* after the command name: state is field 3, starttime field 22 */
+	QList<QByteArray> fields = s.mid(close + 2).split(' ');
+	return fields.size() > 19 ? QString::fromLatin1(fields[19]) : QString();
+}
+
+/* The owner mark of a temporary name (BTD-213 (6)): "p<pid>s<start>-",
+ * so that the clean-up can tell the file of a running process from one of
+ * a killed run */
+static QString ownerMark()
+{
+	qint64 pid = QCoreApplication::applicationPid();
+	QString start = processStart(pid);
+	return QString("p%1s%2-").arg(pid).arg(start.isEmpty() ? "0" : start);
+}
+
+/* ".<name>.bxc-tmp-p<pid>s<start>-<16 hex>"; where that is longer than a
+ * file name may be (255), a prefix of the name and the first 16 hex
+ * digits of the SHA-256 of the whole name stand for it (BTD-210 d), so a
+ * long target name still gets a temporary file of the form the clean-up
+ * looks for */
 static QString temporaryName(const QString &name)
 {
-	QString random = QString(".bxc-tmp-%1").arg(
+	QString random = QString(".bxc-tmp-%1%2").arg(ownerMark()).arg(
 		QRandomGenerator::system()->generate64(), 16, 16, QChar('0'));
 	if (nameLength("." + name + random) <= 255)
 		return "." + name + random;
@@ -231,10 +262,41 @@ static QString sysError(int err)
 }
 
 /* What stage() removes after staleSeconds: a temporary file of a killed
- * run, whatever its target */
+ * run, whatever its target; the owner mark of BTD-213 is optional (names
+ * of earlier versions) */
 static const QRegularExpression tempPattern(
-	"^\\..+\\.bxc-tmp-[0-9a-f]{16}$");
+	"^\\..+\\.bxc-tmp-(p([0-9]+)s([0-9]+)-)?[0-9a-f]{16}$");
 static const int staleSeconds = 600;
+
+/* The process that created a temporary name still runs: its pid exists
+ * and, where /proc tells, it is the same process (start time); a name
+ * without owner mark has no known owner */
+static bool ownerAlive(const QRegularExpressionMatch &m)
+{
+	if (m.captured(1).isEmpty())
+		return false;
+	qint64 pid = m.captured(2).toLongLong();
+	if (pid == QCoreApplication::applicationPid())
+		return true;
+	if (pid <= 0 || (::kill((pid_t)pid, 0) != 0 && errno == ESRCH))
+		return false;
+	QString start = processStart(pid);
+	return start.isEmpty() || m.captured(3) == "0" ||
+		start == m.captured(3);
+}
+
+/* BTD-213 (5): the cause and the safe remedy; --force only with what it
+ * does */
+static serviceError unsupportedFileSystem(const QString &dir,
+		const QString &cause)
+{
+	return serviceError("target_filesystem_unsupported", QObject::tr(
+		"The file system of the output directory '%1' cannot publish "
+		"a file without replacing an existing one (%2); nothing was "
+		"stored. Choose an output directory on a local file system. "
+		"--force does not change this: it only allows replacing an "
+		"existing file of the same name").arg(dir, cause));
+}
 
 /* A descriptor that is closed when it goes out of scope */
 class Fd
@@ -310,26 +372,57 @@ static QList<QByteArray> entries(int dfd)
 	return l;
 }
 
+/* BTD-213 (1): the descriptor of a directory, one per directory for all
+ * its staged files; closed when the last of them lets it go */
+struct SharedDirectory
+{
+	int fd;
+	explicit SharedDirectory(int f) : fd(f) { }
+	~SharedDirectory()
+	{
+		if (fd >= 0)
+			::close(fd);
+	}
+};
+
+static QHash<QString, std::weak_ptr<SharedDirectory> > &sharedDirectories()
+{
+	static QHash<QString, std::weak_ptr<SharedDirectory> > h;
+	return h;
+}
+
 void StagedFile::openDirectory()
 {
 	QString dir = QFileInfo(targetPath).absolutePath();
 	dirPath = QFileInfo(dir).canonicalFilePath();
 	if (dirPath.isEmpty())
 		throw directoryChanged(dir);
-	dirFd = openCanonical(dirPath, false);
-	if (dirFd < 0) {
-		int err = errno;
-		if (err == ELOOP || err == ENOTDIR || err == ENOENT)
-			throw directoryChanged(dir);
-		throw failed(QObject::tr("Opening"), dirPath, sysError(err));
+	auto &shared = sharedDirectories();
+	std::shared_ptr<SharedDirectory> d = shared.value(dirPath).lock();
+	/* shared only while the path still leads to that directory */
+	if (!d || !sameCanonical(d->fd, dirPath)) {
+		int fd = openCanonical(dirPath, false);
+		if (fd < 0) {
+			int err = errno;
+			if (err == ELOOP || err == ENOTDIR || err == ENOENT)
+				throw directoryChanged(dir);
+			throw failed(QObject::tr("Opening"), dirPath,
+					sysError(err));
+		}
+		d = std::make_shared<SharedDirectory>(fd);
+		shared[dirPath] = d;
 	}
+	dirShare = d;
+	dirFd = d->fd;
 }
 
 void StagedFile::closeDirectory()
 {
-	if (dirFd >= 0)
-		::close(dirFd);
+	dirShare.reset();
 	dirFd = -1;
+	auto &shared = sharedDirectories();
+	for (auto i = shared.begin(); i != shared.end(); )
+		i = i.value().expired() ? shared.erase(i) : std::next(i);
 }
 
 bool StagedFile::sameDirectory() const
@@ -346,7 +439,8 @@ void StagedFile::removeTemp()
 
 /* BTD-210 b: temporary files of killed runs (possibly plaintext keys) of
  * this user, regular files older than staleSeconds; a younger one may
- * belong to a run that is still going */
+ * belong to a run that is still going. BTD-213 (6): never one whose owner
+ * (the mark in its name) still runs, whatever its age */
 void StagedFile::removeStale()
 {
 	time_t limit = time(nullptr) - staleSeconds;
@@ -354,7 +448,8 @@ void StagedFile::removeStale()
 	for (const QByteArray &n : entries(dirFd)) {
 		QString name = QFile::decodeName(n);
 		struct stat st;
-		if (!tempPattern.match(name).hasMatch() ||
+		QRegularExpressionMatch m = tempPattern.match(name);
+		if (!m.hasMatch() || ownerAlive(m) ||
 		    fstatat(dirFd, n.constData(), &st, AT_SYMLINK_NOFOLLOW) != 0 ||
 		    !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
 		    st.st_mtime > limit)
@@ -380,11 +475,8 @@ void StagedFile::removeStale()
 void StagedFile::probePublish()
 {
 	if (injected(probe))
-		throw serviceError("target_filesystem_unsupported", QObject::tr(
-			"The file system of the output directory '%1' cannot "
-			"publish a file without replacing an existing one: "
-			"injected fault (test); nothing was stored")
-			.arg(native(dirPath)));
+		throw unsupportedFileSystem(native(dirPath),
+			QObject::tr("injected fault (test)"));
 	QString next = temporaryName(targetName);
 	QByteArray from = QFile::encodeName(tempName);
 	QByteArray to = QFile::encodeName(next);
@@ -405,13 +497,9 @@ void StagedFile::probePublish()
 		throw failed(QObject::tr("Renaming"), tempPath, sysError(err));
 	if (::linkat(dirFd, from.constData(), dirFd, to.constData(), 0) != 0) {
 		err = errno;
-		throw serviceError("target_filesystem_unsupported", QObject::tr(
-			"The file system of the output directory '%1' cannot "
-			"publish a file without replacing an existing one: "
+		throw unsupportedFileSystem(native(dirPath), QObject::tr(
 			"neither renameat2(RENAME_NOREPLACE) nor link() works "
-			"there (%2); nothing was stored. Choose a directory on a "
-			"local file system, or give --force (an existing file is "
-			"then replaced)").arg(native(dirPath), sysError(err)));
+			"there: %1").arg(sysError(err)));
 	}
 	if (::unlinkat(dirFd, to.constData(), 0) != 0)
 		tempLeft(dirPath + "/" + next);
@@ -1057,6 +1145,42 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
+void StagedDirectory::makeParents(const QString &staged)
+{
+	QString rel = QDir(tempPath).relativeFilePath(
+				QFileInfo(staged).absolutePath());
+	if (rel == "." || rel.isEmpty())
+		return;
+	if (rel.startsWith(".."))
+		throw errorEx(QObject::tr("StagedDirectory: '%1' is not below "
+			"'%2'").arg(staged, tempPath));
+	Fd d(::openat(parentFd, QFile::encodeName(tempName).constData(),
+		O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+	QString path = tempPath;
+	for (const QString &part : rel.split('/', Qt::SkipEmptyParts)) {
+		if (d.fd < 0)
+			throw directoryChanged(QDir::toNativeSeparators(path));
+		path += "/" + part;
+		if (StagedFile::faultHook &&
+		    StagedFile::faultHook(StagedFile::subdir, path))
+			throw failed(QObject::tr("Creating"), path,
+				QObject::tr("injected fault (test)"));
+		QByteArray p = QFile::encodeName(part);
+		if (::mkdirat(d.fd, p.constData(), 0777) != 0 && errno != EEXIST)
+			throw failed(QObject::tr("Creating"), path,
+					sysError(errno));
+		int next = ::openat(d.fd, p.constData(), O_RDONLY |
+				O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+		int err = errno;
+		::close(d.fd);
+		d.fd = next;
+		if (next < 0 && (err == ELOOP || err == ENOTDIR))
+			throw directoryChanged(QDir::toNativeSeparators(path));
+		if (next < 0)
+			throw failed(QObject::tr("Opening"), path, sysError(err));
+	}
+}
+
 void StagedDirectory::publish()
 {
 	if (!staged || published)
@@ -1082,6 +1206,15 @@ void StagedDirectory::publish()
 	QByteArray tmp = QFile::encodeName(tempName);
 	QByteArray dst = QFile::encodeName(targetName);
 	QByteArray old;
+	/* BTD-213 (4): the new content gets the mode of the directory it
+	 * replaces (st of the check above), not the one of its creation */
+	{
+		Fd t(::openat(parentFd, tmp.constData(), O_RDONLY |
+			O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
+		if (t.fd < 0 || fchmod(t.fd, st.st_mode & 07777) != 0)
+			throw failed(QObject::tr("Setting the mode of"),
+				tempPath, sysError(errno));
+	}
 #if defined(RENAME_EXCHANGE)
 	/* one step: the sibling becomes the target, the target the sibling */
 	if (::renameat2(parentFd, tmp.constData(), parentFd, dst.constData(),
@@ -1211,6 +1344,14 @@ void StagedDirectory::stage()
 	}
 	throw failed(QObject::tr("Creating"), targetPath,
 		QObject::tr("no free temporary name"));
+}
+
+void StagedDirectory::makeParents(const QString &staged)
+{
+	/* path based like the rest of this branch (BTD-13) */
+	if (!QDir().mkpath(QFileInfo(staged).absolutePath()))
+		throw failed(QObject::tr("Creating"), staged,
+			QObject::tr("the directory could not be created"));
 }
 
 void StagedDirectory::publish()

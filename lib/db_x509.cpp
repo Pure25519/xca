@@ -1652,6 +1652,14 @@ void db_x509::revoke(const ServiceContext &ctx, pki_x509 *cert,
 		if (rev.getReasonBit() < 0)
 			throw serviceError("invalid_reason",
 				tr("Unknown revocation reason"));
+		/* the key cannot become invalid after its revocation; the
+		 * command line refuses it earlier with the same code (BTD-206) */
+		if (!rev.getInvalDate().isUndefined() &&
+		    (QDateTime)rev.getInvalDate() > (QDateTime)rev.getDate())
+			throw serviceError("invalid_invalidity_date",
+				tr("The invalidity date %1 is after the revocation date %2")
+					.arg(rev.getInvalDate().toPrettyGMT())
+					.arg(rev.getDate().toPrettyGMT()));
 		if (cert->isRevoked() || indexOfSerial(revocationRows(
 				ca->getSqlItemId()), rev.getSerial()) != -1)
 			throw serviceError("already_revoked",
