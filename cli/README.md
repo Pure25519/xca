@@ -144,7 +144,9 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   `--reason` is required and takes the RFC 5280 names (`removeFromCRL` is refused: delta CRLs
   only). With `--ca` the issuer must be that CA (`wrong_issuer`). `--invalidity-date` must not
   be after the revocation date, which is now: a later one, also within a clock skew, is
-  `invalid_invalidity_date` (exit code 2, audited like the refusals above; BTD-211). The
+  `invalid_invalidity_date` (exit code 2, audited like the refusals above; BTD-211); the
+  service refuses it with the same code for every front end (BTD-206). Without
+  `--invalidity-date` the CRL entry has no Invalidity Date (BTD-206). The
   revocation and the new CRL
   of the issuing CA are written in one transaction; sign, revoke and crl unlock the CA key the
   same way (`--password`, also for a key with a password of its own).

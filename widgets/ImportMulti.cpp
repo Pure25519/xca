@@ -237,6 +237,8 @@ pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
 
 	spec.items << pki;
 	spec.unstored = &unstored;
+	/* a handed-back item returns to its row (BTD-147) */
+	int row = mcont->index(pki).row();
 	mcont->remFromCont(pki);
 	try {
 		ImportResult result = Database.importItems(
@@ -251,8 +253,12 @@ pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
 		*code = "internal_error";
 		*error = err.getString();
 	}
-	foreach(pki_base *back, unstored)
-		mcont->inToCont(back);
+	foreach(pki_base *back, unstored) {
+		if (back == pki && row >= 0)
+			mcont->insertChildAt(back, row);
+		else
+			mcont->inToCont(back);
+	}
 	return stored;
 }
 
