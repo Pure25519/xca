@@ -116,6 +116,8 @@ class test_service_sql_errors : public ServiceTestCase
 	void privateKeyUpdate();
 	void taKeyNotStored();
 	void noStatementInText();
+	void lastErrorWithoutStatement();
+	void auditErrorWithoutEntry();
 	void codePerDriver_data();
 	void codePerDriver();
 	void commitErrorReachesCaller();
@@ -408,6 +410,61 @@ void test_service_sql_errors::noStatementInText()
 	r = codeOf([&]() { throwSqlError(e, "BTD-50 driver text"); });
 	QCOMPARE(r.first, QString("database_error"));
 	QCOMPARE(r.second, QString("BTD-50 driver text"));
+}
+
+/* BTD-189: XSqlQuery::lastError() put the source location, the statement
+ * and its bound values into the driver text, so every e.text() showed
+ * them: the audit writer, the profile store, the SQL message box. They
+ * belong in the debug log only. */
+static QStringList debugLog;
+static void captureDebug(QtMsgType type, const QMessageLogContext &,
+			const QString &msg)
+{
+	if (type == QtDebugMsg)
+		debugLog << msg;
+}
+
+void test_service_sql_errors::lastErrorWithoutStatement()
+{
+	const char secret[] = "BTD189-SECRET-0123456789abcdef";
+	QCOMPARE(sql("CREATE TEMP TABLE btd189 (v TEXT CHECK (v = 'ok'))"),
+		QString());
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO btd189 VALUES (?)");
+	q.bindValue(0, QString(secret));
+	QVERIFY(!q.exec());
+	debugLog.clear();
+	QtMessageHandler old = qInstallMessageHandler(captureDebug);
+	QSqlError e = q.lastError();
+	qInstallMessageHandler(old);
+	sql("DROP TABLE temp.btd189");
+	QString text = e.text();
+	QVERIFY2(text.contains("CHECK constraint failed"), CCHAR(text));
+	QVERIFY2(!text.contains(secret), CCHAR(text));
+	QVERIFY2(!text.contains("INSERT"), CCHAR(text));
+	QVERIFY2(!text.contains(".cpp:"), CCHAR(text));
+	/* the debug log keeps them for support */
+	QString log = debugLog.join("\n");
+	QVERIFY2(log.contains(secret) && log.contains("INSERT INTO btd189"),
+		CCHAR(log));
+}
+
+/* The audit writer passed e.text() on: the entry with its parameters and
+ * the chain hashes reached the caller */
+void test_service_sql_errors::auditErrorWithoutEntry()
+{
+	QVERIFY(key("audit head key"));
+	QByteArray head = AuditLog::entries().last().hash;
+	QCOMPARE(sql("PRAGMA query_only = ON"), QString());
+	auto r = codeOf([&]() {
+		AuditLog::append(ctx, "key.generate", "key", "btd189-object");
+	});
+	QCOMPARE(sql("PRAGMA query_only = OFF"), QString());
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+	for (const QString &s : { QString("INSERT"), QString("VALUES"),
+			QString("audit_log"), QString("btd189-object"),
+			QString(".cpp:"), QString::fromLatin1(head) })
+		QVERIFY2(!r.second.contains(s), CCHAR(s + ": " + r.second));
 }
 
 void test_service_sql_errors::codePerDriver_data()

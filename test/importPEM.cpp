@@ -21,6 +21,9 @@
 #include <QSqlError>
 #include <QSqlQuery>
 
+#include "lib/XcaWarningCore.h"
+#include "widgets/XcaWarning.h"
+
 #include "main.h"
 
 void test_main::importPEM()
@@ -171,6 +174,114 @@ void test_main::importOneFailingItem()
 	stored.sort();
 	QCOMPARE(stored, QStringList({ "Endentity", "Root CA" }));
 	QCOMPARE(committedItems(file), 2);
+	delete dlg;
+
+	} catch (...) {
+		QVERIFY2(false, "Exception thrown");
+	}
+	dbstatus();
+}
+
+/* The COMMIT of a dialog import fails (a dangling deferred foreign key,
+ * checked by SQLite only at the COMMIT), after the insert itself worked:
+ * every item stays in the dialog, nothing is stored, and the next OK
+ * stores them (BTD-147, M2 of the review of xca#29). The lock test above
+ * fails the insert, not the COMMIT. */
+static void commitFailsOnItems(const QString &when)
+{
+	QSqlQuery q;
+	q.exec("PRAGMA foreign_keys=ON");
+	q.exec("CREATE TEMP TABLE btd147_parent (id INTEGER PRIMARY KEY)");
+	q.exec("CREATE TEMP TABLE btd147_child (p INTEGER REFERENCES "
+		"btd147_parent(id) DEFERRABLE INITIALLY DEFERRED)");
+	q.exec(QString("CREATE TEMP TRIGGER btd147_commit AFTER INSERT ON items "
+		"WHEN %1 BEGIN INSERT INTO btd147_child VALUES (42); END")
+		.arg(when));
+}
+
+static void commitWorksAgain()
+{
+	QSqlQuery q;
+	q.exec("DROP TRIGGER IF EXISTS temp.btd147_commit");
+	q.exec("DROP TABLE IF EXISTS temp.btd147_child");
+	q.exec("DROP TABLE IF EXISTS temp.btd147_parent");
+}
+
+/* The names in the rows of the import dialog, top to bottom */
+static QStringList dialogRows(ImportMulti *dlg)
+{
+	QStringList rows;
+	QAbstractItemModel *m = dlg->findChild<QAbstractItemView *>()->model();
+	for (int r = 0; r < m->rowCount(); r++)
+		rows << m->index(r, 0).data().toString();
+	return rows;
+}
+
+/* Counts the error messages: testxca runs with the headless core */
+static int errorCount;
+class countErrors : public xcaWarningCore
+{
+  public:
+	void error(const QString &msg) override
+	{
+		errorCount++;
+		xcaWarningCore::error(msg);
+	}
+};
+
+void test_main::importCommitFailsKeepsItems()
+{
+	try {
+
+	ImportMulti *dlg = importDialog();
+	QString file = QFileInfo("testdb.xdb").absoluteFilePath();
+	QStringList rows = dialogRows(dlg);
+	commitFailsOnItems("1");
+	dlg->on_butOk_clicked();
+	commitWorksAgain();
+	QCOMPARE(dlg->entries(), 3);
+	QCOMPARE(dialogRows(dlg), rows);
+	QCOMPARE(Store.getAll<pki_x509>().size(), 0);
+	QCOMPARE(committedItems(file), 0);
+
+	dlg->on_butOk_clicked();
+	QCOMPARE(dlg->entries(), 0);
+	QCOMPARE(Store.getAll<pki_x509>().size(), 3);
+	QCOMPARE(committedItems(file), 3);
+	delete dlg;
+
+	} catch (...) {
+		QVERIFY2(false, "Exception thrown");
+	}
+	dbstatus();
+}
+
+/* Two of three items fail: one error message names both, and the two keep
+ * their rows in the dialog. Before, inToCont() put a handed-back item at
+ * the top, and each failure could add an SQL message box of its own
+ * (BTD-147, M6 of the review of xca#29). */
+void test_main::importFailuresKeepRows()
+{
+	try {
+
+	ImportMulti *dlg = importDialog();
+	QStringList rows = dialogRows(dlg);
+	QCOMPARE(rows.size(), 3);
+	/* the first and the last row fail, the middle one is stored */
+	QString first = rows[0], middle = rows[1], last = rows[2];
+	commitFailsOnItems(QString("NEW.name IN ('%1', '%2')")
+				.arg(first, last));
+	errorCount = 0;
+	xcaWarning::setGui(new countErrors());
+	dlg->on_butOk_clicked();
+	xcaWarning::setGui(new xcaWarningCore());
+	commitWorksAgain();
+	QCOMPARE(errorCount, 1);
+	QCOMPARE(dialogRows(dlg), QStringList({ first, last }));
+	QStringList stored;
+	foreach(pki_x509 *cert, Store.getAll<pki_x509>())
+		stored << cert->getIntName();
+	QCOMPARE(stored, QStringList({ middle }));
 	delete dlg;
 
 	} catch (...) {
