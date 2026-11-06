@@ -1,7 +1,8 @@
 # xca --no-gui on a database it may not write (BTD-50): a write command ends
 # with exit code 1 and the error object read_only_database naming the
 # object; reading commands keep working.
-# cmake -DXCA=<xca> [-DSETPRIV=<setpriv>] -DWORK=<scratch dir>
+# cmake -DXCA=<xca> [-DSETPRIV=<setpriv>] -DSOURCE=<source dir>
+#       -DWORK=<scratch dir>
 #       -P cli_readonly_database.cmake
 
 file(REMOVE_RECURSE "${WORK}")
@@ -22,6 +23,14 @@ execute_process(COMMAND "${XCA}" --no-gui ${db} --keygen EC:prime256v1
     TIMEOUT 60)
 if(NOT rc EQUAL 0)
   fail("setup: --keygen on a new database: exit ${rc}\n${out}")
+endif()
+
+# a template for the profile store write below
+execute_process(COMMAND "${XCA}" --no-gui ${db} --import
+    "${SOURCE}/misc/TLS_server.xca" RESULT_VARIABLE rc OUTPUT_VARIABLE out
+    ERROR_VARIABLE out TIMEOUT 60)
+if(NOT rc EQUAL 0)
+  fail("setup: importing the template: exit ${rc}\n${out}")
 endif()
 
 # root ignores file modes: then run as nobody on a database owned by root
@@ -67,6 +76,21 @@ if(NOT detail MATCHES "refused" OR NOT detail MATCHES "readonly")
 endif()
 if(detail MATCHES "INSERT INTO|private_keys")
   fail("--keygen: the error shows the SQL statement: ${detail}")
+endif()
+
+# A write through another helper than the item store (BTD-189): the
+# profile store. The detail names the cause, not the statement, its
+# bound values or the source location of the query.
+run(1 --json --migrate-template TLS_server --name ro-profile)
+string(REGEX MATCH "{\"code\"[^\n]*}" obj "${err}")
+string(JSON detail ERROR_VARIABLE jerr GET "${obj}" detail)
+if(jerr OR NOT detail MATCHES "readonly")
+  fail("--migrate-template: the detail does not name the cause:\n${err}")
+endif()
+# Nothing on stderr shows them either, the log line of a lost audit
+# entry included
+if(err MATCHES "INSERT|UPDATE|VALUES|\\.cpp:[0-9]+ \\(")
+  fail("--migrate-template: the error shows the SQL statement:\n${err}")
 endif()
 
 # reading still works, and the refused key is not there
