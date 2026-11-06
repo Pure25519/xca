@@ -18,6 +18,7 @@
 #include "func.h"
 #include "xfile.h"
 #include "entropy.h"
+#include "staged_file.h"
 
 /* Entropy sources for XCA
  *
@@ -184,15 +185,15 @@ Entropy::~Entropy()
 	unsigned char buf[1024];
 
 	if (RAND_bytes(buf, sizeof buf) == 1) {
-		XFile file(rnd);
+		/* owner-only from the creation of the file on (BTD-139) */
+		QByteArray seed((const char *)buf, sizeof buf);
 		try {
-			file.open_key();
-			file.write((char*)buf, sizeof buf);
+			StagedFile::writeFile(rnd, seed, true, true);
 		} catch (errorEx &e) {
 			qDebug() << "random_from_file" << rnd
 				 << e.getString();
 		}
-		file.close();
+		seed.fill(0);
 	}
 	memset(buf, 0, sizeof buf);
 #ifdef DEBUG_ENTROPY

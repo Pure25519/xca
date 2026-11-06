@@ -52,8 +52,15 @@ set(ENV{XCA_EMPTY_DB_WRONG} "wrong-env-pw")
 
 # Every source is read and rejected; keygen would write a key and an
 # audit entry with db_unlock_verified=true if it got through
-foreach(source "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
-               "file:${WORK}/pw.txt" "stdin" "fd:3")
+set(sources "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
+            "file:${WORK}/pw.txt" "stdin")
+# fd:3 needs a POSIX shell to open the descriptor (BTD-141, 5d)
+if(CMAKE_HOST_WIN32)
+  message(STATUS "fd:3 not tested on Windows")
+else()
+  list(APPEND sources "fd:3")
+endif()
+foreach(source ${sources})
   set(args --password "${source}" --keygen EC:prime256v1 --name intruder-key)
   if(source STREQUAL "stdin")
     execute_process(COMMAND "${XCA}" --no-gui --database "${db}" ${args}
@@ -73,6 +80,20 @@ foreach(source "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
     fail("${source}: the message shows the password:\n${out}")
   endif()
 endforeach()
+
+# A source that yields the empty password, which is the right one here: it
+# is refused as empty, like for every database (BTD-141, 5c). An
+# explicitly empty --password "" is an error of its own (BTD-136,
+# cli_password_empty_option); without --password the database opens with
+# the empty password checked (BTD-246).
+# (an empty environment variable cannot be set from CMake, an empty file
+# gives the same empty password)
+file(WRITE "${WORK}/empty.txt" "")
+run_xca(rc out --password "file:${WORK}/empty.txt" --keygen EC:prime256v1
+  --name empty-source-key)
+if(NOT rc EQUAL 1 OR NOT out MATCHES "is empty")
+  fail("an empty file: expected exit 1 and 'is empty', got '${rc}':\n${out}")
+endif()
 
 # The rejected opens left the old database as it was: no fork schema,
 # no audit log, no baseline, no key

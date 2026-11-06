@@ -8,6 +8,8 @@
 #ifndef __PKI_KEY_H
 #define __PKI_KEY_H
 
+#include <QHash>
+#include <QList>
 #include <QString>
 #include <QJsonObject>
 #include <openssl/rsa.h>
@@ -206,6 +208,30 @@ class keyjob
 			return true;
 		return false;
 	}
+};
+
+class pki_key;
+
+/* The signing key of an operation, decrypted before its database
+ * transaction (BTD-273): the key password, the database password or the
+ * PIN of a token is asked in add(), while no database lock is held.
+ * Inside the scope, decrypt() returns that key without asking again;
+ * the scope frees it. */
+class KeyUnlock
+{
+	QList<const pki_key *> keys{};
+	static QHash<const pki_key *, EVP_PKEY *> unlocked;
+
+  public:
+	KeyUnlock() = default;
+	KeyUnlock(const KeyUnlock &) = delete;
+	KeyUnlock &operator=(const KeyUnlock &) = delete;
+	~KeyUnlock();
+	/* nothing for no key, a public key or a key unlocked already */
+	void add(const pki_key *key);
+	/* the decrypted key, the one of a KeyUnlock scope if there is one;
+	 * the caller frees it with EVP_PKEY_free() */
+	static EVP_PKEY *decrypt(const pki_key *key);
 };
 
 class pki_key: public pki_base

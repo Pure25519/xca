@@ -20,6 +20,7 @@
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/exception.h"
+#include "lib/PwDialogCore.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_multi.h"
 #include "lib/sql.h"
@@ -78,6 +79,10 @@ class test_service_audit : public ServiceTestCase
 	void legacySpellingVerifies();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
+	void upgradeRejectsGivenSource_data();
+	void upgradeRejectsGivenSource();
+	void emptyPasswordFixtureHash();
+	void commandLinePasswordOnEmptyDb();
 	void unverifiedOpenWritesNothing_data();
 	void unverifiedOpenWritesNothing();
 	void currentDatabaseOpensUnverified();
@@ -491,6 +496,91 @@ void test_service_audit::upgradeWaitsForPassword()
 	QVERIFY(rejected);
 	QVERIFY(!Database.isOpen());
 	QCOMPARE(fileRows(), before);
+}
+
+/* BTD-141 (5b): the same with a given source (PasswordSourceScope, as an
+ * import or export with --password has): initPass() reads it even though
+ * the empty password the dialog starts with matches nothing, and the
+ * rejected source leaves every row as it was. upgradeWaitsForPassword
+ * answers through the test dialog, where hasSource() is false. */
+void test_service_audit::upgradeRejectsGivenSource_data()
+{
+	upgradeWaitsForPassword_data();
+}
+
+void test_service_audit::upgradeRejectsGivenSource()
+{
+	QFETCH(QString, dump);
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, dump);
+
+	PasswordSourceScope given(pass_info::DatabasePassword,
+				"pass:wrong-db-pass");
+	QVERIFY(PwDialogCore::hasSource(pass_info::DatabasePassword));
+	warning->expectMessage("Password verify error");
+	bool rejected = false;
+	try {
+		Database.open(dbFile);
+	} catch (secretError &err) {
+		rejected = err.why == secretError::rejected;
+	}
+	QVERIFY(rejected);
+	QVERIFY(!Database.isOpen());
+	QCOMPARE(fileRows(), before);
+}
+
+/* The pwhash of the empty password that cli_password_empty_db.cmake
+ * writes into its fixture (BTD-141, 5a): sha512passwT() of "" with the
+ * salt of the constant must give the constant, or the "empty-password
+ * database" tests test an ordinary database */
+static QString emptyHashOfFixture()
+{
+	QFile f(QString(SERVICE_TEST_DATA "/../cli_password_empty_db.cmake"));
+	if (!f.open(QIODevice::ReadOnly))
+		return QString();
+	QRegularExpressionMatch m = QRegularExpression(
+		"set\\(empty_hash \"([^\"]+)\"\\)").match(QString::fromUtf8(f.readAll()));
+	return m.hasMatch() ? m.captured(1) : QString();
+}
+
+void test_service_audit::emptyPasswordFixtureHash()
+{
+	QString constant = emptyHashOfFixture();
+	QVERIFY2(!constant.isEmpty(), "no empty_hash in cli_password_empty_db.cmake");
+	QCOMPARE(pki_evp::sha512passwT(QByteArray(""), constant), constant);
+	QVERIFY(pki_evp::sha512passwT(QByteArray("x"), constant) != constant);
+}
+
+/* BTD-141 (2): the GUI command-line password (xca --password X, kept in
+ * PwDialogCore::cmdline_passwd) on a database with an empty password.
+ * Since BTD-117 it is read and compared: a wrong one gives "Password
+ * verify error" and the unlock dialog, where the empty password opens
+ * the database verified. Before, the empty current password matched and
+ * X passed unread. */
+void test_service_audit::commandLinePasswordOnEmptyDb()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "schema8-fork.sql");
+	QString constant = emptyHashOfFixture();
+	QVERIFY(!constant.isEmpty());
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "btd141");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		QVERIFY(q.exec(QString("UPDATE settings SET value='%1' WHERE "
+			"key_='pwhash'").arg(constant)));
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("btd141");
+
+	PwDialogCore::cmdline_passwd = "not-the-empty-password";
+	warning->expectMessage("Password verify error");
+	pwdialog->expect(QByteArray(""));
+	Database.open(dbFile);
+	PwDialogCore::cmdline_passwd = QByteArray();
+	QVERIFY(Database.isOpen());
+	QVERIFY(ServiceContext::processPasswordVerified);
 }
 
 void test_service_audit::unverifiedOpenWritesNothing_data()
@@ -1172,8 +1262,9 @@ void test_service_audit::cliExitCodes()
 	QCOMPARE(f.readAll().count('\n'), 5);
 	f.close();
 
-	/* Export that cannot be written (XFile::open_write() throws) */
-	warning->expectMessage("Error opening file");
+	/* Export that cannot be written (StagedFile refuses the target
+	 * before it writes, BTD-139) */
+	warning->expectMessage("does not exist");
 	QCOMPARE(xcaCli({ "--audit-export",
 			"/nonexistent-btd29-dir/audit.jsonl" }), EXIT_FAILURE);
 

@@ -16,7 +16,7 @@
  * "audit_checkpoint_interval", default 100) and before each export,
  * append() adds an entry "audit.checkpoint" whose params hold
  *   checkpoint_seq, checkpoint_hash, checkpoint_time, key_id,
- *   [next_key_id,] signature
+ *   [next_key_id,] checkpoint_interval, signature
  * The signature (Base64) covers checkpointPayload(), the canonical JSON
  * of these params without "signature", and is made with the audit key
  * (lib/audit_key.h). checkpoint_seq/checkpoint_hash name the entry just
@@ -42,9 +42,16 @@
  * checkpoints are reported as checkpoint_missing: a key in audit_keys that
  * no audit.key_create of the chain announces, or more than interval + 1
  * unanchored entries (the revocation baseline at the start excepted, when
- * audit.init counts exactly its rows). The interval is the setting
- * audit_checkpoint_interval clamped to maxCheckpointInterval, because the
- * setting is not signed. Once a key was announced, a missing current key
+ * audit.init counts exactly its rows). The interval is the one the last
+ * valid checkpoint signed as checkpoint_interval (BTD-133, decision A of
+ * the ticket: sign the interval instead of only capping the setting),
+ * because the setting audit_checkpoint_interval is not signed and lives
+ * in the same database. Without a signed one (no checkpoint yet, or only
+ * checkpoints from before BTD-133) it is the setting clamped to the
+ * default. append() writes the next checkpoint after the smaller of the
+ * setting and that interval: a raised setting takes effect once a
+ * checkpoint signed it, a lowered one at once, and a raise in the
+ * settings table alone changes nothing for verify(). Once a key was announced, a missing current key
  * fails the checkpoint with audit_key_missing instead of announcing a new
  * key. The first key is not announced over a log with too long an
  * unsigned tail either (audit_checkpoint_missing), so that the next
@@ -157,6 +164,8 @@ class ServiceContext
 	{
 		return confirmed;
 	}
+	/* Whether question id was confirmed, from any source */
+	bool isConfirmed(const QString &id) const;
 };
 
 /* Parameter summary of an audit entry (PLAN.md 6.4).
@@ -246,6 +255,14 @@ class AuditStateMismatch
 	                         // 0 for a row no audit entry knows
 
 	QVariantMap toMap() const;
+};
+
+/* The checkpoint an export could not sign (BTD-112): the error code and
+ * its text; an empty code if it signed one or none was due */
+class AuditSkippedCheckpoint {
+  public:
+	QString code{};
+	QString reason{};
 };
 
 /* A trust anchor from outside the database (BTD-101): the audit key ids
@@ -348,13 +365,26 @@ class AuditLog
 	/* The failure (or denied) entry of a service function, after its
 	 * rollback: best effort, it never throws. When the database is the
 	 * reason of the failure the entry may not be writable either; then
-	 * it is lost and logged, and the caller rethrows its own error,
-	 * which always wins (BTD-138). Returns whether it was written. */
+	 * it is lost and logged, and the caller rethrows its own error
+	 * (BTD-138). The loss is kept for lostEntries(): a command line must
+	 * not end successfully, or only with the original error, when an
+	 * entry was lost (BTD-274). Returns whether it was written. */
 	static bool appendFailure(const ServiceContext &ctx,
 			const QString &action, const QString &objectType,
 			const QString &objectId, const AuditParams &params,
 			const QString &errorCode,
 			const QString &result = "failure");
+	/* The entries appendFailure() lost since the last call, as
+	 * "action result (code)"; clears the list */
+	static QStringList takeLostEntries();
+	/* audit_entry_lost: names the lost entries and, if given, the
+	 * error of the command (its code and text), which is kept in the
+	 * detail instead of being replaced. A read-only database can hold
+	 * no entry at all: its read_only_database stays the code and the
+	 * detail names the lost entries. */
+	static serviceError lostEntriesError(const QStringList &lost,
+			const QString &originalCode = QString(),
+			const QString &originalText = QString());
 
 	/* Records the revocation rows of a database that existed before the
 	 * audit log, so that verify() can tell them from rows added later
@@ -363,6 +393,10 @@ class AuditLog
 	/* A skipped automatic checkpoint is shown to the user once per
 	 * error code (BTD-148); a newly opened database shows it again */
 	static void resetCheckpointNotices();
+	/* The next automatic checkpoint is tried again even if the last
+	 * one failed over the same head (BTD-144): after a change of the
+	 * audit keys or the password, and on open */
+	static void retryFailedCheckpoint();
 
 	/* Signs the newest entry; the first call creates the audit key.
 	 * Throws serviceError: audit_key_unavailable (no database password),
@@ -384,6 +418,12 @@ class AuditLog
 	/* The setting audit_checkpoint_interval, default 100, at most
 	 * maxCheckpointInterval (1000) */
 	static int checkpointInterval();
+	/* Sets audit_checkpoint_interval (BTD-100) with one settings.update
+	 * entry of the old and the new value. serviceError invalid_value
+	 * outside 1..maxCheckpointInterval, missing_password without a
+	 * verified open; nothing is written then. */
+	static void setCheckpointInterval(const ServiceContext &ctx,
+				int interval);
 	/* The bytes a checkpoint signature covers */
 	static QByteArray checkpointPayload(const QVariantMap &params);
 
@@ -403,14 +443,22 @@ class AuditLog
 	 * one canonical JSON object per line, including prev_hash and hash.
 	 * Without a database password source it signs nothing and writes
 	 * nothing to the database (BTD-70); *unsignedEntries receives the
-	 * number of entries after the last checkpoint (0: all covered).
-	 * Throws errorEx for an entry without a canonical form and
-	 * serviceError when a checkpoint is due and cannot be signed
-	 * (audit_password_rejected, audit_chain_broken). */
+	 * number of entries after the checkpoint_seq of the last
+	 * checkpoint, the checkpoint row included, as unanchored_entries of
+	 * verify() counts them (BTD-134).
+	 * A log that no checkpoint may sign (audit_chain_broken,
+	 * audit_key_missing, audit_checkpoint_missing) is exported read-only
+	 * too (BTD-112); *skipped receives the code and its text, also for
+	 * the missing password source (audit_key_unavailable). Throws
+	 * errorEx for an entry without a canonical form and serviceError
+	 * for a wrong password source (audit_password_rejected) or a
+	 * database error. */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
-			qint64 *unsignedEntries = nullptr);
+			qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 	/* The same for the local user on the channel of this process */
-	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr);
+	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr,
+			AuditSkippedCheckpoint *skipped = nullptr);
 
 	/* RFC 8785 serialisation; throws errorEx on unsupported values */
 	static QByteArray canonicalJson(const QVariant &v);
@@ -475,12 +523,15 @@ class AuditFailureCapture
  * "failure" with the serviceError code (internal_error for any other
  * exception) is appended and the exception is rethrown. params is read
  * only then, so work() may complete it. */
-template <class Work>
+template <class Prepare, class Work>
 void auditedTransaction(const ServiceContext &ctx, const QString &action,
 		const QString &objectType, const QString &objectId,
-		const AuditParams &params, Work work)
+		const AuditParams &params, Prepare prepare, Work work)
 {
 	try {
+		/* questions, passwords and PINs before the transaction
+		 * (BTD-273); a failure here is audited like one of work() */
+		prepare();
 		Transaction;
 		TransThrow();
 		work();
@@ -494,6 +545,15 @@ void auditedTransaction(const ServiceContext &ctx, const QString &action,
 				params, "internal_error");
 		throw;
 	}
+}
+
+template <class Work>
+void auditedTransaction(const ServiceContext &ctx, const QString &action,
+		const QString &objectType, const QString &objectId,
+		const AuditParams &params, Work work)
+{
+	auditedTransaction(ctx, action, objectType, objectId, params,
+			[]() { }, work);
 }
 
 #endif

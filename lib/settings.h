@@ -37,6 +37,13 @@ class svalue
 		set(val);
 		return val;
 	}
+	/* a literal is its text: without this it took the pointer-to-bool
+	 * conversion and was stored as "yes" (BTD-173) */
+	const char *operator = (const char *val)
+	{
+		set(QString(val));
+		return val;
+	}
 	int operator = (int val)
 	{
 		set(QString("%1").arg(val));

@@ -17,6 +17,7 @@
 
 #include "PwDialogCore.h"
 #include "XcaWarningCore.h"
+#include "staged_file.h"
 
 #include <memory>
 #include <openssl/rand.h>
@@ -1031,7 +1032,6 @@ QSqlError pki_evp::deleteSqlData()
 	return q.lastError();
 }
 
-#ifndef LIBRESSL_VERSION_NUMBER
 int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
                                          const EVP_CIPHER *enc,
                                          unsigned char *kstr, int klen,
@@ -1042,7 +1042,6 @@ int PEM_write_bio_PrivateKey_traditional(BIO *bp, EVP_PKEY *x,
 	return PEM_ASN1_write_bio((i2d_of_void *)i2d_PrivateKey,
 			pem.toLatin1(), bp, (char*)x, enc, kstr, klen, cb, u);
 }
-#endif
 
 bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
 			const ExportOptions &opts)
@@ -1139,15 +1138,19 @@ void pki_evp::writePVKprivate(QIODevice &file) const
 
 void pki_evp::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".pem"));
-	file.open_key();
-	if (isPubKey()) {
-		writePublic(file, true);
-		return;
-	}
-	/* PKCS#8 PBES2, not the RFC 1423 encryption of writeKey() (BTD-52) */
-	writePKCS8(file, pki_evp::passwd.isEmpty() ? NULL : EVP_aes_256_cbc(),
-			pki_evp::passwd, true);
+	/* owner-only from the creation of the file on, and a failed dump
+	 * leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".pem"), true, false,
+		[this](QIODevice &file) {
+		if (isPubKey()) {
+			writePublic(file, true);
+			return;
+		}
+		/* PKCS#8 PBES2, not the RFC 1423 encryption of writeKey()
+		 * (BTD-52) */
+		writePKCS8(file, pki_evp::passwd.isEmpty() ? NULL :
+			EVP_aes_256_cbc(), pki_evp::passwd, true);
+		});
 }
 
 void pki_evp::writeKey(QIODevice &file, const EVP_CIPHER *enc,

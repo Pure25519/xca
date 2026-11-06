@@ -31,7 +31,7 @@ add_test(NAME test_no_worker_threads
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
 		-P ${PROJECT_SOURCE_DIR}/test/no_worker_threads.cmake)
 set_tests_properties(test_no_worker_threads PROPERTIES LABELS service)
-target_link_options(testxca PRIVATE -pthread)
+target_link_libraries(testxca Threads::Threads)
 
 if (APPLE)
   target_link_libraries(testxca
