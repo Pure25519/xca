@@ -12,6 +12,7 @@
 
 #include <QBuffer>
 #include <QDir>
+#include <QSaveFile>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -152,6 +153,7 @@ class test_service_importexport : public ServiceTestCase
 	void templateCopyExport();
 	void rejections();
 	void exportFailureKeepsFile();
+	void exportRenameFails();
 	void exportOverwritesKeyOwnerOnly();
 	void exportNullItem();
 	void importRollbackHandsBack();
@@ -1238,6 +1240,52 @@ void test_service_importexport::exportFailureKeepsFile()
 
 /* A private key replaces an existing, world-readable file: the result
  * is readable by the owner only, as a new key file (BTD-114) */
+/* The rename of the written file fails after the COMMIT. The entries say
+ * "handed to the file layer": key.export_private and object.export
+ * success stay, an object.export failure write_failed follows them, and
+ * no file is in place (BTD-147, M4 of the review of xca#29). The rename
+ * is made to fail through ExportSpec::commitFile. */
+void test_service_importexport::exportRenameFails()
+{
+	pki_key *key = newKey("EC:prime256v1", "BTD-147 key");
+	QVERIFY(key);
+	QString target = file("btd147.pem");
+	qsizetype before = AuditLog::entries().size();
+	ExportSpec spec;
+	spec.items << key;
+	spec.format = pki_export::by_id(keyPemPrivate);
+	spec.fileName = target;
+	spec.commitFile = [](QSaveFile &f) {
+		f.cancelWriting();
+		return f.commit();
+	};
+	QString code;
+	try {
+		Database.model<db_key>()->exportItems(ctx, spec);
+	} catch (serviceError &err) {
+		code = err.code;
+	}
+	QCOMPARE(code, QString("write_failed"));
+	QStringList sequence;
+	for (const AuditEntry &e : AuditLog::entries().mid(before))
+		if (e.action != AuditLog::actionCheckpoint &&
+		    e.action != AuditLog::actionKeyCreate)
+			sequence << e.action + ":" + e.result +
+				(e.errorCode.isEmpty() ? QString() :
+				 ":" + e.errorCode);
+	/* every success entry first, then the failure */
+	QVERIFY2(!sequence.isEmpty(), "no entries");
+	QCOMPARE(sequence.takeLast(),
+		QString("object.export:failure:write_failed"));
+	sequence.sort();
+	QCOMPARE(sequence, QStringList({ "key.export_private:success",
+		"object.export:success" }));
+	/* no file in place, no temporary file left */
+	QVERIFY(!QFileInfo::exists(target));
+	QCOMPARE(QDir(dir.path()).entryList({ "btd147*" },
+		QDir::Files | QDir::Hidden).size(), 0);
+}
+
 void test_service_importexport::exportOverwritesKeyOwnerOnly()
 {
 #ifndef OPENSSL_PROGRAM
