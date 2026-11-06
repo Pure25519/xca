@@ -291,6 +291,8 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 	params.set("hash_algo", task.hashAlgo.name());
 	if (!task.trigger.isEmpty())
 		params.set("trigger", task.trigger);
+	if (!task.allowStale.isEmpty())
+		params.set("allow_stale", task.allowStale);
 
 	/* the key of the CA before the transaction (BTD-273) */
 	KeyUnlock unlock;

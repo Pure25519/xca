@@ -361,10 +361,12 @@ bool hasCrlOptions(const Options &o);
 CrlPolicy crlPolicy(const Options &o, const pki_x509 *ca);
 /* Issues a CRL of ca with policy (nextUpdate = thisUpdate + validity),
  * records it in the result (object and crls report) and returns it;
- * with --plan only the checks without signature and nullptr */
+ * with --plan only the checks without signature and nullptr. allowStale
+ * is the comma list of the thisUpdate checks --allow-stale-crl overrode,
+ * for the audit entry (BTD-220). */
 pki_crl *issueCrl(CommandContext &ctx, pki_x509 *ca, const CrlPolicy &policy,
 		const QString &trigger, const QDateTime &thisUpdate = QDateTime(),
-		bool report = true);
+		bool report = true, const QString &allowStale = QString());
 /* Rule 7: issues a new CRL when the latest one of ca is past its
  * re-issue point (or expired). Returns the new CRL or nullptr. */
 pki_crl *reissueIfDue(CommandContext &ctx, pki_x509 *ca,
