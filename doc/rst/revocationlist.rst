@@ -67,7 +67,12 @@ Revocation properties
 ---------------------
 
 The certificate revocation happens by the CA at the *revocation date* which
-is the time when the revocation is performed. The *invalidity date* can be set
-to an earlier time in this dialog. The *revocation reason* is explains why
-the certificate has been revoked.
+is the time when the revocation is performed. The *invalidity date* is the time
+the key was compromised or the certificate became invalid; tick *Invalid since*
+to set it, at or before the revocation date. Left unticked, the CRL entry has
+no invalidity date (RFC 5280 5.3.2). A date after the revocation date is
+refused and nothing is revoked. Revocations stored before this change may carry
+an invalidity date equal to their revocation date; they are kept as they are,
+because signed CRLs and the audit log contain them. The *revocation reason*
+explains why the certificate has been revoked.
 https://tools.ietf.org/html/rfc5280#section-5.3
