@@ -64,6 +64,23 @@ if(NOT keys MATCHES "confirmed--yes" OR
   fail("confirmed keys missing: ${keys}")
 endif()
 
+# --confirm ids are trimmed; an unknown id ends the command with the list
+# of the known ids before anything is opened (BTD-116)
+run_xca(rc out --confirm " key.size" --keygen RSA:768 --name trimmed)
+if(NOT rc EQUAL 0)
+  fail("--confirm ' key.size': expected exit code 0, got '${rc}':\n${out}")
+endif()
+run_xca(rc out --confirm nosuchid --keygen RSA:768 --name unknown-id)
+if(NOT rc EQUAL 1 OR NOT out MATCHES "nosuchid" OR
+   NOT out MATCHES "key\\.size" OR NOT out MATCHES "item\\.delete" OR
+   NOT out MATCHES "token\\.replace_key")
+  fail("--confirm nosuchid: expected exit 1 and the known ids, got '${rc}':\n${out}")
+endif()
+key_names(keys)
+if(NOT keys MATCHES "trimmed" OR keys MATCHES "unknown-id")
+  fail("--confirm ids: keys ${keys}")
+endif()
+
 # The audit log names the question of every refusal and confirmation
 run_xca(rc out --audit-export -)
 file(REMOVE_RECURSE "${WORK}")

@@ -5,6 +5,7 @@
  * All rights reserved.
  */
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QDebug>
@@ -37,6 +38,7 @@
 
 xca_db Database;
 
+bool database_model::refuse_schema_upgrade = false;
 bool database_model::open_without_password = false;
 
 const QString &database_model::detect_provider()
@@ -82,6 +84,23 @@ static unsigned bxcSchemaVersion()
 	return q.next() ? q.value(0).toUInt() : 0;
 }
 
+/* A copy of the SQLite file before its schema is migrated, next to it
+ * as <file>.bak-<UTC time> (BTD-70): no migration without the copy.
+ * Remote databases are migrated as before. */
+void database_model::backupBeforeMigration()
+{
+	if (isRemoteDB(dbName))
+		return;
+	QString copy = QString("%1.bak-%2").arg(dbName).arg(
+		QDateTime::currentDateTimeUtc().toString("yyyyMMddTHHmmss"));
+	if (!QFile::copy(dbName, copy))
+		throw errorEx(tr("No copy of the database '%1' could be written "
+			"to '%2' before its schema upgrade; it was not upgraded")
+			.arg(dbName, copy));
+	qInfo().noquote() << "Database copied to" << copy
+		<< "before the schema upgrade";
+}
+
 QSqlError database_model::initSqlDB()
 {
 #define MAX_SCHEMAS 8
@@ -116,6 +135,22 @@ QSqlError database_model::initSqlDB()
 
 	bool existing = XSqlQuery::schemaVersion() > 0;
 	bool auditCreated = false;
+
+	/* An older database: an audit check does not migrate what it
+	 * checks; any other open keeps a copy of the old file (BTD-70) */
+	if (existing && (XSqlQuery::schemaVersion() < MAX_SCHEMAS ||
+			 bxcSchemaVersion() < BXC_MAX_SCHEMAS)) {
+		if (refuse_schema_upgrade) {
+			TransRollback();
+			throw serviceError("schema_upgrade_required", tr(
+				"The database has an older schema (upstream %1, "
+				"bxc-pki %2); an audit check does not upgrade it. "
+				"Open it once with a writing command or the GUI.")
+				.arg(XSqlQuery::schemaVersion())
+				.arg(bxcSchemaVersion()));
+		}
+		backupBeforeMigration();
+	}
 
 	for (;;) {
 		i = XSqlQuery::schemaVersion();
@@ -163,6 +198,14 @@ QSqlError database_model::initSqlDB()
 			"the database schema update"),
 			QSqlError::TransactionError);
 	return QSqlError();
+}
+
+/* An existing database below the current upstream or fork schema: opening
+ * it writes the migration (and the audit baseline) */
+static bool schemaUpgradeNeeded()
+{
+	return XSqlQuery::schemaVersion() < MAX_SCHEMAS ||
+		bxcSchemaVersion() < BXC_MAX_SCHEMAS;
 }
 
 bool database_model::checkForOldDbFormat(const QString &dbfile) const
@@ -334,6 +377,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 	} while (1);
 	if (!isRemoteDB(dbName))
 		openChangeCounter = fileChangeCounter(dbName);
+	AuditLog::resetCheckpointNotices();
 
 	/* A failed schema update stops the open (BTD-142) */
 	auto initSchema = [this]() {
@@ -356,12 +400,23 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			throw pw_exit;
 		if (result != pw_ok && Settings["pwhash"].empty())
 			throw open_abort;
+		/* Nothing is written without the verified password: GUI
+		 * Cancel and xca --no-gui without a password source open a
+		 * current database read-only, an old one not at all, since
+		 * its upgrade and audit baseline would write (BTD-137) */
+		bool verified = ServiceContext::processPasswordVerified;
+		if (existing && !verified && schemaUpgradeNeeded())
+			throw serviceError("schema_upgrade_needs_password", tr(
+				"The database %1 has to be upgraded to the current "
+				"version, which needs the database password. Open "
+				"it with its password.")
+				.arg(compressFilename(dbName)));
 		if (existing)
 			initSchema();
-		/* only after the unlock: an open without the password
-		 * writes nothing (BTD-117) */
-		if (result == pw_ok)
+		if (verified) {
+			Settings.migrateOptionflags();
 			migratePkcs12Default(existing);
+		}
 	} catch (...) {
 		/* No destructor runs for a failed constructor: close the
 		 * connection here, or the next open() inherits its state */
@@ -386,7 +441,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	if (dbkey)
 		dbkey->updateKeyEncryptionScheme();
-	reportSkippedRows(result == pw_ok);
+	reportSkippedRows(ServiceContext::processPasswordVerified);
 
 	foreach(db_base *m, models) {
 		Q_CHECK_PTR(m);
@@ -674,6 +729,11 @@ void database_model::openLocalDatabase(const QString &connName,
 	f.close();
 
 	db.setDatabaseName(descriptor);
+	/* how long a write transaction waits for the write lock of another
+	 * process at BEGIN IMMEDIATE (BTD-274), set here rather than left to
+	 * the default of the Qt driver */
+	db.setConnectOptions(QString("QSQLITE_BUSY_TIMEOUT=%1")
+			.arg(DbTransaction::busyTimeoutMs));
 	db.open();
 	QSqlError e = db.lastError();
 	if (e.isValid()) {

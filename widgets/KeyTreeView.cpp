@@ -88,6 +88,11 @@ void KeyTreeView::changePin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));
@@ -106,6 +111,11 @@ void KeyTreeView::initPin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));
@@ -124,6 +134,11 @@ void KeyTreeView::changeSoPin()
 	if (!currentIdx.isValid())
 		return;
 	scard = db_base::fromIndex<pki_scard>(currentIdx);
+	/* a software key is no pki_scard (BTD-240) */
+	if (!scard) {
+		XCA_WARN(tr("This is not a token"));
+		return;
+	}
 	try {
 		if (!scard->isToken()) {
 			throw errorEx(tr("This is not a token"));
@@ -157,10 +172,22 @@ void KeyTreeView::toToken()
 		card->pkiSource = key->pkiSource;
 		QString msg = tr("Shall the original key '%1' be replaced by the key on the token?\nThis will delete the key '%1' and make it unexportable").
 			arg(key->getIntName());
-		if (XCA_YESNO("token.replace_key", msg)) {
-			keys()->deleteItems(ServiceContext::localUser(
-				ServiceContext::gui), { key });
-			keys()->insertPKI(card);
+		/* the answer is recorded as confirmed on object.delete
+		 * (BTD-128, as every confirmed deletion since BTD-71) */
+		ServiceContext ctx = ServiceContext::localUser(
+				ServiceContext::gui);
+		if (xcaWarning::confirm(ctx, "token.replace_key", msg)) {
+			/* all or nothing (BTD-217): on an error the software
+			 * key and its links are unchanged, the copy written to
+			 * the token stays there */
+			try {
+				keys()->replaceWithToken(ctx, key, card);
+			} catch (errorEx &err) {
+				err.appendString(tr("The key '%1' is unchanged in "
+					"the database; the copy on the token "
+					"remains.").arg(key->getIntName()));
+				throw;
+			}
 			card = NULL;
 		}
 	} catch (errorEx &err) {

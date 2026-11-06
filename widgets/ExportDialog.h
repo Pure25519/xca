@@ -25,6 +25,9 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
 	QList<const pki_export*> alltypes;
 	QList<pki_base *> pkis{};
 	void mlDsaHelp(const pki_export *x);
+	/* True if the format is PKCS#12 with a non-legacy algorithm: only
+	 * then are MAC and iterations offered (BTD-175) */
+	static bool pkcs12OptionsApply(const pki_export *xport);
 
   public:
 	ExportDialog(QWidget *w, const QString &title, const QString &filt,
@@ -49,6 +52,7 @@ class ExportDialog: public QDialog, public Ui::ExportDialog
 	void on_exportFormat_activated(int);
 	void on_exportFormat_highlighted(int index);
 	void on_mlDsaFormat_currentIndexChanged(int);
+	void on_pkcs12Mac_currentIndexChanged(int);
 	void accept();
 };
 

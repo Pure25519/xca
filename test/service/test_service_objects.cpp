@@ -9,6 +9,8 @@
 
 #include <QDateTime>
 #include <QSignalSpy>
+#include <QSqlError>
+#include <QSqlQuery>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -21,12 +23,45 @@
 #include "lib/exception.h"
 #include "lib/issuance.h"
 #include "lib/pki_crl.h"
+#include "lib/pki_scard.h"
 #include "lib/pki_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
 #include "lib/request.h"
 
 #include "ServiceTestCase.h"
+
+/* A key on a token, without a token: CKA_ID and card as load_token()
+ * would set them (BTD-128) */
+class TokenObject : public pki_scard
+{
+  public:
+	TokenObject(const QString &name, const QString &id) : pki_scard(name)
+	{
+		object_id = id;
+		card_serial = "0815";
+		card_model = "service test";
+	}
+};
+
+/* The token list of the Manage Tokens dialog with objects put in */
+class TokenList : public db_token
+{
+  public:
+	void add(pki_base *pki)
+	{
+		rootItem->insert(pki);
+	}
+	/* rootItem does not own its children (the store or the token
+	 * dialog does) */
+	~TokenList()
+	{
+		for (pki_base *pki : rootItem->getChildItems()) {
+			rootItem->takeChild(pki);
+			delete pki;
+		}
+	}
+};
 
 class test_service_objects : public ServiceTestCase
 {
@@ -74,7 +109,30 @@ class test_service_objects : public ServiceTestCase
 	void deleteDatabaseError();
 	void deleteSuperRowError();
 	void tokenRenameRejected();
+	void deleteOnToken();
+	void deleteOnTokenRejected();
+	void deleteOnTokenFails();
+	void deleteOnTokenRolledBack();
+	void deleteOnTokenAfterCommitFails();
+	void deleteOnTokenDeclined();
+	void tokenRenameObjectId();
+	void tokenRenameLoginFirst();
+	void tokenRenameDatabaseError();
+	void replaceKeyConfirmed();
+	void deleteOnlyOnToken();
+	void deleteOnlyOnTokenNothing();
+	void deleteOnlyOnTokenError();
+	void cleanup();
 };
+
+void test_service_objects::cleanup()
+{
+	db_base::tokenDeleteHook = nullptr;
+	db_base::tokenPrepareHook = nullptr;
+	db_token::tokenRenameHook = nullptr;
+	db_token::tokenRenamePrepareHook = nullptr;
+	ServiceTestCase::cleanup();
+}
 
 pki_x509 *test_service_objects::issue(const QString &cn, pki_key *key,
 			pki_x509 *signer)
@@ -521,6 +579,355 @@ void test_service_objects::tokenRenameRejected()
 	QCOMPARE(e.action, QString("object.rename"));
 	QCOMPARE(e.result, QString("failure"));
 	QCOMPARE(e.params.value("on_token").toBool(), true);
+	verifyChain();
+}
+
+/* BTD-128: the deletion on the token is part of deleteItems(), after
+ * the checks, and its entry says so (on_token). Before, the GUI deleted
+ * on the token first and deleteItems() did not know. */
+void test_service_objects::deleteOnToken()
+{
+	pki_key *key = newKey("key on a token");
+	pki_x509 *cert = issue("not on a token", newKey("cert key"), nullptr);
+	QString keyId = key->getSqlItemId().toString();
+	QList<pki_base *> called;
+	int destroyed = 0;
+	bool committed = false;
+	/* BTD-272/273: prepared (question, login) outside the database
+	 * transaction, destroyed on the token after the COMMIT */
+	db_base::tokenPrepareHook = [&](pki_base *pki) {
+		called << pki;
+		if (DbTransaction::active())
+			QTest::qFail("prepared inside a transaction",
+				__FILE__, __LINE__);
+		TokenDeletion d;
+		d.found = pki == key;
+		d.destroy = [&]() {
+			committed = !DbTransaction::active() &&
+				!keys()->isStored(key);
+			destroyed++;
+		};
+		return d;
+	};
+
+	keys()->deleteItems(ctx, { key }, true);
+	QCOMPARE(called.size(), 1);
+	QCOMPARE(destroyed, 1);
+	QVERIFY(committed);
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.objectId, keyId);
+	QCOMPARE(e.params.value("on_token").toBool(), true);
+
+	certs()->deleteItems(ctx, { cert }, true);
+	QCOMPARE(called.size(), 2);
+	QCOMPARE(destroyed, 1);
+	QVERIFY(!last().params.value("on_token").toBool());
+	verifyChain();
+}
+
+void test_service_objects::deleteOnTokenRejected()
+{
+	/* A rejected call never reaches the token */
+	pki_key *key = newKey("token key");
+	pki_x509 *cert = issue("cert", newKey("other key"), nullptr);
+	bool called = false;
+	db_base::tokenPrepareHook = [&](pki_base *) {
+		called = true;
+		return TokenDeletion();
+	};
+	int entries = AuditLog::entries().size();
+	try {
+		keys()->deleteItems(ctx, { key, cert }, true);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("wrong_object_type"));
+	}
+	QVERIFY(!called);
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	QCOMPARE(last().result, QString("failure"));
+	verifyChain();
+}
+
+void test_service_objects::deleteOnTokenFails()
+{
+	/* A failure while preparing (token removed, login failed) is
+	 * reported and recorded; the database deletion goes on, as before */
+	pki_key *key = newKey("token gone");
+	QString keyId = key->getSqlItemId().toString();
+	db_base::tokenPrepareHook = [](pki_base *) -> TokenDeletion {
+		throw errorEx("the token was removed");
+	};
+	DeleteResult r = keys()->deleteItems(ctx, { key }, true);
+	QCOMPARE(r.tokenErrors.size(), 1);
+	QVERIFY2(r.tokenErrors[0].contains("the token was removed"),
+		CCHAR(r.tokenErrors[0]));
+	AuditEntry e = last();
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.objectId, keyId);
+	QVERIFY(!e.params.value("on_token").toBool());
+	QCOMPARE(e.params.value("warning").toString(),
+		QString("token_delete_failed"));
+	verifyChain();
+}
+
+/* BTD-272: a failure after the first object, here the audit entry of
+ * the second, rolls the database back: no object may be gone from its
+ * token. Before, the token deletion of the first object ran inside the
+ * transaction and stayed done. */
+void test_service_objects::deleteOnTokenRolledBack()
+{
+	pki_key *first = newKey("first on a token");
+	pki_key *second = newKey("second on a token");
+	QString secondId = second->getSqlItemId().toString();
+	int deleted = 0;
+	db_base::tokenPrepareHook = [&](pki_base *) {
+		TokenDeletion d;
+		d.found = true;
+		d.destroy = [&]() { deleted++; };
+		return d;
+	};
+	QSqlQuery q;
+	QVERIFY2(q.exec(QString("CREATE TEMP TRIGGER btd272_fail_audit BEFORE "
+		"INSERT ON audit_log WHEN NEW.action = 'object.delete' "
+		"AND NEW.result = 'success' AND NEW.object_id = '%1' BEGIN "
+		"SELECT RAISE(ABORT, 'BTD-272 test: audit refused'); END")
+		.arg(secondId)), CCHAR(q.lastError().text()));
+	try {
+		keys()->deleteItems(ctx, { first, second }, true);
+		QFAIL("deleteItems() did not throw");
+	} catch (errorEx &) {
+	}
+	QVERIFY2(q.exec("DROP TRIGGER btd272_fail_audit"),
+		CCHAR(q.lastError().text()));
+	QVERIFY(Database.model<db_key>()->isStored(first));
+	QVERIFY(Database.model<db_key>()->isStored(second));
+	QCOMPARE(deleted, 0);
+	verifyChain();
+}
+
+/* BTD-272: a failure on the token after the COMMIT leaves the database
+ * deletion done; one failure entry token.delete names the object left
+ * on its token, and the caller gets the error in tokenErrors */
+void test_service_objects::deleteOnTokenAfterCommitFails()
+{
+	pki_key *gone = newKey("deleted on the token");
+	pki_key *left = newKey("left on the token");
+	QString goneId = gone->getSqlItemId().toString();
+	QString leftId = left->getSqlItemId().toString();
+	db_base::tokenPrepareHook = [&](pki_base *pki) {
+		TokenDeletion d;
+		d.found = true;
+		if (pki == left)
+			d.destroy = []() {
+				throw errorEx("the token was removed");
+			};
+		else
+			d.destroy = []() { };
+		return d;
+	};
+	int entries = AuditLog::entries().size();
+	DeleteResult r = keys()->deleteItems(ctx, { gone, left }, true);
+	QCOMPARE(r.deleted.size(), 2);
+	QCOMPARE(r.tokenErrors.size(), 1);
+	QVERIFY2(r.tokenErrors[0].contains("left on the token") &&
+		r.tokenErrors[0].contains("the token was removed"),
+		CCHAR(r.tokenErrors[0]));
+	QList<AuditEntry> all = AuditLog::entries();
+	QCOMPARE(all.size(), entries + 3);
+	QCOMPARE(all[entries].objectId, goneId);
+	QCOMPARE(all[entries].params.value("on_token").toBool(), true);
+	QCOMPARE(all[entries + 1].objectId, leftId);
+	QCOMPARE(all[entries + 1].result, QString("success"));
+	AuditEntry e = all[entries + 2];
+	QCOMPARE(e.action, QString("token.delete"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("token_error"));
+	QCOMPARE(e.objectId, leftId);
+	QCOMPARE(e.params.value("name").toString(),
+		QString("left on the token"));
+	verifyChain();
+}
+
+/* A "no" at the question of the token (or nothing found on it): the
+ * database deletion goes on, the object stays on its token, the entry
+ * says on_token false; the question item.delete of the caller already
+ * confirmed the database deletion */
+void test_service_objects::deleteOnTokenDeclined()
+{
+	pki_key *key = newKey("declined on the token");
+	db_base::tokenPrepareHook = [](pki_base *) { return TokenDeletion(); };
+	DeleteResult r = keys()->deleteItems(ctx, { key }, true);
+	QCOMPARE(r.deleted.size(), 1);
+	QVERIFY(r.tokenErrors.isEmpty());
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("success"));
+	QVERIFY(!e.params.value("on_token").toBool());
+	QVERIFY(e.params.value("warning").toString().isEmpty());
+	verifyChain();
+}
+
+/* BTD-128: object.rename on a token names the object (its CKA_ID) */
+void test_service_objects::tokenRenameObjectId()
+{
+	TokenList tokens;
+	TokenObject *obj = new TokenObject("on the token", "c0ffee");
+	tokens.add(obj);
+	QStringList renamed;
+	db_token::tokenRenameHook = [&](pki_base *, const QString &name) {
+		renamed << name;
+		return true;
+	};
+	tokens.rename(ctx, obj, "renamed on the token");
+	QCOMPARE(renamed, QStringList() << "renamed on the token");
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.rename"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.objectId, QString("c0ffee"));
+	QCOMPARE(e.params.value("on_token").toBool(), true);
+	verifyChain();
+}
+
+/* BTD-273: the login of the token (prepare) runs before the transaction,
+ * the label is written inside it, after the database. Before, both ran
+ * inside the transaction. */
+void test_service_objects::tokenRenameLoginFirst()
+{
+	TokenList tokens;
+	TokenObject *obj = new TokenObject("on the token", "c0ffee");
+	tokens.add(obj);
+	bool preparedOutside = false, appliedInside = false;
+	db_token::tokenRenamePrepareHook = [&](pki_base *, const QString &) {
+		preparedOutside = !DbTransaction::active();
+		TokenRename r;
+		r.found = true;
+		r.apply = [&]() { appliedInside = DbTransaction::active(); };
+		return r;
+	};
+	tokens.rename(ctx, obj, "renamed after the login");
+	QVERIFY(preparedOutside);
+	QVERIFY(appliedInside);
+	QCOMPARE(last().result, QString("success"));
+
+	/* not on the token or the login failed: nothing renamed */
+	db_token::tokenRenamePrepareHook = [](pki_base *, const QString &) {
+		return TokenRename();
+	};
+	try {
+		tokens.rename(ctx, obj, "not renamed");
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("token_error"));
+	}
+	QCOMPARE(obj->getIntName(), QString("renamed after the login"));
+	QCOMPARE(last().errorCode, QString("token_error"));
+	verifyChain();
+}
+
+void test_service_objects::tokenRenameDatabaseError()
+{
+	/* The database first: when it fails, the label on the token stays */
+	TokenList tokens;
+	TokenObject *obj = new TokenObject("on the token", "c0ffee");
+	tokens.add(obj);
+	bool called = false;
+	db_token::tokenRenameHook = [&](pki_base *, const QString &) {
+		called = true;
+		return true;
+	};
+	XSqlQuery q;
+	QVERIFY(q.exec("DROP TABLE tokens"));
+	try {
+		tokens.rename(ctx, obj, "renamed");
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("database_error"));
+	}
+	QVERIFY(!called);
+	QCOMPARE(obj->getIntName(), QString("on the token"));
+	AuditEntry e = last();
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("database_error"));
+	QCOMPARE(e.objectId, QString("c0ffee"));
+	verifyChain();
+}
+
+/* KeyTreeView::toToken (BTD-128): the question token.replace_key is
+ * asked with the context of the deletion, so object.delete records it,
+ * as every confirmed deletion since BTD-71 */
+void test_service_objects::replaceKeyConfirmed()
+{
+	pki_key *key = newKey("moved to a token");
+	ServiceContext gui = ServiceContext::localUser(ServiceContext::gui);
+	warning->expectQuestion(true);
+	QVERIFY(xcaWarning::confirm(gui, "token.replace_key",
+		"Shall the original key be replaced?"));
+	keys()->deleteItems(gui, { key });
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.params.value("confirmed").toString(),
+		QString("token.replace_key:dialog"));
+	verifyChain();
+}
+
+/* BTD-248: Delete from token (certificate context menu) and the import
+ * dialog delete on the token only; db_token::deleteOnToken() audits it.
+ * Before, no entry was written. */
+void test_service_objects::deleteOnlyOnToken()
+{
+	TokenObject obj("only on the token", "beef01");
+	int keyRows = Store.getAll<pki_key>().size();
+	db_base::tokenDeleteHook = [](pki_base *) { return true; };
+	int entries = AuditLog::entries().size();
+	db_token::deleteOnToken(ctx, &obj);
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.objectId, QString("beef01"));
+	QCOMPARE(e.params.value("on_token").toBool(), true);
+	QCOMPARE(e.params.value("name").toString(), QString("only on the token"));
+	/* the database is not touched */
+	QCOMPARE(Store.getAll<pki_key>().size(), keyRows);
+	verifyChain();
+}
+
+void test_service_objects::deleteOnlyOnTokenNothing()
+{
+	/* declined or not found on the token: a failure, no success */
+	TokenObject obj("declined", "beef02");
+	db_base::tokenDeleteHook = [](pki_base *) { return false; };
+	try {
+		db_token::deleteOnToken(ctx, &obj);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("nothing_deleted"));
+	}
+	AuditEntry e = last();
+	QCOMPARE(e.action, QString("object.delete"));
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("nothing_deleted"));
+	QCOMPARE(e.objectId, QString("beef02"));
+	verifyChain();
+}
+
+void test_service_objects::deleteOnlyOnTokenError()
+{
+	TokenObject obj("token removed", "beef03");
+	db_base::tokenDeleteHook = [](pki_base *) -> bool {
+		throw errorEx("the token was removed");
+	};
+	try {
+		db_token::deleteOnToken(ctx, &obj);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("token_error"));
+	}
+	AuditEntry e = last();
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("token_error"));
+	QCOMPARE(e.objectId, QString("beef03"));
 	verifyChain();
 }
 
