@@ -18,6 +18,7 @@
 #include "lib/exception.h"
 #include "lib/issuance.h"
 #include "lib/pki_temp.h"
+#include "lib/template.h"
 #include "lib/pki_x509.h"
 
 #include "ServiceTestCase.h"
