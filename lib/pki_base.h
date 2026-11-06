@@ -211,6 +211,7 @@ class pki_base : public QObject
 		pki_base *getParent() const;
 		pki_base *child(int row);
 		void insert(pki_base *item);
+		void insertAt(int row, pki_base *item);
 		int childCount() const;
 		void takeChild(pki_base *pki);
 		pki_base *takeFirst();

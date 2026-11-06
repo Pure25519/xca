@@ -19,6 +19,11 @@ bxc-main (bxc-pki fork, unreleased)
    when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
    XCA generates never carry reasonCode unspecified. The stored value is
    unchanged (0 without a reason), no migration.
+ * BTD-113: RSA and DSA keys above 16384 bit, and DSA keys below 512 bit,
+   are refused at once with invalid_key_size (and an audit failure
+   entry), also when the size is confirmed; RSA:65536 ran for hours.
+   A failed DSA or EC parameter generation is reported as a key
+   generation failure, not as invalid_key_size or invalid_curve.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a
