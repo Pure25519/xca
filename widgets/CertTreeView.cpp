@@ -15,6 +15,7 @@
 #include "NewCrl.h"
 #include "AutomationId.h"
 #include "lib/audit.h"
+#include "lib/db_token.h"
 #include "lib/database_model.h"
 #include "lib/db_crl.h"
 #include "lib/load_obj.h"
@@ -193,8 +194,14 @@ void CertTreeView::deleteFromToken()
 		XCA_WARN(tr("No certificate selected"));
 		return;
 	}
+	/* audited, the database row stays (BTD-248); a declined
+	 * question is no error */
 	try {
-		cert->deleteFromToken();
+		db_token::deleteOnToken(ServiceContext::localUser(
+				ServiceContext::gui), cert);
+	} catch (serviceError &err) {
+		if (err.code != "nothing_deleted")
+			XCA_ERROR(err);
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}

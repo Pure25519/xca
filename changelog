@@ -11,6 +11,12 @@ bxc-main (bxc-pki fork, unreleased)
    dialog's end is 23:59:59 of its day, so it may warn again under a CA
    that ends earlier that day; the issuance caps anyway (upstream
    behaviour kept).
+ * BTD-116: the key generation service requires the confirmation of an
+   RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
+   the ServiceContext it refuses with confirmation_required and a
+   denied entry, so a caller without a dialog (REST, EST, CMP) cannot
+   skip the question. --confirm trims its ids and refuses an unknown id
+   with the list of the question ids.
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,
