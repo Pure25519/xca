@@ -1,6 +1,13 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-219: the CA Properties dialog stores a changed CRL validity
+   through the CRL setting of the CA, the same row the bxc-pki command
+   line reads (crlpolicy_<id>), with one audit entry ca.crl_settings;
+   before, it changed only crlDays, so GUI and command line issued CRLs
+   with different lifetimes and nothing was audited. A changed template
+   writes the new audit entry ca.set_template. Both in one transaction
+   (db_x509::setCaProperties()); a failure keeps database and memory.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a

@@ -115,10 +115,8 @@ QVariant test_service_ca_properties::storedTemplate(pki_x509 *ca)
 void test_service_ca_properties::setProperties(pki_x509 *ca, int days,
 		pki_temp *temp)
 {
-	/* what CertTreeView::caProperties() did before BTD-219 */
-	ca->setTemplateSqlId(temp ? temp->getSqlItemId() : QVariant());
-	ca->setCrlDays(days);
-	certs()->updateCaProperties(ca);
+	certs()->setCaProperties(gui, ca, days,
+			temp ? temp->getSqlItemId() : QVariant());
 }
 
 /* The command line's setting of the CA follows the GUI's CRL days, with
