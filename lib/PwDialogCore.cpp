@@ -247,6 +247,25 @@ Passwd PwDialogHeadless::readSource(const QString &source)
 	return pass;
 }
 
+/* How the secret of a purpose can be given: the option of the program
+ * that serves the purpose, or that none does (BTD-196) */
+QString PwDialogHeadless::howToGive(enum pass_info::purpose purpose) const
+{
+	QString option = options.value(purpose);
+	if (!option.isEmpty())
+		return QObject::tr("Give it with %1 (pass:, env:, file:, fd: "
+				"or stdin)").arg(option);
+#if defined(Q_OS_WIN32)
+	return QObject::tr("No option of this program gives it");
+#else
+	return interactive ?
+		QObject::tr("No option of this program gives it: type it on "
+			"a terminal") :
+		QObject::tr("No option of this program gives it: type it on "
+			"a terminal with --interactive");
+#endif
+}
+
 /* Why no terminal prompt is possible */
 static QString noInput()
 {
@@ -274,21 +293,16 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 	/* Prompts go to stderr, stdout carries only results (BTD-41) */
 	if (interactive) {
 		/* Without a terminal readPass() refuses (BTD-145): no
-		 * prompt then, and the error names the request */
-		if (!isatty(0)) {
-			bool db = p->getPurpose() == pass_info::DatabasePassword ||
-				p->getPurpose() == pass_info::KeyPassword;
+		 * prompt then, and the error names the request and how
+		 * its secret can be given (BTD-196) */
+		if (!isatty(0))
 			throw secretError(secretError::missing,
 				QObject::tr("%1 required, but --interactive has "
-					"no terminal on standard input: %2. Give "
-					"it from a source (pass:, env:, file:, fd: "
-					"or stdin)%3")
+					"no terminal on standard input: %2. %3")
 					.arg(p->getType())
 					.arg(p->getDescription())
-					.arg(db ? QObject::tr(", e.g. --password "
-						"env:<variable>") : QString()),
+					.arg(howToGive(p->getPurpose())),
 				p->getPurpose());
-		}
 		console_write(stderr, QString(COL_CYAN "%1\n" COL_LRED "%2:" COL_RESET)
 				.arg(p->getDescription())
 				.arg(p->getType()).toUtf8());
@@ -327,8 +341,9 @@ enum open_result PwDialogHeadless::execute(pass_info *p, Passwd *passwd,
 					QObject::tr("the command line"))
 				.arg(p->getDescription()), p->getPurpose());
 	throw secretError(secretError::missing,
-		QObject::tr("%1 required, but no source is given and %2: %3")
-			.arg(p->getType()).arg(noInput()).arg(p->getDescription()),
+		QObject::tr("%1 required, but no source is given and %2: %3. %4")
+			.arg(p->getType()).arg(noInput()).arg(p->getDescription())
+			.arg(howToGive(p->getPurpose())),
 		p->getPurpose());
 }
 
