@@ -50,6 +50,7 @@
 #include <functional>
 
 #include <QByteArray>
+#include <QIODevice>
 #include <QList>
 #include <QPair>
 #include <QString>
@@ -133,6 +134,11 @@ class StagedFile
 	/* stage() and publish() in one */
 	static void writeFile(const QString &target, const QByteArray &data,
 			bool secretFile, bool replaceTarget);
+	/* writeFile() with the bytes a writer puts into a device, for the
+	 * writers that take a QIODevice (BTD-139) */
+	static void writeWith(const QString &target, bool secretFile,
+			bool replaceTarget,
+			const std::function<void(QIODevice &)> &fill);
 
 	/* Tests only (BTD-42 fault injection): called before each step
 	 * with the target; a hook that returns true makes the step fail

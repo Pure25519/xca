@@ -12,6 +12,7 @@
 #include "database_model.h"
 #include "audit_key.h"
 #include "XcaPresentation.h"
+#include "staged_file.h"
 #include <QDir>
 #include <openssl/err.h>
 
@@ -277,7 +278,7 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 			tr("There is no private key to sign the revocation list"));
 	AuditKey::refuseSigning(key);
 	X509_CRL_sort(crl);
-	pkey = key->decryptKey();
+	pkey = KeyUnlock::decrypt(key);
 	/* 0 leaves the CRL unsigned (BTD-171) */
 	int size = X509_CRL_sign(crl, pkey, key->signatureDigest(digest));
 	EVP_PKEY_free(pkey);
@@ -290,9 +291,11 @@ void pki_crl::sign(pki_key *key, const digest &digest)
 
 void pki_crl::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".crl"));
-	file.open_write();
-	writeCrl(file, true);
+	/* staged: a failed dump leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".crl"), false, false,
+		[this](QIODevice &file) {
+		writeCrl(file, true);
+		});
 }
 
 void pki_crl::writeCrl(QIODevice &file, bool pem) const

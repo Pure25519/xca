@@ -72,6 +72,7 @@ class test_service_key : public ServiceTestCase
 	void newKeySize();
 	void newKeyRejectedSize_data();
 	void newKeyRejectedSize();
+	void newKeyServiceNeedsConfirmation();
 	void newKeySmallRsaConfirmed();
 	void newKeySmallRsaDeclined();
 	void newKeySmallRsaHeadless_data();
@@ -248,8 +249,12 @@ void test_service_key::newKeyRejectedSize()
 	QFETCH(int, bits);
 	int before = AuditLog::entries().size();
 
+	/* the size question is confirmed: OpenSSL's rejection is tested */
+	ServiceContext confirmed = ctx;
+	confirmed.confirm("key.size", "test");
 	try {
-		Database.model<db_key>()->newKey(ctx, keyjob(job), "bad-size");
+		Database.model<db_key>()->newKey(confirmed, keyjob(job),
+						"bad-size");
 		QFAIL("newKey accepted the size");
 	} catch (serviceError &err) {
 		QCOMPARE(err.code, QString("invalid_key_size"));
@@ -357,6 +362,39 @@ void test_service_key::newKeySmallRsaHeadlessUnconfirmed()
 	QCOMPARE(e.params["question"].toString(), QString("key.size"));
 	QCOMPARE(e.params["key_size"].toLongLong(), qint64(768));
 	QVERIFY(!e.params.contains("confirmed"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* BTD-116: the service itself requires the confirmation of an unusual
+ * key size; a caller without a dialog (REST, EST, CMP) passes it in the
+ * ServiceContext. Without it: confirmation_required, a denied entry, no
+ * key; with it: the key, and the entry names the confirmation. */
+void test_service_key::newKeyServiceNeedsConfirmation()
+{
+	db_key *keys = Database.model<db_key>();
+	int before = AuditLog::entries().size();
+	try {
+		keys->newKey(ctx, keyjob("RSA:768"), "unconfirmed");
+		QFAIL("newKey(ctx) made a 768 bit key without confirmation");
+	} catch (confirmationError &err) {
+		QCOMPARE(err.question, QString("key.size"));
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	QCOMPARE(AuditLog::entries().size(), before + 1);
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("denied"));
+	QCOMPARE(e.errorCode, QString("confirmation_required"));
+	QCOMPARE(e.params["question"].toString(), QString("key.size"));
+
+	ServiceContext confirmed = ctx;
+	confirmed.confirm("key.size", "rest");
+	pki_key *key = keys->newKey(confirmed, keyjob("RSA:768"), "confirmed");
+	QVERIFY(key);
+	QCOMPARE(EVP_PKEY_get_bits(key->getPubKey()), 768);
+	e = lastEntry();
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["confirmed"].toString(), QString("key.size:rest"));
 	QVERIFY(AuditLog::verify().ok());
 }
 

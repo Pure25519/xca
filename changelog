@@ -10,6 +10,12 @@ bxc-main (bxc-pki fork, unreleased)
    when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
    XCA generates never carry reasonCode unspecified. The stored value is
    unchanged (0 without a reason), no migration.
+ * BTD-116: the key generation service requires the confirmation of an
+   RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
+   the ServiceContext it refuses with confirmation_required and a
+   denied entry, so a caller without a dialog (REST, EST, CMP) cannot
+   skip the question. --confirm trims its ids and refuses an unknown id
+   with the list of the question ids.
  * BTD-56: renewal and re-key as a service function, db_x509::renew().
    The renewal dialog and the new command "bxc-pki renew" issue through
    the checks, the validity cap and the audit of every issuance; before,

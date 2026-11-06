@@ -11,7 +11,9 @@
 
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QSqlError>
 #include <QSqlQuery>
+#include <QSqlRecord>
 
 #include "lib/audit.h"
 #include "lib/database_model.h"
@@ -66,6 +68,9 @@ class test_service_names : public ServiceTestCase
 	void minimumContent();
 	void strictIssuerKeyUsage();
 	void uniquenessWithStatusFilter();
+	void uniquenessSelfSignedScope();
+	void uniquenessNotYetValid();
+	void uniquenessReadsDatabase();
 	void invalidPolicy();
 	void otherNameForms_data();
 	void otherNameForms();
@@ -401,6 +406,95 @@ void test_service_names::uniquenessWithStatusFilter()
 	rev.setReason("Key Compromise");
 	Database.model<db_x509>()->revoke(ctx, cert, rev);
 	QCOMPARE(attempt(second), QString());
+}
+
+/* BTD-201: with scope issuer, the scope of a self-signed certificate is
+ * the self-signed certificates of the same key. Two roots with the same
+ * subject and different keys are separate scopes; a root issued again
+ * with the same key is in the scope of the first. Before, a root was in
+ * no other root's scope (its signer is itself, spec.signer was nullptr),
+ * so the root issued again was accepted. */
+void test_service_names::uniquenessSelfSignedScope()
+{
+	IssuanceSpec first = caSpec("Same Root", nullptr);
+	first.policies << policy("strict-content");
+	pki_x509 *root = issue(first);
+	QVERIFY(root);
+	IssuanceSpec other = caSpec("Same Root", nullptr);
+	other.name = "Same Root (new key)";
+	other.policies << policy("strict-content");
+	QCOMPARE(attempt(other), QString());
+
+	IssuanceSpec again = caSpec("Same Root", nullptr);
+	again.name = "Same Root (same key)";
+	again.key = first.key;
+	again.policies << policy("strict-content");
+	QString message;
+	QCOMPARE(attempt(again, &message), QString("policy_not_unique"));
+	QVERIFY2(message.contains("subject_dn"), CCHAR(message));
+}
+
+/* BTD-201: the uniqueness rule reads the certificates of the database,
+ * not the store of this process. A certificate another process stored
+ * after this one loaded the database is in the database only; here it
+ * is made so by deleting it (out of the store and the database) and
+ * writing its rows back behind the store's back. */
+void test_service_names::uniquenessReadsDatabase()
+{
+	pki_x509 *ca = issue(caSpec("Shared CA", nullptr));
+	IssuanceSpec first = leafSpec("DNS:first.example", ca);
+	first.policies << policy("strict-content");
+	pki_x509 *other = issue(first);
+	QVERIFY(other);
+	QVariant id = other->getSqlItemId();
+	QSqlQuery q;
+	q.prepare("SELECT hash, iss_hash, serial, issuer, ca, cert FROM certs "
+		"WHERE item=?");
+	q.addBindValue(id);
+	QVERIFY2(q.exec() && q.next(), CCHAR(q.lastError().text()));
+	QSqlRecord row = q.record();
+	Database.model<db_x509>()->deleteItems(ctx, { other });
+	q.prepare("UPDATE items SET del=0 WHERE id=?");
+	q.addBindValue(id);
+	QVERIFY2(q.exec(), CCHAR(q.lastError().text()));
+	q.prepare("INSERT INTO certs (item, hash, iss_hash, serial, issuer, ca, "
+		"cert) VALUES (?, ?, ?, ?, ?, ?, ?)");
+	q.addBindValue(id);
+	for (int i = 0; i < row.count(); i++)
+		q.addBindValue(row.value(i));
+	QVERIFY2(q.exec(), CCHAR(q.lastError().text()));
+	QVERIFY(!Store.lookupPki<pki_x509>(id));
+
+	IssuanceSpec again = leafSpec("DNS:again.example", ca);
+	again.policies << policy("strict-content");
+	QString message;
+	QCOMPARE(attempt(again, &message), QString("policy_not_unique"));
+	QVERIFY2(message.contains("subject_dn"), CCHAR(message));
+}
+
+/* BTD-201: a certificate whose notBefore is in the future has the status
+ * not_yet_valid, not valid: a rule on valid certificates lets the same
+ * subject be issued, a rule that names not_yet_valid does not */
+void test_service_names::uniquenessNotYetValid()
+{
+	pki_x509 *ca = issue(caSpec("Future CA", nullptr));
+	IssuanceSpec future = leafSpec("DNS:future.example", ca);
+	future.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(10));
+	future.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(40));
+	future.policies << policy("strict-content");
+	QVERIFY(issue(future));
+	IssuanceSpec now = leafSpec("DNS:now.example", ca);
+	now.policies << policy("strict-content");
+	QCOMPARE(attempt(now), QString());
+
+	QJsonObject doc = policy("strict-content").document();
+	QJsonObject u = doc["uniqueness"].toObject();
+	u["status"] = QJsonArray{ "valid", "not_yet_valid" };
+	doc["uniqueness"] = u;
+	doc["id"] = "strict-future";
+	IssuanceSpec blocked = leafSpec("DNS:blocked.example", ca);
+	blocked.policies << Policy::fromJson(doc);
+	QCOMPARE(attempt(blocked), QString("policy_not_unique"));
 }
 
 void test_service_names::invalidPolicy()

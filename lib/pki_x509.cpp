@@ -18,6 +18,7 @@
 #include "pass_info.h"
 #include "audit_key.h"
 #include "XcaPresentation.h"
+#include "staged_file.h"
 
 #include <openssl/rand.h>
 #include <openssl/err.h>
@@ -154,7 +155,6 @@ QSqlError pki_x509::deleteSqlData()
 		<< "UPDATE certs SET issuer=NULL WHERE issuer=?"
 		<< "DELETE FROM revocations WHERE caId=?"
 		<< "DELETE FROM takeys WHERE item=?"
-		<< "DELETE FROM issued_profiles WHERE item=?"
 		<< "DELETE FROM renewals WHERE item=?"
 		;
 	foreach(QString task, tasks) {
@@ -338,7 +338,7 @@ QString pki_x509::getTaKey()
 	if (owner != this)
 		return owner->getTaKey();
 
-	Transaction;
+	ReadTransaction;
 	TransThrow();
 
 	SQL_PREPARE(q, "SELECT value FROM takeys WHERE item = ?");
@@ -546,27 +546,37 @@ void pki_x509::store_token(bool alwaysSelect)
 	p11.createObject(p11_atts);
 }
 
-void pki_x509::deleteFromToken()
+TokenDeletion pki_x509::prepareTokenDeletion()
 {
 	pki_key *privkey = getRefKey();
 	pki_scard *card = dynamic_cast<pki_scard *>(privkey);
 	slotidList p11_slots;
+	QList<std::function<void()> > steps;
 
 	if (!card || !pkcs11::libraries.loaded())
-		return;
+		return TokenDeletion();
 
 	if (privkey && privkey->isToken()) {
 		slotid slot;
 		if (!card->prepare_card(&slot))
-			return;
+			return TokenDeletion();
 		p11_slots << slot;
 	} else {
 		pkcs11 p11;
 		p11_slots = p11.getSlotList();
 	}
 	for (int i=0; i<p11_slots.count(); i++) {
-		deleteFromToken(p11_slots[i]);
+		TokenDeletion d = prepareTokenDeletion(p11_slots[i]);
+		if (d.found)
+			steps << d.destroy;
 	}
+	TokenDeletion all;
+	all.found = !steps.isEmpty();
+	all.destroy = [steps]() {
+		for (const std::function<void()> &step : steps)
+			step();
+	};
+	return all;
 }
 
 pk11_attlist pki_x509::objectAttributes()
@@ -579,44 +589,53 @@ pk11_attlist pki_x509::objectAttributes()
 	return attrs;
 }
 
-void pki_x509::deleteFromToken(const slotid &slot)
+TokenDeletion pki_x509::prepareTokenDeletion(const slotid &slot)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
+	/* the session stays open, and logged in, until destroy() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
 	pk11_attlist atts = objectAttributes();
-	QList<CK_OBJECT_HANDLE> objs = p11.objectList(atts);
+	QList<CK_OBJECT_HANDLE> objs = p11->objectList(atts);
 	if (!objs.count())
-		return;
+		return TokenDeletion();
 
-	tkInfo ti = p11.tokenInfo();
+	tkInfo ti = p11->tokenInfo();
 	if (!XCA_YESNO("token.delete_certificate", tr("Delete the certificate '%1' from the token '%2 (#%3)'?").
 		arg(getIntName()).arg(ti.label()).arg(ti.serial())))
 	{
-		return;
+		return TokenDeletion();
 	}
-	if (!p11.tokenLoginForModification())
-		return;
+	if (!p11->tokenLoginForModification())
+		return TokenDeletion();
 
-	p11.deleteObjects(objs);
+	TokenDeletion d;
+	d.found = true;
+	d.destroy = [p11, objs]() { p11->deleteObjects(objs); };
+	return d;
 }
 
-int pki_x509::renameOnToken(const slotid &slot, const QString &name)
+TokenRename pki_x509::prepareTokenRename(const slotid &slot,
+			const QString &name)
 {
+	/* the session stays open, and logged in, until apply() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	pkcs11 p11;
-	p11.startSession(slot, true);
 	pk11_attlist attrs = objectAttributes();
-
-	QList<CK_OBJECT_HANDLE> objs = p11.objectList(attrs);
+	QList<CK_OBJECT_HANDLE> objs = p11->objectList(attrs);
 	if (!objs.count())
-		return 0;
+		return TokenRename();
+	if (!p11->tokenLoginForModification())
+		return TokenRename();
 
-	pk11_attr_data label(CKA_LABEL, name.toUtf8());
-	if (!p11.tokenLoginForModification())
-		return 0;
-	p11.storeAttribute(label, objs[0]);
-	return 1;
+	TokenRename r;
+	r.found = true;
+	r.apply = [p11, objs, name]() {
+		pk11_attr_data label(CKA_LABEL, name.toUtf8());
+		p11->storeAttribute(label, objs[0]);
+	};
+	return r;
 }
 
 void pki_x509::setNotBefore(const a1time &a)
@@ -717,7 +736,7 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 		my_error(tr("There is no key for signing !"));
 	}
 	AuditKey::refuseSigning(signkey);
-	tkey = signkey->decryptKey();
+	tkey = KeyUnlock::decrypt(signkey);
 	pki_openssl_error();
 	/* X509_sign() returns the signature size or 0: a failure leaves
 	 * the certificate unsigned and its DER empty (BTD-171) */
@@ -732,9 +751,11 @@ void pki_x509::sign(pki_key *signkey, const digest &digest)
 
 void pki_x509::writeDefault(const QString &dirname) const
 {
-	XFile file(get_dump_filename(dirname, ".crt"));
-	file.open_write();
-	writeCert(file, true);
+	/* staged: a failed dump leaves no half file (BTD-139) */
+	StagedFile::writeWith(get_dump_filename(dirname, ".crt"), false, false,
+		[this](QIODevice &file) {
+		writeCert(file, true);
+		});
 }
 
 void pki_x509::writeCert(QIODevice &file, bool PEM) const
@@ -1356,10 +1377,8 @@ int pki_x509::name_constraint_check(pki_x509 *issuer) const
 	NAME_CONSTRAINTS *nc = (NAME_CONSTRAINTS *)e.d2i();
 	Q_CHECK_PTR(nc);
 	rc = NAME_CONSTRAINTS_check(cert, nc);
-#ifndef LIBRESSL_VERSION_NUMBER
 	if (!isCA() && rc == X509_V_OK)
 		rc = NAME_CONSTRAINTS_check_CN(cert, nc);
-#endif
 	NAME_CONSTRAINTS_free(nc);
 	pki_openssl_error();
 	qDebug() << getIntName() << issuer->getIntName() << get_ossl_verify_error(rc);
