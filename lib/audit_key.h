@@ -32,6 +32,10 @@ class AuditKey
 {
   public:
 	static const char typeEd25519[];
+	/* PBKDF2-HMAC-SHA256 iterations of the stored private keys
+	 * (PBES2, AES-256-CBC; BTD-112). Keys stored with another count
+	 * stay readable: the count is part of the stored DER. */
+	static const int pbkdf2Iterations = 600000;
 
 	/* A key generated in memory, not stored yet: a checkpoint signs
 	 * before its first write (BTD-111) */
@@ -74,7 +78,8 @@ class AuditKey
 	/* Rejects a key whose public key belongs to an audit key, e.g. one
 	 * imported from a dump of audit_keys: serviceError("audit_key").
 	 * Called where XCA signs: pki_x509::sign() (issuance, renewal),
-	 * pki_x509req::createReq() and pki_crl::sign() */
+	 * pki_x509req::createReq() and pki_crl::sign(). Reads audit_keys:
+	 * needs an open database, otherwise it throws a database error. */
 	static void refuseSigning(pki_key *key);
 };
 

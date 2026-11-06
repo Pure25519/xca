@@ -194,6 +194,27 @@ Especially EC and DSA are only defined with SHA1 in the PKCS#11 specification.</
         </layout>
        </item>
        <item>
+        <layout class="QHBoxLayout" name="pkcs12IterationsLayout">
+         <item>
+          <widget class="QLabel" name="pkcs12IterationsLabel">
+           <property name="text">
+            <string>PKCS#12 iterations</string>
+           </property>
+           <property name="buddy">
+            <cstring>pkcs12Iterations</cstring>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QSpinBox" name="pkcs12Iterations">
+           <property name="toolTip">
+            <string>PBKDF2 iterations of the encryption and the MAC of a PKCS#12 export (not for the legacy algorithms)</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <spacer name="verticalSpacer_2">
          <property name="orientation">
           <enum>Qt::Vertical</enum>

@@ -30,6 +30,7 @@
 #include "pki_temp.h"
 #include "profile_store.h"
 #include "template.h"
+#include "staged_file.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -87,7 +88,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* --json (BTD-39): the outputs as JSON Lines, errors as JSON on stderr */
 	bool json = cmd_opts.has("json");
 	JsonReport::setActive(json);
-	auto report = [json](const errorEx &err) {
+	/* a failure entry that was not written turns the error into
+	 * audit_entry_lost, which keeps the original in its detail
+	 * (BTD-274) */
+	auto report = [json](const errorEx &error) {
+		QStringList lost = AuditLog::takeLostEntries();
+		serviceError lostError = AuditLog::lostEntriesError(lost,
+			JsonReport::error(error)["code"].toString(),
+			error.getString());
+		const errorEx &err = lost.isEmpty() ? error : lostError;
 		if (json)
 			JsonReport::write(stderr, JsonReport::error(err));
 		else
@@ -106,6 +115,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 	}
+	/* An empty --password is most likely an unset variable: the command
+	 * ends before anything is opened instead of running as if the
+	 * option were missing (BTD-136) */
+	if (cmd_opts.has("password") && cmd_opts["password"].isEmpty()) {
+		report(serviceError("missing_password", QObject::tr(
+			"--password is empty; give a password source (pass:, env:, "
+			"file:, fd: or stdin) or leave the option out")));
+		return EXIT_FAILURE;
+	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
@@ -120,9 +138,17 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::SqlPassword, sqlpass);
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
-		/* Questions likewise: "yes" only if confirmed here */
-		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
-				cmd_opts["confirm"].split(","));
+		/* Questions likewise: "yes" only if confirmed here; a
+		 * mistyped id would leave its question unanswered (BTD-116) */
+		QStringList unknown = xcaWarningCore::setConfirmations(
+			cmd_opts.has("yes"), cmd_opts["confirm"].split(","));
+		if (!unknown.isEmpty()) {
+			report(serviceError("usage", QObject::tr(
+				"--confirm: unknown question id %1; the ids are: %2")
+				.arg(unknown.join(", "))
+				.arg(xcaWarningCore::questionIds().join(", "))));
+			return EXIT_FAILURE;
+		}
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())
@@ -266,6 +292,44 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
 					.arg(cmd_opts["hierarchy"]));
 	}
+	/* The audit controls (BTD-100), before the verification and the
+	 * export, so that both see their result */
+	if (cmd_opts.has("audit-checkpoint-interval")) {
+		QString value = cmd_opts["audit-checkpoint-interval"];
+		try {
+			QVariantMap m { { "setting", "audit_checkpoint_interval" } };
+			if (value == "current") {
+				m["value"] = AuditLog::checkpointInterval();
+			} else {
+				bool ok;
+				int n = value.toInt(&ok);
+				if (!ok)
+					throw serviceError("invalid_value", QObject::tr(
+						"The audit checkpoint interval must be a "
+						"number or 'current', not '%1'").arg(value));
+				m["old_value"] = AuditLog::checkpointInterval();
+				AuditLog::setCheckpointInterval(
+					ServiceContext::localUser(ServiceContext::cli), n);
+				m["new_value"] = AuditLog::checkpointInterval();
+			}
+			console_write(stdout, AuditLog::canonicalJson(m) + '\n');
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
+	if (cmd_opts.has("audit-rotate-key")) {
+		try {
+			AuditEntry e = AuditLog::rotateKey(
+				ServiceContext::localUser(ServiceContext::cli));
+			XCA_INFO(QObject::tr("Audit key rotated: checkpoint %1 hands "
+				"over to the new audit key %2")
+				.arg(e.seq).arg(e.params.value("next_key_id").toString()));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
 	/* Before the verification, so that it reports the adoption */
 	if (cmd_opts.has("audit-adopt")) {
 		try {
@@ -281,7 +345,19 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* Both fail closed: any error means exit code 1 */
 	if (cmd_opts.has("audit-verify")) {
 		try {
-			AuditVerifyResult r = AuditLog::verify();
+			AuditVerifyPins pins;
+			if (cmd_opts.has("audit-key"))
+				pins.keys = cmd_opts["audit-key"].split(',',
+						Qt::SkipEmptyParts);
+			if (cmd_opts.has("audit-min-checkpoint")) {
+				bool ok;
+				pins.minCheckpoint =
+					cmd_opts["audit-min-checkpoint"].toLongLong(&ok);
+				if (!ok || pins.minCheckpoint <= 0)
+					throw errorEx(QObject::tr("Invalid checkpoint sequence number '%1'")
+						.arg(cmd_opts["audit-min-checkpoint"]));
+			}
+			AuditVerifyResult r = AuditLog::verify(pins);
 			console_write(stdout, r.toJson() + '\n');
 			if (!r.ok())
 				exitcode = EXIT_FAILURE;
@@ -296,9 +372,23 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		QString filename = cmd_opts["audit-export"];
 		try {
 			qint64 unsignedEntries = 0;
-			QByteArray lines = AuditLog::exportJsonLines(&unsignedEntries);
-			/* Without --password the export only reads (BTD-70) */
-			if (unsignedEntries > 0)
+			AuditSkippedCheckpoint skipped;
+			QByteArray lines = AuditLog::exportJsonLines(
+					&unsignedEntries, &skipped);
+			bool broken = !skipped.code.isEmpty() &&
+				skipped.code != "audit_key_unavailable";
+			/* A log no checkpoint may sign: exported read-only
+			 * for forensics, but not a clean run (BTD-112) */
+			if (broken)
+				console_write(stderr, QObject::tr(
+					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
+					"%1: %2\n")
+					.arg(skipped.code, skipped.reason).toUtf8());
+			/* Without --password the export only reads (BTD-70);
+			 * a signed export leaves only its checkpoint row
+			 * unanchored and stays silent (BTD-134) */
+			else if (skipped.code == "audit_key_unavailable" &&
+				 unsignedEntries > 0)
 				console_write(stderr, QObject::tr(
 					"Warning: no database password given, no audit checkpoint signed; "
 					"the newest %1 audit entries are not covered by a checkpoint "
@@ -307,13 +397,13 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
-				XFile f(filename);
-				if (!f.open_write() ||
-				    f.write(lines) != lines.size())
-					throw errorEx(QObject::tr("Failed to write the audit log to '%1'")
-							.arg(filename));
-				f.close();
+				/* staged: a failed write keeps an old
+				 * file (BTD-139) */
+				StagedFile::writeFile(filename, lines, false,
+						true);
 			}
+			if (broken)
+				exitcode = EXIT_FAILURE;
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;
@@ -475,16 +565,16 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (bbafile.size() > 0)
 	{
 		QString filename = cmd_opts["pem-file"];
-		XFile f(filename);
-		if (f.open_write()) {
-			f.write(bbafile);
-		} else {
+		/* staged: a failed write keeps an old file (BTD-139) */
+		try {
+			StagedFile::writeFile(filename, bbafile.byteArray(),
+					false, true);
+		} catch (errorEx &err) {
 			report(serviceError("write_failed",
-				QObject::tr("Failed to write PEM data to '%1'")
-					.arg(filename)));
+				QObject::tr("Failed to write PEM data to '%1': %2")
+					.arg(filename, err.getString())));
 			exitcode = EXIT_FAILURE;
 		}
-		f.close();
 	}
 	if (cmd_opts.has("import")) {
 		ImportSpec spec;
@@ -501,6 +591,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			report(err);
 			exitcode = EXIT_FAILURE;
 		}
+	}
+	/* a lost failure entry no error reported yet: never exit 0 */
+	QStringList lost = AuditLog::takeLostEntries();
+	if (!lost.isEmpty()) {
+		report(AuditLog::lostEntriesError(lost));
+		exitcode = EXIT_FAILURE;
 	}
 	return exitcode;
 }
