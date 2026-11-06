@@ -5,6 +5,11 @@ bxc-main (bxc-pki fork, unreleased)
    template.update entry, and the EKUs are stored in one order; a CA
    template with a path length that is not a number of 0 or more is
    refused with invalid_path_length when it is stored.
+ * BTD-113: RSA and DSA keys above 16384 bit, and DSA keys below 512 bit,
+   are refused at once with invalid_key_size (and an audit failure
+   entry), also when the size is confirmed; RSA:65536 ran for hours.
+   A failed DSA or EC parameter generation is reported as a key
+   generation failure, not as invalid_key_size or invalid_curve.
  * BTD-116: the key generation service requires the confirmation of an
    RSA/DSA size outside 1024..8192 bit itself: without "key.size" in
    the ServiceContext it refuses with confirmation_required and a
