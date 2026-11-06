@@ -23,6 +23,14 @@ set(ENV{QT_QPA_PLATFORM} offscreen)
 # front of it is fine for this test
 set(ENV{ASAN_OPTIONS} "verify_asan_link_order=0:$ENV{ASAN_OPTIONS}")
 
+# the AddressSanitizer run of bxc-pki (dev.py asan) sets
+# BXC_TEST_TIME_FACTOR for its slower binaries, as in cli/test/cli_lib.cmake
+set(TIME_FACTOR 1)
+if("$ENV{BXC_TEST_TIME_FACTOR}" MATCHES "^[1-9][0-9]*$")
+  set(TIME_FACTOR "$ENV{BXC_TEST_TIME_FACTOR}")
+endif()
+math(EXPR T120 "120 * ${TIME_FACTOR}")
+
 set(DB "${WORK}/one.xdb")
 set(DB_PW "One-Libcrypto-251")
 
@@ -42,7 +50,7 @@ function(loaded label)
   execute_process(COMMAND ${CMAKE_COMMAND} -E env
       "LD_PRELOAD=${PRELOAD}" "XCA_LOADCHECK_OUT=${list}" ${ARGN}
     WORKING_DIRECTORY "${WORK}" INPUT_FILE /dev/null
-    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 120)
+    RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT ${T120})
   if(NOT rc EQUAL 0)
     message(FATAL_ERROR "${label}: exit code ${rc}\n${out}\n${err}")
   endif()
@@ -110,9 +118,10 @@ check(bxc-pki "${BXC_PKI}" init --db "${DB}" --password "pass:${DB_PW}"
 # the GUI binary without a window: open the database, print the certificate
 check(xca "${XCA}" --no-gui --database "${DB}" --password "pass:${DB_PW}"
   --json --print --select 2)
-# the GUI test binary with one test function, and one service test
+# the GUI test binary and a service test, each with one test function:
+# the libraries are loaded at start, the whole suite adds only run time
 check(testxca "${TESTXCA}" automationIds)
-check(service_test "${SERVICE_TEST}")
+check(service_test "${SERVICE_TEST}" chainValid)
 
 if(failures)
   string(REPLACE ";" "\n" text "${failures}")
