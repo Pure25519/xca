@@ -4,11 +4,13 @@
 # one JSON file; errors are an error object on stderr with exit code 1.
 # No output names private key material or a password: the database holds
 # keys encrypted with the database password and one with its own password.
-# cmake -DXCA=<xca> -DDATA=<data/json> [-DOPENSSL=<openssl>]
+# cmake -DXCA=<xca> -DDATA=<test/service/data> [-DOPENSSL=<openssl>]
 #       [-DSQL_EXEC=<sql_exec>] -DWORK=<scratch dir> -P cli_json_output.cmake
 
 cmake_minimum_required(VERSION 3.19)   # string(JSON)
 
+# the fixtures of the JSON tests (BTD-256: DATA is the common data directory)
+set(DATA "${DATA}/json")
 file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")
@@ -222,8 +224,10 @@ if(NOT out STREQUAL "")
   fail("wrong password: output on stdout:\n${out}")
 endif()
 
+# A missing directory is refused by StagedFile before it writes, with its
+# typed code (BTD-139; before: internal_error from XFile)
 run("index write error" 1 ${pw} --json --index "${WORK}/no-such-dir/i.json")
-error_object("index write error" internal_error)
+error_object("index write error" invalid_output)
 
 # Acceptance criterion 4: no key material and no secret anywhere
 foreach(secret "PRIVATE KEY" "ENCRYPTED" "${DB_PW}" "${OWN_PW}"

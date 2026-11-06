@@ -23,6 +23,7 @@
 #include "lib/settings.h"
 
 #include "ServiceTestCase.h"
+#include "lib/sql.h"
 
 const char ServiceTestCase::dbPassword[] = "service-test-db-pass";
 
@@ -68,9 +69,20 @@ void StrictPwDialog::reset()
 	delegateTo(nullptr);
 }
 
+/* No question, password or PIN prompt while a database transaction is
+ * open: the user would read it with the database locked (BTD-273) */
+static void outsideTransaction(const QString &what)
+{
+	if (DbTransaction::active())
+		ServiceViolations::add(QString("%1 inside a database "
+				"transaction").arg(what));
+}
+
 enum open_result StrictPwDialog::execute(pass_info *p, Passwd *passwd,
 					bool write, bool abort)
 {
+	outsideTransaction(QString("password prompt '%1'")
+			.arg(p->getDescription()));
 	if (delegate)
 		return delegate->execute(p, passwd, write, abort);
 	if (expected.isEmpty()) {
@@ -105,6 +117,8 @@ int StrictPwDialog::selectKeySlot(const QString &label,
 
 void StrictPwDialog::pinPadLogin(pass_info *p, QThread *login)
 {
+	outsideTransaction(QString("PIN pad login '%1'")
+			.arg(p->getDescription()));
 	if (delegate) {
 		delegate->pinPadLogin(p, login);
 		return;
@@ -146,6 +160,7 @@ void StrictWarning::reset()
 				.arg(m));
 	answers.clear();
 	messages.clear();
+	notices.clear();
 	delegateTo(nullptr);
 	xcaWarningCore::setConfirmations(false, QStringList());
 }
@@ -164,6 +179,7 @@ void StrictWarning::message(const char *kind, const QString &msg)
 bool StrictWarning::question(const char *kind, const QString &id,
 			const QString &msg)
 {
+	outsideTransaction(QString("question %1").arg(id));
 	if (delegate)
 		return QString(kind) == "yesno" ? delegate->yesno(id, msg) :
 				delegate->okcancel(id, msg);
@@ -183,6 +199,18 @@ void StrictWarning::information(const QString &msg)
 void StrictWarning::warning(const QString &msg)
 {
 	message("warning", msg);
+}
+
+void StrictWarning::notice(const QString &msg)
+{
+	notices << msg;
+}
+
+QStringList StrictWarning::takeNotices()
+{
+	QStringList n = notices;
+	notices.clear();
+	return n;
 }
 
 void StrictWarning::warningv3(const QString &msg, const extList &)

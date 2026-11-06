@@ -270,13 +270,13 @@ pk11_attr_data pki_scard::getIdAttr() const
 	return id;
 }
 
-void pki_scard::deleteFromToken()
+TokenDeletion pki_scard::prepareTokenDeletion()
 {
 	slotid slot;
 
 	if (!prepare_card(&slot))
-		return;
-	deleteFromToken(slot);
+		return TokenDeletion();
+	return prepareTokenDeletion(slot);
 }
 
 /* A key type the token code cannot store, by its OpenSSL name: ML-DSA
@@ -340,53 +340,59 @@ pk11_attlist pki_scard::objectAttributes(bool priv) const
 	return attrs;
 }
 
-void pki_scard::deleteFromToken(const slotid &slot)
+TokenDeletion pki_scard::prepareTokenDeletion(const slotid &slot)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
+	/* the session stays open, and logged in, until destroy() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	tkInfo ti = p11.tokenInfo();
+	tkInfo ti = p11->tokenInfo();
 	if (!XCA_YESNO("token.delete_key", tr("Delete the private key '%1' from the token '%2 (#%3)' ?").
 			arg(getIntName()).arg(ti.label()).arg(ti.serial())))
-		return;
+		return TokenDeletion();
 
-	if (!p11.tokenLoginForModification())
-		return;
+	if (!p11->tokenLoginForModification())
+		return TokenDeletion();
 
 	pk11_attlist atts = objectAttributes(true);
-	QList<CK_OBJECT_HANDLE> priv_objects = p11.objectList(atts);
+	QList<CK_OBJECT_HANDLE> objects = p11->objectList(atts);
 	atts = objectAttributes(false);
-	QList<CK_OBJECT_HANDLE> pub_objects = p11.objectList(atts);
+	objects += p11->objectList(atts);
 
-	p11.deleteObjects(priv_objects);
-	p11.deleteObjects(pub_objects);
+	TokenDeletion d;
+	d.found = !objects.isEmpty();
+	d.destroy = [p11, objects]() { p11->deleteObjects(objects); };
+	return d;
 }
 
-int pki_scard::renameOnToken(const slotid &slot, const QString &name)
+TokenRename pki_scard::prepareTokenRename(const slotid &slot,
+			const QString &name)
 {
-	pkcs11 p11;
-	p11.startSession(slot, true);
-	QList<CK_OBJECT_HANDLE> objs;
+	/* the session stays open, and logged in, until apply() ran */
+	auto p11 = std::make_shared<pkcs11>();
+	p11->startSession(slot, true);
 
-	if (!p11.tokenLoginForModification())
-		return 0;
-	pk11_attr_data label(CKA_LABEL, name.toUtf8());
+	if (!p11->tokenLoginForModification())
+		return TokenRename();
 
 	/* Private key */
 	pk11_attlist attrs = objectAttributes(true);
-
-	objs = p11.objectList(attrs);
-	if (!objs.count())
-		return 0;
-	p11.storeAttribute(label, objs[0]);
-
+	QList<CK_OBJECT_HANDLE> priv = p11->objectList(attrs);
+	if (!priv.count())
+		return TokenRename();
 	/* Public key */
 	attrs = objectAttributes(false);
-	objs = p11.objectList(attrs);
-	if (objs.count())
-		p11.storeAttribute(label, objs[0]);
+	QList<CK_OBJECT_HANDLE> pub = p11->objectList(attrs);
 
-	return 1;
+	TokenRename r;
+	r.found = true;
+	r.apply = [p11, priv, pub, name]() {
+		pk11_attr_data label(CKA_LABEL, name.toUtf8());
+		p11->storeAttribute(label, priv[0]);
+		if (pub.count())
+			p11->storeAttribute(label, pub[0]);
+	};
+	return r;
 }
 
 void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
@@ -630,8 +636,14 @@ pk11_attr_data pki_scard::fixedSlotId(const QString &model,
 	for (const QStringList &item : fixed_ids)
 		items << item[0];
 	int i = PwDialogCore::selectKeySlot(model, items);
-	if (i >= 0 && i < fixed_ids.size())
-		new_id.setULong(fixed_ids[i][1].toULong());
+	/* no valid choice: an empty CKA_ID would reach generateKey() or
+	 * store_token() and land in a slot nobody chose (BTD-176) */
+	if (i < 0 || i >= fixed_ids.size())
+		throw secretError(secretError::rejected,
+			QObject::tr("No key slot of %1 selected: the answer "
+				"must be a slot number 1-%2")
+				.arg(model).arg(fixed_ids.size()));
+	new_id.setULong(fixed_ids[i][1].toULong());
 	return new_id;
 }
 

@@ -324,11 +324,14 @@ class Run
 	const FileDef &f;
 	QList<Decision> decisions{};
 	QJsonArray uncheckedList{};
+	QList<QPair<QString, QString> > warningList{};  // code, detail
 	QMap<QString, pki_x509 *> made{};
 
 	void record(Decision &d, const serviceError &err);
-	bool known(const QString &kind, const QString &id) const;
+	bool known(const QString &kind, const QString &id,
+		bool *retired = nullptr) const;
 	void references(const CaDef &c) const;
+	void issuedWithFits(const CaDef &c);
 	void evaluateDoc(Decision &d);
 	void evaluateCa(Decision &d);
 	void applyDoc(Decision &d);
@@ -403,6 +406,7 @@ void Run::evaluate()
 {
 	decisions.clear();
 	uncheckedList = QJsonArray();
+	warningList.clear();
 	if (ctx.plan) {
 		for (const SecretField &s : secrets()) {
 			if (s.value.startsWith("op://")) {
@@ -515,6 +519,7 @@ void Run::evaluateCa(Decision &d)
 	d.subject = subjectOf(c);
 	d.def = definition(c, f);
 	references(c);
+	issuedWithFits(c);
 	/* rule 1: a CA whose parent (or a CA above it) forbids it by its
 	 * path_len is refused */
 	int below = 1;
@@ -623,15 +628,22 @@ void Run::evaluateCa(Decision &d)
 
 /* A profile or policy id of the file, or (database open) of the
  * database */
-bool Run::known(const QString &kind, const QString &id) const
+/* retired: set when the document exists only in the database and its
+ * newest version is retired; a document of the file is stored as a new,
+ * not retired version (evaluateDoc) */
+bool Run::known(const QString &kind, const QString &id, bool *retired) const
 {
+	if (retired)
+		*retired = false;
 	for (const DocDef &doc : f.docs)
 		if (doc.kind == kind && doc.id == id)
 			return true;
 	if (!dbOpen)
 		return false;
 	try {
-		ProfileStore::show(kind, id);
+		bool r = ProfileStore::show(kind, id).retired;
+		if (retired)
+			*retired = r;
 	} catch (serviceError &err) {
 		if (err.code != "document_not_found")
 			throw;
@@ -641,26 +653,71 @@ bool Run::known(const QString &kind, const QString &id) const
 }
 
 /* issued_with, profiles and policies name documents of the file or the
- * database: unknown_reference at the pointer of the id */
+ * database: unknown_reference at the pointer of the id. profiles and
+ * policies are assigned, so a retired database document is refused with
+ * the code of ProfileStore::assign (document_retired, BTD-232);
+ * issued_with only records how the CA was issued, a profile retired since
+ * then stays a valid record */
 void Run::references(const CaDef &c) const
 {
 	auto check = [this](const QString &kind, const QString &id,
-			const QString &ptr) {
-		if (!known(kind, id))
+			const QString &ptr, bool assigned) {
+		bool retired;
+		if (!known(kind, id, &retired))
 			throw serviceError("unknown_reference",
 				QString("%1: %2").arg(ptr, tr("there is no %1 "
 				"'%2' in the file or the database")
 				.arg(kind, id)));
+		if (assigned && retired)
+			throw serviceError("document_retired",
+				QString("%1: %2").arg(ptr, tr("the %1 '%2' "
+				"of the database is retired").arg(kind, id)));
 	};
 	if (!c.issuedWith.isEmpty())
 		check("profile", c.issuedWith,
-			jsonMember(c.pointer, "issued_with"));
+			jsonMember(c.pointer, "issued_with"), false);
 	for (const auto &k : assignmentKinds) {
 		const QStringList &ids = assignedIn(c, k.first);
 		for (int i = 0; i < ids.size(); i++)
 			check(k.second, ids[i], jsonItem(jsonMember(c.pointer,
-				k.first), i));
+				k.first), i), true);
 	}
+}
+
+/* issued_with is not applied, but a profile that contradicts the CA would
+ * be a misleading record: every mismatch of the profile (from the file or
+ * the database) with the CA's key type, path_len and validity is a
+ * warning issued_with_mismatch at the pointer of issued_with (BTD-233).
+ * The validity is the one the CA is made with: not_before or now, then
+ * not_after or validity (default P10Y for a root, P5Y below) */
+void Run::issuedWithFits(const CaDef &c)
+{
+	if (c.issuedWith.isEmpty())
+		return;
+	QJsonObject doc;
+	for (const DocDef &d : f.docs)
+		if (d.kind == "profile" && d.id == c.issuedWith)
+			doc = d.doc;
+	if (doc.isEmpty())
+		doc = ProfileStore::show("profile", c.issuedWith).document;
+	Profile p;
+	QDateTime from, to;
+	try {
+		p = Profile::fromJson(doc);
+		from = c.notBefore.isEmpty() ? QDateTime::currentDateTimeUtc() :
+			(QDateTime)parseTimestamp(c.notBefore, "not_before");
+		to = !c.notAfter.isEmpty() ?
+			(QDateTime)parseTimestamp(c.notAfter, "not_after") :
+			parseDuration(!c.validity.isEmpty() ? c.validity :
+				c.parent.isEmpty() ? "P10Y" : "P5Y", "validity")
+				.addTo(from);
+	} catch (errorEx &) {
+		return;  // the profile entry or the CA reports it
+	}
+	QString ptr = jsonMember(c.pointer, "issued_with");
+	for (const auto &m : p.caMismatches(c.key, c.pathLen, from, to))
+		warningList << qMakePair(QString("issued_with_mismatch"),
+			QString("%1: %2 (%3)").arg(ptr, m.second, m.first));
 }
 
 int Run::count(const QString &action) const
@@ -902,6 +959,8 @@ QJsonObject Run::entry(const Decision &d) const
 
 QJsonObject Run::report() const
 {
+	for (const auto &w : warningList)
+		ctx.result->warning(w.first, w.second);
 	QJsonObject b, counts;
 	b["file"] = f.path;
 	b["file_sha256"] = f.sha256;

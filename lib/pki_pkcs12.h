@@ -68,6 +68,18 @@ class pki_pkcs12: public pki_multi
 		void parse(const QByteArray &ba, const QString &fname);
 
 	public:
+		/* The MACs of a PKCS#12 export; the first is the default
+		 * (BTD-175) */
+		static const QStringList macs;
+		/* The bounds of the PKCS#12 iteration count: the minimum
+		 * is the BTD-52 default, the maximum keeps one export
+		 * below seconds */
+		static const int minIterations = 2048;
+		static const int maxIterations = 10000000;
+		/* The iteration count of the options, or the setting
+		 * pkcs12_iterations */
+		static int iterationsForExport(const ExportOptions &opts);
+
 		pki_pkcs12(const QString &d, pki_x509 *acert, pki_key *akey);
 		pki_pkcs12(const QString &fname);
 		/* The content of a PKCS#12 file (BTD-34) */

@@ -12,6 +12,7 @@
 #include "digest.h"
 #include "pki_pkcs12.h"
 #include "pki_export.h"
+#include "audit.h"
 
 #include <QDebug>
 #include <QDir>
@@ -52,6 +53,9 @@ const QMap<QString, QString> settings::defaults() const
 		 * the database opened before (BTD-174) */
 		{ "default_hash", digest::getBuiltinDefault().name() },
 		{ "pkcs12_enc_algo", encAlgo::getBuiltinDefault().name() },
+		/* PBKDF2 iterations of a PKCS#12 export (BTD-175) */
+		{ "pkcs12_iterations",
+			QString::number(pki_pkcs12::minIterations) },
 		{ "ical_expiry", "1W" },
 		{ "cert_expiry", "80%" },
 		{ "serial_len", "64" },
@@ -68,6 +72,7 @@ void settings::clear()
 	loaded = false;
 	values.clear();
 	db_keys.clear();
+	legacyOptionflags.clear();
 	keyjob::defaultjob = keyjob();
 	const QMap<QString, QString> def = defaults();
 	for(QString key : def.keys())
@@ -88,21 +93,46 @@ void settings::setAction(const QString &key, const QString &value)
 	else if (key == "defaultkey")
 		keyjob::defaultjob = keyjob(value);
 	else if (key == "optionflags") {
-		XSqlQuery q;
-		Transaction;
-		if (!TransBegin())
-			return;
-		SQL_PREPARE(q, "DELETE FROM settings where key_='optionflags'");
-		q.exec();
+		/* Reading the settings happens before the database password
+		 * is checked: memory only, migrateOptionflags() stores them
+		 * (BTD-137). Before, the row was deleted and committed here. */
+		legacyOptionflags = value;
 		foreach(QString flag, value.split(",")) {
 			if (flag == "dont_colorize_expiries")
 				flag = "no_expire_colors";
 			setAction(flag, "yes");
 		}
-		TransCommit();
 		return;
 	}
 	values[key] = value;
+}
+
+void settings::migrateOptionflags()
+{
+	load_settings();
+	if (legacyOptionflags.isEmpty())
+		return;
+	XSqlQuery q;
+	Transaction;
+	if (!TransBegin())
+		return;
+	foreach(QString flag, legacyOptionflags.split(",", Qt::SkipEmptyParts)) {
+		if (flag == "dont_colorize_expiries")
+			flag = "no_expire_colors";
+		/* "yes" in memory already, but not stored: not in db_keys */
+		set(flag, "yes");
+	}
+	SQL_PREPARE(q, "DELETE FROM settings WHERE key_='optionflags'");
+	q.exec();
+	if (q.lastError().isValid()) {
+		qWarning() << "optionflags not migrated:" << q.lastError().text();
+		TransRollback();
+		return;
+	}
+	if (!TransCommit())
+		return;
+	db_keys.removeAll("optionflags");
+	legacyOptionflags.clear();
 }
 
 QString settings::defaults(const QString &key)
@@ -202,4 +232,51 @@ void settings::set(QString key, QString value)
 		else
 			values.remove(origkey);
 	});
+}
+
+/* The options of the Options dialog (the keys of its shown()) and the
+ * audit checkpoint interval: their values go into the audit log in
+ * clear (BTD-224) */
+static const QStringList clearSettings {
+	"adapt_explicit_subj", "cert_expiry", "default_hash",
+	"disable_netscape", "explicit_dn", "ical_expiry", "mandatory_dn",
+	"no_expire_colors", "only_token_hashes", "pkcs11path",
+	"pkcs12_enc_algo", "serial_len", "string_opt", "suppress_messages",
+	"translate_dn",
+	/* not in the dialog, but no secret either (BTD-100) */
+	"audit_checkpoint_interval",
+};
+
+static bool clearSetting(const QString &key)
+{
+	/* never a password or the password hash, whatever the list says */
+	if (key.contains("pass", Qt::CaseInsensitive) || key == "pwhash")
+		return false;
+	return clearSettings.contains(key);
+}
+
+void settings::update(const ServiceContext &ctx,
+			const QMap<QString, QString> &changes)
+{
+	Transaction;
+	TransThrow();
+	for (auto i = changes.cbegin(); i != changes.cend(); ++i) {
+		QString old = get(i.key());
+		set(i.key(), i.value());
+		QString now = get(i.key());
+		/* set() skips a value it does not take (a workingdir
+		 * that does not exist) */
+		if (now == old)
+			continue;
+		AuditParams params;
+		params.set("setting", hostspecific.contains(i.key()) ?
+			QString("%1:%2").arg(i.key()).arg(hostId()) : i.key());
+		if (clearSetting(i.key()))
+			params.set("old_value", old).set("new_value", now);
+		else
+			params.set("redacted", true);
+		AuditLog::append(ctx, AuditLog::actionSettingsUpdate,
+				"database", QString(), params);
+	}
+	TransCommitThrow();
 }
