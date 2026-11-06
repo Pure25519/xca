@@ -84,6 +84,7 @@ class test_service_revocation : public ServiceTestCase
 	void sameCodeForCertificateAndCrl();
 	void passwordProtectedCaKey();
 	void reasonStates();
+	void invalidityDate();
 };
 
 pki_x509 *test_service_revocation::issue(const QString &cn, pki_key *key,
@@ -485,6 +486,8 @@ void test_service_revocation::rejected_data()
 		<< "crl.generate" << "issuer_not_ca";
 	QTest::newRow("CRL without CA key") << "nokey"
 		<< "crl.generate" << "no_private_signing_key";
+	QTest::newRow("invalidity date after the revocation date")
+		<< "future" << "certificate.revoke" << "invalid_invalidity_date";
 	QTest::newRow("revocation list with a serial twice") << "duplicate"
 		<< "ca.set_revocations" << "duplicate_serial";
 }
@@ -521,7 +524,12 @@ void test_service_revocation::rejected()
 			certs()->revoke(ctx, ca, reason("Superseded"));
 		else if (variant == "reason")
 			certs()->revoke(ctx, ee, reason("no such reason"));
-		else if (variant == "nocert")
+		else if (variant == "future") {
+			x509rev rev = reason("Key Compromise");
+			rev.setInvalDate(a1time(QDateTime::currentDateTimeUtc()
+							.addDays(1)));
+			certs()->revoke(ctx, ee, rev);
+		} else if (variant == "nocert")
 			certs()->revoke(ctx, nullptr, reason("Superseded"));
 		else if (variant == "notrevoked")
 			certs()->unrevoke(ctx, ee);
@@ -962,3 +970,52 @@ void test_service_revocation::reasonStates()
 
 XCA_SERVICE_TEST_MAIN(test_service_revocation)
 #include "test_service_revocation.moc"
+
+/* BTD-206: a revocation without an invalidity date has none, in the CRL
+ * entry, the revocations table and the audit entry (RFC 5280 5.3.2); a
+ * given one is kept exactly */
+void test_service_revocation::invalidityDate()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = rootCa("Invalidity Root CA");
+	pki_x509 *without = endEntity("without", ca);
+	pki_x509 *with = endEntity("with", ca);
+	QVERIFY(ca && without && with);
+
+	certs()->revoke(ctx, without, reason("Key Compromise"));
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.result, QString("success"));
+	QVERIFY2(e.params["invalidity_date"].isNull(),
+		CCHAR(e.params["invalidity_date"].toString()));
+	QCOMPARE(revocationRows(), 1);
+	XSqlQuery q("SELECT invaldate FROM revocations");
+	QVERIFY(q.first());
+	/* the table keeps "no date" as XCA's undefined time, as for
+	 * every other optional date; it reads back as undefined */
+	QCOMPARE(q.value(0).toString(), a1time().setUndefined().toPlain());
+	a1time stored;
+	stored.fromPlain(q.value(0).toString());
+	QVERIFY(stored.isUndefined());
+	QVERIFY(without->getRevocation().getInvalDate().isUndefined());
+
+	a1time inval("20261001120000Z");
+	x509rev rev = reason("Key Compromise");
+	rev.setInvalDate(inval);
+	certs()->revoke(ctx, with, rev);
+	e = AuditLog::entries().last();
+	QCOMPARE(e.params["invalidity_date"].toString(),
+		QString("2026-10-01T12:00:00Z"));
+
+	QString text = crlText(crl(ca), ca);
+	QVERIFY(!text.isEmpty());
+	QCOMPARE(text.count("Invalidity Date"), 1);
+	int at = text.indexOf("Serial Number: " + with->getSerial().toHex());
+	QVERIFY2(at >= 0, CCHAR(text));
+	QVERIFY2(text.indexOf("Oct  1 12:00:00 2026 GMT", at) > at,
+		CCHAR(text));
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+#endif
+}
