@@ -377,8 +377,16 @@ QJsonObject JsonReport::crl(const pki_crl *crl)
 	o["this_update"] = timestamp(crl->getLastUpdate());
 	const ASN1_TIME *next = X509_CRL_get0_nextUpdate(c);
 	o["next_update"] = next ? timestamp(a1time(next)) : QJsonValue();
-	o["crl_number"] = crl->getCrlNumber(&number) ?
-			QJsonValue(number.toDec().toLongLong()) : QJsonValue();
+	/* exact: an integer up to 2^53-1, which every JSON parser keeps,
+	 * the decimal string beyond (BTD-182) */
+	if (crl->getCrlNumber(&number)) {
+		bool ok;
+		qint64 n = number.toDec().toLongLong(&ok);
+		o["crl_number"] = ok && n <= (Q_INT64_C(1) << 53) - 1 ?
+			QJsonValue(n) : QJsonValue(number.toDec());
+	} else {
+		o["crl_number"] = QJsonValue();
+	}
 	X509_CRL_get0_signature(c, nullptr, &alg);
 	o["signature_algorithm"] = algorithm(alg);
 
