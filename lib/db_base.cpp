@@ -717,7 +717,8 @@ static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
 		q.exec();
 		QSqlError e = q.lastError();
 		if (e.isValid())
-			throw serviceError("database_error", e.text());
+			throwSqlError(e, QObject::tr("The revocations of the CA could "
+				"not be counted"));
 		if (q.next())
 			*revocations = q.value(0).toInt();
 	}
