@@ -127,6 +127,7 @@ class test_main: public QObject
 	void templateMergeShownAndSaved();
 	void templateMergeLegacyKept();
 	void templateMergeDefaultRefused();
+	void templateMergeNoDuplicate();
 
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();

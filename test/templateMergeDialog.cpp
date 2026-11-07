@@ -13,7 +13,11 @@
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
 #include "widgets/XcaWarning.h"
+#include "lib/db_key.h"
+#include "lib/db_x509req.h"
 #include "lib/pki_temp.h"
+#include "lib/pki_x509req.h"
+#include "lib/request.h"
 #include "lib/template.h"
 
 #include "main.h"
@@ -138,4 +142,50 @@ void test_main::templateMergeDefaultRefused()
 	QVERIFY(dlg->result() != QDialog::Accepted);
 	delete dlg;
 	delete temp;
+}
+
+/* Signing a request with a template whose SAN mode merges: the dialog's
+ * check does not count the request's SAN as a duplicate, the issuance
+ * merges both into one (found by the GUI case gui.template.request_merge).
+ * With legacy, a copied SAN next to the template's stays a duplicate. */
+void test_main::templateMergeNoDuplicate()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		RequestSpec r;
+		r.name = "merge request";
+		r.subject.addEntryByNid(NID_commonName, "req.example");
+		r.key = Database.model<db_key>()->newKey(keyjob("EC:prime256v1"),
+				"merge request key");
+		r.hashAlgo = digest(NID_sha256);
+		r.extensions.subjectAltName = "DNS:req.example";
+		pki_x509req *req = Database.model<db_x509req>()->newRequest(ctx, r);
+		QVERIFY(req);
+
+		for (ExtensionSpec::requestMerge m : { ExtensionSpec::merge_union,
+					ExtensionSpec::merge_legacy }) {
+			pki_temp *temp = new pki_temp("merge SAN template");
+			TemplateSpec t = TemplateSpec::fromTemplate(temp);
+			t.extensions.subjectAltName = "DNS:tmpl.example";
+			t.extensions.sanMerge = m;
+			t.toTemplate(temp);
+
+			NewX509 *dlg = new NewX509(mainwin);
+			dlg->setCert();
+			dlg->defineRequest(req);
+			dlg->defineTemplate(temp);
+			dlg->copyReqExtCB->setChecked(true);
+			QString result;
+			int ee = dlg->validateExtensions(result);
+			delete dlg;
+			delete temp;
+			if (m == ExtensionSpec::merge_union)
+				QVERIFY2(ee == 0, CCHAR(result));
+			else
+				QVERIFY2(ee != 0, CCHAR(result));
+		}
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
 }
