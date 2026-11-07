@@ -1177,9 +1177,12 @@ enum NewX509::extension_error NewX509::validateExtensions(QString &result)
 		 * are not copied: the issuance merges them into one instance
 		 * (BTD-54), so they are no duplicates (BTD-185) */
 		QList<int> merged;
-		for (const auto &m : { qMakePair(NID_subject_alt_name, reqSanMerge),
-				       qMakePair(NID_key_usage, reqKuMerge),
-				       qMakePair(NID_ext_key_usage, reqEkuMerge) }) {
+		const QList<QPair<int, QComboBox *> > modes {
+			{ NID_subject_alt_name, reqSanMerge },
+			{ NID_key_usage, reqKuMerge },
+			{ NID_ext_key_usage, reqEkuMerge },
+		};
+		for (const auto &m : modes) {
 			if (m.second->currentData().toInt() !=
 			    ExtensionSpec::merge_legacy)
 				merged << m.first;
