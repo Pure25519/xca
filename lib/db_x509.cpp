@@ -665,6 +665,9 @@ static void *requestedExt(X509_REQ *req, int nid, int *critical)
 	return value;
 }
 
+X509_EXTENSION *(*db_x509::encodeExtension)(int, int, void *) =
+	X509V3_EXT_i2d;
+
 /* Replaces or adds the extension nid of cert, keeping its place */
 static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 {
@@ -672,7 +675,7 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 	int at = X509_get_ext_by_NID(x, nid, -1);
 	if (at >= 0)
 		X509_EXTENSION_free(X509_delete_ext(x, at));
-	X509_EXTENSION *ext = X509V3_EXT_i2d(nid, critical, value);
+	X509_EXTENSION *ext = db_x509::encodeExtension(nid, critical, value);
 	if (ext)
 		X509_add_ext(x, ext, at);
 	X509_EXTENSION_free(ext);
