@@ -34,6 +34,25 @@ static QString stripCopyToken(const QString &s, const QString &token)
 	return sn.join(", ");
 }
 
+void ExtensionSpec::checkEkuNames() const
+{
+	const QList<QPair<const char *, const QStringList *> > fields {
+		{ "ekuAllowed", &ekuAllowed }, { "ekuDefault", &ekuDefault },
+	};
+	for (const auto &f : fields) {
+		for (const QString &name : *f.second) {
+			ASN1_OBJECT *o = OBJ_txt2obj(CCHAR(name), 0);
+			ASN1_OBJECT_free(o);
+			ign_openssl_error();
+			if (!o)
+				throw serviceError("template_eku_unknown",
+					QCoreApplication::translate("ExtensionSpec",
+					"%1: '%2' is no known extended key usage (a short name, long name or OID)")
+					.arg(f.first, name));
+		}
+	}
+}
+
 x509v3ext ExtensionSpec::basicConstraintsExt(X509V3_CTX *ctx) const
 {
 	QStringList cont;

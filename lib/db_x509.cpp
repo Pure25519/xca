@@ -668,16 +668,33 @@ static void *requestedExt(X509_REQ *req, int nid, int *critical)
 X509_EXTENSION *(*db_x509::encodeExtension)(int, int, void *) =
 	X509V3_EXT_i2d;
 
-/* Replaces or adds the extension nid of cert, keeping its place */
+/* Replaces or adds the extension nid of cert, keeping its place. Encodes
+ * first: a value that does not encode is an error and the template's
+ * extension stays, never a certificate without it (BTD-192) */
 static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 {
 	X509 *x = cert->getCert();
-	int at = X509_get_ext_by_NID(x, nid, -1);
-	if (at >= 0)
-		X509_EXTENSION_free(X509_delete_ext(x, at));
 	X509_EXTENSION *ext = db_x509::encodeExtension(nid, critical, value);
-	if (ext)
-		X509_add_ext(x, ext, at);
+	if (!ext)
+		throw serviceError("invalid_extension", QString("%1
+%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
+	int at = X509_get_ext_by_NID(x, nid, -1);
+	X509_EXTENSION *old = at >= 0 ? X509_delete_ext(x, at) : nullptr;
+	if (!X509_add_ext(x, ext, at)) {
+		if (old)
+			X509_add_ext(x, old, at);
+		X509_EXTENSION_free(old);
+		X509_EXTENSION_free(ext);
+		throw serviceError("invalid_extension", QString("%1
+%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
+	}
+	X509_EXTENSION_free(old);
 	X509_EXTENSION_free(ext);
 }
 
@@ -688,6 +705,8 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
 			X509_REQ *req, int *critical, bool leaf, bool *fromDefault)
 {
+	/* a spec that bypassed the template check (BTD-192) */
+	e.checkEkuNames();
 	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)
 			requestedExt(req, NID_ext_key_usage, critical);
 	*fromDefault = !eku && !e.ekuDefault.isEmpty();
