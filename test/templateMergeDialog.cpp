@@ -13,6 +13,7 @@
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
 #include "widgets/XcaWarning.h"
+#include "lib/audit.h"
 #include "lib/db_key.h"
 #include "lib/db_x509req.h"
 #include "lib/pki_temp.h"
