@@ -1,6 +1,11 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-255: the offline help is switched off deliberately in the bxc-pki
+   builds: the build image has no sphinx-build, so no help collection is
+   made (the CMake warning says so). Help > Content shows a note with the
+   online XCA manual instead of an empty window; the context help buttons
+   stay disabled as before.
  * BTD-113: RSA and DSA keys above 16384 bit, and DSA keys below 512 bit,
    are refused at once with invalid_key_size (and an audit failure
    entry), also when the size is confirmed; RSA:65536 ran for hours.
