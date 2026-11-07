@@ -675,27 +675,18 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 {
 	X509 *x = cert->getCert();
 	X509_EXTENSION *ext = db_x509::encodeExtension(nid, critical, value);
-	if (!ext)
-		throw serviceError("invalid_extension", QString("%1
-%2")
-			.arg(QCoreApplication::translate("db_x509",
-				"The extension %1 cannot be added.")
-				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 	int at = X509_get_ext_by_NID(x, nid, -1);
-	X509_EXTENSION *old = at >= 0 ? X509_delete_ext(x, at) : nullptr;
-	if (!X509_add_ext(x, ext, at)) {
-		if (old)
-			X509_add_ext(x, old, at);
-		X509_EXTENSION_free(old);
-		X509_EXTENSION_free(ext);
-		throw serviceError("invalid_extension", QString("%1
-%2")
-			.arg(QCoreApplication::translate("db_x509",
-				"The extension %1 cannot be added.")
-				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
-	}
+	X509_EXTENSION *old = ext && at >= 0 ? X509_delete_ext(x, at) : nullptr;
+	bool added = ext && X509_add_ext(x, ext, at);
+	if (!added && old)
+		X509_add_ext(x, old, at);
 	X509_EXTENSION_free(old);
 	X509_EXTENSION_free(ext);
+	if (!added)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 }
 
 /* The EKU a CSR asks for: its own, or ekuDefault when it has none
