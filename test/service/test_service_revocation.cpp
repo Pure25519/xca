@@ -410,8 +410,7 @@ void test_service_revocation::crlValidityFromCa()
 	/* Another CA with 3 days configured */
 	pki_x509 *other = rootCa("Short CRL CA");
 	QVERIFY(other);
-	other->setCrlDays(3);
-	certs()->updateCaProperties(other);
+	certs()->setCaProperties(ctx, other, 3, other->getTemplateSqlId());
 	QVariant otherId = other->getSqlItemId(), caId = ca->getSqlItemId();
 	reopenDatabase();
 	other = Store.lookupPki<pki_x509>(otherId);
