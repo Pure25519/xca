@@ -863,7 +863,12 @@ static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert,
 			crit = templCrit;
 		}
 		freeExtValue(nid, t);
-		putExt(cert, nid, value, crit > 0);
+		try {
+			putExt(cert, nid, value, crit > 0);
+		} catch (...) {
+			freeExtValue(nid, value);
+			throw;
+		}
 		freeExtValue(nid, value);
 	}
 	*merge = decisions.join(",");
