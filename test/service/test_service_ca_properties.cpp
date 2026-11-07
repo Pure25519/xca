@@ -187,6 +187,8 @@ void test_service_ca_properties::failedStoreKeepsEverything()
 	QString policy = storedPolicy(ca);
 	int days = storedCrlDays(ca);
 	QVariant tmpl = storedTemplate(ca);
+	/* in memory "no template" is an invalid QVariant, in SQL a null string */
+	QVariant memTmpl = ca->getTemplateSqlId();
 	QCOMPARE(ca->getCrlDays(), days);
 	int entries = AuditLog::entries().size();
 
@@ -207,7 +209,7 @@ void test_service_ca_properties::failedStoreKeepsEverything()
 	QCOMPARE(storedCrlDays(ca), days);
 	QCOMPARE(storedTemplate(ca), tmpl);
 	QCOMPARE(ca->getCrlDays(), days);
-	QCOMPARE(ca->getTemplateSqlId(), tmpl);
+	QCOMPARE(ca->getTemplateSqlId(), memTmpl);
 	QCOMPARE(AuditLog::entries().size(), entries + 1);
 	AuditEntry e = AuditLog::entries().last();
 	QCOMPARE(e.result, QString("failure"));
