@@ -113,6 +113,7 @@ pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
 	try {
 		auditedTransaction(ctx, "template.create", "template",
 				QString(), params, [&]() {
+			spec.extensions.checkEkuNames();
 			QSqlError e = temp->insertSql();
 			if (e.isValid())
 				throw serviceError("database_error",
@@ -150,6 +151,7 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			if (!isStored(temp))
 				throw serviceError("missing_template",
 					tr("The template is not in the database"));
+			spec.extensions.checkEkuNames();
 			XSqlQuery q;
 			spec.toTemplate(temp);
 			DbTransaction::onRollback([temp, old]() {

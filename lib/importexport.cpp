@@ -21,6 +21,7 @@
 #include "pki_crl.h"
 #include "PwDialogCore.h"
 #include "sql.h"
+#include "template.h"
 
 #include <QBuffer>
 #include <QMap>
@@ -270,6 +271,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 				throw serviceError("unsupported_type",
 					tr("The type of the item '%1' is not recognized")
 					.arg(pki->getIntName()));
+			/* the check of db_temp::newTemplate() (BTD-192) */
+			if (pki_temp *t = dynamic_cast<pki_temp *>(pki))
+				TemplateSpec::fromTemplate(t).extensions.checkEkuNames();
 		}
 
 		Transaction;

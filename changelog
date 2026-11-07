@@ -1,6 +1,15 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-192: an ekuAllowed or ekuDefault entry of a template that OpenSSL
+   does not know (short name, long name or OID) is refused with
+   template_eku_unknown, naming the field and the entry, when a template
+   is created, changed or imported, and at issuance for a spec that
+   bypassed that check; before, it was dropped, and an ekuDefault of
+   unknown names gave an empty EKU SEQUENCE. A merged SAN, key usage or
+   EKU that cannot be encoded is an invalid_extension error; before, the
+   template's extension was deleted first and the certificate was issued
+   without it.
  * BTD-113: RSA and DSA keys above 16384 bit, and DSA keys below 512 bit,
    are refused at once with invalid_key_size (and an audit failure
    entry), also when the size is confirmed; RSA:65536 ran for hours.
