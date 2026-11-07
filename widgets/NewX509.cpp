@@ -1173,8 +1173,21 @@ enum NewX509::extension_error NewX509::validateExtensions(QString &result)
 	el.clear();
 	setupTmpCtx();
 	if (fromReqCB->isChecked() && copyReqExtCB->isChecked()) {
+		/* SAN, key usage and EKU with a merge mode other than legacy
+		 * are not copied: the issuance merges them into one instance
+		 * (BTD-54), so they are no duplicates (BTD-185) */
+		QList<int> merged;
+		for (const auto &m : { qMakePair(NID_subject_alt_name, reqSanMerge),
+				       qMakePair(NID_key_usage, reqKuMerge),
+				       qMakePair(NID_ext_key_usage, reqEkuMerge) }) {
+			if (m.second->currentData().toInt() !=
+			    ExtensionSpec::merge_legacy)
+				merged << m.first;
+		}
 		req_el = getSelectedReq()->getV3ext();
 		for (int i=0; i<req_el.count(); i++) {
+			if (merged.contains(req_el[i].nid()))
+				continue;
 			if (ctx_cert && ctx_cert->addV3ext(req_el[i], true))
 				el += req_el[i];
 		}
