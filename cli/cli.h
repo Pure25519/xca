@@ -37,6 +37,7 @@
 #include "lib/digest.h"
 #include "lib/exception.h"
 #include "lib/issuance.h"
+#include "lib/key_types.h"
 #include "lib/pass_info.h"
 #include "lib/x509name.h"
 
@@ -487,16 +488,8 @@ QString checkEmail(const QString &email);
 /* RFC 3339 date-time; throws usageError invalid_value */
 a1time parseTimestamp(const QString &text, const QString &option);
 IsoDuration parseDuration(const QString &text, const QString &option);
-/* --key: a name of the bootstrap keyType vocabulary (rsa-3072, ec-p256,
- * ed25519, ml-dsa-65, ...) as keyjob text; an unknown name is
- * invalid_key_type, a name this build cannot generate not_supported.
- * Size and curve are checked by the key generation service. */
-QString keyJobText(const QString &keyType);
-QStringList supportedKeyTypes();
-/* The --key name of a key's type; empty when the vocabulary has none */
-QString keyTypeOf(const EVP_PKEY *pkey);
-/* Every name of the vocabulary, also those this build cannot generate */
-QStringList keyTypeNames();
+/* --key: the key types of lib/key_types.h (keyJobText, supportedKeyTypes,
+ * keyTypeOf, keyTypeNames) */
 
 /* The command line option that supplies a secret of this purpose */
 QString optionForPurpose(int purpose);
