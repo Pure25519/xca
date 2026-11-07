@@ -123,6 +123,12 @@ class test_main: public QObject
 	void staleReloadInDelete();
 	void reloadProxyRows();
 
+	/* templateMergeDialog.cpp */
+	void templateMergeShownAndSaved();
+	void templateMergeLegacyKept();
+	void templateMergeDefaultRefused();
+	void templateMergeNoDuplicate();
+
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();
 
