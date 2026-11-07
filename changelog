@@ -1,6 +1,11 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-185: the template dialog has a tab "Request merge" with the merge
+   modes of SAN, key usage and EKU and the EKU allow-list and default
+   (BTD-54); before, they were kept but not shown. An EKU default outside
+   a non-empty allow-list is refused with template_eku_default_not_allowed,
+   and the dialog stays open with the error.
  * BTD-192: an ekuAllowed or ekuDefault entry of a template that OpenSSL
    does not know (short name, long name or OID) is refused with
    template_eku_unknown, naming the field and the entry, when a template

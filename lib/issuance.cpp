@@ -51,6 +51,24 @@ void ExtensionSpec::checkEkuNames() const
 					.arg(f.first, name));
 		}
 	}
+	if (ekuAllowed.isEmpty())
+		return;
+	for (const QString &name : ekuDefault) {
+		ASN1_OBJECT *d = OBJ_txt2obj(CCHAR(name), 0);
+		bool in = false;
+		for (const QString &a : ekuAllowed) {
+			ASN1_OBJECT *o = OBJ_txt2obj(CCHAR(a), 0);
+			in |= !OBJ_cmp(d, o);
+			ASN1_OBJECT_free(o);
+		}
+		ASN1_OBJECT_free(d);
+		ign_openssl_error();
+		if (!in)
+			throw serviceError("template_eku_default_not_allowed",
+				QCoreApplication::translate("ExtensionSpec",
+				"ekuDefault: '%1' is not in ekuAllowed (%2)")
+				.arg(name, ekuAllowed.join(", ")));
+	}
 }
 
 x509v3ext ExtensionSpec::basicConstraintsExt(X509V3_CTX *ctx) const
