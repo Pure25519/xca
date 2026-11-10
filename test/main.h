@@ -132,6 +132,7 @@ class test_main: public QObject
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
+	void renewalCapWithoutContinue();
 	void issueRefusedInsideDialog();
 
   public:
