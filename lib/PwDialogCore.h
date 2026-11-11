@@ -51,15 +51,25 @@ class PwDialogUI_i
  * read once anyway. */
 class PwDialogHeadless: public PwDialogUI_i
 {
+	/* name is the source, for pass: the secret itself: it gets a
+	 * buffer of its own and is wiped with the entry (BTD-74) */
 	class entry
 	{
 	  public:
 		QString name{};
 		Passwd secret{};
 		bool read{};
+		entry() = default;
+		entry(const entry &other);
+		entry &operator=(const entry &other);
+		~entry();
 	};
 	QMap<enum pass_info::purpose, entry> sources{};
+	/* The command line option that gives a secret of a purpose,
+	 * set by the program (BTD-196); without one no option does */
+	QMap<enum pass_info::purpose, QString> options{};
 	bool interactive{};
+	QString howToGive(enum pass_info::purpose purpose) const;
 
   public:
 	/* Longest secret accepted: OpenSSL's password callbacks get
@@ -68,6 +78,10 @@ class PwDialogHeadless: public PwDialogUI_i
 
 	void setSource(enum pass_info::purpose purpose, const QString &source);
 	void clearSources();
+	void setOption(enum pass_info::purpose purpose, const QString &option)
+	{
+		options[purpose] = option;
+	}
 	bool hasSource(enum pass_info::purpose purpose) const
 	{
 		return sources.contains(purpose);

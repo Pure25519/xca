@@ -340,7 +340,7 @@ void test_service_issuance::chain()
 	QCOMPARE(e.actor, QString("os:service-test"));
 	QCOMPARE(e.channel, QString("cli"));
 	QCOMPARE(e.params["serial"].toString(), ee->getSerial().toHex());
-	QCOMPARE(e.params["issuer"].toString(), sub->getSubject().oneLine());
+	QCOMPARE(e.params["issuer"].toString(), sub->getSubject().rfc4514());
 	QCOMPARE(e.params["template"].toString(), QString("service-test"));
 	QCOMPARE(e.params["fingerprint"].toString(),
 		ee->fingerprint(EVP_sha256()));

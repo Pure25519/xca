@@ -162,8 +162,10 @@ void pki_evp::generate(const keyjob &task)
 		keygenCheck(EVP_PKEY_paramgen_init(ctx), QString(), failed);
 		keygenCheck(EVP_PKEY_CTX_set_dsa_paramgen_bits(ctx, task.size),
 			"invalid_key_size", badSize);
+		/* only the parameter calls name the size or curve; a failed
+		 * paramgen (RNG, provider) is a generic failure (BTD-113) */
 		keygenCheck(EVP_PKEY_generate(ctx, &param_key),
-			"invalid_key_size", badSize);
+			QString(), failed);
 
 		EVP_PKEY_CTX_free(ctx);
 		ctx = EVP_PKEY_CTX_new_from_pkey(NULL, param_key, NULL);
@@ -176,7 +178,7 @@ void pki_evp::generate(const keyjob &task)
 		keygenCheck(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx,
 			task.ec_nid), "invalid_curve", tr("Unknown EC curve"));
 		keygenCheck(EVP_PKEY_generate(ctx, &param_key),
-			"invalid_curve", tr("Unknown EC curve"));
+			QString(), failed);
 		EVP_PKEY_CTX_free(ctx);
 		ctx = EVP_PKEY_CTX_new_from_pkey(NULL, param_key, NULL);
 		Q_CHECK_PTR(ctx);
@@ -194,7 +196,10 @@ void pki_evp::generate(const keyjob &task)
 	}
 	keygenCheck(EVP_PKEY_keygen(ctx, &pkey), QString(), failed);
 
-	/* No silent fallback to another size */
+	/* No silent fallback to another size. It caught BTD-94 (bits set
+	 * before keygen_init were dropped); with the calls above no size
+	 * reaches it, and a test would need a hook in the release build,
+	 * so it has none (BTD-113) */
 	if ((task.ktype.type == EVP_PKEY_RSA ||
 	     task.ktype.type == EVP_PKEY_DSA) &&
 	    EVP_PKEY_get_bits(pkey) != task.size)

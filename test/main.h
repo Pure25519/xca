@@ -44,6 +44,10 @@ class test_main: public QObject
 	 * tests do not edit the same lines. QTest runs the slots in this
 	 * order. */
 
+	/* auditVerify.cpp */
+	void auditVerifyIntactAndBroken();
+	void auditVerifyAdopt();
+
 	/* automationIds.cpp */
 	void automationIds();
 	void keyboardContextMenu();
@@ -77,6 +81,8 @@ class test_main: public QObject
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
+	void importCommitFailsKeepsItems();
+	void importFailuresKeepRows();
 	void tokenDialogClosedDatabase();
 
 	/* issuanceExt.cpp */
@@ -114,6 +120,9 @@ class test_main: public QObject
 	void renewalThroughService();
 	void renewalAllOrNothing();
 
+	/* revokeInvalidity.cpp */
+	void revokeInvalidityDate();
+
 	/* staleReload.cpp */
 	void staleReloadInDelete();
 	void reloadProxyRows();
@@ -127,6 +136,7 @@ class test_main: public QObject
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
+	void renewalCapWithoutContinue();
 	void issueRefusedInsideDialog();
 
   public:
