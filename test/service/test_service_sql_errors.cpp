@@ -19,8 +19,10 @@
 #include <openssl/evp.h>
 
 #include "lib/audit.h"
+#include "lib/crl_policy.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
+#include "lib/db_temp.h"
 #include "lib/db_x509.h"
 #include "lib/db_x509req.h"
 #include "lib/exception.h"
@@ -28,8 +30,10 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 #include "lib/pki_x509req.h"
+#include "lib/profile_store.h"
 #include "lib/request.h"
 #include "lib/settings.h"
+#include "lib/template.h"
 #include "lib/x509rev.h"
 
 #include "ServiceTestCase.h"
@@ -116,9 +120,15 @@ class test_service_sql_errors : public ServiceTestCase
 	void privateKeyUpdate();
 	void taKeyNotStored();
 	void noStatementInText();
+	void lastErrorWithoutStatement();
+	void auditErrorWithoutEntry();
 	void codePerDriver_data();
 	void codePerDriver();
 	void commitErrorReachesCaller();
+	void auditWriteTyped();
+	void profileStoreTyped();
+	void crlPolicyTyped();
+	void itemStoreTyped();
 };
 
 void test_service_sql_errors::cleanup()
@@ -410,6 +420,61 @@ void test_service_sql_errors::noStatementInText()
 	QCOMPARE(r.second, QString("BTD-50 driver text"));
 }
 
+/* BTD-189: XSqlQuery::lastError() put the source location, the statement
+ * and its bound values into the driver text, so every e.text() showed
+ * them: the audit writer, the profile store, the SQL message box. They
+ * belong in the debug log only. */
+static QStringList debugLog;
+static void captureDebug(QtMsgType type, const QMessageLogContext &,
+			const QString &msg)
+{
+	if (type == QtDebugMsg)
+		debugLog << msg;
+}
+
+void test_service_sql_errors::lastErrorWithoutStatement()
+{
+	const char secret[] = "BTD189-SECRET-0123456789abcdef";
+	QCOMPARE(sql("CREATE TEMP TABLE btd189 (v TEXT CHECK (v = 'ok'))"),
+		QString());
+	XSqlQuery q;
+	SQL_PREPARE(q, "INSERT INTO btd189 VALUES (?)");
+	q.bindValue(0, QString(secret));
+	QVERIFY(!q.exec());
+	debugLog.clear();
+	QtMessageHandler old = qInstallMessageHandler(captureDebug);
+	QSqlError e = q.lastError();
+	qInstallMessageHandler(old);
+	sql("DROP TABLE temp.btd189");
+	QString text = e.text();
+	QVERIFY2(text.contains("CHECK constraint failed"), CCHAR(text));
+	QVERIFY2(!text.contains(secret), CCHAR(text));
+	QVERIFY2(!text.contains("INSERT"), CCHAR(text));
+	QVERIFY2(!text.contains(".cpp:"), CCHAR(text));
+	/* the debug log keeps them for support */
+	QString log = debugLog.join("\n");
+	QVERIFY2(log.contains(secret) && log.contains("INSERT INTO btd189"),
+		CCHAR(log));
+}
+
+/* The audit writer passed e.text() on: the entry with its parameters and
+ * the chain hashes reached the caller */
+void test_service_sql_errors::auditErrorWithoutEntry()
+{
+	QVERIFY(key("audit head key"));
+	QByteArray head = AuditLog::entries().last().hash;
+	QCOMPARE(sql("PRAGMA query_only = ON"), QString());
+	auto r = codeOf([&]() {
+		AuditLog::append(ctx, "key.generate", "key", "btd189-object");
+	});
+	QCOMPARE(sql("PRAGMA query_only = OFF"), QString());
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+	for (const QString &s : { QString("INSERT"), QString("VALUES"),
+			QString("audit_log"), QString("btd189-object"),
+			QString(".cpp:"), QString::fromLatin1(head) })
+		QVERIFY2(!r.second.contains(s), CCHAR(s + ": " + r.second));
+}
+
 void test_service_sql_errors::codePerDriver_data()
 {
 	QTest::addColumn<QString>("driver");
@@ -474,4 +539,83 @@ void test_service_sql_errors::commitErrorReachesCaller()
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_sql_errors)
+/* BTD-214 (AC4): every SQL write path goes through throwSqlError(), so a
+ * read-only database is read_only_database there too, with what failed
+ * and the reason of the database. Before, the audit writer threw an
+ * untyped errorEx ("Database error: ..."), the profile store, the CRL
+ * settings, templates and revocations the generic database_error. */
+template <class F> static QPair<QString, QString> readOnly(F f)
+{
+	QSqlQuery q;
+	q.exec("PRAGMA query_only = ON");
+	QPair<QString, QString> r;
+	try {
+		f();
+	} catch (serviceError &err) {
+		r = qMakePair(err.code, err.getString());
+	} catch (errorEx &err) {
+		r = qMakePair(QString("errorEx"), err.getString());
+	}
+	q.exec("PRAGMA query_only = OFF");
+	return r;
+}
+
+void test_service_sql_errors::auditWriteTyped()
+{
+	auto r = readOnly([&]() {
+		AuditLog::append(ctx, "key.generate", "key", "214");
+	});
+	QCOMPARE(r.first, QString("read_only_database"));
+	QVERIFY2(r.second.startsWith("The audit log"), CCHAR(r.second));
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+}
+
+void test_service_sql_errors::profileStoreTyped()
+{
+	QString file = QString(SERVICE_TEST_DATA "/profiles/opcua-client.json");
+	auto r = readOnly([&]() {
+		ProfileStore::importFile(ctx, "profile", file);
+	});
+	QCOMPARE(r.first, QString("read_only_database"));
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+	QCOMPARE(ProfileStore::list("profile").size(), 0);
+}
+
+void test_service_sql_errors::crlPolicyTyped()
+{
+	pki_x509 *ca = issue("BTD-214 CA", nullptr);
+	QVERIFY(ca);
+	CrlPolicy policy = CrlPolicy::of(ca);
+	auto r = readOnly([&]() { policy.store(ctx, ca); });
+	QCOMPARE(r.first, QString("read_only_database"));
+	QVERIFY2(r.second.contains("BTD-214 CA"), CCHAR(r.second));
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+}
+
+void test_service_sql_errors::itemStoreTyped()
+{
+	TemplateSpec spec;
+	spec.name = "BTD-214 template";
+	auto r = readOnly([&]() {
+		Database.model<db_temp>()->newTemplate(ctx, spec);
+	});
+	QCOMPARE(r.first, QString("read_only_database"));
+	QVERIFY2(r.second.contains("BTD-214 template"), CCHAR(r.second));
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+
+	pki_x509 *ca = issue("BTD-214 revoking CA", nullptr);
+	QVERIFY(ca);
+	pki_x509 *ee = issue("BTD-214 EE", ca);
+	QVERIFY(ee);
+	r = readOnly([&]() {
+		x509rev rev;
+		rev.setReason("Key Compromise");
+		Database.model<db_x509>()->revoke(ctx, ee, rev);
+	});
+	QCOMPARE(r.first, QString("read_only_database"));
+	QVERIFY2(r.second.contains("readonly"), CCHAR(r.second));
+	QVERIFY(!ee->isRevoked());
+}
+
+
 #include "test_service_sql_errors.moc"

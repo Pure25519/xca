@@ -109,8 +109,7 @@ Passwd readPass()
 	if (!isatty(0))
 		throw secretError(secretError::missing, QObject::tr(
 			"The password cannot be asked for: there is no terminal on "
-			"standard input. Give it with --password "
-			"(pass:, env:, file:, fd: or stdin)."));
+			"standard input."));
 	if (tcgetattr(0, &t))
 		throw errorEx(strerror(errno));
 	back = t;

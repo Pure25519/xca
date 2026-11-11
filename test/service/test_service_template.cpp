@@ -231,7 +231,7 @@ void test_service_template::templateRoundTrip()
 	QCOMPARE(e.objectType, QString("template"));
 	QCOMPARE(e.objectId, temp->getSqlItemId().toString());
 	QCOMPARE(e.params.value("name").toString(), spec.name);
-	QCOMPARE(e.params.value("subject").toString(), spec.subject.oneLine());
+	QCOMPARE(e.params.value("subject").toString(), spec.subject.rfc4514());
 	QCOMPARE(temp->getIntName(), spec.name);
 	QCOMPARE(temp->getComment(), spec.comment);
 	QVERIFY(Store.getAll<pki_temp>().contains(temp));

@@ -8,6 +8,8 @@
 #include <QDebug>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonObject>
 
 #include <openssl/provider.h>
 #include <openssl/ui.h>
@@ -88,6 +90,13 @@ static void installFaults()
 					late.write("late\n");
 			} else if (f[0] == "swapdir") {
 				swapDirectory(target);
+			} else if (f[0] == "symlink") {
+				/* a link in place of a directory the run is
+				 * about to create, to one outside (BTD-213) */
+				QString outside = QDir::tempPath() +
+						"/bxc-pki-outside";
+				QDir().mkpath(outside);
+				QFile::link(outside, target);
 			} else {
 				failStep = true;
 			}
@@ -161,7 +170,8 @@ static int report(const errorEx &error, const CommandContext &ctx)
 
 	if (pw) {
 		QString o = optionForPurpose(pw->purpose);
-		if (!o.isEmpty())
+		/* the message may name it already (BTD-196) */
+		if (!o.isEmpty() && !detail.contains(o))
 			detail += QObject::tr(" (option %1)").arg(o);
 	}
 	/* rule 11: a write error names the object and the cause; the
@@ -172,11 +182,25 @@ static int report(const errorEx &error, const CommandContext &ctx)
 	if (!ctx.step.isEmpty())
 		detail = QObject::tr("%1 was not written to %2: %3")
 			.arg(ctx.step).arg(ctx.database).arg(detail);
-	if (ctx.text)
+	/* what happened to files before the failure, e.g. temporary
+	 * files of earlier runs that were removed (BTD-213) */
+	for (const auto &w : ctx.errorWarnings)
+		console_write(stderr, QObject::tr("Warning: %1 [%2]\n")
+				.arg(w.second, w.first).toUtf8());
+	if (ctx.text) {
 		console_write(stderr, QString("Error: %1 [%2]\n")
 				.arg(detail).arg(code).toUtf8());
-	else
-		JsonReport::write(stderr, JsonReport::error(code, detail));
+	} else {
+		QJsonObject e = JsonReport::error(code, detail);
+		if (!ctx.errorWarnings.isEmpty()) {
+			QJsonArray a;
+			for (const auto &w : ctx.errorWarnings)
+				a.append(QJsonObject{ { "code", w.first },
+						{ "detail", w.second } });
+			e["warnings"] = a;
+		}
+		JsonReport::write(stderr, e);
+	}
 	return dynamic_cast<const usageError *>(&err) ? exitUsage :
 							exitFailure;
 }
@@ -204,8 +228,10 @@ static void setupSecrets(const Options &o)
 	PwDialogHeadless *h = PwDialogCore::headless();
 	h->setInteractive(o.has("interactive"));
 	for (const OptionSpec &spec : Registry::globalOptions())
-		for (enum pass_info::purpose p : spec.purposes)
+		for (enum pass_info::purpose p : spec.purposes) {
 			h->setSource(p, o.value(spec.name));
+			h->setOption(p, "--" + spec.name);
+		}
 }
 
 /* The open results of database_model (review of xca#54): a cancelled
@@ -328,10 +354,16 @@ static int run(const QStringList &argv)
 		ctx.result = &result;
 		OutputFiles files(ctx.opts.has("force"), ctx.plan);
 		ctx.files = &files;
-		if (cmd->ownTransaction)
-			cmd->handler(ctx);
-		else
-			runInTransaction(ctx, { cmd->handler });
+		try {
+			if (cmd->ownTransaction)
+				cmd->handler(ctx);
+			else
+				runInTransaction(ctx, { cmd->handler });
+		} catch (...) {
+			ctx.errorWarnings = files.warnings();
+			ctx.files = nullptr;
+			throw;
+		}
 		if (ctx.text)
 			console_write(stdout, result.text().toUtf8());
 		else
