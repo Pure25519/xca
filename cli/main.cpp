@@ -170,7 +170,8 @@ static int report(const errorEx &error, const CommandContext &ctx)
 
 	if (pw) {
 		QString o = optionForPurpose(pw->purpose);
-		if (!o.isEmpty())
+		/* the message may name it already (BTD-196) */
+		if (!o.isEmpty() && !detail.contains(o))
 			detail += QObject::tr(" (option %1)").arg(o);
 	}
 	/* rule 11: a write error names the object and the cause; the
@@ -227,8 +228,10 @@ static void setupSecrets(const Options &o)
 	PwDialogHeadless *h = PwDialogCore::headless();
 	h->setInteractive(o.has("interactive"));
 	for (const OptionSpec &spec : Registry::globalOptions())
-		for (enum pass_info::purpose p : spec.purposes)
+		for (enum pass_info::purpose p : spec.purposes) {
 			h->setSource(p, o.value(spec.name));
+			h->setOption(p, "--" + spec.name);
+		}
 }
 
 /* The open results of database_model (review of xca#54): a cancelled
