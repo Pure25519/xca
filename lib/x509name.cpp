@@ -68,6 +68,16 @@ QString x509name::oneLine(unsigned long flags) const
 	return bba.qstring();
 }
 
+QString x509name::rfc4514() const
+{
+	BioByteArray bba;
+	/* RFC 2253 escaping without ESC_MSB: RFC 4514 allows UTF-8 */
+	X509_NAME_print_ex(bba, get0(), 0,
+			XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB);
+	ign_openssl_error();
+	return QString::fromUtf8(bba.byteArray());
+}
+
 QString x509name::getEntryByNid(int nid) const
 {
 	int i = X509_NAME_get_index_by_NID(_get(), nid, -1);
