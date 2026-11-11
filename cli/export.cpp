@@ -171,8 +171,9 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 	try {
 		data = model->exportItems(ctx.svc, spec);
 	} catch (serviceError &err) {
-		if (err.code == "missing_password" ||
-		    err.code == "wrong_password")
+		if ((err.code == "missing_password" ||
+		     err.code == "wrong_password") &&
+		    !err.getString().contains("--export-pass"))
 			throw serviceError(err.code, err.getString() +
 				QObject::tr(" (option --export-pass)"));
 		throw;
