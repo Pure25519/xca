@@ -44,6 +44,10 @@ class test_main: public QObject
 	 * tests do not edit the same lines. QTest runs the slots in this
 	 * order. */
 
+	/* auditVerify.cpp */
+	void auditVerifyIntactAndBroken();
+	void auditVerifyAdopt();
+
 	/* automationIds.cpp */
 	void automationIds();
 	void keyboardContextMenu();
@@ -135,6 +139,7 @@ class test_main: public QObject
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
+	void renewalCapWithoutContinue();
 	void issueRefusedInsideDialog();
 
   public:

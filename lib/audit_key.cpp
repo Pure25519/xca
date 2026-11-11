@@ -34,7 +34,8 @@ static void throwOnError(XSqlQuery &q)
 {
 	QSqlError e = q.lastError();
 	if (e.isValid())
-		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
+		throwSqlError(e, QObject::tr("The audit keys could not be "
+			"read or written"));
 }
 
 Passwd AuditKey::password(bool ask)
