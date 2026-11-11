@@ -94,7 +94,10 @@ void CertExtend::accept()
 		xcaWarningBox msg(this, text);
 		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
 		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
-		msg.addButton(QMessageBox::Apply, tr("Continue rollout"));
+		/* no "Continue rollout": the renewal caps the end at the
+		 * issuer chain anyway (db_x509::renew(), BTD-56), so it would
+		 * promise an uncapped certificate that is never issued
+		 * (BTD-107) */
 		msg.addButton(QMessageBox::Yes, tr("Adjust date and continue"));
 		switch (msg.exec())
 		{
@@ -104,8 +107,6 @@ void CertExtend::accept()
 			case QMessageBox::Close:
 				reject();
 				return;
-			case QMessageBox::Apply:
-				break;
 			case QMessageBox::Yes:
 				notAfter->setDate(cappedEnd);
 		}
