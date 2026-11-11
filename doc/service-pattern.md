@@ -17,6 +17,14 @@ Certificate issuance is the reference implementation.
 | GUI caller | the dialog only fills the value object (`NewX509::getIssuanceSpec()`), calls the service function with `ServiceContext::localUser(ServiceContext::gui)` and shows the `serviceError` with `XCA_ERROR` | `widgets/NewX509_issue.cpp` |
 | Tests | `test/service/test_service_<area>.cpp` on the harness of BTD-28; check the result with openssl where possible, the audit entry of success and of every rejection, and `AuditLog::verify()` | `test/service/test_service_issuance.cpp` |
 
+DN parameters of audit entries (`subject`, `issuer`) are RFC 4514 strings from `x509name::rfc4514()`
+(BTD-104): most significant RDN last, the members of a multi-valued RDN joined with `+`, special
+characters escaped with `\`, UTF-8 as it is, e.g. `CN=device.example,O=BxC Security,C=DE`. It is
+the same form as `rfc4514` in the JSON reports. Entries written before BTD-104 keep the OpenSSL
+one-line form (`C = DE, O = BxC Security, CN = device.example`, non-ASCII escaped as `\C3\BC`);
+the hash chain forbids rewriting them, and `--audit-verify` does not read DNs, so a log with both
+forms verifies.
+
 Structure of the service function: a public wrapper builds the audit parameters, calls a private
 worker that does the work in one `Transaction`, and appends the `failure` entry when the worker
 throws (the worker's transaction is rolled back by then). The worker appends the `success` entry
@@ -85,6 +93,11 @@ A failed SQL write is a typed error, never a message box in a service path (BTD-
   - `execOrThrow(q, what)`;
   - `TransThrow()`;
   - `TransCommitThrow()`, which carries the error of the failed COMMIT.
+  - Since BTD-214 also every other SQL error path: the audit log and the audit keys (before an untyped
+    error "Database error: …", audited as `internal_error`), the profile store, the CRL settings of a
+    CA, the profile and predecessor rows of an issuance, revocation rows, templates, the revocation
+    count of a CA and the bootstrap state of `bxc-pki` (before `database_error` in every case). A
+    read-only or full database therefore gives `read_only_database` or `disk_full` there too.
 - **The text.** It is `what` and SQLite's reason, never the statement and its values (they may hold key material). The full statement goes to the debug log.
 - **Helpers throw instead of returning false.** This covers `x509revList::sqlUpdate()`, `pki_x509req::markSigned()`, `pki_evp::sqlUpdatePrivateKey()` and the UPDATEs of `db_x509::markRequestSigned()`, `pki_x509::getTaKey()` and `pki_scard::updateLabel()`. Their callers therefore stop at the first failure instead of running on in a transaction that can only roll back.
 - **`db_base::insertPKI()` and the `insert()` overrides** throw without deleting:
@@ -161,6 +174,16 @@ Import and export (BTD-34):
   (`lib/PwDialogCore.h`), whatever GUI or headless configuration is set; without it
   `PwDialogCore` asks as before. The export writers no longer prompt: they take the password
   (`pki_evp::writeKey`/`writePKCS8`, `pki_pkcs12::writePKCS12`).
+- Secrets in memory (BTD-74): a `Passwd` owns its bytes (copies never share the buffer), so its
+  destructor and `cleanse()` zero the bytes it used, with `OPENSSL_cleanse`. `secretWipe()` and
+  `secretCleanse()` (`lib/Passwd.h`) zero a `QByteArray` or `QString` in place; a buffer shared
+  with another array is detached first, so every holder wipes its own copy. The headless sources
+  keep their own copy of the source string (for `pass:` the secret) and wipe it with the entry;
+  `readSource()` copies the secret straight into the `Passwd`. The parsed command line wipes the
+  values of `--password`/`--sqlpass` once the sources are set (`arguments::forgetSecrets()`), the
+  `bxc-pki` options wipe theirs on destruction. Not covered: the process arguments and
+  environment, the internals of `QCommandLineParser`, swap (no `mlock`), and the database password
+  `pki_evp::passwd`, which is kept for the session by design.
 - Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
   audit entries, then writes the file and commits: no file without its entries, no entries
   without the file (the file is removed when the commit fails).
