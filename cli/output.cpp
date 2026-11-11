@@ -64,16 +64,20 @@ void OutputFiles::add(const QString &path, const QString &kind,
 	e.size = data.size();
 	e.sha256 = QString::fromLatin1(QCryptographicHash::hash(data,
 			QCryptographicHash::Sha256).toHex());
-	/* below a staged directory: into its sibling, which is new */
+	/* below a staged directory: into its sibling, which is new; its
+	 * subdirectories never follow a link (BTD-213) */
 	QString staged = directory ? directory->stagedPath(path) : QString();
-	if (!staged.isEmpty() &&
-	    !QDir().mkpath(QFileInfo(staged).absolutePath()))
-		throw serviceError("write_failed", QObject::tr(
-			"Creating the directory of '%1' failed")
-			.arg(QDir::toNativeSeparators(path)));
+	if (!staged.isEmpty())
+		directory->makeParents(staged);
 	e.file = std::make_shared<StagedFile>(staged.isEmpty() ? path : staged,
 			secret, staged.isEmpty() && force);
-	e.file->stage(data);
+	try {
+		e.file->stage(data);
+	} catch (...) {
+		/* e.g. stale_temp_removed: the clean-up happened */
+		failedWarnings += e.file->warnings();
+		throw;
+	}
 	files << e;
 }
 
@@ -98,7 +102,7 @@ QString OutputFiles::leftover() const
 
 QList<QPair<QString, QString> > OutputFiles::warnings() const
 {
-	QList<QPair<QString, QString> > l;
+	QList<QPair<QString, QString> > l = failedWarnings;
 	for (const entry &e : files)
 		if (e.file)
 			l += e.file->warnings();
@@ -310,7 +314,8 @@ void writeOut(CommandContext &ctx, pki_base *pki, const QString &kind,
 	try {
 		data = db->exportItems(ctx.svc, spec);
 	} catch (serviceError &err) {
-		if (err.code == "missing_password")
+		if (err.code == "missing_password" &&
+		    !err.getString().contains("--export-pass"))
 			throw serviceError(err.code, err.getString() +
 				QObject::tr(" (option --export-pass)"));
 		throw;

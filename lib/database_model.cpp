@@ -729,6 +729,11 @@ void database_model::openLocalDatabase(const QString &connName,
 	f.close();
 
 	db.setDatabaseName(descriptor);
+	/* how long a write transaction waits for the write lock of another
+	 * process at BEGIN IMMEDIATE (BTD-274), set here rather than left to
+	 * the default of the Qt driver */
+	db.setConnectOptions(QString("QSQLITE_BUSY_TIMEOUT=%1")
+			.arg(DbTransaction::busyTimeoutMs));
 	db.open();
 	QSqlError e = db.lastError();
 	if (e.isValid()) {
@@ -798,7 +803,10 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 
 	ServiceContext::processPasswordVerified = false;
 	pki_evp::passHash = passhash;
-	bool checked = !open_without_password || passhash.isEmpty();
+	/* Without a password source the empty password is tried: if it
+	 * is the database's password, the open is verified (BTD-246) */
+	bool checked = !open_without_password || passhash.isEmpty() ||
+		pki_evp::sha512passwT(QByteArray(""), passhash) == passhash;
 	if (pki_evp::passHash.isEmpty()) {
 		result = PwDialogCore::execute(&p, &pki_evp::passwd,true,true);
 		if (result != pw_ok)

@@ -280,7 +280,7 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 
 	if (cert) {
 		params.set("ca_id", cert->getSqlItemId().toLongLong());
-		params.set("issuer", cert->getSubject().oneLine());
+		params.set("issuer", cert->getSubject().rfc4514());
 	}
 	bool numeric;
 	qint64 number = task.crlNumber.toDec().toLongLong(&numeric);
@@ -294,9 +294,13 @@ pki_crl *db_crl::newCrl(const ServiceContext &ctx, const crljob &task,
 	if (!task.allowStale.isEmpty())
 		params.set("allow_stale", task.allowStale);
 
+	/* the key of the CA before the transaction (BTD-273) */
+	KeyUnlock unlock;
 	try {
 		auditedTransaction(ctx, AuditLog::actionCrlGenerate, "crl",
 					QString(), params, [&]() {
+			unlock.add(cert ? cert->getRefKey() : nullptr);
+		}, [&]() {
 			pki_crl *crl = nullptr;
 			x509v3ext e;
 			X509V3_CTX ext_ctx;

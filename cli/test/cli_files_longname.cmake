@@ -1,5 +1,6 @@
-# Temporary names of long targets (BTD-210 d): ".<name>.bxc-tmp-<16 hex>"
-# of a 250-character file name is longer than a file name may be (255
+# Temporary names of long targets (BTD-210 d): ".<name>.bxc-tmp-<owner
+# mark>-<16 hex>" (owner mark p<pid>s<start>, BTD-213) of a 250-character
+# file name is longer than a file name may be (255
 # bytes); such a name is shortened to a prefix of the name, a hash of the
 # whole name and the random part, so the file is written all the same.
 
@@ -37,6 +38,6 @@ if(NOT n EQUAL 1)
 endif()
 get_filename_component(tn "${t}" NAME)
 string(LENGTH "${tn}" len)
-if(len GREATER 255 OR NOT tn MATCHES "^\\.m+.*\\.bxc-tmp-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$")
+if(len GREATER 255 OR NOT tn MATCHES "^\\.m+.*\\.bxc-tmp-p[0-9]+s[0-9]+-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]$")
   fail("long name, killed: temporary name '${tn}' (${len} characters)")
 endif()

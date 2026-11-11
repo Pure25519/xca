@@ -99,6 +99,9 @@
       </item>
       <item row="1" column="1">
        <widget class="Validity" name="invalid">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
         <property name="calendarPopup">
          <bool>true</bool>
         </property>
@@ -106,13 +109,19 @@
       </item>
       <item row="2" column="1">
        <widget class="QCheckBox" name="checkBox">
+        <property name="enabled">
+         <bool>false</bool>
+        </property>
         <property name="text">
          <string>Local time</string>
         </property>
        </widget>
       </item>
       <item row="1" column="0">
-       <widget class="QLabel" name="label">
+       <widget class="QCheckBox" name="invalidSince">
+        <property name="toolTip">
+         <string>The time the key was compromised or the certificate became invalid, if it is known. Without it the CRL entry has no invalidity date.</string>
+        </property>
         <property name="text">
          <string>Invalid since</string>
         </property>
@@ -204,6 +213,18 @@
      <y>59</y>
     </hint>
    </hints>
+  </connection>
+  <connection>
+   <sender>invalidSince</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>invalid</receiver>
+   <slot>setEnabled(bool)</slot>
+  </connection>
+  <connection>
+   <sender>invalidSince</sender>
+   <signal>toggled(bool)</signal>
+   <receiver>checkBox</receiver>
+   <slot>setEnabled(bool)</slot>
   </connection>
  </connections>
 </ui>

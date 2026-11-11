@@ -52,8 +52,15 @@ set(ENV{XCA_EMPTY_DB_WRONG} "wrong-env-pw")
 
 # Every source is read and rejected; keygen would write a key and an
 # audit entry with db_unlock_verified=true if it got through
-foreach(source "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
-               "file:${WORK}/pw.txt" "stdin" "fd:3")
+set(sources "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
+            "file:${WORK}/pw.txt" "stdin")
+# fd:3 needs a POSIX shell to open the descriptor (BTD-141, 5d)
+if(CMAKE_HOST_WIN32)
+  message(STATUS "fd:3 not tested on Windows")
+else()
+  list(APPEND sources "fd:3")
+endif()
+foreach(source ${sources})
   set(args --password "${source}" --keygen EC:prime256v1 --name intruder-key)
   if(source STREQUAL "stdin")
     execute_process(COMMAND "${XCA}" --no-gui --database "${db}" ${args}
@@ -74,6 +81,20 @@ foreach(source "pass:wrong-pass-pw" "env:XCA_EMPTY_DB_WRONG"
   endif()
 endforeach()
 
+# A source that yields the empty password, which is the right one here: it
+# is refused as empty, like for every database (BTD-141, 5c). An
+# explicitly empty --password "" is an error of its own (BTD-136,
+# cli_password_empty_option); without --password the database opens with
+# the empty password checked (BTD-246).
+# (an empty environment variable cannot be set from CMake, an empty file
+# gives the same empty password)
+file(WRITE "${WORK}/empty.txt" "")
+run_xca(rc out --password "file:${WORK}/empty.txt" --keygen EC:prime256v1
+  --name empty-source-key)
+if(NOT rc EQUAL 1 OR NOT out MATCHES "is empty")
+  fail("an empty file: expected exit 1 and 'is empty', got '${rc}':\n${out}")
+endif()
+
 # The rejected opens left the old database as it was: no fork schema,
 # no audit log, no baseline, no key
 sql(out -c "SELECT count(*) FROM sqlite_master WHERE name='audit_log'"
@@ -83,20 +104,23 @@ if(NOT out STREQUAL "0\n0\n0\n")
   fail("a rejected open wrote to the database (audit_log, bxc_schema, key):\n${out}")
 endif()
 
-# Without --password: the old database needs an upgrade, which needs the
-# verified password, so the open is refused and nothing is written
-# (BTD-137). Before, it was upgraded and given a baseline, unchecked.
+# Without --password: the empty password is the database's password, so
+# the open counts as verified (BTD-246, boss 2026-10-31): the old
+# database is upgraded and its baseline records db_unlock_verified=true.
+# Before, the open counted as unverified and was refused (BTD-137).
 run_xca(rc out --list-items)
-if(rc EQUAL 0 OR NOT out MATCHES "schema_upgrade_needs_password|needs the database password")
-  fail("no password: expected a refusal of the upgrade, got '${rc}':\n${out}")
+if(NOT rc EQUAL 0 OR NOT out MATCHES "fixture-rsa")
+  fail("no password: expected exit 0 and the fixture items, got '${rc}':\n${out}")
 endif()
-if(out MATCHES "fixture-rsa")
-  fail("no password: the refused open listed items:\n${out}")
-endif()
-sql(out -c "SELECT count(*) FROM sqlite_master WHERE name='audit_log'"
-        -c "SELECT count(*) FROM settings WHERE key_='bxc_schema'")
+run_xca(rc out --audit-export -)
 file(REMOVE_RECURSE "${WORK}")
-if(NOT out STREQUAL "0\n0\n")
-  message(FATAL_ERROR "no password: the refused open wrote to the database:\n${out}")
+if(NOT rc EQUAL 0 OR NOT out MATCHES "\"action\":\"audit.init\"")
+  message(FATAL_ERROR "no password: expected the baseline in the export, got '${rc}':\n${out}")
 endif()
-message(STATUS "xca --no-gui: empty-password database rejects every given source and the open without one, writes nothing")
+if(out MATCHES "\"db_unlock_verified\":false" OR out MATCHES "intruder-key")
+  message(FATAL_ERROR "the export records an unverified open or the key:\n${out}")
+endif()
+if(NOT out MATCHES "\"db_unlock_verified\":true")
+  message(FATAL_ERROR "no password: no entry records the verified open:\n${out}")
+endif()
+message(STATUS "xca --no-gui: empty-password database rejects every given source; without one it opens verified")

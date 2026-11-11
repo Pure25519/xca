@@ -18,6 +18,7 @@
 #include "lib/pki_evp.h"
 #include "lib/pki_temp.h"
 #include "lib/audit.h"
+#include "lib/db_token.h"
 #include "lib/importexport.h"
 #include "CrlDetail.h"
 #include "CertDetail.h"
@@ -236,6 +237,8 @@ pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
 
 	spec.items << pki;
 	spec.unstored = &unstored;
+	/* a handed-back item returns to its row (BTD-147) */
+	int row = mcont->index(pki).row();
 	mcont->remFromCont(pki);
 	try {
 		ImportResult result = Database.importItems(
@@ -250,8 +253,12 @@ pki_base *ImportMulti::importOne(pki_base *pki, QString *code,
 		*code = "internal_error";
 		*error = err.getString();
 	}
-	foreach(pki_base *back, unstored)
-		mcont->inToCont(back);
+	foreach(pki_base *back, unstored) {
+		if (back == pki && row >= 0)
+			mcont->insertChildAt(back, row);
+		else
+			mcont->inToCont(back);
+	}
 	return stored;
 }
 
@@ -281,14 +288,20 @@ void ImportMulti::on_deleteToken_clicked()
 	QModelIndex index;
 	QString items;
 
+	ServiceContext ctx = ServiceContext::localUser(ServiceContext::gui);
 	foreach(index, indexes) {
 		if (index.column() != 0)
 			continue;
 		pki_base *pki = db_base::fromIndex(index);
+		/* one audited deletion per object (BTD-248); an object
+		 * that was not deleted stays in the list */
 		try {
-			pki->deleteFromToken(slot);
+			db_token::deleteOnToken(ctx, pki, &slot);
 			mcont->remFromCont(pki);
 			delete pki;
+		} catch (serviceError &err) {
+			if (err.code != "nothing_deleted")
+				XCA_ERROR(err);
 		} catch (errorEx &err) {
 			XCA_ERROR(err);
 		}

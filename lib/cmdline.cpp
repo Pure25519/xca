@@ -30,6 +30,7 @@
 #include "pki_temp.h"
 #include "profile_store.h"
 #include "template.h"
+#include "staged_file.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -87,7 +88,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* --json (BTD-39): the outputs as JSON Lines, errors as JSON on stderr */
 	bool json = cmd_opts.has("json");
 	JsonReport::setActive(json);
-	auto report = [json](const errorEx &err) {
+	/* a failure entry that was not written turns the error into
+	 * audit_entry_lost, which keeps the original in its detail
+	 * (BTD-274) */
+	auto report = [json](const errorEx &error) {
+		QStringList lost = AuditLog::takeLostEntries();
+		serviceError lostError = AuditLog::lostEntriesError(lost,
+			JsonReport::error(error)["code"].toString(),
+			error.getString());
+		const errorEx &err = lost.isEmpty() ? error : lostError;
 		if (json)
 			JsonReport::write(stderr, JsonReport::error(err));
 		else
@@ -106,6 +115,18 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 	}
+	/* An empty --password or --sqlpass is most likely an unset
+	 * variable: the command ends before anything is opened instead of
+	 * running as if the option were missing (BTD-136, BTD-268) */
+	for (const char *opt : { "password", "sqlpass" }) {
+		if (cmd_opts.has(opt) && cmd_opts[opt].isEmpty()) {
+			report(serviceError("missing_password", QObject::tr(
+				"--%1 is empty; give a password source (pass:, "
+				"env:, file:, fd: or stdin) or leave the option "
+				"out").arg(opt)));
+			return EXIT_FAILURE;
+		}
+	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
@@ -118,11 +139,23 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::DatabasePassword, dbpass);
 		headless->setSource(pass_info::KeyPassword, dbpass);
 		headless->setSource(pass_info::SqlPassword, sqlpass);
+		/* the options of xca; nothing gives an import password */
+		headless->setOption(pass_info::DatabasePassword, "--password");
+		headless->setOption(pass_info::KeyPassword, "--password");
+		headless->setOption(pass_info::SqlPassword, "--sqlpass");
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
-		/* Questions likewise: "yes" only if confirmed here */
-		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
-				cmd_opts["confirm"].split(","));
+		/* Questions likewise: "yes" only if confirmed here; a
+		 * mistyped id would leave its question unanswered (BTD-116) */
+		QStringList unknown = xcaWarningCore::setConfirmations(
+			cmd_opts.has("yes"), cmd_opts["confirm"].split(","));
+		if (!unknown.isEmpty()) {
+			report(serviceError("usage", QObject::tr(
+				"--confirm: unknown question id %1; the ids are: %2")
+				.arg(unknown.join(", "))
+				.arg(xcaWarningCore::questionIds().join(", "))));
+			return EXIT_FAILURE;
+		}
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())
@@ -131,6 +164,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!sqlpass.isEmpty())
 			sqlpw = PwDialogHeadless::readSource(sqlpass);
 	}
+	/* The sources are set: the parsed values are no longer needed, a
+	 * pass: value is the secret itself (BTD-74) */
+	bool dbPassGiven = !dbpass.isEmpty();
+	secretCleanse(dbpass);
+	secretCleanse(sqlpass);
+	cmd_opts.forgetSecrets();
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];
@@ -140,7 +179,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		/* A given database password is checked on open, a wrong one
 		 * ends the command; without one, the public objects can
 		 * still be listed as upstream allows (BTD-78) */
-		database_model::open_without_password = dbpass.isEmpty();
+		database_model::open_without_password = !dbPassGiven;
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 
@@ -365,12 +404,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
-				XFile f(filename);
-				if (!f.open_write() ||
-				    f.write(lines) != lines.size())
-					throw errorEx(QObject::tr("Failed to write the audit log to '%1'")
-							.arg(filename));
-				f.close();
+				/* staged: a failed write keeps an old
+				 * file (BTD-139) */
+				StagedFile::writeFile(filename, lines, false,
+						true);
 			}
 			if (broken)
 				exitcode = EXIT_FAILURE;
@@ -535,16 +572,16 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (bbafile.size() > 0)
 	{
 		QString filename = cmd_opts["pem-file"];
-		XFile f(filename);
-		if (f.open_write()) {
-			f.write(bbafile);
-		} else {
+		/* staged: a failed write keeps an old file (BTD-139) */
+		try {
+			StagedFile::writeFile(filename, bbafile.byteArray(),
+					false, true);
+		} catch (errorEx &err) {
 			report(serviceError("write_failed",
-				QObject::tr("Failed to write PEM data to '%1'")
-					.arg(filename)));
+				QObject::tr("Failed to write PEM data to '%1': %2")
+					.arg(filename, err.getString())));
 			exitcode = EXIT_FAILURE;
 		}
-		f.close();
 	}
 	if (cmd_opts.has("import")) {
 		ImportSpec spec;
@@ -561,6 +598,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			report(err);
 			exitcode = EXIT_FAILURE;
 		}
+	}
+	/* a lost failure entry no error reported yet: never exit 0 */
+	QStringList lost = AuditLog::takeLostEntries();
+	if (!lost.isEmpty()) {
+		report(AuditLog::lostEntriesError(lost));
+		exitcode = EXIT_FAILURE;
 	}
 	return exitcode;
 }

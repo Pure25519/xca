@@ -14,6 +14,7 @@
 #include "headerlist.h"
 
 #include <QStringList>
+#include <functional>
 #include <QAbstractItemModel>
 #include <QHash>
 
@@ -48,6 +49,9 @@ class DeleteResult
 	QList<pki_base *> dependents{};
 	/* Revocation rows of deleted CA certificates that were removed */
 	int revocations{};
+	/* Objects whose deletion on the token failed, with the reason;
+	 * they are deleted from the database (BTD-128) */
+	QStringList tokenErrors{};
 };
 
 class db_base: public QAbstractItemModel
@@ -211,11 +215,32 @@ class db_base: public QAbstractItemModel
 		 * per object, all in one transaction: either all objects are
 		 * deleted or none, then one failure entry names the object
 		 * that failed and memory is unchanged (BTD-130). The
-		 * confirmation (question item.delete) and the deletion of a
-		 * key or certificate on its token belong to the caller. The
-		 * pointers in items are invalid after a successful call. */
+		 * confirmation (question item.delete) belongs to the caller.
+		 * fromToken: each object is also deleted on its token, in
+		 * this order (BTD-272, BTD-273): after the checks and before
+		 * the transaction pki_base::prepareTokenDeletion() asks, logs
+		 * in and finds the objects; the entry of each object records
+		 * on_token (found and confirmed); after the COMMIT the found
+		 * objects are deleted on the token, so a rollback leaves the
+		 * token unchanged. A failure while preparing is returned in
+		 * tokenErrors and recorded as warning token_delete_failed on
+		 * the entry (BTD-128); a failure on the token after the COMMIT
+		 * is returned in tokenErrors and recorded as one failure entry
+		 * token.delete (error token_error) per object left on its
+		 * token. Called inside a transaction, the token step waits for
+		 * the outermost COMMIT and its errors reach only the audit log.
+		 * The pointers in items are invalid after a successful call. */
 		DeleteResult deleteItems(const ServiceContext &ctx,
-				const QList<pki_base *> &items);
+				const QList<pki_base *> &items,
+				bool fromToken = false);
+		/* Tests only (BTD-128): replaces pki_base::deleteFromToken()
+		 * in db_token::deleteOnToken(); true if the object was deleted
+		 * on a token, an exception is a failure on the token */
+		static std::function<bool(pki_base *)> tokenDeleteHook;
+		/* Tests only (BTD-272): replaces
+		 * pki_base::prepareTokenDeletion() in deleteItems(); an
+		 * exception is a failure while preparing */
+		static std::function<TokenDeletion(pki_base *)> tokenPrepareHook;
 		static pki_base *fromIndex(const QModelIndex &index)
 		{
 			if (!index.isValid())
@@ -228,6 +253,7 @@ class db_base: public QAbstractItemModel
 			return dynamic_cast<T*>(fromIndex(index));
 		}
 		void insertChild(pki_base *child, pki_base *parent = NULL);
+		void insertChildAt(pki_base *child, int row);
 		int rownumber(const pki_base *child) const;
 		void createSuccess(const pki_base *pki) const;
 		bool columnHidden(int col) const;

@@ -23,11 +23,14 @@
 #include "lib/db_x509.h"
 #include "lib/exception.h"
 #include "lib/issuance.h"
+#include "lib/json_report.h"
 #include "lib/pass_info.h"
 #include "lib/pki_crl.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_x509.h"
 
+#include "lib/db_x509req.h"
+#include "lib/request.h"
 #include "ServiceTestCase.h"
 
 class test_service_revocation : public ServiceTestCase
@@ -80,6 +83,8 @@ class test_service_revocation : public ServiceTestCase
 	void sameCodeForCertificateAndCrl_data();
 	void sameCodeForCertificateAndCrl();
 	void passwordProtectedCaKey();
+	void reasonStates();
+	void invalidityDate();
 };
 
 pki_x509 *test_service_revocation::issue(const QString &cn, pki_key *key,
@@ -127,6 +132,41 @@ pki_x509 *test_service_revocation::endEntity(const QString &cn, pki_x509 *ca,
 	QDateTime now = QDateTime::currentDateTimeUtc();
 	return issue(cn, newKey(cn + " key"), ca, now.addDays(-30),
 			now.addDays(days));
+}
+
+/* An entry as another CA tool writes it: reasonCode absent (code -1),
+ * explicit or any number (BTD-170) */
+static x509rev revoked(const a1int &serial, int code)
+{
+	X509_REVOKED *r = X509_REVOKED_new();
+	ASN1_INTEGER *sn = serial.get();
+	X509_REVOKED_set_serialNumber(r, sn);
+	ASN1_INTEGER_free(sn);
+	ASN1_TIME *t = ASN1_TIME_set(nullptr, time(nullptr) - 3600);
+	X509_REVOKED_set_revocationDate(r, t);
+	ASN1_TIME_free(t);
+	if (code >= 0) {
+		ASN1_ENUMERATED *e = ASN1_ENUMERATED_new();
+		ASN1_ENUMERATED_set(e, code);
+		X509_REVOKED_add1_ext_i2d(r, NID_crl_reason, e, 0, 0);
+		ASN1_ENUMERATED_free(e);
+	}
+	x509rev rev(r);
+	X509_REVOKED_free(r);
+	return rev;
+}
+
+/* The reasonCode of an encoded entry, -1 without the extension */
+static int encodedReason(const x509rev &rev)
+{
+	X509_REVOKED *r = rev.get();
+	int crit = -1;
+	ASN1_ENUMERATED *e = static_cast<ASN1_ENUMERATED *>(
+		X509_REVOKED_get_ext_d2i(r, NID_crl_reason, &crit, nullptr));
+	int code = e ? (int)ASN1_ENUMERATED_get(e) : -1;
+	ASN1_ENUMERATED_free(e);
+	X509_REVOKED_free(r);
+	return code;
 }
 
 x509rev test_service_revocation::reason(const QString &name)
@@ -446,6 +486,8 @@ void test_service_revocation::rejected_data()
 		<< "crl.generate" << "issuer_not_ca";
 	QTest::newRow("CRL without CA key") << "nokey"
 		<< "crl.generate" << "no_private_signing_key";
+	QTest::newRow("invalidity date after the revocation date")
+		<< "future" << "certificate.revoke" << "invalid_invalidity_date";
 	QTest::newRow("revocation list with a serial twice") << "duplicate"
 		<< "ca.set_revocations" << "duplicate_serial";
 }
@@ -482,7 +524,12 @@ void test_service_revocation::rejected()
 			certs()->revoke(ctx, ca, reason("Superseded"));
 		else if (variant == "reason")
 			certs()->revoke(ctx, ee, reason("no such reason"));
-		else if (variant == "nocert")
+		else if (variant == "future") {
+			x509rev rev = reason("Key Compromise");
+			rev.setInvalDate(a1time(QDateTime::currentDateTimeUtc()
+							.addDays(1)));
+			certs()->revoke(ctx, ee, rev);
+		} else if (variant == "nocert")
 			certs()->revoke(ctx, nullptr, reason("Superseded"));
 		else if (variant == "notrevoked")
 			certs()->unrevoke(ctx, ee);
@@ -829,6 +876,22 @@ void test_service_revocation::passwordProtectedCaKey()
 	QVERIFY(c);
 	QVERIFY(crlText(c, ca).contains(ee->getSerial().toHex()));
 
+	/* BTD-273: the key password is asked before the transaction of
+	 * the issuance, the CRL, the request and the renewal (the strict
+	 * dialog fails a prompt inside a transaction) */
+	RequestSpec rs;
+	rs.name = "protected request";
+	rs.subject.addEntryByNid(NID_commonName, "protected request");
+	rs.key = key;
+	rs.hashAlgo = digest(NID_sha256);
+	QVERIFY(Database.model<db_x509req>()->newRequest(ctx, rs));
+	RenewalSpec r;
+	r.predecessor = ca;
+	r.notBefore = a1time(QDateTime::currentDateTimeUtc());
+	r.validity = IsoDuration::parse("P1Y");
+	r.hashAlgo = digest(NID_sha256);
+	QCOMPARE(certs()->renew(ctx, { r }).size(), 1);
+
 	/* without the key password nothing is generated */
 	h->clearSources();
 	int crlCount = Store.getAll<pki_crl>().size();
@@ -844,5 +907,115 @@ void test_service_revocation::passwordProtectedCaKey()
 #endif
 }
 
+/* BTD-170: "no reasonCode", an explicit unspecified and an unknown code
+ * are three states. No reason is reported as none (JSON null), an explicit
+ * 0 read from a CRL as unspecified, an unknown code as its number; XCA's
+ * own "Unspecified" writes no extension (RFC 5280 5.3.1). An explicit 0
+ * becomes "no reason" when it is a revocation of the CA; an unknown code
+ * is kept and written again. */
+void test_service_revocation::reasonStates()
+{
+	/* read from an entry */
+	a1int sn("0A0B0C");
+	QCOMPARE(revoked(sn, -1).getReason(), QString());
+	QCOMPARE(encodedReason(revoked(sn, -1)), -1);
+	QCOMPARE(revoked(sn, 0).getReason(), QString("Unspecified"));
+	QCOMPARE(encodedReason(revoked(sn, 0)), 0);
+	QCOMPARE(revoked(sn, 7).getReasonBit(), 7);
+	QCOMPARE(revoked(sn, 7).getReason(), QString("7"));
+	QCOMPARE(encodedReason(revoked(sn, 7)), 7);
+	QCOMPARE(revoked(sn, 1).getReason(), QString("Key Compromise"));
+	QCOMPARE(encodedReason(revoked(sn, 1)), 1);
+
+	/* XCA's own revocation with "Unspecified": no reason anywhere */
+	pki_x509 *ca = rootCa("Reason CA");
+	pki_x509 *plain = endEntity("no reason", ca);
+	pki_x509 *zero = endEntity("explicit zero", ca);
+	pki_x509 *seven = endEntity("code seven", ca);
+	QVERIFY(ca && plain && zero && seven);
+	certs()->revoke(ctx, plain, reason("Unspecified"));
+	QJsonObject doc = JsonReport::certificate(plain);
+	QVERIFY2(doc["revocation"].toObject()["reason"].isNull(),
+		JsonReport::line(doc).constData());
+
+	/* imported: explicit 0 becomes "no reason", 7 is kept */
+	x509revList list = ca->getRevList();
+	list << revoked(zero->getSerial(), 0) << revoked(seven->getSerial(), 7);
+	certs()->setRevocations(ctx, ca, list);
+	QVERIFY(JsonReport::certificate(zero)["revocation"].toObject()
+		["reason"].isNull());
+	QCOMPARE(JsonReport::certificate(seven)["revocation"].toObject()
+		["reason"].toInt(), 7);
+
+	pki_crl *c = crl(ca);
+	QVERIFY(c);
+	QByteArray der = c->i2d();
+	const unsigned char *p = (const unsigned char *)der.constData();
+	X509_CRL *x = d2i_X509_CRL(nullptr, &p, der.size());
+	QVERIFY(x);
+	QMap<QString, int> codes;
+	STACK_OF(X509_REVOKED) *st = X509_CRL_get_REVOKED(x);
+	for (int i = 0; i < sk_X509_REVOKED_num(st); i++) {
+		X509_REVOKED *r = sk_X509_REVOKED_value(st, i);
+		x509rev rev(r);
+		codes[rev.getSerial().toHex()] = encodedReason(rev);
+	}
+	X509_CRL_free(x);
+	QCOMPARE(codes.value(plain->getSerial().toHex(), -2), -1);
+	QCOMPARE(codes.value(zero->getSerial().toHex(), -2), -1);
+	QCOMPARE(codes.value(seven->getSerial().toHex(), -2), 7);
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+}
+
 XCA_SERVICE_TEST_MAIN(test_service_revocation)
 #include "test_service_revocation.moc"
+
+/* BTD-206: a revocation without an invalidity date has none, in the CRL
+ * entry, the revocations table and the audit entry (RFC 5280 5.3.2); a
+ * given one is kept exactly */
+void test_service_revocation::invalidityDate()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	pki_x509 *ca = rootCa("Invalidity Root CA");
+	pki_x509 *without = endEntity("without", ca);
+	pki_x509 *with = endEntity("with", ca);
+	QVERIFY(ca && without && with);
+
+	certs()->revoke(ctx, without, reason("Key Compromise"));
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.result, QString("success"));
+	QVERIFY2(e.params["invalidity_date"].isNull(),
+		CCHAR(e.params["invalidity_date"].toString()));
+	QCOMPARE(revocationRows(), 1);
+	XSqlQuery q("SELECT invaldate FROM revocations");
+	QVERIFY(q.first());
+	/* the table keeps "no date" as XCA's undefined time, as for
+	 * every other optional date; it reads back as undefined */
+	QCOMPARE(q.value(0).toString(), a1time().setUndefined().toPlain());
+	a1time stored;
+	stored.fromPlain(q.value(0).toString());
+	QVERIFY(stored.isUndefined());
+	QVERIFY(without->getRevocation().getInvalDate().isUndefined());
+
+	a1time inval("20261001120000Z");
+	x509rev rev = reason("Key Compromise");
+	rev.setInvalDate(inval);
+	certs()->revoke(ctx, with, rev);
+	e = AuditLog::entries().last();
+	QCOMPARE(e.params["invalidity_date"].toString(),
+		QString("2026-10-01T12:00:00Z"));
+
+	QString text = crlText(crl(ca), ca);
+	QVERIFY(!text.isEmpty());
+	QCOMPARE(text.count("Invalidity Date"), 1);
+	int at = text.indexOf("Serial Number: " + with->getSerial().toHex());
+	QVERIFY2(at >= 0, CCHAR(text));
+	QVERIFY2(text.indexOf("Oct  1 12:00:00 2026 GMT", at) > at,
+		CCHAR(text));
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+#endif
+}

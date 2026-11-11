@@ -5,6 +5,7 @@
  */
 
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QProcess>
 #include <QRegularExpression>
@@ -72,6 +73,7 @@ class test_service_key : public ServiceTestCase
 	void newKeySize();
 	void newKeyRejectedSize_data();
 	void newKeyRejectedSize();
+	void newKeyServiceNeedsConfirmation();
 	void newKeySmallRsaConfirmed();
 	void newKeySmallRsaDeclined();
 	void newKeySmallRsaHeadless_data();
@@ -79,6 +81,9 @@ class test_service_key : public ServiceTestCase
 	void newKeySmallRsaHeadlessUnconfirmed_data();
 	void newKeySmallRsaHeadlessUnconfirmed();
 	void newKeyTooSmall();
+	void newKeyAboveLimit_data();
+	void newKeyAboveLimit();
+	void newKeyTooLargeNotAsked();
 	void keyjobParse_data();
 	void keyjobParse();
 	void keytypeList();
@@ -239,6 +244,13 @@ void test_service_key::newKeyRejectedSize_data()
 	/* above the service's lower bound (32), below OpenSSL's */
 	QTest::newRow("RSA 100") << "RSA:100" << 100;
 	QTest::newRow("DSA 100") << "DSA:100" << 100;
+	/* the paramgen of OpenSSL fails for DSA below 512 bit only with
+	 * "provider keymgmt failure": the service checks it (BTD-113) */
+	QTest::newRow("DSA 511") << "DSA:511" << 511;
+	/* above the limit of 16384 bit, also when confirmed (BTD-113) */
+	QTest::newRow("RSA 16385") << "RSA:16385" << 16385;
+	QTest::newRow("DSA 16385") << "DSA:16385" << 16385;
+	QTest::newRow("RSA 65536") << "RSA:65536" << 65536;
 }
 
 /* A size OpenSSL rejects fails, it does not become OpenSSL's default */
@@ -248,8 +260,12 @@ void test_service_key::newKeyRejectedSize()
 	QFETCH(int, bits);
 	int before = AuditLog::entries().size();
 
+	/* the size question is confirmed: OpenSSL's rejection is tested */
+	ServiceContext confirmed = ctx;
+	confirmed.confirm("key.size", "test");
 	try {
-		Database.model<db_key>()->newKey(ctx, keyjob(job), "bad-size");
+		Database.model<db_key>()->newKey(confirmed, keyjob(job),
+						"bad-size");
 		QFAIL("newKey accepted the size");
 	} catch (serviceError &err) {
 		QCOMPARE(err.code, QString("invalid_key_size"));
@@ -360,11 +376,91 @@ void test_service_key::newKeySmallRsaHeadlessUnconfirmed()
 	QVERIFY(AuditLog::verify().ok());
 }
 
+/* BTD-116: the service itself requires the confirmation of an unusual
+ * key size; a caller without a dialog (REST, EST, CMP) passes it in the
+ * ServiceContext. Without it: confirmation_required, a denied entry, no
+ * key; with it: the key, and the entry names the confirmation. */
+void test_service_key::newKeyServiceNeedsConfirmation()
+{
+	db_key *keys = Database.model<db_key>();
+	int before = AuditLog::entries().size();
+	try {
+		keys->newKey(ctx, keyjob("RSA:768"), "unconfirmed");
+		QFAIL("newKey(ctx) made a 768 bit key without confirmation");
+	} catch (confirmationError &err) {
+		QCOMPARE(err.question, QString("key.size"));
+	}
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	QCOMPARE(AuditLog::entries().size(), before + 1);
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.action, QString("key.generate"));
+	QCOMPARE(e.result, QString("denied"));
+	QCOMPARE(e.errorCode, QString("confirmation_required"));
+	QCOMPARE(e.params["question"].toString(), QString("key.size"));
+
+	ServiceContext confirmed = ctx;
+	confirmed.confirm("key.size", "rest");
+	pki_key *key = keys->newKey(confirmed, keyjob("RSA:768"), "confirmed");
+	QVERIFY(key);
+	QCOMPARE(EVP_PKEY_get_bits(key->getPubKey()), 768);
+	e = lastEntry();
+	QCOMPARE(e.result, QString("success"));
+	QCOMPARE(e.params["confirmed"].toString(), QString("key.size:rest"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
 void test_service_key::newKeyTooSmall()
 {
 	warning->expectMessage("Key size too small");
 	pki_key *key = Database.model<db_key>()->newKey(
 				keyjob("RSA:16"), "tiny-key");
+	QVERIFY(!key);
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+}
+
+/* BTD-113: above the limit the service refuses at once, before the
+ * key.size question: RSA:65536 ran for hours, and keys above 16384 bit
+ * cannot be used for public-key operations by OpenSSL */
+void test_service_key::newKeyAboveLimit_data()
+{
+	QTest::addColumn<QString>("job");
+
+	QTest::newRow("RSA 16385") << "RSA:16385";
+	QTest::newRow("DSA 16385") << "DSA:16385";
+	QTest::newRow("RSA 65536") << "RSA:65536";
+}
+
+void test_service_key::newKeyAboveLimit()
+{
+	QFETCH(QString, job);
+	int before = AuditLog::entries().size();
+	QElapsedTimer timer;
+	timer.start();
+
+	try {
+		Database.model<db_key>()->newKey(ctx, keyjob(job), "too-large");
+		QFAIL("newKey accepted the size");
+	} catch (errorEx &err) {
+		serviceError *svc = dynamic_cast<serviceError *>(&err);
+		QVERIFY2(svc, CCHAR(err.getString()));
+		QCOMPARE(svc->code, QString("invalid_key_size"));
+	}
+	QVERIFY(timer.elapsed() < 5000);
+	QCOMPARE(Store.getAll<pki_key>().size(), 0);
+	QCOMPARE(AuditLog::entries().size(), before + 1);
+	AuditEntry e = lastEntry();
+	QCOMPARE(e.result, QString("failure"));
+	QCOMPARE(e.errorCode, QString("invalid_key_size"));
+	QVERIFY(AuditLog::verify().ok());
+}
+
+/* The interactive wrapper does not ask about a size it cannot generate:
+ * the message names the limit (StrictWarning fails on a question) */
+void test_service_key::newKeyTooLargeNotAsked()
+{
+	warning->expectMessage("above the limit of 16384 bit");
+	pki_key *key = Database.model<db_key>()->newKey(
+				keyjob("RSA:16385"), "too-large");
 	QVERIFY(!key);
 	QCOMPARE(Store.getAll<pki_key>().size(), 0);
 }

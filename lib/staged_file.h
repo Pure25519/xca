@@ -50,7 +50,10 @@
 #include <functional>
 
 #include <QByteArray>
+#include <QIODevice>
 #include <QList>
+#include <memory>
+
 #include <QPair>
 #include <QString>
 #include <QStringList>
@@ -60,7 +63,7 @@ class StagedFile
   public:
 	/* The steps a test can make fail (faultHook) */
 	enum step { create, write, sync, publish_step, recheck, owner_check,
-		swap, probe, noreplace, unlink_temp };
+		swap, probe, noreplace, unlink_temp, subdir };
 	/* A warning for the result: code and detail */
 	typedef QPair<QString, QString> warning;
 
@@ -71,6 +74,9 @@ class StagedFile
 	QString dirPath{};       // its directory, canonical (stage())
 	QString tempName{};      // the temporary file in it
 	int dirFd{ -1 };         // POSIX: the directory, opened once
+	/* POSIX: dirFd, shared with the other staged files of the same
+	 * directory (BTD-213), closed with the last of them */
+	std::shared_ptr<struct SharedDirectory> dirShare{};
 	bool useLink{};          // POSIX: publish with link() (probed)
 	bool secret{};
 	bool replace{};
@@ -133,6 +139,11 @@ class StagedFile
 	/* stage() and publish() in one */
 	static void writeFile(const QString &target, const QByteArray &data,
 			bool secretFile, bool replaceTarget);
+	/* writeFile() with the bytes a writer puts into a device, for the
+	 * writers that take a QIODevice (BTD-139) */
+	static void writeWith(const QString &target, bool secretFile,
+			bool replaceTarget,
+			const std::function<void(QIODevice &)> &fill);
 
 	/* Tests only (BTD-42 fault injection): called before each step
 	 * with the target; a hook that returns true makes the step fail
@@ -202,6 +213,11 @@ class StagedDirectory
 	void stage();
 	/* path below the target: the same path in the sibling; else "" */
 	QString stagedPath(const QString &path) const;
+	/* The directories above staged (a path of stagedPath()) inside the
+	 * sibling, created one component at a time without following a
+	 * link (BTD-213): a link in their place is
+	 * target_directory_changed */
+	void makeParents(const QString &staged);
 	bool contains(const QString &path) const;
 	/* After the files below it are published into the sibling */
 	void publish();
