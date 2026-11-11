@@ -92,6 +92,7 @@ class test_service_memory : public ServiceTestCase
 	void newRequestRollback();
 	void newCrlRollback();
 	void importCompletedKeyAndCrlRollback();
+	void importCompletingKeyRemoveFails();
 	void importRollbackWritesNoSql();
 	void settingWithoutStoredValueRollback();
 	void pkcs12MigrationCommitFails();
@@ -412,6 +413,60 @@ void test_service_memory::importCompletedKeyAndCrlRollback()
 	QCOMPARE(Store.getAll<pki_crl>().size(), 0);
 	QCOMPARE(count("SELECT COUNT(*) FROM crls"), 0);
 	QCOMPARE(count("SELECT COUNT(*) FROM revocations"), 0);
+}
+
+/* A private key that completes a public key of the database replaces it:
+ * db_key::insertKey() deletes the public key (removeItem()) before it
+ * stores the new one. When that delete fails, the import fails with a
+ * typed error, the key object goes back to the caller instead of being
+ * lost (BTD-140; fixed by the catch of BTD-50, 2c686f21), and the public
+ * key stays as it was. The returned object already carries the name of
+ * the public key it was to complete: insertKey() sets it before the
+ * delete. */
+void test_service_memory::importCompletingKeyRemoveFails()
+{
+	pki_key *key = newKey("BTD-140 public");
+	QVERIFY(key);
+	EVP_PKEY *priv = static_cast<pki_evp *>(key)->decryptKey();
+	QVERIFY(priv);
+	QString pub = exportFile(key, 19, "btd140-public.pem");
+	Database.model<db_key>()->deleteItems(ctx, { key });
+	ImportSpec pubSpec;
+	pubSpec.files << pub;
+	ImportResult pubResult = Database.importItems(ctx, pubSpec);
+	QCOMPARE(pubResult.created.size(), 1);
+	Database.model<db_key>()->rename(ctx, pubResult.created[0],
+					"BTD-140 public");
+	QCOMPARE(inStore("BTD-140 public"), 1);
+
+	sql("CREATE TEMP TRIGGER btd140_remove BEFORE UPDATE ON items "
+		"WHEN NEW.del=1 BEGIN SELECT RAISE(ABORT, "
+		"'BTD-140 test: delete refused'); END");
+	pki_evp *k = new pki_evp(priv);
+	k->setIntName("BTD-140 private");
+	QList<pki_base *> unstored;
+	ImportSpec spec;
+	spec.items << k;
+	spec.unstored = &unstored;
+	QString code = errorCode([&]() { Database.importItems(ctx, spec); });
+	sql("DROP TRIGGER temp.btd140_remove");
+
+	QCOMPARE(code, QString("database_error"));
+	/* the key object is the caller's again, not stored, not lost */
+	QCOMPARE(unstored.size(), 1);
+	QVERIFY(unstored.first() == k);
+	QVERIFY(!k->getSqlItemId().isValid());
+	QVERIFY(k->isPrivKey());
+	delete k;
+	/* the public key is unchanged, in the store and in the database */
+	QCOMPARE(inStore("BTD-140 public"), 1);
+	for (pki_key *p : Store.getAll<pki_key>())
+		if (p->getIntName() == "BTD-140 public")
+			QVERIFY(p->isPubKey());
+	QCOMPARE(count("SELECT COUNT(*) FROM private_keys p JOIN items i "
+		"ON p.item=i.id WHERE i.name='BTD-140 public'"), 0);
+	QCOMPARE(count("SELECT COUNT(*) FROM items WHERE "
+		"name='BTD-140 public' AND del=0"), 1);
 }
 
 /* A newer CA certificate with the subject and key of a CA of the

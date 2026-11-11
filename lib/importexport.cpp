@@ -705,7 +705,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		 * temporary file carries the permissions set above (POSIX);
 		 * on Windows the inherited ACL of the directory, and the
 		 * directory must be writable (no direct-write fallback) */
-		if (!spec.fileName.isEmpty() && !file.commit())
+		if (!spec.fileName.isEmpty() && !(spec.commitFile ?
+				spec.commitFile(file) : file.commit()))
 			throw serviceError("write_failed",
 				tr("Failed writing to %1: %2").arg(spec.fileName)
 				.arg(file.errorString()));

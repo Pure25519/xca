@@ -237,7 +237,9 @@ x509rev Revocation::getRevocation()
 	x509rev r;
 
 	r.setSerial(a1int(serial->text()));
-	r.setInvalDate(invalid->getDate());
+	/* RFC 5280 5.3.2: an invalidity date only when it is known (BTD-206) */
+	if (invalidSince->isChecked())
+		r.setInvalDate(invalid->getDate());
 	r.setDate(a1time());
 	r.setCrlNo(0);
 	r.setReason(reason->currentText());
@@ -247,7 +249,9 @@ x509rev Revocation::getRevocation()
 void Revocation::setRevocation(x509rev r)
 {
 	serial->setText(r.getSerial());
-	invalid->setDate(r.getInvalDate());
+	invalidSince->setChecked(!r.getInvalDate().isUndefined());
+	if (invalidSince->isChecked())
+		invalid->setDate(r.getInvalDate());
 	int i = reason->findText(r.getReason());
 	if (i == -1)
 		i = 0;

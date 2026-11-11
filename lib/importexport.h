@@ -8,12 +8,15 @@
 #ifndef __IMPORTEXPORT_H
 #define __IMPORTEXPORT_H
 
+#include <functional>
+
 #include <QByteArray>
 #include <QList>
 #include <QMap>
 #include <QString>
 #include <QStringList>
 
+class QSaveFile;
 class pki_base;
 class pki_export;
 
@@ -126,6 +129,11 @@ class ExportSpec
 	 * its item id, as the audit entry key.export_private names it
 	 * (the bxc-pki command line reports it, BTD-42) */
 	QMap<QString, QString> *mlDsaWritten{};
+	/* The last step of a file export, after the COMMIT: puts the
+	 * written temporary file in place. Empty: QSaveFile::commit(). A
+	 * caller (a test, BTD-147) can pass one that fails, to see the
+	 * entries that a failed rename leaves */
+	std::function<bool(QSaveFile &)> commitFile{};
 };
 
 /* The PKCS#12 algorithm, MAC and iteration count of an export of spec:
