@@ -411,9 +411,9 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	if (spec.signer) {
-		p.set("issuer", spec.signer->getSubject().oneLine());
+		p.set("issuer", spec.signer->getSubject().rfc4514());
 		p.set("ca_id", spec.signer->getSqlItemId().toLongLong());
 	}
 	p.set("not_before", (QDateTime)spec.notBefore);
@@ -479,10 +479,9 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 	q.bindValue(3, policies.join(","));
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The profile of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The profile of the certificate could not "
+			"be stored"));
 }
 
 /* The predecessor of a renewal (BTD-56); inside the issuing transaction.
@@ -500,10 +499,9 @@ static void recordRenewal(const IssuanceSpec &spec, pki_x509 *cert)
 			X509_get0_pubkey(old->getCert())) == 1 ? 0 : 1);
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The predecessor of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The predecessor of the certificate could "
+			"not be stored"));
 }
 
 /* The extensions of the predecessor in their order (BTD-56). A new key
@@ -1081,7 +1079,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert->pkiSource = spec.source;
 
 	params.set("serial", cert->getSerial().toHex());
-	params.set("subject", cert->getSubject().oneLine());
+	params.set("subject", cert->getSubject().rfc4514());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
 	/* what was signed with: hash_algo is what the spec asked for, a
@@ -1552,9 +1550,8 @@ static void insertRevocation(const QVariant &caId, x509rev rev)
 	q.bindValue(0, caId);
 	rev.executeQuery(q);
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QObject::tr("Database error: %1")
-				.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QObject::tr("The revocation "
+			"could not be stored"));
 }
 
 /* Reason and dates only: the CRL number of the first appearance stays */
@@ -1590,7 +1587,7 @@ static AuditParams revocationParams(const pki_x509 *ca, const QString &serial,
 	AuditParams p = AuditParams::revocation(
 		ca ? ca->getSqlItemId().toLongLong() : 0, serial,
 		rev.getReasonBit(), rev.getDate(), rev.getInvalDate());
-	if (rev.getReasonBit() >= 0)
+	if (rev.hasReason())
 		p.set("reason", rev.getReason());
 	if (rev.getCrlNo())
 		p.set("crl_number", (qint64)rev.getCrlNo());

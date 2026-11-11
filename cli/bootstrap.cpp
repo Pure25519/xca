@@ -81,7 +81,8 @@ QString rowKey(const QString &kind, const QString &id)
 void checkSql(XSqlQuery &q)
 {
 	if (q.lastError().isValid())
-		throw serviceError("database_error", q.lastError().text());
+		throwSqlError(q.lastError(), QObject::tr("The bootstrap "
+			"state could not be read or written"));
 }
 
 QJsonObject readRow(const QString &kind, const QString &id,
