@@ -32,8 +32,8 @@ static void throwOnError(XSqlQuery &q)
 {
 	QSqlError e = q.lastError();
 	if (e.isValid())
-		throw serviceError("database_error",
-			tr("Database error: %1").arg(e.text()));
+		throwSqlError(e, tr("The profile store could not be read "
+			"or written"));
 }
 
 /* The table of a kind; anything else is refused before it reaches SQL */

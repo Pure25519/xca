@@ -15,10 +15,13 @@
 #include "lib/db_x509.h"
 #include "lib/issuance.h"
 #include "lib/pki_x509.h"
+#include "widgets/CertExtend.h"
 #include "widgets/MainWindow.h"
 #include "widgets/NewX509.h"
 #include "widgets/validity.h"
 #include "widgets/XcaWarning.h"
+
+#include "ui_CertExtend.h"
 
 #include "main.h"
 
@@ -383,6 +386,56 @@ void test_main::signerCapWithoutContinue()
 		QDateTime end = cert->getNotAfter(), caEnd = ca->getNotAfter();
 		QVERIFY2(end <= caEnd && end.secsTo(caEnd) < 60,
 			CCHAR(cert->getNotAfter().toPlain() + " / " +
+				ca->getNotAfter().toPlain()));
+		delete dlg;
+	} catch (errorEx &err) {
+		QVERIFY2(false, CCHAR(err.getString()));
+	}
+}
+
+/* BTD-107 for the renewal dialog: since BTD-56 the renewal issues through
+ * db_x509::renew(), which caps the end at the issuer chain (BTD-51), so
+ * the warning offers no "Continue rollout" there either; "Adjust date and
+ * continue" sets the CA's end */
+void test_main::renewalCapWithoutContinue()
+{
+	try {
+		openDB();
+		ServiceContext ctx(ServiceContext::cli, "os:test");
+		db_key *keys = Database.model<db_key>();
+		pki_key *caKey = keys->newKey(keyjob("EC:prime256v1"), "Renew CA");
+		x509name n;
+		n.addEntryByNid(NID_commonName, "Renew CA");
+		IssuanceSpec spec;
+		spec.name = "Renew CA";
+		spec.subject = n;
+		spec.key = caKey;
+		spec.notBefore = a1time(QDateTime::currentDateTimeUtc().addDays(-1));
+		spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addYears(1));
+		spec.hashAlgo = digest(NID_sha256);
+		spec.extensions.basicCA = ExtensionSpec::bc_ca;
+		spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+		pki_x509 *ca = Database.model<db_x509>()->newCert(ctx, spec);
+		QVERIFY(ca);
+
+		CertExtend *dlg = new CertExtend(mainwin, ca);
+		dlg->notBefore->setDate(a1time());
+		dlg->notAfter->setDate(a1time(
+			QDateTime::currentDateTimeUtc().addYears(3)));
+
+		warningText.clear();
+		signerBoxButtons.clear();
+		whenShown<xcaWarningBox>("dlg_warning", adjustAndContinue);
+		dlg->accept();
+		QVERIFY2(warningText.contains("longer valid than the signer"),
+			CCHAR(warningText));
+		QCOMPARE(signerBoxButtons, (QStringList{ "Edit dates",
+			"Abort rollout", "Adjust date and continue" }));
+		QCOMPARE(dlg->result(), (int)QDialog::Accepted);
+		/* the dialog's dates have whole minutes */
+		QDateTime end = dlg->notAfter->getDate(), caEnd = ca->getNotAfter();
+		QVERIFY2(end <= caEnd && end.secsTo(caEnd) < 60,
+			CCHAR(dlg->notAfter->getDate().toPlain() + " / " +
 				ca->getNotAfter().toPlain()));
 		delete dlg;
 	} catch (errorEx &err) {
