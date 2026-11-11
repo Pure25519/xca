@@ -150,13 +150,14 @@ void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
 			throw serviceError("issuer_not_ca", QObject::tr(
 				"CRL settings need a CA certificate of the "
 				"database"));
+		QString what = QObject::tr("The CRL settings of the CA "
+			"'%1' could not be stored").arg(ca->getIntName());
 		XSqlQuery q;
 		SQL_PREPARE(q, "DELETE FROM settings WHERE key_=?");
 		q.bindValue(0, settingsKey(ca));
 		q.exec();
 		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
+			throwSqlError(q.lastError(), what);
 		SQL_PREPARE(q, "INSERT INTO settings (key_, value) "
 				"VALUES (?, ?)");
 		q.bindValue(0, settingsKey(ca));
@@ -164,16 +165,14 @@ void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
 				.toJson(QJsonDocument::Compact)));
 		q.exec();
 		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
+			throwSqlError(q.lastError(), what);
 		SQL_PREPARE(q, "UPDATE authority SET crlDays=? WHERE item=?");
 		q.bindValue(0, days);
 		q.bindValue(1, ca->getSqlItemId());
 		AffectedItems(ca->getSqlItemId());
 		q.exec();
 		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
+			throwSqlError(q.lastError(), what);
 		int old = ca->getCrlDays();
 		ca->setCrlDays(days);
 		DbTransaction::onRollback([ca, old]() {
