@@ -1,9 +1,6 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
- * BTD-178: a skipped test_core_link (not Linux, or no readelf) is a
-   CMake warning instead of a STATUS line; -DXCA_REQUIRE_CORE_LINK=ON
-   makes it a configure error.
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an
