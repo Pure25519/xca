@@ -24,6 +24,7 @@
 #include "template.h"
 
 #include <QBuffer>
+#include <QFileInfo>
 #include <QMap>
 #include <QSaveFile>
 
@@ -219,6 +220,13 @@ static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 	}
 }
 
+QString importFailureCode(const QString &file, bool data)
+{
+	QFileInfo fi(file);
+	return data || (fi.isFile() && fi.isReadable()) ? "no_pki_data" :
+		"unreadable_input";
+}
+
 ImportResult database_model::importItems(const ServiceContext &ctx,
 				const ImportSpec &spec)
 {
@@ -227,6 +235,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 	QList<pki_crl *> raised;
 	AuditParams params;
 	QStringList sources = spec.files;
+	/* every failed file has its own failure entry: no second one for
+	 * the import as a whole (BTD-270) */
+	bool perFile = false;
 
 	if (!spec.data.isEmpty())
 		sources << (spec.dataName.isEmpty() ?
@@ -267,10 +278,24 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		}
 		items += read.pull();
 		result.failedFiles = read.failed_files;
+		for (const QString &f : spec.failedFiles)
+			if (!result.failedFiles.contains(f))
+				result.failedFiles << f;
+		/* one failure entry per file that could not be read, before
+		 * anything is stored; the readable objects are imported all
+		 * the same (BTD-270) */
+		for (const QString &f : result.failedFiles) {
+			AuditParams p;
+			p.set("file", f);
+			AuditLog::appendFailure(ctx, "object.import", "object",
+				QString(), p, importFailureCode(f,
+					!spec.data.isEmpty() && f == spec.dataName));
+		}
 		params.set("count", (qint64)items.size());
 
 		if (items.isEmpty()) {
-			if (!result.failedFiles.isEmpty())
+			perFile = !result.failedFiles.isEmpty();
+			if (perFile)
 				throw serviceError("no_pki_data",
 					tr("No PKI data found in: '%1'").arg(
 					result.failedFiles.join("', '")));
@@ -393,8 +418,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		 * back to the caller or is deleted (BTD-114) */
 		dropItems(items + result.created, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
-				params, err.code);
+		if (!perFile)
+			AuditLog::appendFailure(ctx, "object.import", "object",
+					QString(), params, err.code);
 		throw;
 	} catch (...) {
 		dropItems(items + result.created, spec);

@@ -50,7 +50,9 @@ const QList<arg_option> arguments::opts = {
 	arg_option("index", "file", file_argument, true, true,
 		"Save OpenSSL index in <file>."),
 	arg_option("import", NULL, no_argument, false, true,
-		"Import all provided items into the database."),
+		"Import all provided items into the database. A file that "
+		"cannot be read is reported and audited, and the exit code "
+		"is 1; the readable items are imported."),
 	arg_option("import-names", NULL, required_argument, false, true,
 		"A semicolon separated list of names applied to the imported items in the order found in the PEM file and on the commandline."),
 	arg_option("interactive", NULL, no_argument, false, false,
