@@ -410,8 +410,9 @@ void test_service_template::updateUnchanged()
 	QCOMPARE(temp->toB64Data(), stored);
 	QCOMPARE(AuditLog::entries().size(), entries);
 
+	QVariant id = temp->getSqlItemId();
 	reopenDatabase();
-	temp = Store.lookupPki<pki_temp>(temp->getSqlItemId());
+	temp = Store.lookupPki<pki_temp>(id);
 	QVERIFY(temp);
 	QCOMPARE(temp->toB64Data(), stored);
 	verifyChain();
