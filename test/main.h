@@ -57,6 +57,7 @@ class test_main: public QObject
 
 	/* dialogParent.cpp */
 	void passwordDialogParent();
+	void helpWithoutCollection();
 
 	/* dnBounds.cpp */
 	void dnUpperBounds();
