@@ -27,6 +27,28 @@ xca --no-gui --database fixture.xdb --password pass:service-test-db-pass --crlge
 Regenerate it only with a build of the schema it stands for; a dump made by a newer schema no
 longer tests the upgrade.
 
+## `schema8-legacy-keys.sql`
+
+`schema8-fork.sql` with both private keys (items 1 and 3) in the legacy encryption of XCA 1.x and
+without the settings row `legacy-keys-updated`: a database whose keys were never converted.
+`test_service_legacy_keys` checks with it that the open converts every legacy key to PKCS#8 with
+the same key, that a failed COMMIT of the conversion changes no row and leaves the marker unset,
+and that the fixture is what `pki_evp::legacyDecryptKey()` reads (BTD-269).
+
+It is synthesised, not made by an upstream build: the fork cannot convert an XCA 1.x database any
+more (upstream `57802580`), and the last upstream SQL build before PKCS#8 (`d50dbbd7`) wrote keys
+with SHA-256 and 8000 rounds, which `legacyDecryptKey()` does not read. The legacy blob, as
+`legacyDecryptKey()` and upstream `d32ab2e0` read it, is
+`iv || 3DES-EDE-CBC(EVP_BytesToKey(SHA-1, salt = iv, database password, 1 round), iv)` over the
+type-specific DER of the key, with a fixed 8-byte iv per item, so the file is byte-reproducible.
+`test_legacy_key_fixture` makes it again in ctest and compares it byte by byte.
+
+Made from `schema8-fork.sql` with the openssl program (OpenSSL 3) and Python 3:
+
+```
+python3 -I make_legacy_key_fixture.py schema8-fork.sql schema8-legacy-keys.sql
+```
+
 ## `schema8-bxc2.sql`
 
 SQL dump (Python `sqlite3.iterdump()`) of a database created by bxc-main `2700efa7`, database schema

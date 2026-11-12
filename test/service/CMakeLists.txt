@@ -147,6 +147,17 @@ if(UNIX)
   set_tests_properties(test_openssl_minimum PROPERTIES LABELS service)
 endif()
 
+# the legacy-key fixture is what its generator makes (BTD-269)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND AND OPENSSL_PROGRAM)
+  add_test(NAME test_legacy_key_fixture
+	COMMAND ${CMAKE_COMMAND} -DPYTHON=${Python3_EXECUTABLE}
+		-DOPENSSL=${OPENSSL_PROGRAM} -DDATA=${SERVICE_TEST_DIR}/data
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/legacy_key_fixture
+		-P ${SERVICE_TEST_DIR}/legacy_key_fixture.cmake)
+  set_tests_properties(test_legacy_key_fixture PROPERTIES LABELS service)
+endif()
+
 # no internal references in the public fork (BTD-236)
 add_test(NAME test_private_refs
 	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
