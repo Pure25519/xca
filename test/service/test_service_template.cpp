@@ -399,7 +399,7 @@ void test_service_template::updateUnchanged()
 	created.extensions.extKeyUsage = eku;
 	pki_temp *temp = temps()->newTemplate(ctx, created);
 	QVERIFY(temp);
-	QByteArray stored = temp->toB64Data();
+	QString stored = temp->toB64Data();
 	int entries = AuditLog::entries().size();
 
 	temps()->updateTemplate(ctx, temp, TemplateSpec::fromTemplate(temp));
@@ -439,7 +439,7 @@ void test_service_template::pathLengthRejected()
 	spec.extensions.basicCA = ExtensionSpec::bc_ca;
 	spec.extensions.pathLen = "1";
 	pki_temp *temp = nullptr;
-	QByteArray stored;
+	QString stored;
 
 	if (update) {
 		temp = temps()->newTemplate(ctx, spec);

@@ -158,7 +158,7 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			spec.extensions.checkEkuNames();
 			IssuanceChecks::pathLength(spec.extensions);
 			XSqlQuery q;
-			QByteArray before = temp->toB64Data();
+			QString before = temp->toB64Data();
 			QString beforeName = temp->getIntName();
 			QString beforeComment = temp->getComment();
 			spec.toTemplate(temp);
