@@ -63,7 +63,7 @@ class StagedFile
   public:
 	/* The steps a test can make fail (faultHook) */
 	enum step { create, write, sync, publish_step, recheck, owner_check,
-		swap, probe, noreplace, unlink_temp, subdir };
+		swap, probe, noreplace, unlink_temp, subdir, opendir };
 	/* A warning for the result: code and detail */
 	typedef QPair<QString, QString> warning;
 

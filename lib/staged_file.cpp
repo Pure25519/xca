@@ -66,6 +66,7 @@ QString StagedFile::stepName(enum step s)
 	case noreplace: return "noreplace";
 	case unlink_temp: return "unlink";
 	case subdir: return "subdir";
+	case opendir: return "opendir";
 	}
 	return "unknown";
 }
@@ -512,6 +513,7 @@ void StagedFile::stage(const QByteArray &data)
 		throw errorEx(QObject::tr("StagedFile: '%1' staged twice")
 			.arg(targetPath));
 	checkTarget(targetPath, replace);
+	fault(opendir);
 	openDirectory();
 	removeStale();
 
