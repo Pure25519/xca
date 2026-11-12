@@ -27,6 +27,7 @@
 
 #include "issuance.h"
 
+class AuditParams;
 class pki_crl;
 class pki_x509;
 class ServiceContext;
@@ -56,6 +57,13 @@ class CrlPolicy
 	 * size_budget); throws serviceError issuer_not_ca,
 	 * database_error. */
 	void store(const ServiceContext &ctx, pki_x509 *ca) const;
+	/* store() inside the caller's audited transaction: the writes
+	 * and the success entry ca.crl_settings, no failure entry; for
+	 * a service function that changes more than the CRL setting
+	 * (db_x509::setCaProperties(), BTD-219) */
+	void storeIn(const ServiceContext &ctx, pki_x509 *ca) const;
+	/* The parameters of the ca.crl_settings entry */
+	AuditParams auditParams(const pki_x509 *ca) const;
 
 	/* nextUpdate of a CRL issued at thisUpdate */
 	QDateTime nextUpdate(const QDateTime &thisUpdate) const;
