@@ -153,6 +153,9 @@ class test_service_importexport : public ServiceTestCase
 	void crlBeforeCaInTwoImports();
 	void templateCopyExport();
 	void rejections();
+	void sourcePasswordNoRetryWarning_data();
+	void sourcePasswordNoRetryWarning();
+	void interactivePasswordRetryWarns();
 	void pkcs12SourceFails_data();
 	void pkcs12SourceFails();
 	void exportFailureKeepsFile();
@@ -1148,15 +1151,14 @@ void test_service_importexport::rejections()
 #ifndef OPENSSL_PROGRAM
 	QSKIP("openssl program not found");
 #else
-	/* Wrong PKCS#12 password from the source: XCA's parser warns once
-	 * before the source is asked again */
+	/* Wrong PKCS#12 password from the source: no retry warning, the
+	 * source is not asked again (BTD-89) */
 	QFile p12(file("leaf.p12"));
 	QVERIFY(p12.open(QIODevice::ReadOnly));
 	ImportSpec in;
 	in.data = p12.readAll();
 	in.dataName = "leaf.p12";
 	in.passwordSource = "pass:wrong";
-	warning->expectMessage("Password verify error");
 	try {
 		Database.importItems(ctx, in);
 		QFAIL("importItems() did not throw");
@@ -1218,6 +1220,72 @@ void test_service_importexport::rejections()
 #endif
 }
 
+/* A wrong password from a source ends the import with wrong_password
+ * and shows no "Password verify error" warning: the next request would
+ * not prompt anybody (BTD-89). StrictWarning fails on any message. */
+void test_service_importexport::sourcePasswordNoRetryWarning_data()
+{
+	QTest::addColumn<QString>("name");
+	QTest::addColumn<QString>("source");
+
+	QTest::newRow("PKCS#12, pass:") << "leaf.p12" << "pass:wrong";
+	QTest::newRow("PKCS#12, env:") << "leaf.p12" << "env:BTD89_WRONG";
+	QTest::newRow("encrypted PEM key, pass:") << "btd89-enc.pem"
+		<< "pass:wrong";
+	QTest::newRow("encrypted PEM key, env:") << "btd89-enc.pem"
+		<< "env:BTD89_WRONG";
+}
+
+void test_service_importexport::sourcePasswordNoRetryWarning()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, name);
+	QFETCH(QString, source);
+
+	qputenv("BTD89_WRONG", "wrong-btd89");
+	if (!QFile::exists(file("btd89-enc.pem")))
+		QVERIFY(opensslRun({ "pkey", "-in", file("leaf.key"),
+			"-aes-256-cbc", "-passout", "pass:right-btd89",
+			"-out", file("btd89-enc.pem") }));
+	ImportSpec in;
+	in.files << file(name);
+	in.passwordSource = source;
+	try {
+		Database.importItems(ctx, in);
+		QFAIL("importItems() did not throw");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("wrong_password"));
+	}
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("object.import"));
+	QCOMPARE(e.errorCode, QString("wrong_password"));
+	qunsetenv("BTD89_WRONG");
+#endif
+}
+
+/* Interactive input is unchanged: a wrong password typed into the dialog
+ * shows the warning once, the dialog asks again and the right password
+ * imports the file (BTD-89) */
+void test_service_importexport::interactivePasswordRetryWarns()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFile p12(file("leaf.p12"));
+	QVERIFY(p12.open(QIODevice::ReadOnly));
+	ImportSpec in;
+	in.data = p12.readAll();
+	in.dataName = "leaf.p12";
+	pwdialog->expect("wrong-typed");
+	pwdialog->expect(p12Pass);
+	warning->expectMessage("Password verify error");
+	ImportResult r = Database.importItems(ctx, in);
+	QCOMPARE(r.created.size(), 3);
+#endif
+}
+
 /* A PKCS#12 import whose password source fails: a wrong password, a
  * variable or a file without a value. The source throws secretError in
  * the MAC loop of pki_pkcs12::parse(), which must free the PFX on that
@@ -1228,13 +1296,12 @@ void test_service_importexport::pkcs12SourceFails_data()
 {
 	QTest::addColumn<QString>("source");
 	QTest::addColumn<QString>("code");
-	QTest::addColumn<bool>("warns");
 
-	QTest::newRow("wrong") << "pass:wrong" << "wrong_password" << true;
+	QTest::newRow("wrong") << "pass:wrong" << "wrong_password";
 	QTest::newRow("unset variable") << "env:BTD91_UNSET_PASSWORD"
-		<< "missing_password" << false;
+		<< "missing_password";
 	QTest::newRow("missing file") << "file:" + file("btd91-no-such-file")
-		<< "missing_password" << false;
+		<< "missing_password";
 }
 
 void test_service_importexport::pkcs12SourceFails()
@@ -1244,7 +1311,6 @@ void test_service_importexport::pkcs12SourceFails()
 #else
 	QFETCH(QString, source);
 	QFETCH(QString, code);
-	QFETCH(bool, warns);
 
 	qunsetenv("BTD91_UNSET_PASSWORD");
 	QFile p12(file("leaf.p12"));
@@ -1253,8 +1319,7 @@ void test_service_importexport::pkcs12SourceFails()
 	in.data = p12.readAll();
 	in.dataName = "leaf.p12";
 	in.passwordSource = source;
-	if (warns)
-		warning->expectMessage("Password verify error");
+	/* no "Password verify error": a source is not asked again (BTD-89) */
 	int before = Store.getAll<pki_x509>().size();
 	try {
 		Database.importItems(ctx, in);
