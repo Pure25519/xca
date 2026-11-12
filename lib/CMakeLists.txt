@@ -1,5 +1,5 @@
 
-list(APPEND xcadoc_sources arguments.cpp arguments.h xcadoc.cpp)
+list(APPEND xcadoc_sources arguments.cpp arguments.h Passwd.cpp Passwd.h xcadoc.cpp)
 list(APPEND xcaexport_sources pki_export.cpp pki_export.h xcaexport.cpp)
 
 list(APPEND xcacore_sources
@@ -43,6 +43,7 @@ cmdline.cpp   pkcs11_provider.cpp
 audit.cpp	audit.h	audit_key.cpp	audit_key.h
 issuance.cpp	issuance.h
 issuance_checks.cpp	issuance_checks.h
+key_types.cpp	key_types.h
 policy.cpp	policy.h
 profile.cpp	profile.h
 profile_store.cpp	profile_store.h

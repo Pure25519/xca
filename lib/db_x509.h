@@ -84,12 +84,29 @@ class db_x509: public db_x509super
 		void inToCont(pki_base *pki);
 		/* Serial number rule of BTD-31, see randomSerial() */
 		static a1int randomSerial();
+		/* Encodes an extension value, X509V3_EXT_i2d(). A test seam
+		 * (BTD-192): the service test replaces it to inject an
+		 * encoding failure into the request merge */
+		static X509_EXTENSION *(*encodeExtension)(int nid, int crit,
+							 void *value);
 		bool serialInUse(pki_x509 *signer, const a1int &serial);
 		a1int getUniqueSerial(pki_x509 *signer,
 			const std::function<a1int()> &draw = randomSerial);
 		void toToken(QModelIndex idx, bool alwaysSelect);
 		void toRequest(QModelIndex idx);
-		void updateCaProperties(pki_x509 *cert);
+		/* The CA Properties dialog (BTD-219), one transaction: a
+		 * changed CRL validity of crlDays whole days goes through
+		 * CrlPolicy (the crlpolicy row of the command line, crlDays,
+		 * entry ca.crl_settings), a changed template writes entry
+		 * ca.set_template (ca_id, name, template). Unchanged values
+		 * write nothing. On a failure database and memory keep the
+		 * stored values; one failure entry, of ca.crl_settings when
+		 * the CRL days changed, else of ca.set_template. Throws
+		 * serviceError issuer_not_ca, invalid_validity,
+		 * crl_settings_invalid, database_error */
+		void setCaProperties(const ServiceContext &ctx, pki_x509 *ca,
+				int crlDays, const QVariant &templateId);
+		static const char actionSetTemplate[];   // "ca.set_template"
 
 		/* Revocation (BTD-33). Each call writes exactly one audit
 		 * entry certificate.revoke / certificate.unrevoke and throws

@@ -9,6 +9,7 @@
 #include "NewX509.h"
 #include <QCheckBox>
 #include <QComboBox>
+#include <QFormLayout>
 #include <QRadioButton>
 #include <QMessageBox>
 #include <QLineEdit>
@@ -167,6 +168,7 @@ NewX509::NewX509(QWidget *w) : XcaDetail(w)
 		tabWidget->widget(i)->setObjectName(tabnames[i]);
 		qDebug() << "TAB:" << i << tabWidget->tabText(i);
 	}
+	setupRequestMerge();
 
 	nsImg->setPixmap(QPixmap(":nsImg"));
 
@@ -359,6 +361,59 @@ void NewX509::setReqAttributes(pki_x509req *req)
 	}
 }
 
+/* The tab "Request merge" (BTD-185): what a CSR adds to SAN, key usage
+ * and EKU, and the EKUs a CSR may ask for */
+void NewX509::setupRequestMerge()
+{
+	requestMergeTab = new QWidget(this);
+	requestMergeTab->setObjectName("requestMerge");
+	requestMergeTab->hide();
+	QFormLayout *form = new QFormLayout(requestMergeTab);
+	QLabel *help = new QLabel(tr(
+		"How an extension of a certificate request is combined with "
+		"the template's when the request is signed with this template:\n"
+		"Legacy: as XCA always did, the request's extensions only with "
+		"\"copy extensions\" and only where the template has none.\n"
+		"Template: the template's extension; the request's is ignored.\n"
+		"Request: the request's extension if it has one, else the "
+		"template's. Device requests may ask for more than they need.\n"
+		"Merge: the entries of both."), requestMergeTab);
+	help->setWordWrap(true);
+	form->addRow(help);
+	const QList<QPair<ExtensionSpec::requestMerge, QString> > modes {
+		{ ExtensionSpec::merge_legacy, tr("Legacy") },
+		{ ExtensionSpec::merge_template, tr("Template") },
+		{ ExtensionSpec::merge_request, tr("Request") },
+		{ ExtensionSpec::merge_union, tr("Merge") },
+	};
+	struct box {
+		QComboBox **member;
+		const char *name;
+		QString label;
+	};
+	const QList<box> boxes {
+		{ &reqSanMerge, "reqSanMerge", tr("Subject alternative name") },
+		{ &reqKuMerge, "reqKuMerge", tr("Key usage") },
+		{ &reqEkuMerge, "reqEkuMerge", tr("Extended key usage") },
+	};
+	for (const box &b : boxes) {
+		QComboBox *c = new QComboBox(requestMergeTab);
+		c->setObjectName(b.name);
+		for (const auto &m : modes)
+			c->addItem(m.second, (int)m.first);
+		form->addRow(b.label, c);
+		*b.member = c;
+	}
+	ekuAllowed = new QLineEdit(requestMergeTab);
+	ekuAllowed->setObjectName("ekuAllowed");
+	ekuAllowed->setToolTip(tr("Extended key usages a request may ask for, comma separated: short names, long names or OIDs. Empty: any"));
+	form->addRow(tr("Allowed extended key usages"), ekuAllowed);
+	ekuDefault = new QLineEdit(requestMergeTab);
+	ekuDefault->setObjectName("ekuDefault");
+	ekuDefault->setToolTip(tr("Extended key usages for a request that asks for none, comma separated; each must be allowed"));
+	form->addRow(tr("Default extended key usages"), ekuDefault);
+}
+
 /* Initialize dialog for Template creation */
 void NewX509::setTemp(pki_temp *temp, bool create)
 {
@@ -369,6 +424,7 @@ void NewX509::setTemp(pki_temp *temp, bool create)
 	validityBox->setEnabled(false);
 	image->setPixmap(QPixmap(":tempImg"));
 	pt = tmpl;
+	tabWidget->addTab(requestMergeTab, tr("Request merge"));
 	fromTemplate(temp);
 	comment->setPlainText(temp->getComment());
 	if (!create)
@@ -533,7 +589,11 @@ void NewX509::extensionsFromTemplate(pki_temp *temp)
 
 	TemplateSpec t = TemplateSpec::fromTemplate(temp);
 	const ExtensionSpec &e = t.extensions;
-	requestMerge = e;
+	reqSanMerge->setCurrentIndex(reqSanMerge->findData((int)e.sanMerge));
+	reqKuMerge->setCurrentIndex(reqKuMerge->findData((int)e.kuMerge));
+	reqEkuMerge->setCurrentIndex(reqEkuMerge->findData((int)e.ekuMerge));
+	ekuAllowed->setText(e.ekuAllowed.join(", "));
+	ekuDefault->setText(e.ekuDefault.join(", "));
 
 	nameCons->setText(e.nameConstraints);
 	subAltName->setText(e.subjectAltName);
@@ -1113,8 +1173,24 @@ enum NewX509::extension_error NewX509::validateExtensions(QString &result)
 	el.clear();
 	setupTmpCtx();
 	if (fromReqCB->isChecked() && copyReqExtCB->isChecked()) {
+		/* SAN, key usage and EKU with a merge mode other than legacy
+		 * are not copied: the issuance merges them into one instance
+		 * (BTD-54), so they are no duplicates (BTD-185) */
+		QList<int> merged;
+		const QList<QPair<int, QComboBox *> > modes {
+			{ NID_subject_alt_name, reqSanMerge },
+			{ NID_key_usage, reqKuMerge },
+			{ NID_ext_key_usage, reqEkuMerge },
+		};
+		for (const auto &m : modes) {
+			if (m.second->currentData().toInt() !=
+			    ExtensionSpec::merge_legacy)
+				merged << m.first;
+		}
 		req_el = getSelectedReq()->getV3ext();
 		for (int i=0; i<req_el.count(); i++) {
+			if (merged.contains(req_el[i].nid()))
+				continue;
 			if (ctx_cert && ctx_cert->addV3ext(req_el[i], true))
 				el += req_el[i];
 		}
@@ -1563,6 +1639,19 @@ void NewX509::accept()
 			msg.addButton(QMessageBox::Close, tr("Abort rollout"));
 			if (msg.exec() == QMessageBox::Close)
 				reject();
+			return;
+		}
+	} else if (pt == tmpl) {
+		/* the check db_temp runs when the template is stored, here
+		 * so the dialog stays open with its error (BTD-185) */
+		try {
+			getExtensionSpec().checkEkuNames();
+		} catch (serviceError &err) {
+			tabWidget->setCurrentWidget(requestMergeTab);
+			xcaWarningBox msg(this, tr("The template cannot be saved: %1")
+				.arg(err.getString()));
+			msg.addButton(QMessageBox::Ok, tr("Edit"));
+			msg.exec();
 			return;
 		}
 	} else if (pt == x509) {
