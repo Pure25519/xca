@@ -92,7 +92,7 @@ static AuditParams templateParams(const TemplateSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	return p;
 }
 
@@ -113,10 +113,11 @@ pki_temp *db_temp::newTemplate(const ServiceContext &ctx,
 	try {
 		auditedTransaction(ctx, "template.create", "template",
 				QString(), params, [&]() {
+			spec.extensions.checkEkuNames();
 			QSqlError e = temp->insertSql();
 			if (e.isValid())
-				throw serviceError("database_error",
-					e.text());
+				throwSqlError(e, tr("The template '%1' could "
+					"not be stored").arg(spec.name));
 			storeInMemory(temp);
 			AuditLog::append(ctx, "template.create", "template",
 					itemId(temp), params);
@@ -150,6 +151,7 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			if (!isStored(temp))
 				throw serviceError("missing_template",
 					tr("The template is not in the database"));
+			spec.extensions.checkEkuNames();
 			XSqlQuery q;
 			spec.toTemplate(temp);
 			DbTransaction::onRollback([temp, old]() {
@@ -162,7 +164,8 @@ void db_temp::updateTemplate(const ServiceContext &ctx, pki_temp *temp,
 			q.exec();
 			QSqlError e = q.lastError();
 			if (e.isValid())
-				throw serviceError("database_error", e.text());
+				throwSqlError(e, tr("The template '%1' could "
+					"not be updated").arg(spec.name));
 			writeNameComment(temp);
 			AuditLog::append(ctx, "template.update", "template",
 					itemId(temp), params);

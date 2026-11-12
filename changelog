@@ -1,6 +1,25 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-118: follow-ups of the validity cap (BTD-51). An issuance below a
+   CA whose end date is no valid time fails with invalid_validity naming
+   the CA, instead of issuing an uncapped certificate. The renewal dialog
+   warns like the New Certificate dialog when "No well-defined
+   expiration" is ticked under a CA with a finite end; "Adjust date and
+   continue" unticks it and takes the CA's end. requested_not_after is
+   null for the undefined date, like not_after. With the time hidden the
+   dialog's end is 23:59:59 of its day, so it may warn again under a CA
+   that ends earlier that day; the issuance caps anyway (upstream
+   behaviour kept).
+ * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
+   and a code RFC 5280 does not name apart. Without a reason the JSON
+   reports null and the GUI shows nothing (before: unspecified); an
+   unknown code is shown and written again as its number (before:
+   unspecified, written without the extension). An explicit unspecified
+   read from a CRL is shown as such in the CRL, but becomes "no reason"
+   when it is adopted as a revocation of the CA (RFC 5280 5.3.1), so CRLs
+   XCA generates never carry reasonCode unspecified. The stored value is
+   unchanged (0 without a reason), no migration.
  * BTD-113: RSA and DSA keys above 16384 bit, and DSA keys below 512 bit,
    are refused at once with invalid_key_size (and an audit failure
    entry), also when the size is confirmed; RSA:65536 ran for hours.
@@ -52,7 +71,8 @@ bxc-main (bxc-pki fork, unreleased)
    Certificate dialog no longer offers "Continue rollout": the issuance
    caps the end at the issuer chain anyway (BTD-51), so the button
    promised an uncapped certificate that was never issued. "Adjust date
-   and continue" remains. The renewal dialog follows with BTD-56.
+   and continue" remains. The renewal dialog does the same, since it
+   issues through db_x509::renew() (BTD-56), which caps as well.
  * BTD-215, BTD-127: extended key usages in the New Certificate dialog.
    An EKU of a template, profile or source certificate that is not in
    the dialog's list (missing or old eku.txt, own OID) gets a row marked

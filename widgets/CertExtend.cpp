@@ -85,16 +85,24 @@ void CertExtend::accept()
 				notBefore->setDate(signer->getNotBefore());
 		}
 	}
-	/* a signer with the undefined notAfter caps nothing (BTD-51) */
+	/* a signer with the undefined notAfter caps nothing (BTD-51); "No
+	 * well-defined expiration" is an undefined end, which a finite signer
+	 * caps as well: warn as NewX509 does (BTD-118) */
+	a1time requestedEnd = notAfter->getDate();
+	if (noWellDefinedExpDate->isChecked())
+		requestedEnd.setUndefined();
 	bool capped = false;
-	a1time cappedEnd = IssuanceSpec::cappedNotAfter(notAfter->getDate(),
+	a1time cappedEnd = IssuanceSpec::cappedNotAfter(requestedEnd,
 							signer, &capped);
-	if (capped && !noWellDefinedExpDate->isChecked()) {
+	if (capped) {
 		QString text = tr("The certificate will be longer valid than the signer. This is probably not what you want.");
 		xcaWarningBox msg(this, text);
 		msg.addButton(QMessageBox::Ok, tr("Edit dates"));
 		msg.addButton(QMessageBox::Close, tr("Abort rollout"));
-		msg.addButton(QMessageBox::Apply, tr("Continue rollout"));
+		/* no "Continue rollout": the renewal caps the end at the
+		 * issuer chain anyway (db_x509::renew(), BTD-56), so it would
+		 * promise an uncapped certificate that is never issued
+		 * (BTD-107) */
 		msg.addButton(QMessageBox::Yes, tr("Adjust date and continue"));
 		switch (msg.exec())
 		{
@@ -104,9 +112,8 @@ void CertExtend::accept()
 			case QMessageBox::Close:
 				reject();
 				return;
-			case QMessageBox::Apply:
-				break;
 			case QMessageBox::Yes:
+				noWellDefinedExpDate->setChecked(false);
 				notAfter->setDate(cappedEnd);
 		}
 	}

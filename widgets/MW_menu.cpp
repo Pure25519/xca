@@ -195,6 +195,8 @@ void MainWindow::init_menu()
 				SLOT(exportIndexHierarchy())), "act_extra_exportIndexHierarchy");
 	acList += setAutomationId(extra->addAction(tr("C&hange DataBase password"), this,
 				SLOT(changeDbPass())), "act_extra_changeDbPassword");
+	acList += setAutomationId(extra->addAction(tr("&Verify audit log"), this,
+				SLOT(verifyAudit())), "act_extra_verifyAudit");
 
 	extra->addSeparator();
 	acList += setAutomationId(extra->addAction(tr("Change table font"), this,
