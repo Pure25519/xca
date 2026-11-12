@@ -142,6 +142,49 @@ bxc-main (bxc-pki fork, unreleased)
    dialog's end is 23:59:59 of its day, so it may warn again under a CA
    that ends earlier that day; the issuance caps anyway (upstream
    behaviour kept).
+ * BTD-268 (xca#166): an explicitly empty --sqlpass (--sqlpass "" or
+   --sqlpass=) ends xca --no-gui with exit 1 and missing_password before
+   anything is opened, as an empty --password does since BTD-136;
+   before, it ran as if the option had not been given. The --help text
+   says so.
+ * BTD-196 (xca#153): a missing password names how it can be given: the
+   option of the running program that serves its purpose (xca:
+   --password for the database and key passwords, --sqlpass for the SQL
+   password; bxc-pki: its secret options) with the accepted sources, or
+   that no option gives it and it must be typed on a terminal. Before,
+   xca named --password only as an example and named no option without
+   --interactive. The error code stays missing_password.
+ * BTD-214 (xca#151, PR A, AC4): every SQL error path of the audit log,
+   audit keys, profile store, CRL settings, templates, revocations and
+   bootstrap goes through throwSqlError(): read_only_database or
+   disk_full where SQLite says so, database_error otherwise, with the
+   object and the reason of the database in the text. Before, the audit
+   paths gave the untyped internal_error and the others database_error
+   in every case.
+ * BTD-103 (xca#146): Extra > Verify audit log shows the report of
+   --audit-verify in the GUI: result, entries, first broken entry,
+   reason, checkpoints, unanchored and adopted entries, audit keys and
+   revocation state mismatches. It can check again with pinned audit key
+   ids and a minimum checkpoint, and offers Adopt unanchored entries (as
+   --audit-adopt) after a question when the log has no audit key.
+ * BTD-104 (xca#144): the DN parameters of audit entries (subject and
+   issuer of certificate.issue, request.create, crl.generate,
+   template.create and template.update) are written in RFC 4514 form
+   with UTF-8 as it is, e.g. OU=Ops+CN=a\+b,O=Müller\, Lab,C=DE; before,
+   the OpenSSL one-line form with escaped non-ASCII. Older entries keep
+   their form, since the hash chain forbids rewriting them; such a log
+   still verifies.
+ * BTD-246 (xca#143): a database with an empty password opened on the
+   command line without --password counts as verified when the empty
+   password matches the stored hash (db_unlock_verified true); before,
+   it was recorded as unverified. The update of legacy-encrypted keys to
+   PKCS#8 now runs only after a verified open.
+ * BTD-74 (xca#127): secrets in memory: a password object owns its bytes
+   and is wiped with OPENSSL_cleanse when it is cleared or destroyed;
+   before, a shared buffer kept the secret after a cleanse of a detached
+   copy. The copies of password sources, parsed secret options of xca
+   and bxc-pki and the headless password cache are wiped as well. argv,
+   the environment and swap are not covered.
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an
