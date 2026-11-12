@@ -22,6 +22,9 @@
 #include <QSqlQuery>
 #include <QTemporaryDir>
 
+#include <fcntl.h>
+#include <unistd.h>
+
 #include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_crl.h"
@@ -134,6 +137,9 @@ class test_service_importexport : public ServiceTestCase
 
   private slots:
 	void initTestCase();
+	void revocationSnapshotOnlyWhenNeeded();
+	void importPasswordSources_data();
+	void importPasswordSources();
 	void importCreatesAndMatches();
 	void certificateRoundTrip_data();
 	void certificateRoundTrip();
@@ -327,6 +333,102 @@ void test_service_importexport::checkNoSecret(const QByteArray &secret)
 
 /* Import from files made by openssl: four objects created, the same
  * files again only matched; one object.import entry per object */
+#define JSON_DATA SERVICE_TEST_DATA "/json/"
+
+/* BTD-115: keys and requests cannot change revocation rows, so their
+ * import does not read the revocation table. Observed without a hook:
+ * with the table renamed, reading it fails, so an import of keys and a
+ * request only succeeds if it never reads the table; a CA certificate
+ * still needs it */
+void test_service_importexport::revocationSnapshotOnlyWhenNeeded()
+{
+	auto sql = [](const char *statement) {
+		XSqlQuery q;
+		QVERIFY2(q.exec(statement), CCHAR(q.lastError().text()));
+	};
+	sql("ALTER TABLE revocations RENAME TO revocations_hidden");
+	ImportSpec spec;
+	for (const char *f : { "ec.key", "own.key", "device.pub", "plain.csr" })
+		spec.files << QString(JSON_DATA) + f;
+	ImportResult r;
+	QString error;
+	try {
+		r = Database.importItems(ctx, spec);
+	} catch (errorEx &err) {
+		error = err.getString();
+	}
+	ImportSpec ca;
+	ca.files << QString(JSON_DATA "ca.crt");
+	bool caFails = false;
+	try {
+		Database.importItems(ctx, ca);
+	} catch (errorEx &) {
+		caFails = true;
+	}
+	sql("ALTER TABLE revocations_hidden RENAME TO revocations");
+	QVERIFY2(error.isEmpty(), CCHAR("keys and a request read the "
+		"revocation table: " + error));
+	QCOMPARE(r.created.size(), 4);
+	QVERIFY2(caFails, "a CA certificate is imported without its "
+		"revocation snapshot");
+	r = Database.importItems(ctx, ca);
+	QCOMPARE(r.created.size(), 1);
+}
+
+/* BTD-115: the import password from file:, fd: and stdin (pass: and
+ * env: are covered by the cases above) */
+void test_service_importexport::importPasswordSources_data()
+{
+	QTest::addColumn<QString>("kind");
+	QTest::newRow("file:") << "file";
+	QTest::newRow("fd:") << "fd";
+	QTest::newRow("stdin") << "stdin";
+}
+
+void test_service_importexport::importPasswordSources()
+{
+	QFETCH(QString, kind);
+	QString pwFile = file("import-password.txt");
+	{
+		QFile f(pwFile);
+		QVERIFY(f.open(QIODevice::WriteOnly));
+		f.write("Import-Secret-11\n");
+	}
+	ImportSpec spec;
+	spec.files << QString(JSON_DATA "rsa-enc.key");
+	int fd = -1, savedStdin = -1;
+	if (kind == "file") {
+		spec.passwordSource = "file:" + pwFile;
+	} else {
+		fd = ::open(QFile::encodeName(pwFile).constData(), O_RDONLY);
+		QVERIFY(fd >= 0);
+		if (kind == "fd") {
+			spec.passwordSource = QString("fd:%1").arg(fd);
+		} else {
+			savedStdin = ::dup(0);
+			QVERIFY(::dup2(fd, 0) == 0);
+			spec.passwordSource = "stdin";
+		}
+	}
+	ImportResult r;
+	QString error;
+	try {
+		r = Database.importItems(ctx, spec);
+	} catch (errorEx &err) {
+		error = err.getString();
+	}
+	if (savedStdin >= 0) {
+		::dup2(savedStdin, 0);
+		::close(savedStdin);
+	}
+	if (fd >= 0)
+		::close(fd);
+	QVERIFY2(error.isEmpty(), CCHAR(error));
+	QCOMPARE(r.created.size(), 1);
+	pki_key *key = dynamic_cast<pki_key *>(r.created.first());
+	QVERIFY(key && key->isPrivKey());
+}
+
 void test_service_importexport::importCreatesAndMatches()
 {
 #ifndef OPENSSL_PROGRAM

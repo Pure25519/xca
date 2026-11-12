@@ -220,6 +220,16 @@ static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 	}
 }
 
+/* A CRL in the store whose CA is not stored yet: a certificate of any
+ * kind may turn out to be its issuer when it is stored (BTD-122) */
+static bool orphanCrls()
+{
+	for (pki_crl *c : Store.getAll<pki_crl>())
+		if (!c->getIssuer())
+			return true;
+	return false;
+}
+
 QString importFailureCode(const QString &file, bool data)
 {
 	QFileInfo fi(file);
@@ -351,7 +361,16 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			if (completes)
 				p.set("item_id", itemId(completes));
 
-			revocationTable before = readRevocations();
+			/* Only a CRL or a CA certificate can change revocation
+			 * rows (revokeCerts(), the CRLs stored before their CA,
+			 * the take-over of db_x509::inToCont()); a key, request
+			 * or template does not read the table (BTD-115) */
+			pki_x509 *cert = dynamic_cast<pki_x509 *>(pki);
+			bool revocations = dynamic_cast<pki_crl *>(pki) ||
+				(cert && (cert->isCA() || orphanCrls()));
+			revocationTable before;
+			if (revocations)
+				before = readRevocations();
 			items.removeFirst();
 			pki_base *stored;
 			try {
@@ -386,7 +405,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 					linked << c;
 				}
 			}
-			auditRevocationChanges(ctx, before, readRevocations());
+			if (revocations)
+				auditRevocationChanges(ctx, before,
+						readRevocations());
 			for (pki_crl *c : linked) {
 				AuditParams lp;
 				lp.set("name", c->getIntName());
