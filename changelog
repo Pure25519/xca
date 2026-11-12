@@ -1,15 +1,16 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
- * BTD-192: an ekuAllowed or ekuDefault entry of a template that OpenSSL
-   does not know (short name, long name or OID) is refused with
-   template_eku_unknown, naming the field and the entry, when a template
-   is created, changed or imported, and at issuance for a spec that
-   bypassed that check; before, it was dropped, and an ekuDefault of
-   unknown names gave an empty EKU SEQUENCE. A merged SAN, key usage or
-   EKU that cannot be encoded is an invalid_extension error; before, the
-   template's extension was deleted first and the certificate was issued
-   without it.
+ * BTD-118: follow-ups of the validity cap (BTD-51). An issuance below a
+   CA whose end date is no valid time fails with invalid_validity naming
+   the CA, instead of issuing an uncapped certificate. The renewal dialog
+   warns like the New Certificate dialog when "No well-defined
+   expiration" is ticked under a CA with a finite end; "Adjust date and
+   continue" unticks it and takes the CA's end. requested_not_after is
+   null for the undefined date, like not_after. With the time hidden the
+   dialog's end is 23:59:59 of its day, so it may warn again under a CA
+   that ends earlier that day; the issuance caps anyway (upstream
+   behaviour kept).
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an
