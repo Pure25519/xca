@@ -82,7 +82,7 @@ void pki_pkcs12::parse(const QByteArray &ba, const QString &fname)
 		while (!PKCS12_verify_mac(pkcs12, pass.constData(),
 						pass.size())) {
 			if (pass.size() > 0)
-				XCA_PASSWD_ERROR();
+				PwDialogCore::passwordRetry(p.getPurpose());
 			enum open_result result =
 				PwDialogCore::execute(&p, &pass);
 			if (result != pw_ok) {
