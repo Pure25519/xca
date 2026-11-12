@@ -233,14 +233,17 @@ class db_base: public QAbstractItemModel
 		DeleteResult deleteItems(const ServiceContext &ctx,
 				const QList<pki_base *> &items,
 				bool fromToken = false);
-		/* Tests only (BTD-128): replaces pki_base::deleteFromToken()
-		 * in db_token::deleteOnToken(); true if the object was deleted
-		 * on a token, an exception is a failure on the token */
+#ifdef BXC_PKI_TEST_SEAMS
+		/* Tests only (BTD-128; test builds only, BTD-271): replaces
+		 * pki_base::deleteFromToken() in db_token::deleteOnToken();
+		 * true if the object was deleted on a token, an exception is
+		 * a failure on the token */
 		static std::function<bool(pki_base *)> tokenDeleteHook;
-		/* Tests only (BTD-272): replaces
+		/* Tests only (BTD-272; test builds only, BTD-271): replaces
 		 * pki_base::prepareTokenDeletion() in deleteItems(); an
 		 * exception is a failure while preparing */
 		static std::function<TokenDeletion(pki_base *)> tokenPrepareHook;
+#endif
 		static pki_base *fromIndex(const QModelIndex &index)
 		{
 			if (!index.isValid())

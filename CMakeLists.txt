@@ -158,6 +158,11 @@ file(TO_CMAKE_PATH ${OPENSSL_ROOT_DIR}  OPENSSL_ROOT_DIR)
 target_link_libraries(xcacore PUBLIC
     OpenSSL::Crypto ${QT}::Core ${QT}::Sql ${ASAN_LIB}
 )
+# Test seams (lib/test_seams.h, BTD-271) only in a build with tests: a
+# build with BUILD_TESTING=OFF has none (test_release_no_seams)
+if(BUILD_TESTING)
+  target_compile_definitions(xcacore PUBLIC BXC_PKI_TEST_SEAMS)
+endif()
 target_link_libraries(xcagui PUBLIC xcacore ${QT}::Widgets ${QT}::Help)
 target_link_libraries(xcadoc
     OpenSSL::Crypto ${QT}::Core ${ASAN_LIB}

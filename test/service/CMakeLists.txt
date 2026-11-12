@@ -146,7 +146,8 @@ if(CMAKE_NM)
 	${PROJECT_SOURCE_DIR}/lib/sql.cpp
 	${PROJECT_SOURCE_DIR}/lib/db_base.cpp
 	${PROJECT_SOURCE_DIR}/lib/db_token.cpp
-	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp)
+	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp
+	${PROJECT_SOURCE_DIR}/lib/test_seams.cpp)
   get_target_property(core_all xcacore SOURCES)
   foreach(src IN LISTS core_all)
     if(src MATCHES "\\.cpp$" AND EXISTS "${src}")

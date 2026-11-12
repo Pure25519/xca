@@ -7,7 +7,7 @@
  * of a silent success. The import case needs no injection: a CRL whose
  * revocation rows cannot be written (x509revList::sqlUpdate() returns
  * false and its caller carries on). The others use
- * DbTransaction::injectNestedRollback(), which turns a nested commit into
+ * TestSeams::injectNestedRollback(), which turns a nested commit into
  * the same kind of swallowed rollback. Follow-up of the review of xca#31:
  * a failed schema update stops the open, a failed password change keeps
  * the old password in memory too, a stray rollback after a commit does
@@ -39,6 +39,7 @@
 #include "lib/pki_x509.h"
 #include "lib/settings.h"
 #include "lib/sql.h"
+#include "lib/test_seams.h"
 #include "lib/template.h"
 
 #include "ServiceTestCase.h"
@@ -188,8 +189,8 @@ int test_service_transaction::entries(const QString &action,
 void test_service_transaction::cleanup()
 {
 	/* every injection was consumed by the call it was meant for */
-	bool pending = DbTransaction::injectionPending();
-	DbTransaction::injectNestedRollback(-1);
+	bool pending = TestSeams::injectionPending();
+	TestSeams::injectNestedRollback(-1);
 	ServiceTestCase::cleanup();
 	QVERIFY(!pending);
 }
@@ -341,7 +342,7 @@ void test_service_transaction::exportNestedRollback()
 	spec.items << key;
 	spec.clipboard = true;
 	spec.fileName = name;
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->exportItems(ctx, spec); }),
 		QString("database_error"));
@@ -361,7 +362,7 @@ void test_service_transaction::deleteNestedRollback()
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items "
 		"WHERE name='BTD-142 delete'").toInt(), 1);
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->deleteItems(ctx, { key }); }),
 		QString("database_error"));
@@ -378,7 +379,7 @@ void test_service_transaction::renameNestedRollback()
 	pki_key *key = newKey("BTD-142 old");
 	QVERIFY(key);
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->rename(ctx, key, "BTD-142 new"); }),
 		QString("database_error"));
@@ -396,7 +397,7 @@ void test_service_transaction::templateNestedRollback()
 	TemplateSpec spec;
 	spec.name = "BTD-142 template";
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_temp>()->newTemplate(ctx, spec); }),
 		QString("database_error"));
@@ -418,7 +419,7 @@ void test_service_transaction::checkpointNestedRollback()
 	Settings["audit_checkpoint_interval"] =
 		(int)AuditLog::entries().size() + 1;
 
-	DbTransaction::injectNestedRollback(1);
+	TestSeams::injectNestedRollback(1);
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->rename(ctx, key, "BTD-142 new"); }),
 		QString("database_error"));
@@ -517,7 +518,7 @@ void test_service_transaction::passwordChangeRollbackKeepsOld()
 	Passwd pass;
 	pass = "BTD-142-new-password";
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QString code = errorCode([&]() {
 		Database.model<db_key>()->changeDatabasePassword(pass); });
 	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));

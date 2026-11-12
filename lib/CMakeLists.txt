@@ -53,6 +53,7 @@ template.cpp	template.h
 XcaPresentation.cpp	XcaPresentation.h
 json_report.cpp	json_report.h
 staged_file.cpp	staged_file.h
+test_seams.cpp	test_seams.h
 crl_policy.cpp	crl_policy.h
 )
 macro(ExpandSources target)

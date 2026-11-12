@@ -36,7 +36,6 @@ class DbTransaction
 		static int error;
 		static QList<quint64> items;
 		static bool hasTransaction;
-		static int injected;
 		static QString firstRollback;
 		static QSqlError failure;
 		static QList<std::function<void()> > undoActions;
@@ -49,19 +48,6 @@ class DbTransaction
 		int beginLine{};
 		void debug(const char *func, const char *file, int line);
 		bool finish(bool commit, const char *file, int line);
-		/* Tests only (BTD-142): the nested commit after the next skip
-		 * ones rolls back instead and reports success, like an inner
-		 * helper that rolls back and returns without throwing */
-		static void injectNestedRollback(int skip = 0)
-		{
-			injected = skip + 1;
-		}
-		static bool injectionPending()
-		{
-			return injected > 0;
-		}
-		friend class test_service_transaction;
-		friend class test_service_memory;
 
 	public:
 		DbTransaction(Kind k = write) : kind(k) { };

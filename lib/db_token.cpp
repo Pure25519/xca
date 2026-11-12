@@ -8,9 +8,11 @@
 #include "sql.h"
 #include "XcaWarningCore.h"
 
+#ifdef BXC_PKI_TEST_SEAMS
 std::function<bool(pki_base *, const QString &)> db_token::tokenRenameHook{};
 std::function<TokenRename(pki_base *, const QString &)>
 	db_token::tokenRenamePrepareHook{};
+#endif
 
 db_token::db_token() : db_base("manageTokens")
 {
@@ -76,8 +78,12 @@ void db_token::deleteOnToken(const ServiceContext &ctx, pki_base *pki,
 				tr("No item selected"));
 		bool deleted;
 		try {
-			deleted = tokenDeleteHook ? tokenDeleteHook(pki) :
-				slot ? pki->deleteFromToken(*slot) :
+#ifdef BXC_PKI_TEST_SEAMS
+			if (tokenDeleteHook)
+				deleted = tokenDeleteHook(pki);
+			else
+#endif
+			deleted = slot ? pki->deleteFromToken(*slot) :
 				pki->deleteFromToken();
 		} catch (serviceError &) {
 			throw;
@@ -122,17 +128,21 @@ void db_token::rename(const ServiceContext &ctx, pki_base *pki,
 				tr("The item is not on the token"));
 		/* the login of the token before the transaction: no PIN
 		 * dialog while the database is locked (BTD-273) */
+#ifdef BXC_PKI_TEST_SEAMS
 		if (tokenRenamePrepareHook) {
 			change = tokenRenamePrepareHook(pki, name);
-		} else if (tokenRenameHook) {
+			return;
+		}
+		if (tokenRenameHook) {
 			change.found = true;
 			change.apply = [pki, name, notRenamed]() {
 				if (!tokenRenameHook(pki, name))
 					throw notRenamed();
 			};
-		} else {
-			change = pki->prepareTokenRename(slot, name);
+			return;
 		}
+#endif
+		change = pki->prepareTokenRename(slot, name);
 	}, [&]() {
 		/* The database first and the label on the token last: a
 		 * database failure leaves the token as it was, a token
