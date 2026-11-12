@@ -57,6 +57,7 @@ class test_main: public QObject
 
 	/* dialogParent.cpp */
 	void passwordDialogParent();
+	void helpWithoutCollection();
 
 	/* dnBounds.cpp */
 	void dnUpperBounds();
@@ -130,6 +131,12 @@ class test_main: public QObject
 	void staleReloadInDelete();
 	void reloadProxyRows();
 
+	/* templateMergeDialog.cpp */
+	void templateMergeShownAndSaved();
+	void templateMergeLegacyKept();
+	void templateMergeDefaultRefused();
+	void templateMergeNoDuplicate();
+
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();
 
@@ -140,6 +147,7 @@ class test_main: public QObject
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
 	void renewalCapWithoutContinue();
+	void undefinedEndUnderFiniteCa();
 	void issueRefusedInsideDialog();
 
   public:

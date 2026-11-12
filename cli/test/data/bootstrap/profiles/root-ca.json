@@ -27,6 +27,13 @@
         "cRLSign"
       ],
       "critical": false
+    },
+    "ml-dsa": {
+      "bits": [
+        "keyCertSign",
+        "cRLSign"
+      ],
+      "critical": false
     }
   },
   "csr_eku": "ignore",
