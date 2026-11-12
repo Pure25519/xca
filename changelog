@@ -1,6 +1,137 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-131 (xca#183): saving a template without a change writes nothing
+   and no template.update entry, and the EKUs are stored in one order; a
+   CA template with a path length that is not a number of 0 or more is
+   refused with invalid_path_length when it is stored.
+ * BTD-73 (xca#182): the password dialog shows the hex option for token
+   PINs by their purpose; before, it compared the translated word "PIN",
+   so in French ("NIP") the option was hidden for every PIN.
+ * BTD-271 (xca#181): the test seams of the library (DbTransaction
+   nested-rollback injection, the token delete, prepare and rename
+   hooks, the staged file fault hook) are compiled only into builds with
+   tests (BUILD_TESTING); a build with BUILD_TESTING=OFF has none,
+   checked with nm by test_release_no_seams. No change in behaviour.
+ * BTD-280 (xca#180): follow-ups of BTD-213 for staged directories. A
+   staging subdirectory swapped for a symbolic link after it was created
+   is refused with target_directory_changed before the commit; the files
+   are written through the descriptor of the directory that was created,
+   never through its path. The subdirectories of a published trust list
+   get the mode of the directory it replaces. Temporary files whose
+   owner cannot be proven alive (owner mark without start time,
+   unreadable /proc, a pid of another user) are removed like those of a
+   killed run once they are older than 10 minutes.
+ * BTD-178 (xca#173): a skipped test_core_link (not Linux, or no
+   readelf) is a CMake warning instead of a STATUS line;
+   -DXCA_REQUIRE_CORE_LINK=ON makes it a configure error.
+ * BTD-220 (xca#159): bxc-pki crl --allow-stale-crl reports every
+   thisUpdate check it overrides as a result warning
+   (crl_expired_at_issue, crl_this_update_before_latest, with the dates
+   and the number of the latest CRL) and records them in the new audit
+   parameter allow_stale of crl.generate. Without an overridden check
+   nothing changes.
+ * BTD-182 (xca#157): JSON output keeps CRL numbers exact: up to 2^53-1
+   as an integer, larger numbers as a decimal string (before, 2^63 and
+   more became 0). A file that --index, --hierarchy or another JSON
+   output cannot write is reported as write_failed, and later options
+   still run. Under --json the error detail no longer carries the GUI
+   prefix "The following error occurred:".
+ * BTD-115 (xca#165): importing keys, requests and templates no longer
+   reads the revocation table; it is read only around a CRL, a CA
+   certificate, or a certificate while a stored CRL waits for its CA.
+   Large imports into a database with many revocations are much faster.
+ * BTD-270 (xca#162): xca --import with a file it cannot read (missing,
+   unreadable, no PKI data) still imports the readable items, but now
+   reports each failed file (unreadable_input or no_pki_data; with
+   --json one error object per file) and exits 1; before, it warned and
+   exited 0. Each failed file has its own object.import failure entry in
+   the audit log, written by importItems().
+ * BTD-106 (xca#156): a command line write request that is refused
+   before its service function (e.g. xca --keygen with an unknown key
+   type, xca --crlgen with an unknown CA, a bxc-pki write command that
+   fails early) now writes one audit failure entry with the intended
+   action and the error code, as long as the database is open. Read
+   requests and refusals before the database is open write nothing.
+ * BTD-269 (xca#179): tests for the conversion of legacy-encrypted
+   private keys (pre-PKCS#8, 3DES with a SHA-1 derived key) on open,
+   including a failed COMMIT of the conversion, which leaves the keys
+   and the legacy-keys-updated marker unchanged for a retry. Test-only
+   change.
+ * BTD-214 (xca#152, AC1-3): a database the user may not write is
+   detected when it is opened. The command line prints a notice and
+   refuses --keygen, --import, --crlgen, --migrate-template and
+   --audit-adopt with read_only_database before any work; --audit-export
+   skips the checkpoint signature and says why. The GUI shows
+   "(read-only)" in the status bar and disables new, import, delete, the
+   Import menu, Change DataBase password and Options; export and details
+   stay. A read-only database that needs the schema upgrade is not
+   opened. A lock held by another process does not count as read-only.
+ * BTD-97 (xca#149): one spelling for audit values. New audit.key_create
+   entries and audit_keys rows name the Ed25519 audit key ED25519
+   (keytype name, like every other key entry), the schema upgrade
+   baseline writes object_type certificate instead of cert. Entries
+   written before keep ed25519 and cert, since the hash chain forbids
+   rewriting them; such a log still verifies.
+ * BTD-89 (xca#130): a wrong password from a password source (pass:,
+   env:, file:, fd:) no longer shows "Password verify error, please try
+   again"; the source is asked only once and the request fails with
+   wrong_password. This covers PKCS#12 import, encrypted PEM and PKCS#8
+   keys and opening a database. A person who types a wrong password into
+   the dialog still sees the warning before the dialog asks again.
+ * BTD-185 (xca#178): the template dialog has a tab "Request merge" with
+   the merge modes of SAN, key usage and EKU and the EKU allow-list and
+   default (BTD-54); before, they were kept but not shown. An EKU
+   default outside a non-empty allow-list is refused with
+   template_eku_default_not_allowed, and the dialog stays open with the
+   error.
+ * BTD-192 (xca#177): an ekuAllowed or ekuDefault entry of a template
+   that OpenSSL does not know (short name, long name or OID) is refused
+   with template_eku_unknown, naming the field and the entry, when a
+   template is created, changed or imported, and at issuance for a spec
+   that bypassed that check; before, it was dropped, and an ekuDefault
+   of unknown names gave an empty EKU SEQUENCE. A merged SAN, key usage
+   or EKU that cannot be encoded is an invalid_extension error; before,
+   the template's extension was deleted first and the certificate was
+   issued without it.
+ * BTD-219 (xca#176): the CA Properties dialog stores a changed CRL
+   validity through the CRL setting of the CA, the same row the bxc-pki
+   command line reads (crlpolicy_<id>), with one audit entry
+   ca.crl_settings; before, it changed only crlDays, so GUI and command
+   line issued CRLs with different lifetimes and nothing was audited. A
+   changed template writes the new audit entry ca.set_template. Both in
+   one transaction (db_x509::setCaProperties()); a failure keeps
+   database and memory.
+ * BTD-255 (xca#133): the offline help is switched off deliberately in
+   the bxc-pki builds: the build image has no sphinx-build, so no help
+   collection is made (the CMake warning says so). Help > Content shows
+   a note with the online XCA manual instead of an empty window; the
+   context help buttons stay disabled as before.
+ * BTD-123 (xca#132): CRL numbers up to 2^53-1 (the JSON-safe range of
+   the audit parameters, RFC 8785) are adopted on import and continued
+   by the CRL generation; before, 2^32-1 was the limit and a larger
+   imported number was dropped silently, so the next CRL could go below
+   it. A larger number is imported, the CA keeps its CRL number, the
+   import shows a warning naming the limit and audits warning
+   crl_number_out_of_range; the generation refuses it with
+   invalid_crl_number. authority.crlNo and the CRL number of a
+   revocation are read and written as 64 bit; no migration.
+ * BTD-241 (xca#131): the "CA vCalendar" export (format 18) lists only
+   valid issued certificates, as its description says. Upstream
+   behaviour that changes: upstream asked the CA instead of each
+   certificate whether it was revoked, so a valid CA listed its revoked
+   certificates too and a revoked CA listed none. The object.export
+   audit entries follow the same list.
+ * BTD-237 (xca#175): a profile names in key_types only the key types of
+   the bootstrap vocabulary (lib/key_types.cpp, moved from the CLI); an
+   unknown value is invalid_profile with its JSON pointer.
+   ku_by_key_type knows the key families eddsa, ml-dsa and slh-dsa,
+   which only sign (no encryption or key agreement bit), and every
+   family in key_types needs its entry. A profile issues for Brainpool,
+   EdDSA, ML-DSA and SLH-DSA keys, and a digest-less issuer signs
+   without a hash of the profile; before, Brainpool keys never matched
+   key_types and such a CA failed with profile_signature. A stored
+   profile with another value no longer loads.
  * BTD-118: follow-ups of the validity cap (BTD-51). An issuance below a
    CA whose end date is no valid time fails with invalid_validity naming
    the CA, instead of issuing an uncapped certificate. The renewal dialog
@@ -11,6 +142,49 @@ bxc-main (bxc-pki fork, unreleased)
    dialog's end is 23:59:59 of its day, so it may warn again under a CA
    that ends earlier that day; the issuance caps anyway (upstream
    behaviour kept).
+ * BTD-268 (xca#166): an explicitly empty --sqlpass (--sqlpass "" or
+   --sqlpass=) ends xca --no-gui with exit 1 and missing_password before
+   anything is opened, as an empty --password does since BTD-136;
+   before, it ran as if the option had not been given. The --help text
+   says so.
+ * BTD-196 (xca#153): a missing password names how it can be given: the
+   option of the running program that serves its purpose (xca:
+   --password for the database and key passwords, --sqlpass for the SQL
+   password; bxc-pki: its secret options) with the accepted sources, or
+   that no option gives it and it must be typed on a terminal. Before,
+   xca named --password only as an example and named no option without
+   --interactive. The error code stays missing_password.
+ * BTD-214 (xca#151, PR A, AC4): every SQL error path of the audit log,
+   audit keys, profile store, CRL settings, templates, revocations and
+   bootstrap goes through throwSqlError(): read_only_database or
+   disk_full where SQLite says so, database_error otherwise, with the
+   object and the reason of the database in the text. Before, the audit
+   paths gave the untyped internal_error and the others database_error
+   in every case.
+ * BTD-103 (xca#146): Extra > Verify audit log shows the report of
+   --audit-verify in the GUI: result, entries, first broken entry,
+   reason, checkpoints, unanchored and adopted entries, audit keys and
+   revocation state mismatches. It can check again with pinned audit key
+   ids and a minimum checkpoint, and offers Adopt unanchored entries (as
+   --audit-adopt) after a question when the log has no audit key.
+ * BTD-104 (xca#144): the DN parameters of audit entries (subject and
+   issuer of certificate.issue, request.create, crl.generate,
+   template.create and template.update) are written in RFC 4514 form
+   with UTF-8 as it is, e.g. OU=Ops+CN=a\+b,O=Müller\, Lab,C=DE; before,
+   the OpenSSL one-line form with escaped non-ASCII. Older entries keep
+   their form, since the hash chain forbids rewriting them; such a log
+   still verifies.
+ * BTD-246 (xca#143): a database with an empty password opened on the
+   command line without --password counts as verified when the empty
+   password matches the stored hash (db_unlock_verified true); before,
+   it was recorded as unverified. The update of legacy-encrypted keys to
+   PKCS#8 now runs only after a verified open.
+ * BTD-74 (xca#127): secrets in memory: a password object owns its bytes
+   and is wiped with OPENSSL_cleanse when it is cleared or destroyed;
+   before, a shared buffer kept the secret after a cleanse of a detached
+   copy. The copies of password sources, parsed secret options of xca
+   and bxc-pki and the headless password cache are wiped as well. argv,
+   the environment and swap are not covered.
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an
