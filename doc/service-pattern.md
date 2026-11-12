@@ -427,6 +427,9 @@ the request; the dialog's own context is set up only by some widget events
   questions `xcaWarning`, secrets and token choices `PwDialogCore`, progress `XcaProgress`, item
   icons, row colours and the wait cursor `XcaPresentation`. The ctests `test_core_sources` (grep)
   and `test_core_link` (whole-archive link, readelf) fail on any GUI reference in the core.
+  Without Linux or readelf, `test_core_link` is skipped with a CMake warning, and
+  `-DXCA_REQUIRE_CORE_LINK=ON` (set in the bxc-pki build image) turns that into a configure
+  error (BTD-178). On Windows the skip stays visible until BTD-13 decides on an equivalent check.
 - Where the GUI used to show an information box and stop (for issuance: the certificate already
   exists, practically unreachable with random serials), the service throws a `serviceError` and
   the GUI shows it as an error.
