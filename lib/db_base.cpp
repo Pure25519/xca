@@ -742,8 +742,10 @@ static QList<pki_base *> dependentsOf(pki_base *pki, int *revocations)
 	return list;
 }
 
+#ifdef BXC_PKI_TEST_SEAMS
 std::function<bool(pki_base *)> db_base::tokenDeleteHook{};
 std::function<TokenDeletion(pki_base *)> db_base::tokenPrepareHook{};
+#endif
 
 /* After the COMMIT of deleteItems(): the objects found on a token are
  * deleted there; one failure entry token.delete per object left on its
@@ -809,8 +811,14 @@ DeleteResult db_base::deleteItems(const ServiceContext &ctx,
 		if (fromToken) {
 			foreach(pki_base *pki, items) {
 				try {
-					onToken[pki] = tokenPrepareHook ?
-						tokenPrepareHook(pki) :
+#ifdef BXC_PKI_TEST_SEAMS
+					if (tokenPrepareHook) {
+						onToken[pki] =
+							tokenPrepareHook(pki);
+						continue;
+					}
+#endif
+					onToken[pki] =
 						pki->prepareTokenDeletion();
 				} catch (errorEx &err) {
 					tokenFailed[pki] = err.getString();

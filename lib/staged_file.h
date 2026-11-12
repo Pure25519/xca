@@ -150,13 +150,18 @@ class StagedFile
 			bool replaceTarget,
 			const std::function<void(QIODevice &)> &fill);
 
-	/* Tests only (BTD-42 fault injection): called before each step
-	 * with the target; a hook that returns true makes the step fail
-	 * as if the system call had failed (EIO; probe: as on vfat,
-	 * noreplace: as on a file system without RENAME_NOREPLACE). A hook
-	 * may also end the process to simulate a killed run. Never set in
-	 * bxc-pki. */
+#ifdef BXC_PKI_TEST_SEAMS
+	/* Tests only (BTD-42 fault injection; test builds only, BTD-271):
+	 * called before each step with the target; a hook that returns
+	 * true makes the step fail as if the system call had failed (EIO;
+	 * probe: as on vfat, noreplace: as on a file system without
+	 * RENAME_NOREPLACE). A hook may also end the process to simulate a
+	 * killed run. Set only by bxc-pki-faults and the tests. */
 	static std::function<bool(enum step, const QString &)> faultHook;
+#endif
+	/* The fault hook asks to fail step s for path (false without
+	 * test seams) */
+	static bool faultAt(enum step s, const QString &path);
 	static QString stepName(enum step s);
 };
 

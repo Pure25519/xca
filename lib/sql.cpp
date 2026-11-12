@@ -10,6 +10,7 @@
 #include <QDebug>
 #include "base.h"
 #include "sql.h"
+#include "test_seams.h"
 #include "settings.h"
 #include "XcaWarningCore.h"
 #include "exception.h"
@@ -17,7 +18,6 @@
 int DbTransaction::mutex;
 int DbTransaction::error;
 bool DbTransaction::hasTransaction;
-int DbTransaction::injected;
 QString DbTransaction::firstRollback;
 QSqlError DbTransaction::failure;
 QList<quint64> DbTransaction::items;
@@ -206,10 +206,12 @@ void DbTransaction::afterCommit(std::function<void()> action)
 
 bool DbTransaction::commit(const char *file, int line)
 {
-	if (injected > 0 && has_begun && mutex > 1 && --injected == 0) {
+#ifdef BXC_PKI_TEST_SEAMS
+	if (has_begun && mutex > 1 && TestSeams::nestedCommitRollsBack()) {
 		rollback(file, line);
 		return true;
 	}
+#endif
 	return finish(true, file, line);
 }
 

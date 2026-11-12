@@ -49,8 +49,21 @@
 #include <unistd.h>
 #endif
 
+#ifdef BXC_PKI_TEST_SEAMS
 std::function<bool(enum StagedFile::step, const QString &)>
 	StagedFile::faultHook;
+#endif
+
+bool StagedFile::faultAt(enum step s, const QString &path)
+{
+#ifdef BXC_PKI_TEST_SEAMS
+	return faultHook && faultHook(s, path);
+#else
+	(void)s;
+	(void)path;
+	return false;
+#endif
+}
 
 QString StagedFile::stepName(enum step s)
 {
@@ -96,7 +109,7 @@ static serviceError directoryChanged(const QString &dir)
 
 bool StagedFile::injected(enum step s) const
 {
-	return faultHook && faultHook(s, targetPath);
+	return faultAt(s, targetPath);
 }
 
 void StagedFile::fault(enum step s) const
@@ -1221,8 +1234,7 @@ std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
 		if (d.fd < 0)
 			throw directoryChanged(QDir::toNativeSeparators(path));
 		path += "/" + part;
-		if (StagedFile::faultHook &&
-		    StagedFile::faultHook(StagedFile::subdir, path))
+		if (StagedFile::faultAt(StagedFile::subdir, path))
 			throw failed(QObject::tr("Creating"), path,
 				QObject::tr("injected fault (test)"));
 		QByteArray p = QFile::encodeName(part);
@@ -1259,8 +1271,7 @@ void StagedDirectory::publish()
 	if (!staged || published)
 		throw errorEx(QObject::tr("StagedDirectory: '%1' is not staged")
 			.arg(targetPath));
-	if (StagedFile::faultHook &&
-	    StagedFile::faultHook(StagedFile::swap, targetPath))
+	if (StagedFile::faultAt(StagedFile::swap, targetPath))
 		throw failed(QObject::tr("Swapping in"), targetPath,
 			QObject::tr("injected fault (test)"));
 	/* again, after the commit, relative to the directory above of
@@ -1441,8 +1452,7 @@ void StagedDirectory::publish()
 	if (!staged || published)
 		throw errorEx(QObject::tr("StagedDirectory: '%1' is not staged")
 			.arg(targetPath));
-	if (StagedFile::faultHook &&
-	    StagedFile::faultHook(StagedFile::swap, targetPath))
+	if (StagedFile::faultAt(StagedFile::swap, targetPath))
 		throw failed(QObject::tr("Swapping in"), targetPath,
 			QObject::tr("injected fault (test)"));
 	/* again, after the commit: what changed since stage() is refused,

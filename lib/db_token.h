@@ -42,15 +42,17 @@ class db_token: public db_base
 				pki_base *pki, const slotid *slot = nullptr);
 		void saveHeaderState();
 		void rename_token_in_database(pki_scard *token);
-		/* Tests only (BTD-128): replaces the label change on the token
-		 * in rename(); false or an exception is a failure on the
-		 * token */
+#ifdef BXC_PKI_TEST_SEAMS
+		/* Tests only (BTD-128; test builds only, BTD-271): replaces
+		 * the label change on the token in rename(); false or an
+		 * exception is a failure on the token */
 		static std::function<bool(pki_base *, const QString &)>
 			tokenRenameHook;
-		/* Tests only (BTD-273): replaces
+		/* Tests only (BTD-273; test builds only, BTD-271): replaces
 		 * pki_base::prepareTokenRename() in rename() */
 		static std::function<TokenRename(pki_base *, const QString &)>
 			tokenRenamePrepareHook;
+#endif
 };
 
 #endif
