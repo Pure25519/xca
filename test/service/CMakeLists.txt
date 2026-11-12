@@ -136,6 +136,41 @@ else()
   message(STATUS "readelf or Linux missing: test_core_link skipped")
 endif()
 
+# The test seams of xcacore are compiled only into test builds (BTD-271).
+# The xcacore sources with seams (the known ones and every one that uses
+# BXC_PKI_TEST_SEAMS) are compiled once more without the definition, as
+# a build with BUILD_TESTING=OFF compiles them, into the object library
+# xcacore_release_seams; test_release_no_seams checks them with nm.
+if(CMAKE_NM)
+  set(seam_sources
+	${PROJECT_SOURCE_DIR}/lib/sql.cpp
+	${PROJECT_SOURCE_DIR}/lib/db_base.cpp
+	${PROJECT_SOURCE_DIR}/lib/db_token.cpp
+	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp)
+  get_target_property(core_all xcacore SOURCES)
+  foreach(src IN LISTS core_all)
+    if(src MATCHES "\\.cpp$" AND EXISTS "${src}")
+      file(STRINGS "${src}" uses REGEX "BXC_PKI_TEST_SEAMS")
+      if(uses)
+        list(APPEND seam_sources "${src}")
+      endif()
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES seam_sources)
+  add_library(xcacore_release_seams OBJECT ${seam_sources})
+  target_link_libraries(xcacore_release_seams PRIVATE
+	OpenSSL::Crypto ${QT}::Core ${QT}::Sql)
+  add_dependencies(tests xcacore_release_seams)
+  add_test(NAME test_release_no_seams
+	COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+		"-DOBJECTS=$<JOIN:$<TARGET_OBJECTS:xcacore_release_seams>,|>"
+		-DCORE=$<TARGET_FILE:xcacore>
+		-P ${SERVICE_TEST_DIR}/release_no_seams.cmake)
+  set_tests_properties(test_release_no_seams PROPERTIES LABELS service)
+else()
+  message(STATUS "nm missing: test_release_no_seams skipped")
+endif()
+
 # configuring against OpenSSL 3 stops with the version message (BTD-253);
 # the stand-in prefix uses the Unix library names
 if(UNIX)
