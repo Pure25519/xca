@@ -1165,6 +1165,35 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
+/* BTD-280: every directory below dfd gets mode, walked by descriptor
+ * without following a link (the staged tree holds only directories and
+ * regular files). Returns the path that failed and its errno in err, or
+ * an empty path. */
+static QString chmodSubdirectories(int dfd, mode_t mode, const QString &path,
+		int *err)
+{
+	for (const QByteArray &n : entries(dfd)) {
+		QString sub = path + "/" + QFile::decodeName(n);
+		struct stat st;
+		if (fstatat(dfd, n.constData(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
+			*err = errno;
+			return sub;
+		}
+		if (!S_ISDIR(st.st_mode))
+			continue;
+		Fd d(::openat(dfd, n.constData(), O_RDONLY | O_DIRECTORY |
+			O_NOFOLLOW | O_CLOEXEC));
+		if (d.fd < 0 || fchmod(d.fd, mode) != 0) {
+			*err = errno;
+			return sub;
+		}
+		QString failedAt = chmodSubdirectories(d.fd, mode, sub, err);
+		if (!failedAt.isEmpty())
+			return failedAt;
+	}
+	return QString();
+}
+
 std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
 		const QString &staged)
 {
@@ -1248,6 +1277,13 @@ void StagedDirectory::publish()
 		if (t.fd < 0 || fchmod(t.fd, st.st_mode & 07777) != 0)
 			throw failed(QObject::tr("Setting the mode of"),
 				tempPath, sysError(errno));
+		/* BTD-280: its subdirectories too, not 0777 & umask */
+		int err = 0;
+		QString sub = chmodSubdirectories(t.fd, st.st_mode & 07777,
+				tempPath, &err);
+		if (!sub.isEmpty())
+			throw failed(QObject::tr("Setting the mode of"), sub,
+				sysError(err));
 	}
 #if defined(RENAME_EXCHANGE)
 	/* one step: the sibling becomes the target, the target the sibling */
