@@ -90,7 +90,8 @@ class ExtensionSpec
 	QStringList ekuDefault{};
 	/* Every entry of ekuAllowed and ekuDefault must be an OpenSSL short
 	 * name, long name or dotted OID; otherwise template_eku_unknown
-	 * names the field and the entry (BTD-192) */
+	 * names the field and the entry (BTD-192). With an allow-list, every
+	 * default must be in it: template_eku_default_not_allowed (BTD-185) */
 	void checkEkuNames() const;
 
 	bool netscape{};            // add the Netscape extensions below

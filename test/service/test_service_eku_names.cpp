@@ -52,6 +52,8 @@ class test_service_eku_names : public ServiceTestCase
 	void templateWithUnknownEku_data();
 	void templateWithUnknownEku();
 	void knownEkuNamesAccepted();
+	void ekuDefaultOutsideAllowed_data();
+	void ekuDefaultOutsideAllowed();
 	void failedEncodingIssuesNothing();
 	void mergedExtensionKeepsPosition();
 };
@@ -276,6 +278,44 @@ void test_service_eku_names::knownEkuNamesAccepted()
 	QVERIFY(temp);
 	QCOMPARE(TemplateSpec::fromTemplate(temp).extensions.ekuAllowed,
 		t.extensions.ekuAllowed);
+}
+
+void test_service_eku_names::ekuDefaultOutsideAllowed_data()
+{
+	QTest::addColumn<QStringList>("allowed");
+	QTest::addColumn<QStringList>("def");
+	QTest::addColumn<QString>("code");
+	QTest::newRow("outside") << QStringList{ "serverAuth" }
+		<< QStringList{ "clientAuth" }
+		<< "template_eku_default_not_allowed";
+	QTest::newRow("same OID, other name")
+		<< QStringList{ "TLS Web Client Authentication" }
+		<< QStringList{ "clientAuth" } << QString();
+	QTest::newRow("no allow-list") << QStringList()
+		<< QStringList{ "codeSigning" } << QString();
+}
+
+/* BTD-185: an EKU default outside a non-empty allow-list is refused */
+void test_service_eku_names::ekuDefaultOutsideAllowed()
+{
+	QFETCH(QStringList, allowed);
+	QFETCH(QStringList, def);
+	QFETCH(QString, code);
+	TemplateSpec t;
+	t.name = "Default template";
+	t.extensions.ekuMerge = ExtensionSpec::merge_request;
+	t.extensions.ekuAllowed = allowed;
+	t.extensions.ekuDefault = def;
+	QString got, message;
+	try {
+		Database.model<db_temp>()->newTemplate(ctx, t);
+	} catch (serviceError &err) {
+		got = err.code;
+		message = err.getString();
+	}
+	QCOMPARE(got, code);
+	if (!code.isEmpty())
+		QVERIFY2(message.contains(def.first()), CCHAR(message));
 }
 
 static X509_EXTENSION *failEku(int nid, int crit, void *value)
