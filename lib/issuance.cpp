@@ -34,6 +34,43 @@ static QString stripCopyToken(const QString &s, const QString &token)
 	return sn.join(", ");
 }
 
+void ExtensionSpec::checkEkuNames() const
+{
+	const QList<QPair<const char *, const QStringList *> > fields {
+		{ "ekuAllowed", &ekuAllowed }, { "ekuDefault", &ekuDefault },
+	};
+	for (const auto &f : fields) {
+		for (const QString &name : *f.second) {
+			ASN1_OBJECT *o = OBJ_txt2obj(CCHAR(name), 0);
+			ASN1_OBJECT_free(o);
+			ign_openssl_error();
+			if (!o)
+				throw serviceError("template_eku_unknown",
+					QCoreApplication::translate("ExtensionSpec",
+					"%1: '%2' is no known extended key usage (a short name, long name or OID)")
+					.arg(f.first, name));
+		}
+	}
+	if (ekuAllowed.isEmpty())
+		return;
+	for (const QString &name : ekuDefault) {
+		ASN1_OBJECT *d = OBJ_txt2obj(CCHAR(name), 0);
+		bool in = false;
+		for (const QString &a : ekuAllowed) {
+			ASN1_OBJECT *o = OBJ_txt2obj(CCHAR(a), 0);
+			in |= !OBJ_cmp(d, o);
+			ASN1_OBJECT_free(o);
+		}
+		ASN1_OBJECT_free(d);
+		ign_openssl_error();
+		if (!in)
+			throw serviceError("template_eku_default_not_allowed",
+				QCoreApplication::translate("ExtensionSpec",
+				"ekuDefault: '%1' is not in ekuAllowed (%2)")
+				.arg(name, ekuAllowed.join(", ")));
+	}
+}
+
 x509v3ext ExtensionSpec::basicConstraintsExt(X509V3_CTX *ctx) const
 {
 	QStringList cont;
