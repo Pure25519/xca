@@ -275,21 +275,29 @@ static const QRegularExpression tempPattern(
 	"^\\..+\\.bxc-tmp-(p([0-9]+)s([0-9]+)-)?[0-9a-f]{16}$");
 static const int staleSeconds = 600;
 
-/* The process that created a temporary name still runs: its pid exists
- * and, where /proc tells, it is the same process (start time); a name
- * without owner mark has no known owner */
-static bool ownerAlive(const QRegularExpressionMatch &m)
+/* The process that created a temporary name still runs (BTD-213 (6)).
+ * Fail-safe rule (BTD-280): an owner counts as alive only when it is
+ * this process, or its pid exists and /proc gives a start time equal to
+ * the mark. A mark with start 0 (written where /proc was unreadable), an
+ * unreadable /proc now (procKnown false or no start), and a pid of
+ * another user (kill() EPERM) without a matching start prove nothing: a
+ * reused pid would keep the file forever. Such an owner counts as gone,
+ * and removeStale() still removes only a file older than staleSeconds,
+ * so the file of a run that is still going is kept for 10 minutes. A
+ * name without owner mark has no known owner. */
+static bool ownerAlive(const QRegularExpressionMatch &m, bool procKnown)
 {
 	if (m.captured(1).isEmpty())
 		return false;
 	qint64 pid = m.captured(2).toLongLong();
 	if (pid == QCoreApplication::applicationPid())
 		return true;
-	if (pid <= 0 || (::kill((pid_t)pid, 0) != 0 && errno == ESRCH))
+	if (pid <= 0 || m.captured(3) == "0" || !procKnown)
+		return false;
+	if (::kill((pid_t)pid, 0) != 0 && errno == ESRCH)
 		return false;
 	QString start = processStart(pid);
-	return start.isEmpty() || m.captured(3) == "0" ||
-		start == m.captured(3);
+	return !start.isEmpty() && start == m.captured(3);
 }
 
 /* BTD-213 (5): the cause and the safe remedy; --force only with what it
@@ -463,12 +471,14 @@ void StagedFile::removeTemp()
 void StagedFile::removeStale()
 {
 	time_t limit = time(nullptr) - staleSeconds;
+	/* test build: the owner check reads no /proc (BTD-280) */
+	bool procKnown = !injected(proc_start);
 	QStringList removed;
 	for (const QByteArray &n : entries(dirFd)) {
 		QString name = QFile::decodeName(n);
 		struct stat st;
 		QRegularExpressionMatch m = tempPattern.match(name);
-		if (!m.hasMatch() || ownerAlive(m) ||
+		if (!m.hasMatch() || ownerAlive(m, procKnown) ||
 		    fstatat(dirFd, n.constData(), &st, AT_SYMLINK_NOFOLLOW) != 0 ||
 		    !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
 		    st.st_mtime > limit)
