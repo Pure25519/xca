@@ -63,7 +63,8 @@ class StagedFile
   public:
 	/* The steps a test can make fail (faultHook) */
 	enum step { create, write, sync, publish_step, recheck, owner_check,
-		swap, probe, noreplace, unlink_temp, subdir };
+		swap, probe, noreplace, unlink_temp, subdir, opendir,
+		proc_start };
 	/* A warning for the result: code and detail */
 	typedef QPair<QString, QString> warning;
 
@@ -101,6 +102,10 @@ class StagedFile
 	StagedFile(const StagedFile &) = delete;
 	StagedFile &operator=(const StagedFile &) = delete;
 
+	/* The directory of the target, already opened without following
+	 * a link (StagedDirectory::makeParents()); stage() uses it instead
+	 * of opening the directory again by its path (BTD-213) */
+	void setDirectory(const std::shared_ptr<struct SharedDirectory> &dir);
 	void stage(const QByteArray &data);
 	void publish();
 	void discard();
@@ -216,8 +221,11 @@ class StagedDirectory
 	/* The directories above staged (a path of stagedPath()) inside the
 	 * sibling, created one component at a time without following a
 	 * link (BTD-213): a link in their place is
-	 * target_directory_changed */
-	void makeParents(const QString &staged);
+	 * target_directory_changed. Returns the directory of staged, opened
+	 * on that walk and shared with the other staged files in it, for
+	 * StagedFile::setDirectory() (POSIX; empty on Windows) */
+	std::shared_ptr<struct SharedDirectory> makeParents(
+			const QString &staged);
 	bool contains(const QString &path) const;
 	/* After the files below it are published into the sibling */
 	void publish();

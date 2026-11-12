@@ -66,6 +66,8 @@ QString StagedFile::stepName(enum step s)
 	case noreplace: return "noreplace";
 	case unlink_temp: return "unlink";
 	case subdir: return "subdir";
+	case opendir: return "opendir";
+	case proc_start: return "proc_start";
 	}
 	return "unknown";
 }
@@ -135,6 +137,11 @@ StagedFile::~StagedFile()
 void StagedFile::discard()
 {
 	removeTemp();
+}
+
+void StagedFile::setDirectory(const std::shared_ptr<SharedDirectory> &dir)
+{
+	dirShare = dir;
 }
 
 void StagedFile::checkTarget(const QString &target, bool replaceTarget)
@@ -268,21 +275,29 @@ static const QRegularExpression tempPattern(
 	"^\\..+\\.bxc-tmp-(p([0-9]+)s([0-9]+)-)?[0-9a-f]{16}$");
 static const int staleSeconds = 600;
 
-/* The process that created a temporary name still runs: its pid exists
- * and, where /proc tells, it is the same process (start time); a name
- * without owner mark has no known owner */
-static bool ownerAlive(const QRegularExpressionMatch &m)
+/* The process that created a temporary name still runs (BTD-213 (6)).
+ * Fail-safe rule (BTD-280): an owner counts as alive only when it is
+ * this process, or its pid exists and /proc gives a start time equal to
+ * the mark. A mark with start 0 (written where /proc was unreadable), an
+ * unreadable /proc now (procKnown false or no start), and a pid of
+ * another user (kill() EPERM) without a matching start prove nothing: a
+ * reused pid would keep the file forever. Such an owner counts as gone,
+ * and removeStale() still removes only a file older than staleSeconds,
+ * so the file of a run that is still going is kept for 10 minutes. A
+ * name without owner mark has no known owner. */
+static bool ownerAlive(const QRegularExpressionMatch &m, bool procKnown)
 {
 	if (m.captured(1).isEmpty())
 		return false;
 	qint64 pid = m.captured(2).toLongLong();
 	if (pid == QCoreApplication::applicationPid())
 		return true;
-	if (pid <= 0 || (::kill((pid_t)pid, 0) != 0 && errno == ESRCH))
+	if (pid <= 0 || m.captured(3) == "0" || !procKnown)
+		return false;
+	if (::kill((pid_t)pid, 0) != 0 && errno == ESRCH)
 		return false;
 	QString start = processStart(pid);
-	return start.isEmpty() || m.captured(3) == "0" ||
-		start == m.captured(3);
+	return !start.isEmpty() && start == m.captured(3);
 }
 
 /* BTD-213 (5): the cause and the safe remedy; --force only with what it
@@ -394,6 +409,18 @@ static QHash<QString, std::weak_ptr<SharedDirectory> > &sharedDirectories()
 void StagedFile::openDirectory()
 {
 	QString dir = QFileInfo(targetPath).absolutePath();
+	/* opened by StagedDirectory::makeParents() without following a
+	 * link: not again by the path, whose links canonicalFilePath()
+	 * would resolve (review of xca#172) */
+	if (dirShare) {
+		dirPath = dir;
+		dirFd = dirShare->fd;
+		/* the path below the staged directory is canonical; a link
+		 * swapped in since is refused now, before the commit */
+		if (!sameCanonical(dirFd, dirPath))
+			throw directoryChanged(dir);
+		return;
+	}
 	dirPath = QFileInfo(dir).canonicalFilePath();
 	if (dirPath.isEmpty())
 		throw directoryChanged(dir);
@@ -444,12 +471,14 @@ void StagedFile::removeTemp()
 void StagedFile::removeStale()
 {
 	time_t limit = time(nullptr) - staleSeconds;
+	/* test build: the owner check reads no /proc (BTD-280) */
+	bool procKnown = !injected(proc_start);
 	QStringList removed;
 	for (const QByteArray &n : entries(dirFd)) {
 		QString name = QFile::decodeName(n);
 		struct stat st;
 		QRegularExpressionMatch m = tempPattern.match(name);
-		if (!m.hasMatch() || ownerAlive(m) ||
+		if (!m.hasMatch() || ownerAlive(m, procKnown) ||
 		    fstatat(dirFd, n.constData(), &st, AT_SYMLINK_NOFOLLOW) != 0 ||
 		    !S_ISREG(st.st_mode) || st.st_uid != geteuid() ||
 		    st.st_mtime > limit)
@@ -512,6 +541,7 @@ void StagedFile::stage(const QByteArray &data)
 		throw errorEx(QObject::tr("StagedFile: '%1' staged twice")
 			.arg(targetPath));
 	checkTarget(targetPath, replace);
+	fault(opendir);
 	openDirectory();
 	removeStale();
 
@@ -1145,12 +1175,42 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
-void StagedDirectory::makeParents(const QString &staged)
+/* BTD-280: every directory below dfd gets mode, walked by descriptor
+ * without following a link (the staged tree holds only directories and
+ * regular files). Returns the path that failed and its errno in err, or
+ * an empty path. */
+static QString chmodSubdirectories(int dfd, mode_t mode, const QString &path,
+		int *err)
+{
+	for (const QByteArray &n : entries(dfd)) {
+		QString sub = path + "/" + QFile::decodeName(n);
+		struct stat st;
+		if (fstatat(dfd, n.constData(), &st, AT_SYMLINK_NOFOLLOW) != 0) {
+			*err = errno;
+			return sub;
+		}
+		if (!S_ISDIR(st.st_mode))
+			continue;
+		Fd d(::openat(dfd, n.constData(), O_RDONLY | O_DIRECTORY |
+			O_NOFOLLOW | O_CLOEXEC));
+		if (d.fd < 0 || fchmod(d.fd, mode) != 0) {
+			*err = errno;
+			return sub;
+		}
+		QString failedAt = chmodSubdirectories(d.fd, mode, sub, err);
+		if (!failedAt.isEmpty())
+			return failedAt;
+	}
+	return QString();
+}
+
+std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
+		const QString &staged)
 {
 	QString rel = QDir(tempPath).relativeFilePath(
 				QFileInfo(staged).absolutePath());
-	if (rel == "." || rel.isEmpty())
-		return;
+	if (rel == ".")
+		rel.clear();
 	if (rel.startsWith(".."))
 		throw errorEx(QObject::tr("StagedDirectory: '%1' is not below "
 			"'%2'").arg(staged, tempPath));
@@ -1179,6 +1239,19 @@ void StagedDirectory::makeParents(const QString &staged)
 		if (next < 0)
 			throw failed(QObject::tr("Opening"), path, sysError(err));
 	}
+	if (d.fd < 0)
+		throw directoryChanged(QDir::toNativeSeparators(path));
+	/* one descriptor per directory for all its files (BTD-213 (1)) */
+	auto &shared = sharedDirectories();
+	std::shared_ptr<SharedDirectory> dir = shared.value(path).lock();
+	struct stat a, b;
+	if (dir && fstat(dir->fd, &a) == 0 && fstat(d.fd, &b) == 0 &&
+	    a.st_dev == b.st_dev && a.st_ino == b.st_ino)
+		return dir;
+	dir = std::make_shared<SharedDirectory>(d.fd);
+	d.fd = -1;
+	shared[path] = dir;
+	return dir;
 }
 
 void StagedDirectory::publish()
@@ -1214,6 +1287,13 @@ void StagedDirectory::publish()
 		if (t.fd < 0 || fchmod(t.fd, st.st_mode & 07777) != 0)
 			throw failed(QObject::tr("Setting the mode of"),
 				tempPath, sysError(errno));
+		/* BTD-280: its subdirectories too, not 0777 & umask */
+		int err = 0;
+		QString sub = chmodSubdirectories(t.fd, st.st_mode & 07777,
+				tempPath, &err);
+		if (!sub.isEmpty())
+			throw failed(QObject::tr("Setting the mode of"), sub,
+				sysError(err));
 	}
 #if defined(RENAME_EXCHANGE)
 	/* one step: the sibling becomes the target, the target the sibling */
@@ -1346,12 +1426,14 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
-void StagedDirectory::makeParents(const QString &staged)
+std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
+		const QString &staged)
 {
 	/* path based like the rest of this branch (BTD-13) */
 	if (!QDir().mkpath(QFileInfo(staged).absolutePath()))
 		throw failed(QObject::tr("Creating"), staged,
 			QObject::tr("the directory could not be created"));
+	return {};
 }
 
 void StagedDirectory::publish()

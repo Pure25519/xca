@@ -32,3 +32,26 @@ if(NOT before STREQUAL after)
 endif()
 file(REMOVE_RECURSE "${OUTSIDE}")
 message(STATUS "link at subdir: target_directory_changed, nothing written")
+
+# The same link after the subdirectory was created, right before a staged
+# file opens it (review of xca#172): swapdir:opendir renames
+# trusted/certs to trusted/certs.moved and puts a link to
+# trusted/certs.other in its place. The file keeps the directory that
+# makeParents() created and opened; it is not opened again by its path,
+# which would resolve the link. The export fails with
+# target_directory_changed and the earlier trust list stays as it was.
+fx("link before open" 1 "swapdir:opendir:/trusted/certs/" export "L Root"
+    --db "${DB}" ${PW} --format trustlist --out tl --force)
+expect_error("link before open" target_directory_changed)
+file(SHA256 "${WORK}/tl/manifest.json" after)
+if(NOT before STREQUAL after)
+  fail("link before open: the earlier trust list changed")
+endif()
+if(EXISTS "${WORK}/tl/trusted/certs.other" OR EXISTS "${WORK}/tl/trusted/certs.moved")
+  fail("link before open: the swapped directories reached the trust list")
+endif()
+file(GLOB left "${WORK}/.*bxc-tmp*")
+if(left)
+  fail("link before open: staging directories stay: ${left}")
+endif()
+message(STATUS "link before open: target_directory_changed")

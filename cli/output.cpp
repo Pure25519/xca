@@ -67,10 +67,14 @@ void OutputFiles::add(const QString &path, const QString &kind,
 	/* below a staged directory: into its sibling, which is new; its
 	 * subdirectories never follow a link (BTD-213) */
 	QString staged = directory ? directory->stagedPath(path) : QString();
+	std::shared_ptr<struct SharedDirectory> dir;
 	if (!staged.isEmpty())
-		directory->makeParents(staged);
+		dir = directory->makeParents(staged);
 	e.file = std::make_shared<StagedFile>(staged.isEmpty() ? path : staged,
 			secret, staged.isEmpty() && force);
+	/* the directory makeParents() opened, not again by its path */
+	if (dir)
+		e.file->setDirectory(dir);
 	try {
 		e.file->stage(data);
 	} catch (...) {

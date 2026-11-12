@@ -54,9 +54,10 @@ static void swapDirectory(const QString &target)
 
 /* Test build only (bxc-pki-faults, BTD-42, BTD-210):
  * BXC_PKI_FAULT=<mode>:<step>:<text>, several separated by ",", acts at
- * the step (create, owner_check, probe, write, sync, publish, noreplace,
- * unlink, recheck, swap) of every staged file or directory whose target
- * contains <text>: the step fails (mode fail), the process ends there with
+ * the step (opendir, create, owner_check, probe, write, sync, publish,
+ * noreplace, unlink, recheck, swap, subdir, proc_start) of every staged
+ * file or directory whose target contains <text>: the step fails (mode
+ * fail; at proc_start the owner check of the clean-up reads no /proc), the process ends there with
  * exit code 137 like a killed run (mode kill), at the step swap of a
  * directory the file late.txt is added to it (mode addfile), the target
  * file appears with the content "late" (mode addtarget), or the directory
