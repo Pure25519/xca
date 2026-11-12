@@ -42,6 +42,7 @@
 #include "lib/db_temp.h"
 #include "lib/pki_x509.h"
 #include "lib/sql.h"
+#include "lib/x509rev.h"
 
 #include "ServiceTestCase.h"
 
@@ -101,7 +102,7 @@ class test_service_importexport : public ServiceTestCase
 	void checkNoSecret(const QByteArray &secret);
 	/* A CRL of ca.pem with this CRL number, by openssl ca; empty, or
 	 * revoking the certificate with this hex serial (keyCompromise) */
-	bool opensslCrl(const QString &name, int number, int days,
+	bool opensslCrl(const QString &name, qint64 number, int days,
 			const QString &revokedSerial = QString());
 	/* BTD-122: a CRL stored before its CA */
 	void checkLateCrlLink(const QString &revokedSerial);
@@ -153,10 +154,14 @@ class test_service_importexport : public ServiceTestCase
 	void crlImportAuditsRevocations();
 	void crlImportRaisesCrlNumber();
 	void crlGeneratedAfterImport();
+	void crlNumberAbove32Bit();
 	void crlBeforeCaInOneImport();
 	void crlBeforeCaInTwoImports();
 	void templateCopyExport();
 	void rejections();
+	void sourcePasswordNoRetryWarning_data();
+	void sourcePasswordNoRetryWarning();
+	void interactivePasswordRetryWarns();
 	void pkcs12SourceFails_data();
 	void pkcs12SourceFails();
 	void exportFailureKeepsFile();
@@ -195,6 +200,7 @@ class test_service_importexport : public ServiceTestCase
 	void tlsAuthFileOwnerOnly_data();
 	void tlsAuthFileOwnerOnly();
 	void vcalendarCaObjects();
+	void vcalendarSkipsRevoked();
 	void jwkChainObjects();
 };
 
@@ -956,7 +962,7 @@ void test_service_importexport::crlImportAuditsRevocations()
 #endif
 }
 
-bool test_service_importexport::opensslCrl(const QString &name, int number,
+bool test_service_importexport::opensslCrl(const QString &name, qint64 number,
 					int days, const QString &revokedSerial)
 {
 	QFile index(file("crl-index.txt"));
@@ -971,8 +977,11 @@ bool test_service_importexport::opensslCrl(const QString &name, int number,
 			"\t%1\tunknown\t/CN=revoked\n").arg(revokedSerial)
 			.toUtf8());
 	index.close();
-	crlnumber.write(QString("%1\n").arg(number, 2, 16, QChar('0'))
-			.toUtf8());
+	/* openssl ca reads the number as hex in whole octets */
+	QString hex = QString::number(number, 16);
+	if (hex.size() % 2)
+		hex.prepend('0');
+	crlnumber.write((hex + "\n").toUtf8());
 	crlnumber.close();
 	cnf.write(QString("[ ca ]\ndefault_ca = CA_default\n"
 		"[ CA_default ]\ndatabase = %1\ncrlnumber = %2\n"
@@ -1153,6 +1162,65 @@ void test_service_importexport::crlGeneratedAfterImport()
 #endif
 }
 
+/* BTD-123: CRL numbers above 2^32-1 up to 2^53-1 (the JSON-safe limit of
+ * the audit parameters) are adopted on import and continued by newCrl;
+ * a larger one is imported but leaves the CA's number, with the warning
+ * crl_number_out_of_range in the audit entry. The CRL number of a
+ * revocation is kept in 64 bit too. */
+void test_service_importexport::crlNumberAbove32Bit()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	const qint64 big = Q_INT64_C(0x100000000);
+	QVERIFY(opensslCrl("big.crl", big, 7));
+	importChain();
+	pki_x509 *ca = cert("BTD34 CA");
+	pki_x509 *leaf = cert("BTD34 Leaf");
+	QVERIFY(ca && leaf);
+	QVERIFY(importCrl("big.crl"));
+	QCOMPARE(authorityCrl(ca).first, big);
+	QCOMPARE(ca->getCrlNumber().toDec(), QString::number(big));
+
+	x509rev rev;
+	rev.setReason("Key Compromise");
+	Database.model<db_x509>()->revoke(ctx, leaf, rev);
+	pki_crl *next = Database.model<db_crl>()->newCrl(ctx, crljob(ca));
+	QVERIFY(next);
+	QFile der(file("next-big.crl"));
+	QVERIFY(der.open(QIODevice::WriteOnly | QIODevice::Truncate));
+	der.write(next->i2d());
+	der.close();
+	QCOMPARE(opensslOk({ "crl", "-in", der.fileName(), "-inform", "DER",
+		"-noout", "-crlnumber" }).trimmed(),
+		QString("crlNumber=0x0100000001"));
+	QCOMPARE(authorityCrl(ca).first, big + 1);
+	x509revList revs = ca->getRevList();
+	QCOMPARE(revs.size(), 1);
+	QCOMPARE((qint64)revs[0].getCrlNo(), big + 1);
+
+	/* above 2^53-1: imported, the CA's number stays, a warning */
+	const qint64 huge = Q_INT64_C(1) << 53;
+	QVERIFY(opensslCrl("huge.crl", huge, 7));
+	ImportSpec spec;
+	spec.files << file("huge.crl");
+	ImportResult r = Database.importItems(ctx, spec);
+	QCOMPARE(r.created.size(), 1);
+	QCOMPARE(r.warnings.size(), 1);
+	QVERIFY2(r.warnings[0].contains(QString::number(huge)) &&
+		 r.warnings[0].contains(QString::number(db_crl::maxCrlNumber)),
+		 qPrintable(r.warnings[0]));
+	QCOMPARE(authorityCrl(ca).first, big + 1);
+	AuditEntry e = entries("object.import").last();
+	QCOMPARE(e.params.value("authority_updated").toBool(), false);
+	QCOMPARE(e.params.value("warning").toString(),
+		QString("crl_number_out_of_range"));
+	QVERIFY(!e.params.contains("crl_number"));
+	AuditVerifyResult v = AuditLog::verify();
+	QVERIFY2(v.ok(), v.toJson().constData());
+#endif
+}
+
 /* Regression (BTD-34): a copied template (Duplicate in the Templates
  * tab) had no pki type, was stored with items.type 0 and could not be
  * exported: exportItems() rejected it as wrong_object_type. Found by
@@ -1185,15 +1253,14 @@ void test_service_importexport::rejections()
 #ifndef OPENSSL_PROGRAM
 	QSKIP("openssl program not found");
 #else
-	/* Wrong PKCS#12 password from the source: XCA's parser warns once
-	 * before the source is asked again */
+	/* Wrong PKCS#12 password from the source: no retry warning, the
+	 * source is not asked again (BTD-89) */
 	QFile p12(file("leaf.p12"));
 	QVERIFY(p12.open(QIODevice::ReadOnly));
 	ImportSpec in;
 	in.data = p12.readAll();
 	in.dataName = "leaf.p12";
 	in.passwordSource = "pass:wrong";
-	warning->expectMessage("Password verify error");
 	try {
 		Database.importItems(ctx, in);
 		QFAIL("importItems() did not throw");
@@ -1255,6 +1322,72 @@ void test_service_importexport::rejections()
 #endif
 }
 
+/* A wrong password from a source ends the import with wrong_password
+ * and shows no "Password verify error" warning: the next request would
+ * not prompt anybody (BTD-89). StrictWarning fails on any message. */
+void test_service_importexport::sourcePasswordNoRetryWarning_data()
+{
+	QTest::addColumn<QString>("name");
+	QTest::addColumn<QString>("source");
+
+	QTest::newRow("PKCS#12, pass:") << "leaf.p12" << "pass:wrong";
+	QTest::newRow("PKCS#12, env:") << "leaf.p12" << "env:BTD89_WRONG";
+	QTest::newRow("encrypted PEM key, pass:") << "btd89-enc.pem"
+		<< "pass:wrong";
+	QTest::newRow("encrypted PEM key, env:") << "btd89-enc.pem"
+		<< "env:BTD89_WRONG";
+}
+
+void test_service_importexport::sourcePasswordNoRetryWarning()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFETCH(QString, name);
+	QFETCH(QString, source);
+
+	qputenv("BTD89_WRONG", "wrong-btd89");
+	if (!QFile::exists(file("btd89-enc.pem")))
+		QVERIFY(opensslRun({ "pkey", "-in", file("leaf.key"),
+			"-aes-256-cbc", "-passout", "pass:right-btd89",
+			"-out", file("btd89-enc.pem") }));
+	ImportSpec in;
+	in.files << file(name);
+	in.passwordSource = source;
+	try {
+		Database.importItems(ctx, in);
+		QFAIL("importItems() did not throw");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("wrong_password"));
+	}
+	AuditEntry e = AuditLog::entries().last();
+	QCOMPARE(e.action, QString("object.import"));
+	QCOMPARE(e.errorCode, QString("wrong_password"));
+	qunsetenv("BTD89_WRONG");
+#endif
+}
+
+/* Interactive input is unchanged: a wrong password typed into the dialog
+ * shows the warning once, the dialog asks again and the right password
+ * imports the file (BTD-89) */
+void test_service_importexport::interactivePasswordRetryWarns()
+{
+#ifndef OPENSSL_PROGRAM
+	QSKIP("openssl program not found");
+#else
+	QFile p12(file("leaf.p12"));
+	QVERIFY(p12.open(QIODevice::ReadOnly));
+	ImportSpec in;
+	in.data = p12.readAll();
+	in.dataName = "leaf.p12";
+	pwdialog->expect("wrong-typed");
+	pwdialog->expect(p12Pass);
+	warning->expectMessage("Password verify error");
+	ImportResult r = Database.importItems(ctx, in);
+	QCOMPARE(r.created.size(), 3);
+#endif
+}
+
 /* A PKCS#12 import whose password source fails: a wrong password, a
  * variable or a file without a value. The source throws secretError in
  * the MAC loop of pki_pkcs12::parse(), which must free the PFX on that
@@ -1265,13 +1398,12 @@ void test_service_importexport::pkcs12SourceFails_data()
 {
 	QTest::addColumn<QString>("source");
 	QTest::addColumn<QString>("code");
-	QTest::addColumn<bool>("warns");
 
-	QTest::newRow("wrong") << "pass:wrong" << "wrong_password" << true;
+	QTest::newRow("wrong") << "pass:wrong" << "wrong_password";
 	QTest::newRow("unset variable") << "env:BTD91_UNSET_PASSWORD"
-		<< "missing_password" << false;
+		<< "missing_password";
 	QTest::newRow("missing file") << "file:" + file("btd91-no-such-file")
-		<< "missing_password" << false;
+		<< "missing_password";
 }
 
 void test_service_importexport::pkcs12SourceFails()
@@ -1281,7 +1413,6 @@ void test_service_importexport::pkcs12SourceFails()
 #else
 	QFETCH(QString, source);
 	QFETCH(QString, code);
-	QFETCH(bool, warns);
 
 	qunsetenv("BTD91_UNSET_PASSWORD");
 	QFile p12(file("leaf.p12"));
@@ -1290,8 +1421,7 @@ void test_service_importexport::pkcs12SourceFails()
 	in.data = p12.readAll();
 	in.dataName = "leaf.p12";
 	in.passwordSource = source;
-	if (warns)
-		warning->expectMessage("Password verify error");
+	/* no "Password verify error": a source is not asked again (BTD-89) */
 	int before = Store.getAll<pki_x509>().size();
 	try {
 		Database.importItems(ctx, in);
@@ -2861,6 +2991,65 @@ void test_service_importexport::vcalendarCaObjects()
 	QCOMPARE(exportedIds(all, before), expected);
 	foreach(const AuditEntry &e, all.mid(before))
 		QCOMPARE(e.params.value("count").toLongLong(), (qint64)4);
+}
+
+/* Format 18 lists only valid issued certificates (BTD-241): a revoked
+ * one is neither in the calendar nor in its object.export entries, and
+ * a revoked sub-CA still lists its valid certificates. Upstream XCA asked
+ * the CA whether it was revoked instead of each certificate. */
+void test_service_importexport::vcalendarSkipsRevoked()
+{
+	pki_x509 *ca = rsaCa();
+	QVERIFY(ca);
+	pki_x509 *valid = certFor(newKey("EC:prime256v1", "vcal valid"), ca);
+	pki_x509 *gone = certFor(newKey("EC:prime256v1", "vcal revoked"), ca);
+	QVERIFY(valid && gone);
+	x509rev rev;
+	rev.setReason("Key Compromise");
+	Database.model<db_x509>()->revoke(ctx, gone, rev);
+	QVERIFY(gone->isRevoked());
+	crljob job(ca);
+	pki_crl *crl = Database.model<db_crl>()->newCrl(ctx, job);
+	QVERIFY(crl);
+
+	qsizetype before = entries("object.export").size();
+	QByteArray out = exportTo(Database.model<db_x509>(), ca,
+				certVcalendarCa, file("revoked.ics"));
+	QCOMPARE(out.count("BEGIN:VEVENT"), 3);
+	QVERIFY2(!out.contains("vcal revoked"), out.constData());
+	QVERIFY(out.contains("vcal valid"));
+	QStringList expected { idOf(ca, "certificate"),
+		idOf(valid, "certificate"), idOf(crl, "crl") };
+	expected.sort();
+	QCOMPARE(exportedIds(entries("object.export"), before), expected);
+
+	/* a revoked sub-CA: itself and its valid certificate */
+	IssuanceSpec spec;
+	spec.name = "vcal sub CA";
+	spec.subject.addEntryByNid(NID_commonName, spec.name);
+	spec.key = newKey("EC:prime256v1", "vcal sub key");
+	spec.signer = ca;
+	spec.notBefore = a1time();
+	spec.notAfter = a1time(QDateTime::currentDateTimeUtc().addDays(20));
+	spec.hashAlgo = digest(NID_sha256);
+	spec.extensions.basicCA = ExtensionSpec::bc_ca;
+	spec.extensions.keyUsage << "keyCertSign" << "cRLSign";
+	pki_x509 *sub = Database.model<db_x509>()->newCert(ctx, spec);
+	QVERIFY(sub);
+	pki_x509 *child = certFor(newKey("EC:prime256v1", "vcal child"), sub);
+	QVERIFY(child);
+	Database.model<db_x509>()->revoke(ctx, sub, rev);
+	QVERIFY(sub->isRevoked());
+
+	before = entries("object.export").size();
+	out = exportTo(Database.model<db_x509>(), sub, certVcalendarCa,
+			file("sub.ics"));
+	QCOMPARE(out.count("BEGIN:VEVENT"), 2);
+	QVERIFY(out.contains("vcal child"));
+	expected = QStringList { idOf(sub, "certificate"),
+		idOf(child, "certificate") };
+	expected.sort();
+	QCOMPARE(exportedIds(entries("object.export"), before), expected);
 }
 
 /* Format 43 writes the chain of the certificate in x5c: one

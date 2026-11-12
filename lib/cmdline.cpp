@@ -632,6 +632,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				spec);
 			foreach(pki_base *pki, result.existing)
 				XCA_INFO(importExistsMessage(pki));
+			foreach(const QString &w, result.warnings)
+				XCA_WARN(w);
 			reportFailed();
 		} catch (serviceError &err) {
 			/* nothing readable: the files are the error */

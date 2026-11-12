@@ -50,10 +50,15 @@ class NewX509: public XcaDetail, public Ui::NewX509
 		Q_OBJECT
 	private:
 		NIDlist aia_nid{};
-		/* What the dialog does not show yet (BTD-185) but must keep
-		 * when it edits or applies a template: the merge modes and the
-		 * EKU limits of BTD-54 */
-		ExtensionSpec requestMerge{};
+		/* The merge modes and EKU limits of BTD-54 (BTD-185): a tab
+		 * of their own, added in template mode only. The certificate
+		 * dialog keeps it hidden; it carries the applied template's
+		 * values into the issuance. The object names are the
+		 * automation IDs. */
+		QWidget *requestMergeTab{};
+		QComboBox *reqSanMerge{}, *reqKuMerge{}, *reqEkuMerge{};
+		QLineEdit *ekuAllowed{}, *ekuDefault{};
+		void setupRequestMerge();
 		/* key usage bits the user removed because the key cannot use
 		 * them (BTD-195), for the audit of the issuance */
 		QStringList keyUsageRemoved{};

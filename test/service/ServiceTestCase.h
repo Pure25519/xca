@@ -52,6 +52,11 @@ class StrictPwDialog : public PwDialogUI_i
 	int selectKeySlot(const QString &label,
 			const QStringList &names) override;
 	void pinPadLogin(pass_info *p, QThread *login) override;
+	/* the delegate's sources count as sources (BTD-89) */
+	bool answersFromSource(enum pass_info::purpose p) const override
+	{
+		return delegate && delegate->answersFromSource(p);
+	}
 };
 
 /* Replaces the message boxes of xcaWarning: questions are answered from
