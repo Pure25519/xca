@@ -60,6 +60,9 @@ class ImportResult
 	 * ImportSpec::failedFiles; each has one object.import failure
 	 * entry with the code of importFailureCode() (BTD-270) */
 	QStringList failedFiles{};
+	/* Notes for the user, e.g. a CRL number above the limit that the
+	 * CA did not adopt (BTD-123) */
+	QStringList warnings{};
 
 	QList<pki_base *> all() const
 	{

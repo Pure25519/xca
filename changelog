@@ -1,12 +1,16 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
- * BTD-270: xca --import with a file it cannot read (missing,
-   unreadable, no PKI data) still imports the readable items, but now
-   reports each failed file (unreadable_input or no_pki_data; with
-   --json one error object per file) and exits 1; before, it warned and
-   exited 0. Each failed file has its own object.import failure entry
-   in the audit log, written by importItems().
+ * BTD-118: follow-ups of the validity cap (BTD-51). An issuance below a
+   CA whose end date is no valid time fails with invalid_validity naming
+   the CA, instead of issuing an uncapped certificate. The renewal dialog
+   warns like the New Certificate dialog when "No well-defined
+   expiration" is ticked under a CA with a finite end; "Adjust date and
+   continue" unticks it and takes the CA's end. requested_not_after is
+   null for the undefined date, like not_after. With the time hidden the
+   dialog's end is 23:59:59 of its day, so it may warn again under a CA
+   that ends earlier that day; the issuance caps anyway (upstream
+   behaviour kept).
  * BTD-170: a revocation keeps "no reasonCode", an explicit reasonCode
    and a code RFC 5280 does not name apart. Without a reason the JSON
    reports null and the GUI shows nothing (before: unspecified); an
