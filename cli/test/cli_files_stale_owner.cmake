@@ -55,8 +55,24 @@ bxc("start 0" 0 crl --ca "O Root" --db "${DB}" ${PW} --out f
 expect_cleaned("start 0" "${old}" "${young}")
 
 # --- /proc unreadable --------------------------------------------------------
-temp(old ".c.crl.bxc-tmp-p1s123-0123456789abcdef" "-1 hour")
-temp(young ".d.crl.bxc-tmp-p1s123-fedcba9876543210" "-1 minute")
+# the mark carries the real start time of pid 1: with /proc readable the
+# owner is proven alive and even the old file stays; with /proc unreadable
+# nothing is proven and the old file goes
+file(READ "/proc/1/stat" stat1)
+string(REGEX REPLACE "^.*\\) " "" stat1 "${stat1}")
+string(REPLACE " " ";" stat1 "${stat1}")
+list(GET stat1 19 start1)
+if(NOT start1 MATCHES "^[0-9]+$")
+  fail("no start time of pid 1 in /proc/1/stat: ${start1}")
+endif()
+temp(old ".c.crl.bxc-tmp-p1s${start1}-0123456789abcdef" "-1 hour")
+temp(young ".d.crl.bxc-tmp-p1s${start1}-fedcba9876543210" "-1 minute")
+bxc("owner alive" 0 crl --ca "O Root" --db "${DB}" ${PW} --out f
+    --layout certstrap --force)
+if(NOT EXISTS "${old}" OR NOT EXISTS "${young}")
+  fail("owner alive: a file of a proven owner was removed")
+endif()
+message(STATUS "owner alive: both files kept")
 fx("no proc" 0 "fail:proc_start:O_Root" crl --ca "O Root" --db "${DB}" ${PW}
     --out f --layout certstrap --force)
 expect_cleaned("no proc" "${old}" "${young}")
