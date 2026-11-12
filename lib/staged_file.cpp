@@ -138,6 +138,11 @@ void StagedFile::discard()
 	removeTemp();
 }
 
+void StagedFile::setDirectory(const std::shared_ptr<SharedDirectory> &dir)
+{
+	dirShare = dir;
+}
+
 void StagedFile::checkTarget(const QString &target, bool replaceTarget)
 {
 	QFileInfo t(QFileInfo(target).absoluteFilePath());
@@ -395,6 +400,18 @@ static QHash<QString, std::weak_ptr<SharedDirectory> > &sharedDirectories()
 void StagedFile::openDirectory()
 {
 	QString dir = QFileInfo(targetPath).absolutePath();
+	/* opened by StagedDirectory::makeParents() without following a
+	 * link: not again by the path, whose links canonicalFilePath()
+	 * would resolve (review of xca#172) */
+	if (dirShare) {
+		dirPath = dir;
+		dirFd = dirShare->fd;
+		/* the path below the staged directory is canonical; a link
+		 * swapped in since is refused now, before the commit */
+		if (!sameCanonical(dirFd, dirPath))
+			throw directoryChanged(dir);
+		return;
+	}
 	dirPath = QFileInfo(dir).canonicalFilePath();
 	if (dirPath.isEmpty())
 		throw directoryChanged(dir);
@@ -1147,12 +1164,13 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
-void StagedDirectory::makeParents(const QString &staged)
+std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
+		const QString &staged)
 {
 	QString rel = QDir(tempPath).relativeFilePath(
 				QFileInfo(staged).absolutePath());
-	if (rel == "." || rel.isEmpty())
-		return;
+	if (rel == ".")
+		rel.clear();
 	if (rel.startsWith(".."))
 		throw errorEx(QObject::tr("StagedDirectory: '%1' is not below "
 			"'%2'").arg(staged, tempPath));
@@ -1181,6 +1199,19 @@ void StagedDirectory::makeParents(const QString &staged)
 		if (next < 0)
 			throw failed(QObject::tr("Opening"), path, sysError(err));
 	}
+	if (d.fd < 0)
+		throw directoryChanged(QDir::toNativeSeparators(path));
+	/* one descriptor per directory for all its files (BTD-213 (1)) */
+	auto &shared = sharedDirectories();
+	std::shared_ptr<SharedDirectory> dir = shared.value(path).lock();
+	struct stat a, b;
+	if (dir && fstat(dir->fd, &a) == 0 && fstat(d.fd, &b) == 0 &&
+	    a.st_dev == b.st_dev && a.st_ino == b.st_ino)
+		return dir;
+	dir = std::make_shared<SharedDirectory>(d.fd);
+	d.fd = -1;
+	shared[path] = dir;
+	return dir;
 }
 
 void StagedDirectory::publish()
@@ -1348,12 +1379,14 @@ void StagedDirectory::stage()
 		QObject::tr("no free temporary name"));
 }
 
-void StagedDirectory::makeParents(const QString &staged)
+std::shared_ptr<SharedDirectory> StagedDirectory::makeParents(
+		const QString &staged)
 {
 	/* path based like the rest of this branch (BTD-13) */
 	if (!QDir().mkpath(QFileInfo(staged).absolutePath()))
 		throw failed(QObject::tr("Creating"), staged,
 			QObject::tr("the directory could not be created"));
+	return {};
 }
 
 void StagedDirectory::publish()
