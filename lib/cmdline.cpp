@@ -305,29 +305,42 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		else
 			console_write(stdout, list.join("\n").toUtf8() + '\n');
 	}
+	/* A write error is reported like one of --pem-file and the other
+	 * options still run (BTD-182) */
 	if (!cmd_opts["index"].isEmpty()) {
 		qDebug() << cmd_opts["index"];
 		db_x509 *certs = Database.model<db_x509>();
-		if (json)
-			JsonReport::writeTo(cmd_opts["index"], JsonReport::index());
-		else
-			certs->writeIndex(cmd_opts["index"], false);
-		if (!json || cmd_opts["index"] != "-")
-			XCA_INFO(QObject::tr("Index file written to '%1'")
-					.arg(cmd_opts["index"]));
+		try {
+			if (json)
+				JsonReport::writeTo(cmd_opts["index"],
+						JsonReport::index());
+			else
+				certs->writeIndex(cmd_opts["index"], false);
+			if (!json || cmd_opts["index"] != "-")
+				XCA_INFO(QObject::tr("Index file written to '%1'")
+						.arg(cmd_opts["index"]));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	if (!cmd_opts["hierarchy"].isEmpty()) {
 		qDebug() << cmd_opts["hierarchy"];
 		db_x509 *certs = Database.model<db_x509>();
-		/* With --json one document for all CAs, no directory */
-		if (json)
-			JsonReport::writeTo(cmd_opts["hierarchy"],
-					JsonReport::hierarchy());
-		else
-			certs->writeIndex(cmd_opts["hierarchy"], true);
-		if (!json || cmd_opts["hierarchy"] != "-")
-			XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
-					.arg(cmd_opts["hierarchy"]));
+		try {
+			/* With --json one document for all CAs, no directory */
+			if (json)
+				JsonReport::writeTo(cmd_opts["hierarchy"],
+						JsonReport::hierarchy());
+			else
+				certs->writeIndex(cmd_opts["hierarchy"], true);
+			if (!json || cmd_opts["hierarchy"] != "-")
+				XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
+						.arg(cmd_opts["hierarchy"]));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	/* The audit controls (BTD-100), before the verification and the
 	 * export, so that both see their result */
