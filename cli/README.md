@@ -47,6 +47,7 @@ bxc-pki export "BxC OT Issuing" --format trustlist --target-format opcua-dir --o
   (`oid_init_failed`).
 - Every write goes through the service layer, which writes the audit entries (channel `cli`,
   actor `os:<login>`). `list` and `show` only read and write no audit entry (PLAN.md 6.1).
+- A write command that fails after the database is open but before any service call wrote a failure entry (for example on an option value, an unknown reference or a key it cannot unlock) writes one: result `failure`, the command's action (`Command::auditAction`: `init` and `sign` `certificate.issue`, `request-cert` `request.create`, `renew` `certificate.renew`, `revoke` `certificate.revoke`, `crl` `crl.generate`, `export` `object.export`), the error code and the parameter `command` (BTD-106, `doc/service-pattern.md`). Errors while parsing options and opening the database write none.
 
 Result document of `init`, `request-cert`, `sign`, `revoke`, `crl`, `export` and `renew` (schema
 `urn:bxc-pki:schema:cli-result:v1`):

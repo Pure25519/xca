@@ -749,6 +749,8 @@ void registerCommands(Registry &r)
 		{ "key-unencrypted", "no-key-file" } } +
 		validityConflicts();
 	c.writes = true;
+	c.auditAction = "certificate.issue";
+	c.auditObject = "certificate";
 	c.createsDatabase = true;
 	c.handler = cmdInit;
 	r.add(c);
@@ -788,6 +790,8 @@ void registerCommands(Registry &r)
 		{ "use-key", "key-file" }, { "key", "key-file" },
 		{ "key-unencrypted", "no-key-file" } };
 	c.writes = true;
+	c.auditAction = "request.create";
+	c.auditObject = "request";
 	c.handler = cmdRequestCert;
 	r.add(c);
 
@@ -821,6 +825,8 @@ void registerCommands(Registry &r)
 	c.conflicts = validityConflicts();
 	c.minArgs = c.maxArgs = 1;
 	c.writes = true;
+	c.auditAction = "certificate.issue";
+	c.auditObject = "certificate";
 	c.handler = cmdSign;
 	r.add(c);
 
@@ -864,6 +870,8 @@ void registerCommands(Registry &r)
 		{ "key-unencrypted", "no-key-file" } } + validityConflicts();
 	c.maxArgs = 1;
 	c.writes = true;
+	c.auditAction = "certificate.renew";
+	c.auditObject = "certificate";
 	c.handler = cmdRenew;
 	r.add(c);
 

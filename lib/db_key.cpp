@@ -275,11 +275,12 @@ pki_key *db_key::generate(const keyjob &task, const QString &name,
 }
 
 /* RSA and DSA outside 1024..8192 bit need the confirmation "key.size";
- * a size the service refuses anyway is not asked about */
+ * a size the service refuses anyway is not asked about (BTD-113), and
+ * an unknown type is rejected by the service, not asked about (BTD-106) */
 static bool unusualSize(const keyjob &task)
 {
-	return !task.isEC() && !task.isFixed() && task.size >= 32 &&
-		task.size <= maxKeySize &&
+	return task.ktype.isValid() && !task.isEC() && !task.isFixed() &&
+		task.size >= 32 && task.size <= maxKeySize &&
 		(task.size < 1024 || task.size > 8192);
 }
 

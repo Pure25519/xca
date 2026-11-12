@@ -808,6 +808,8 @@ void registerExportCommands(Registry &r)
 	c.minArgs = 1;
 	c.maxArgs = 100;
 	c.writes = true;
+	c.auditAction = "object.export";
+	c.auditObject = "object";
 	c.handler = cmdExport;
 	r.add(c);
 }

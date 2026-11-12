@@ -151,6 +151,8 @@ class CommandContext
 	Options opts{};
 	ServiceContext svc{ ServiceContext::cli, QString() };
 	QString command{};
+	/* Command::auditAction and auditObject of the command */
+	QString auditAction{}, auditObject{};
 	bool plan{};                // --plan: evaluate, write nothing
 	bool text{};                // --text instead of JSON
 	QString database{};
@@ -181,6 +183,10 @@ class Command
 	QList<QPair<QString, QString> > conflicts{};
 	int minArgs{}, maxArgs{};
 	bool writes{};              // runs in a transaction, --plan allowed
+	/* The action and object type a write command audits when it fails
+	 * before any service function wrote a failure entry (BTD-106);
+	 * empty for a command that audits its runs itself (bootstrap) */
+	QString auditAction{}, auditObject{};
 	bool needsDatabase{ true };
 	/* may create a database that does not exist (init, bootstrap) */
 	bool createsDatabase{};

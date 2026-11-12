@@ -496,6 +496,8 @@ void registerLifecycleCommands(Registry &r)
 	} + outOptions(false);
 	c.maxArgs = 1;
 	c.writes = true;
+	c.auditAction = "certificate.revoke";
+	c.auditObject = "certificate";
 	c.handler = cmdRevoke;
 	r.add(c);
 
@@ -523,6 +525,8 @@ void registerLifecycleCommands(Registry &r)
 	} + crlOptions(QObject::tr("; stored as the CA's setting")) +
 		outOptions(false);
 	c.writes = true;
+	c.auditAction = "crl.generate";
+	c.auditObject = "crl";
 	c.handler = cmdCrl;
 	r.add(c);
 }

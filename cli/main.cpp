@@ -335,6 +335,8 @@ static int run(const QStringList &argv)
 		}
 		ctx.plan = ctx.opts.has("plan");
 		ctx.command = cmd->name;
+		ctx.auditAction = cmd->auditAction;
+		ctx.auditObject = cmd->auditObject;
 		JsonReport::setActive(!ctx.text);
 
 		initObjects();
