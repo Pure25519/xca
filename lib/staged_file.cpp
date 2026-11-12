@@ -67,6 +67,7 @@ QString StagedFile::stepName(enum step s)
 	case unlink_temp: return "unlink";
 	case subdir: return "subdir";
 	case opendir: return "opendir";
+	case proc_start: return "proc_start";
 	}
 	return "unknown";
 }
