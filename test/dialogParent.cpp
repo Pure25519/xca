@@ -14,6 +14,10 @@
 #include "ui_PwDialog.h"
 #include "widgets/PwDialog.h"
 #include "lib/pass_info.h"
+#include "lib/XcaWarningCore.h"
+#include "lib/func.h"
+#include "ui_Help.h"
+#include "widgets/Help.h"
 
 #include "main.h"
 
@@ -42,4 +46,34 @@ void test_main::passwordDialogParent()
 	PwDialog focused(&pi);
 	QCOMPARE(focused.parentWidget(), (QWidget *)&other);
 	other.hide();
+}
+
+/* BTD-255: a build without the help collection (no sphinx-build in the
+ * build image) shows the online manual on Help > Content instead of an
+ * empty help window */
+class helpInfo : public xcaWarningCore
+{
+  public:
+	QStringList infos{};
+	void information(const QString &msg) override
+	{
+		infos << msg;
+	}
+};
+
+void test_main::helpWithoutCollection()
+{
+	if (!getDocDir().isEmpty())
+		QSKIP("this build has the help collection");
+	helpInfo *w = new helpInfo();
+	xcaWarning::setGui(w);
+	mainwin->helpdlg->hide();
+	mainwin->helpdlg->content();
+	QStringList infos = w->infos;
+	bool shown = mainwin->helpdlg->isVisible();
+	mainwin->helpdlg->hide();
+	xcaWarning::setGui(new xcaWarningCore());
+	QCOMPARE(infos.size(), 1);
+	QVERIFY2(infos[0].contains("hohnstaedt.de/xca"), qPrintable(infos[0]));
+	QVERIFY(!shown);
 }

@@ -82,12 +82,17 @@ ExtensionSpec NewX509::getExtensionSpec()
 	e.nsSslServerName = nsSslServerName->text();
 	e.nsComment = nsComment->text();
 
-	/* kept from the template, the dialog has no input for them yet */
-	e.sanMerge = requestMerge.sanMerge;
-	e.kuMerge = requestMerge.kuMerge;
-	e.ekuMerge = requestMerge.ekuMerge;
-	e.ekuAllowed = requestMerge.ekuAllowed;
-	e.ekuDefault = requestMerge.ekuDefault;
+	/* the tab "Request merge" (BTD-185) */
+	e.sanMerge = (ExtensionSpec::requestMerge)
+		reqSanMerge->currentData().toInt();
+	e.kuMerge = (ExtensionSpec::requestMerge)
+		reqKuMerge->currentData().toInt();
+	e.ekuMerge = (ExtensionSpec::requestMerge)
+		reqEkuMerge->currentData().toInt();
+	for (const QString &s : ekuAllowed->text().split(',', Qt::SkipEmptyParts))
+		e.ekuAllowed << s.trimmed();
+	for (const QString &s : ekuDefault->text().split(',', Qt::SkipEmptyParts))
+		e.ekuDefault << s.trimmed();
 	return e;
 }
 

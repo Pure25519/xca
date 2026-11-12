@@ -442,7 +442,6 @@ void test_service_audit::upgradeWaitsForPassword()
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
 	pwdialog->delegateTo(h);
-	warning->expectMessage("Password verify error");
 	bool rejected = false;
 	try {
 		Database.open(dbFile);
@@ -473,7 +472,7 @@ void test_service_audit::upgradeRejectsGivenSource()
 	PasswordSourceScope given(pass_info::DatabasePassword,
 				"pass:wrong-db-pass");
 	QVERIFY(PwDialogCore::hasSource(pass_info::DatabasePassword));
-	warning->expectMessage("Password verify error");
+	/* no "Password verify error": a source is not asked again (BTD-89) */
 	bool rejected = false;
 	try {
 		Database.open(dbFile);
@@ -620,7 +619,7 @@ void test_service_audit::optionflagsWrongPassword()
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
 	pwdialog->delegateTo(h);
-	warning->expectMessage("Password verify error");
+	/* no "Password verify error": a source is not asked again (BTD-89) */
 	bool rejected = false;
 	try {
 		Database.open(dbFile);
