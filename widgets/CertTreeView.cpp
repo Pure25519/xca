@@ -264,17 +264,14 @@ void CertTreeView::caProperties()
 		cert->getIntName(), "ca_properties");
 
 	if (dlg->exec()) {
-		int oldDays = cert->getCrlDays();
 		templ = ui.temp->currentPkiItem();
-		cert->setTemplateSqlId(templ ? templ->getSqlItemId() :
-						QVariant());
-		cert->setCrlDays(ui.days->value());
+		/* the CRL setting of the command line and the audit follow
+		 * (BTD-219); not stored: memory keeps the stored values */
 		try {
-			certs()->updateCaProperties(cert);
+			certs()->setCaProperties(ServiceContext::localUser(
+					ServiceContext::gui), cert, ui.days->value(),
+				templ ? templ->getSqlItemId() : QVariant());
 		} catch (errorEx &err) {
-			/* not stored: memory keeps the stored values (BTD-50) */
-			cert->setTemplateSqlId(tmplId);
-			cert->setCrlDays(oldDays);
 			XCA_ERROR(err);
 		}
 		columnsChanged();

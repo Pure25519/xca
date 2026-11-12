@@ -22,6 +22,7 @@
 #include "audit.h"
 #include "issuance.h"
 #include "issuance_checks.h"
+#include "crl_policy.h"
 #include "profile_store.h"
 #include "request.h"
 
@@ -1842,21 +1843,57 @@ void db_x509::toToken(QModelIndex idx, bool alwaysSelect)
         }
 }
 
-void db_x509::updateCaProperties(pki_x509 *cert)
+const char db_x509::actionSetTemplate[] = "ca.set_template";
+
+void db_x509::setCaProperties(const ServiceContext &ctx, pki_x509 *ca,
+		int crlDays, const QVariant &templateId)
 {
-	XSqlQuery q;
-	Transaction;
-	TransThrow();
+	if (!ca)
+		throw serviceError("issuer_not_ca",
+			tr("No CA certificate given"));
+	bool daysChanged = crlDays != ca->getCrlDays();
+	bool templateChanged = templateId != ca->getTemplateSqlId();
+	if (!daysChanged && !templateChanged)
+		return;
 
-	SQL_PREPARE(q, "UPDATE authority SET crlDays=?, "
-			"template=? WHERE item=?");
+	/* the setting the command line uses, with the GUI's days; a
+	 * broken stored row is refused here like in the command line */
+	CrlPolicy policy = CrlPolicy::of(ca);
+	if (daysChanged)
+		policy.validity = CrlPolicy::checkValidity(IsoDuration::parse(
+				QString("P%1D").arg(crlDays)), "crl_days");
+	pki_temp *temp = Store.lookupPki<pki_temp>(templateId);
+	AuditParams templateParams;
+	templateParams.set("ca_id", ca->getSqlItemId().toLongLong());
+	templateParams.set("name", ca->getIntName());
+	templateParams.set("template", temp ? temp->getIntName() : QString());
 
-	q.bindValue(0, cert->getCrlDays());
-	q.bindValue(1, cert->getTemplateSqlId());
-	q.bindValue(2, cert->getSqlItemId());
-
-	AffectedItems(cert->getSqlItemId());
-	execOrThrow(q, tr("The CA properties of '%1' could not be stored")
-			.arg(cert->getIntName()));
-	TransCommitThrow();
+	QString id = ca->getSqlItemId().toString();
+	auditedTransaction(ctx, daysChanged ? CrlPolicy::actionSettings :
+			actionSetTemplate, "certificate", id,
+			daysChanged ? policy.auditParams(ca) : templateParams,
+			[&]() {
+		if (!ca->isCA())
+			throw serviceError("issuer_not_ca",
+				tr("'%1' is no CA certificate")
+					.arg(ca->getIntName()));
+		if (daysChanged)
+			policy.storeIn(ctx, ca);
+		if (!templateChanged)
+			return;
+		XSqlQuery q;
+		SQL_PREPARE(q, "UPDATE authority SET template=? WHERE item=?");
+		q.bindValue(0, templateId);
+		q.bindValue(1, ca->getSqlItemId());
+		AffectedItems(ca->getSqlItemId());
+		execOrThrow(q, tr("The CA properties of '%1' could not be "
+				"stored").arg(ca->getIntName()));
+		QVariant old = ca->getTemplateSqlId();
+		ca->setTemplateSqlId(templateId);
+		DbTransaction::onRollback([ca, old]() {
+			ca->setTemplateSqlId(old);
+		});
+		AuditLog::append(ctx, actionSetTemplate, "certificate", id,
+				templateParams);
+	});
 }
