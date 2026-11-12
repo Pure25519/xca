@@ -36,6 +36,14 @@ entry is lost and logged, and the wrapper rethrows its own error (BTD-138). Sinc
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
 
+Spelling of audit values (BTD-97): one spelling per value, so that filters and the JSON Schema
+need no aliases. `key_type` is the name of the key type table in `lib/pki_key.h` (`keytype::name`:
+`RSA`, `DSA`, `EC`, `ED25519`, `ED448`, `ML-DSA-65`, `SLH-DSA-SHA2-128s`, ...), the same name
+`--keygen`, the GUI and the `--json` reports use; the audit key of `audit.key_create` is `ED25519`.
+`object_type` of every certificate entry is `certificate`. Entries written before BTD-97 keep
+`ed25519` (`audit.key_create`) and `cert` (`revocation.baseline`): the hash chain forbids
+rewriting them, and readers accept both spellings.
+
 A lost entry is not silent (BTD-274): `appendFailure()` keeps it, and the command lines (`bxc-pki`,
 `xca --no-gui`) end such a command with exit code 1 and the error `audit_entry_lost`, whose detail
 names the lost entries and the original error with its code; a command that succeeded otherwise
