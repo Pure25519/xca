@@ -203,7 +203,7 @@ Files that cannot be read (BTD-270): `importItems()` writes one `object.import` 
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
 | BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password), `secret.export` per symmetric secret in the output (BTD-90) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `invalid_pkcs12_mac`, `invalid_pkcs12_iterations`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
-| BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
+| BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `invalid_path_length`, `database_error` |
 | BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
 | BTD-224 | `settings::update(ctx, changes)` (`lib/settings.h`), used by the Options dialog | key/value map | `settings.update` per changed setting: `setting` (a host-specific key with `:<hostId>`), `old_value`/`new_value` only for the 15 Options keys, `redacted` for any other key and never a value for `pwhash` or a key with "pass" | `read_only_database`, `database_error` (neither setting nor entry stored) |
 | BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
@@ -261,6 +261,12 @@ Templates, rename and delete (BTD-35):
   `fromObject()` (Transform > Template) make one. The dialog fills and reads its widgets through
   `TemplateSpec` (`NewX509::extensionsFromTemplate()`, `NewX509::templateSpec()`), so the mapping
   exists once. Applying a template changes nothing in the database and writes no entry.
+- Saving (BTD-131): `toTemplate()` stores the EKUs in the order `fromTemplate()` reads them (the
+  dialog's list), so a template has the same bytes after every save of the same content.
+  `updateTemplate()` writes nothing and no `template.update` entry when bytes, name and comment
+  do not change. `newTemplate()` and `updateTemplate()` check the path length of a CA with the
+  rule of the issuance (`IssuanceChecks::pathLength()`, `invalid_path_length`), so a bad value is
+  refused when it is stored, not first when the template is used.
 - Audit parameters: `template.create`/`template.update` `name`, `subject`, `old_name` (only when
   the name changed); `object.rename` `name`, `old_name`, `on_token` (renamed on a token,
   `db_token`; `object_id` is the CKA_ID of a key or the SHA-256 fingerprint of a certificate,
