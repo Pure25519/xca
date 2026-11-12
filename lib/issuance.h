@@ -88,6 +88,10 @@ class ExtensionSpec
 	 * (Nexus style: clientAuth, PLAN.md 9.1). */
 	QStringList ekuAllowed{};
 	QStringList ekuDefault{};
+	/* Every entry of ekuAllowed and ekuDefault must be an OpenSSL short
+	 * name, long name or dotted OID; otherwise template_eku_unknown
+	 * names the field and the entry (BTD-192) */
+	void checkEkuNames() const;
 
 	bool netscape{};            // add the Netscape extensions below
 	QStringList nsCertType{};   // "client", "server", "email", "objsign", ...

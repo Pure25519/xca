@@ -84,6 +84,11 @@ class db_x509: public db_x509super
 		void inToCont(pki_base *pki);
 		/* Serial number rule of BTD-31, see randomSerial() */
 		static a1int randomSerial();
+		/* Encodes an extension value, X509V3_EXT_i2d(). A test seam
+		 * (BTD-192): the service test replaces it to inject an
+		 * encoding failure into the request merge */
+		static X509_EXTENSION *(*encodeExtension)(int nid, int crit,
+							 void *value);
 		bool serialInUse(pki_x509 *signer, const a1int &serial);
 		a1int getUniqueSerial(pki_x509 *signer,
 			const std::function<a1int()> &draw = randomSerial);

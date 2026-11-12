@@ -664,17 +664,28 @@ static void *requestedExt(X509_REQ *req, int nid, int *critical)
 	return value;
 }
 
-/* Replaces or adds the extension nid of cert, keeping its place */
+X509_EXTENSION *(*db_x509::encodeExtension)(int, int, void *) =
+	X509V3_EXT_i2d;
+
+/* Replaces or adds the extension nid of cert, keeping its place. Encodes
+ * first: a value that does not encode is an error and the template's
+ * extension stays, never a certificate without it (BTD-192) */
 static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 {
 	X509 *x = cert->getCert();
+	X509_EXTENSION *ext = db_x509::encodeExtension(nid, critical, value);
 	int at = X509_get_ext_by_NID(x, nid, -1);
-	if (at >= 0)
-		X509_EXTENSION_free(X509_delete_ext(x, at));
-	X509_EXTENSION *ext = X509V3_EXT_i2d(nid, critical, value);
-	if (ext)
-		X509_add_ext(x, ext, at);
+	X509_EXTENSION *old = ext && at >= 0 ? X509_delete_ext(x, at) : nullptr;
+	bool added = ext && X509_add_ext(x, ext, at);
+	if (!added && old)
+		X509_add_ext(x, old, at);
+	X509_EXTENSION_free(old);
 	X509_EXTENSION_free(ext);
+	if (!added)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 }
 
 /* The EKU a CSR asks for: its own, or ekuDefault when it has none
@@ -684,6 +695,8 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
 			X509_REQ *req, int *critical, bool leaf, bool *fromDefault)
 {
+	/* a spec that bypassed the template check (BTD-192) */
+	e.checkEkuNames();
 	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)
 			requestedExt(req, NID_ext_key_usage, critical);
 	*fromDefault = !eku && !e.ekuDefault.isEmpty();
@@ -849,7 +862,12 @@ static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert,
 			crit = templCrit;
 		}
 		freeExtValue(nid, t);
-		putExt(cert, nid, value, crit > 0);
+		try {
+			putExt(cert, nid, value, crit > 0);
+		} catch (...) {
+			freeExtValue(nid, value);
+			throw;
+		}
 		freeExtValue(nid, value);
 	}
 	*merge = decisions.join(",");
