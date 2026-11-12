@@ -130,6 +130,7 @@ class MainWindow: public QMainWindow, public Ui::MainWindow
 		bool pastePem(const QString &text, bool silent=false);
 		void pastePem();
 		void changeDbPass();
+		void verifyAudit();
 		void openURLs(QStringList &files);
 		void openURLs();
 		void changeEvent(QEvent *event);

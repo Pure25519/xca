@@ -34,6 +34,12 @@ class PwDialogUI_i
 	/* The PIN is entered on the PIN pad of the reader: starts the
 	 * login thread and returns when it has finished */
 	virtual void pinPadLogin(pass_info *p, QThread *login) = 0;
+	/* True if requests of purpose p are answered from a password source
+	 * instead of a prompt (BTD-89); a dialog always prompts */
+	virtual bool answersFromSource(enum pass_info::purpose) const
+	{
+		return false;
+	}
 	virtual ~PwDialogUI_i() { };
 };
 
@@ -45,15 +51,25 @@ class PwDialogUI_i
  * read once anyway. */
 class PwDialogHeadless: public PwDialogUI_i
 {
+	/* name is the source, for pass: the secret itself: it gets a
+	 * buffer of its own and is wiped with the entry (BTD-74) */
 	class entry
 	{
 	  public:
 		QString name{};
 		Passwd secret{};
 		bool read{};
+		entry() = default;
+		entry(const entry &other);
+		entry &operator=(const entry &other);
+		~entry();
 	};
 	QMap<enum pass_info::purpose, entry> sources{};
+	/* The command line option that gives a secret of a purpose,
+	 * set by the program (BTD-196); without one no option does */
+	QMap<enum pass_info::purpose, QString> options{};
 	bool interactive{};
+	QString howToGive(enum pass_info::purpose purpose) const;
 
   public:
 	/* Longest secret accepted: OpenSSL's password callbacks get
@@ -62,6 +78,10 @@ class PwDialogHeadless: public PwDialogUI_i
 
 	void setSource(enum pass_info::purpose purpose, const QString &source);
 	void clearSources();
+	void setOption(enum pass_info::purpose purpose, const QString &option)
+	{
+		options[purpose] = option;
+	}
 	bool hasSource(enum pass_info::purpose purpose) const
 	{
 		return sources.contains(purpose);
@@ -87,6 +107,10 @@ class PwDialogHeadless: public PwDialogUI_i
 	int selectKeySlot(const QString &label,
 			const QStringList &names) override;
 	void pinPadLogin(pass_info *p, QThread *login) override;
+	bool answersFromSource(enum pass_info::purpose purpose) const override
+	{
+		return hasSource(purpose);
+	}
 };
 
 class PasswordSourceScope;
@@ -109,6 +133,10 @@ class PwDialogCore
 	 * instead of a dialog: the caller must ask even if the current
 	 * password already fits, or the given one is never checked */
 	static bool hasSource(enum pass_info::purpose p);
+	/* A password of purpose p was wrong and will be asked again:
+	 * warns "Password verify error" only if the next request prompts
+	 * somebody, not when a source answers it (BTD-89) */
+	static void passwordRetry(enum pass_info::purpose p);
 	static int selectToken(const QStringList &names);
 	static int selectKeySlot(const QString &label,
 			const QStringList &names);

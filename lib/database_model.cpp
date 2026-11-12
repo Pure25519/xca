@@ -803,7 +803,10 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 
 	ServiceContext::processPasswordVerified = false;
 	pki_evp::passHash = passhash;
-	bool checked = !open_without_password || passhash.isEmpty();
+	/* Without a password source the empty password is tried: if it
+	 * is the database's password, the open is verified (BTD-246) */
+	bool checked = !open_without_password || passhash.isEmpty() ||
+		pki_evp::sha512passwT(QByteArray(""), passhash) == passhash;
 	if (pki_evp::passHash.isEmpty()) {
 		result = PwDialogCore::execute(&p, &pki_evp::passwd,true,true);
 		if (result != pw_ok)
@@ -822,7 +825,7 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 		{
 			given = false;
 			if (result == pw_ok)
-				XCA_PASSWD_ERROR();
+				PwDialogCore::passwordRetry(p.getPurpose());
 			p.setTitle(tr("Password"));
 			p.setDescription(tr("Please enter the password for unlocking the database:\n%1").arg(compressFilename(dbName)));
 			result = PwDialogCore::execute(&p, &pki_evp::passwd,

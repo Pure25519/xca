@@ -128,7 +128,8 @@ void pki_x509::restoreSql(const QSqlRecord &rec)
 				rec.value(VIEW_x509_cert).toByteArray());
 	d2i(ba);
 	issuerSqlId = rec.value(VIEW_x509_issuer);
-	crlNumber.set(rec.value(VIEW_x509_auth_crlNo).toUInt());
+	crlNumber.setDec(QString::number(
+		rec.value(VIEW_x509_auth_crlNo).toLongLong()));
 	crlExpire.fromPlain(rec.value(VIEW_x509_auth_crlExpire).toString());
 	caTemplateSqlId = rec.value(VIEW_x509_auth_template);
 	if (!rec.isNull(VIEW_x509_auth_crlDays))
@@ -1035,7 +1036,8 @@ bool pki_x509::isRevoked() const
 
 void pki_x509::setRevoked(const x509rev &revok)
 {
-	revocation = revok;
+	/* as stored: an explicit unspecified is no reason (BTD-170) */
+	revocation = revok.adopted();
 }
 
 bool pki_x509::caAndPathLen(bool *ca, a1int *pathlen, bool *hasLen) const
@@ -1164,7 +1166,7 @@ QList<pki_base *> pki_x509::vcalendarObjects() const
 	objects << const_cast<pki_x509 *>(this);
 	foreach(pki_base *p, childItems) {
 		pki_x509 *pki = static_cast<pki_x509 *>(p);
-		if (pki->getNotAfter() > a1time() && !isRevoked())
+		if (pki->getNotAfter() > a1time() && !pki->isRevoked())
 			objects << pki;
 	}
 

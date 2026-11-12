@@ -115,14 +115,17 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 	}
-	/* An empty --password is most likely an unset variable: the command
-	 * ends before anything is opened instead of running as if the
-	 * option were missing (BTD-136) */
-	if (cmd_opts.has("password") && cmd_opts["password"].isEmpty()) {
-		report(serviceError("missing_password", QObject::tr(
-			"--password is empty; give a password source (pass:, env:, "
-			"file:, fd: or stdin) or leave the option out")));
-		return EXIT_FAILURE;
+	/* An empty --password or --sqlpass is most likely an unset
+	 * variable: the command ends before anything is opened instead of
+	 * running as if the option were missing (BTD-136, BTD-268) */
+	for (const char *opt : { "password", "sqlpass" }) {
+		if (cmd_opts.has(opt) && cmd_opts[opt].isEmpty()) {
+			report(serviceError("missing_password", QObject::tr(
+				"--%1 is empty; give a password source (pass:, "
+				"env:, file:, fd: or stdin) or leave the option "
+				"out").arg(opt)));
+			return EXIT_FAILURE;
+		}
 	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
@@ -136,6 +139,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::DatabasePassword, dbpass);
 		headless->setSource(pass_info::KeyPassword, dbpass);
 		headless->setSource(pass_info::SqlPassword, sqlpass);
+		/* the options of xca; nothing gives an import password */
+		headless->setOption(pass_info::DatabasePassword, "--password");
+		headless->setOption(pass_info::KeyPassword, "--password");
+		headless->setOption(pass_info::SqlPassword, "--sqlpass");
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
 		/* Questions likewise: "yes" only if confirmed here; a
@@ -157,6 +164,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!sqlpass.isEmpty())
 			sqlpw = PwDialogHeadless::readSource(sqlpass);
 	}
+	/* The sources are set: the parsed values are no longer needed, a
+	 * pass: value is the secret itself (BTD-74) */
+	bool dbPassGiven = !dbpass.isEmpty();
+	secretCleanse(dbpass);
+	secretCleanse(sqlpass);
+	cmd_opts.forgetSecrets();
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];
@@ -166,7 +179,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		/* A given database password is checked on open, a wrong one
 		 * ends the command; without one, the public objects can
 		 * still be listed as upstream allows (BTD-78) */
-		database_model::open_without_password = dbpass.isEmpty();
+		database_model::open_without_password = !dbPassGiven;
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 
@@ -581,6 +594,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				spec);
 			foreach(pki_base *pki, result.existing)
 				XCA_INFO(importExistsMessage(pki));
+			foreach(const QString &w, result.warnings)
+				XCA_WARN(w);
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;

@@ -127,10 +127,9 @@ QJsonObject CrlPolicy::toJson() const
 	return o;
 }
 
-void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
+AuditParams CrlPolicy::auditParams(const pki_x509 *ca) const
 {
 	AuditParams params;
-	QString id = ca ? ca->getSqlItemId().toString() : QString();
 	if (ca) {
 		params.set("ca_id", ca->getSqlItemId().toLongLong());
 		params.set("name", ca->getIntName());
@@ -138,50 +137,59 @@ void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
 	params.set("crl_validity", validity.toString());
 	params.set("reissue_fraction", fractionText(reissueFraction));
 	params.set("size_budget", sizeBudget);
+	return params;
+}
 
+void CrlPolicy::store(const ServiceContext &ctx, pki_x509 *ca) const
+{
+	QString id = ca ? ca->getSqlItemId().toString() : QString();
+	auditedTransaction(ctx, actionSettings, "certificate", id,
+			auditParams(ca), [&]() {
+		storeIn(ctx, ca);
+	});
+}
+
+void CrlPolicy::storeIn(const ServiceContext &ctx, pki_x509 *ca) const
+{
 	/* crlDays: the validity is whole days (checkValidity()) */
 	QDateTime t0(QDate(2000, 1, 1), QTime(0, 0), Qt::UTC);
 	qint64 secs = t0.secsTo(validity.addTo(t0));
 	int days = (int)qMax<qint64>(1, secs / 86400);
 
-	auditedTransaction(ctx, actionSettings, "certificate", id, params,
-				[&]() {
-		if (!ca || !ca->isCA() || !ca->getSqlItemId().isValid())
-			throw serviceError("issuer_not_ca", QObject::tr(
-				"CRL settings need a CA certificate of the "
-				"database"));
-		XSqlQuery q;
-		SQL_PREPARE(q, "DELETE FROM settings WHERE key_=?");
-		q.bindValue(0, settingsKey(ca));
-		q.exec();
-		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
-		SQL_PREPARE(q, "INSERT INTO settings (key_, value) "
-				"VALUES (?, ?)");
-		q.bindValue(0, settingsKey(ca));
-		q.bindValue(1, QString::fromUtf8(QJsonDocument(toJson())
-				.toJson(QJsonDocument::Compact)));
-		q.exec();
-		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
-		SQL_PREPARE(q, "UPDATE authority SET crlDays=? WHERE item=?");
-		q.bindValue(0, days);
-		q.bindValue(1, ca->getSqlItemId());
-		AffectedItems(ca->getSqlItemId());
-		q.exec();
-		if (q.lastError().isValid())
-			throw serviceError("database_error",
-				q.lastError().text());
-		int old = ca->getCrlDays();
-		ca->setCrlDays(days);
-		DbTransaction::onRollback([ca, old]() {
-			ca->setCrlDays(old);
-		});
-		AuditLog::append(ctx, actionSettings, "certificate", id,
-				params);
+	if (!ca || !ca->isCA() || !ca->getSqlItemId().isValid())
+		throw serviceError("issuer_not_ca", QObject::tr(
+			"CRL settings need a CA certificate of the "
+			"database"));
+	QString what = QObject::tr("The CRL settings of the CA "
+		"'%1' could not be stored").arg(ca->getIntName());
+	XSqlQuery q;
+	SQL_PREPARE(q, "DELETE FROM settings WHERE key_=?");
+	q.bindValue(0, settingsKey(ca));
+	q.exec();
+	if (q.lastError().isValid())
+		throwSqlError(q.lastError(), what);
+	SQL_PREPARE(q, "INSERT INTO settings (key_, value) "
+			"VALUES (?, ?)");
+	q.bindValue(0, settingsKey(ca));
+	q.bindValue(1, QString::fromUtf8(QJsonDocument(toJson())
+			.toJson(QJsonDocument::Compact)));
+	q.exec();
+	if (q.lastError().isValid())
+		throwSqlError(q.lastError(), what);
+	SQL_PREPARE(q, "UPDATE authority SET crlDays=? WHERE item=?");
+	q.bindValue(0, days);
+	q.bindValue(1, ca->getSqlItemId());
+	AffectedItems(ca->getSqlItemId());
+	q.exec();
+	if (q.lastError().isValid())
+		throwSqlError(q.lastError(), what);
+	int old = ca->getCrlDays();
+	ca->setCrlDays(days);
+	DbTransaction::onRollback([ca, old]() {
+		ca->setCrlDays(old);
 	});
+	AuditLog::append(ctx, actionSettings, "certificate",
+			ca->getSqlItemId().toString(), auditParams(ca));
 }
 
 QDateTime CrlPolicy::nextUpdate(const QDateTime &thisUpdate) const
