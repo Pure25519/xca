@@ -1,6 +1,7 @@
 # xca --no-gui on a database it may not write (BTD-50): a write command ends
 # with exit code 1 and the error object read_only_database naming the
-# object; reading commands keep working.
+# command (since BTD-214, refused before any work); reading commands keep
+# working.
 # cmake -DXCA=<xca> [-DSETPRIV=<setpriv>] -DSOURCE=<source dir>
 #       -DWORK=<scratch dir>
 #       -P cli_readonly_database.cmake
@@ -71,20 +72,25 @@ if(jerr OR NOT code STREQUAL "read_only_database")
   fail("--keygen: error code '${code}', expected read_only_database:\n${err}")
 endif()
 string(JSON detail GET "${obj}" detail)
-if(NOT detail MATCHES "refused" OR NOT detail MATCHES "readonly")
-  fail("--keygen: the detail names neither the key nor the cause: ${detail}")
+# Since BTD-214 the write probe of the open finds the read-only file and
+# the command is refused before the key is generated; the store path of
+# BTD-50 behind it is tested by test_service_sql_errors
+if(NOT detail MATCHES "--keygen" OR NOT detail MATCHES "read-only")
+  fail("--keygen: the detail names neither the command nor the cause: ${detail}")
 endif()
 if(detail MATCHES "INSERT INTO|private_keys")
   fail("--keygen: the error shows the SQL statement: ${detail}")
 endif()
 
 # A write through another helper than the item store (BTD-189): the
-# profile store. The detail names the cause, not the statement, its
-# bound values or the source location of the query.
+# profile store. Since BTD-214 it is refused at the open as well; the
+# detail names the command and the cause, not the statement, its bound
+# values or the source location of the query.
 run(1 --json --migrate-template TLS_server --name ro-profile)
 string(REGEX MATCH "{\"code\"[^\n]*}" obj "${err}")
 string(JSON detail ERROR_VARIABLE jerr GET "${obj}" detail)
-if(jerr OR NOT detail MATCHES "readonly")
+if(jerr OR NOT detail MATCHES "--migrate-template" OR
+   NOT detail MATCHES "read-only")
   fail("--migrate-template: the detail does not name the cause:\n${err}")
 endif()
 # Nothing on stderr shows them either, the log line of a lost audit

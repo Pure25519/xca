@@ -88,6 +88,7 @@ class MainWindow: public QMainWindow, public Ui::MainWindow
 		void keyPressEvent(QKeyEvent *e);
 		void update_history_menu();
 		void showDatabaseName();
+		void enableWriteActions(bool enable);
 
 	public:
 		static bool legacy_loaded;
