@@ -502,6 +502,11 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			this, SLOT(pkiChangedSlot(pki_base*)));
 	}
 
+#ifdef BXC_PKI_TEST_SEAMS
+	if (TestSeams::openFailsAfterModels())
+		throw errorEx("test seam: the open fails after the models "
+			"(BTD-299)");
+#endif
 	pkcs11::libraries.load(Settings["pkcs11path"]);
 	restart_timer();
 }

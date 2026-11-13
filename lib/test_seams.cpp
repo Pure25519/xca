@@ -38,4 +38,18 @@ bool TestSeams::openFailsAfterUnlock()
 	return fail;
 }
 
+static bool lateOpenFailure;
+
+void TestSeams::failNextOpenAfterModels()
+{
+	lateOpenFailure = true;
+}
+
+bool TestSeams::openFailsAfterModels()
+{
+	bool fail = lateOpenFailure;
+	lateOpenFailure = false;
+	return fail;
+}
+
 #endif
