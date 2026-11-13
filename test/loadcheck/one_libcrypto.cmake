@@ -5,7 +5,7 @@
 # LOADCHECK (test/loadcheck/loadcheck.cpp), which lists every loaded
 # object at process exit; a run without such a list fails.
 #
-# Variables: LOADCHECK, XCA, BXC_PKI, TESTXCA, SERVICE_TEST, WORK, MODE.
+# Variables: LOADCHECK, XCA, BXC_PKI, XCA_SERVER, TESTXCA, SERVICE_TEST, WORK, MODE.
 # MODE clean: every run must have exactly one libcrypto, libcrypto.so.4,
 # and no libssl.so.3. MODE injected: INJECT (the Debian libcrypto.so.3)
 # is preloaded as well, and the check must report it for every run; this
@@ -120,6 +120,9 @@ check(xca "${XCA}" --no-gui --database "${DB}" --password "pass:${DB_PW}"
   --json --print --select 2)
 # the GUI test binary and a service test, each with one test function:
 # the libraries are loaded at start, the whole suite adds only run time
+# the REST server links libssl next to xcacore (BTD-154, rule
+# phase3-http-library of bxc-pki docs/dependencies.json)
+check(xca-server "${XCA_SERVER}" --version)
 check(testxca "${TESTXCA}" automationIds)
 check(service_test "${SERVICE_TEST}" chainValid)
 
