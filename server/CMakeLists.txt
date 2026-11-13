@@ -27,6 +27,31 @@ endif()
 # the target exists
 set(XCA_SERVER_BIN ${PROJECT_BINARY_DIR}/xca-server)
 
+# POSIX hosts only for now: the Windows build (MSVC) of the server is not
+# set up or tested yet
+if(NOT WIN32)
+  add_executable(xca-server
+	${SERVER_DIR}/main.cpp
+	${SERVER_DIR}/config.cpp ${SERVER_DIR}/config.h
+	${SERVER_DIR}/worker.cpp ${SERVER_DIR}/worker.h
+	${SERVER_DIR}/session.cpp ${SERVER_DIR}/session.h
+	${SERVER_DIR}/routes.cpp ${SERVER_DIR}/routes.h
+	${PROJECT_BINARY_DIR}/local.h)
+  # SYSTEM: the OpenSSL 4.1 deprecations inside the header (condition 6)
+  # are not warnings of our code
+  target_include_directories(xca-server SYSTEM PRIVATE ${SERVER_DIR}/third_party)
+  # server code only, no httplib::Client is used (condition 4)
+  target_compile_definitions(xca-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+  target_link_libraries(xca-server xcacore OpenSSL::SSL Threads::Threads
+	${ASAN_LIB})
+  set_target_properties(xca-server PROPERTIES MACOSX_BUNDLE FALSE
+	RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
+  install(TARGETS xca-server RUNTIME DESTINATION ${RUNTIME_DEST})
+  if(BUILD_TESTING)
+    add_dependencies(tests xca-server)
+  endif()
+endif()
+
 if(BUILD_TESTING)
   find_program(SERVER_READELF readelf)
   find_program(SERVER_LDD ldd)
