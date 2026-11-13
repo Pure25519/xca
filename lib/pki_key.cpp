@@ -615,10 +615,12 @@ EVP_PKEY *pki_key::fromParamData(QSharedPointer<OSSL_PARAM_BLD> bld,
 		const QMap<const char *, BIGNUM*> &params, int keytype) const
 {
 	EVP_PKEY *pk = nullptr;
-	EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_id(keytype, nullptr);
-	Q_CHECK_PTR(ctx);
+	/* freed on every path (BTD-292: the context leaked) */
+	QSharedPointer<EVP_PKEY_CTX> ctx(EVP_PKEY_CTX_new_id(keytype, nullptr),
+			EVP_PKEY_CTX_free);
+	Q_CHECK_PTR(ctx.get());
 	pki_openssl_error();
-	if (EVP_PKEY_fromdata_init(ctx) <= 0)
+	if (EVP_PKEY_fromdata_init(ctx.get()) <= 0)
 		return nullptr;
 	for (auto i = params.cbegin(), end = params.cend(); i != end; ++i) {
 		OSSL_PARAM_BLD_push_BN(bld.get(), i.key(), i.value());
@@ -626,7 +628,7 @@ EVP_PKEY *pki_key::fromParamData(QSharedPointer<OSSL_PARAM_BLD> bld,
 				<< BioByteArray(i.value()).qstring();
 	}
 	OSSL_PARAM *pa = OSSL_PARAM_BLD_to_param(bld.get());
-	EVP_PKEY_fromdata(ctx, &pk, EVP_PKEY_KEYPAIR, pa);
+	EVP_PKEY_fromdata(ctx.get(), &pk, EVP_PKEY_KEYPAIR, pa);
 	OSSL_PARAM_free(pa);
 	for (auto i = params.cbegin(), end = params.cend(); i != end; ++i)
 		BN_free(i.value());
