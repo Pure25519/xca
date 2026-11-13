@@ -497,7 +497,8 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 		else if (policyNames.contains("dn"))
 			throw serviceError("policy_name_not_allowed",
 				tr("Policy '%1' has no rule for the subject attribute %2 '%3'")
-				.arg(id, OBJ_nid2sn(nid), value));
+				.arg(id, OBJ_nid2sn(nid), value))
+				.with("rule", "names.dn");
 	}
 	for (const Name &n : names) {
 		/* a policy that rules on names admits no name it cannot rule on */
@@ -508,7 +509,8 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 				continue;
 			throw serviceError("policy_name_not_allowed",
 				tr("Policy '%1' has no rule for the name '%2'")
-				.arg(id, n.value));
+				.arg(id, n.value))
+				.with("rule", "names." + n.form);
 		}
 		bool dn = n.form.startsWith("dn:");
 		QString form = dn ? "dn" : n.form;
@@ -516,6 +518,10 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 			policyNames["dn"].toObject()[n.form.mid(3)].toObject() :
 			policyNames[form].toObject();
 		QString what = dn ? n.form.mid(3) : formNames().value(form);
+		/* the member of the policy that decides, e.g. names.dns or
+		 * names.dn.CN (bxc-pki error.schema.json rule, BTD-153) */
+		QString rulePath = dn ? "names.dn." + n.form.mid(3) :
+					"names." + form;
 		auto match = [&](const QJsonObject &r, bool deny) {
 			return form == "ip" ? ipMatch(r["network"].toString(), n.ip) :
 					matches(form, r, n, deny);
@@ -527,7 +533,8 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 				throw serviceError("policy_name_denied",
 					tr("Policy '%1': the %2 '%3' is denied by the rule %4")
 					.arg(id, what, n.value, form == "ip" ?
-						v.toString() : ruleText(r)));
+						v.toString() : ruleText(r)))
+					.with("rule", rulePath + ".deny");
 		}
 		if (!rules.contains("allow"))
 			continue;
@@ -540,7 +547,8 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 		if (!allowed)
 			throw serviceError("policy_name_not_allowed",
 				tr("Policy '%1': no allow rule admits the %2 '%3'")
-				.arg(id, what, n.value));
+				.arg(id, what, n.value))
+				.with("rule", rulePath + ".allow");
 	}
 
 	/* the minimum content */
@@ -548,13 +556,15 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 	if (content["require_extensions"].toBool() && X509_get_ext_count(x) == 0)
 		throw serviceError("policy_no_extensions",
 			tr("Policy '%1': a certificate without any extension is not issued (rule content.require_extensions)")
-			.arg(id));
+			.arg(id))
+			.with("rule", "content.require_extensions");
 	for (const QJsonValue &a : content["required_dn_attributes"].toArray()) {
 		if (X509_NAME_get_index_by_NID(subject,
 				dnAttributes().value(a.toString()), -1) < 0)
 			throw serviceError("policy_missing_dn_attribute",
 				tr("Policy '%1': the subject has no %2 (rule content.required_dn_attributes)")
-				.arg(id, a.toString()));
+				.arg(id, a.toString()))
+				.with("rule", "content.required_dn_attributes");
 	}
 
 	/* strict issuer key usage; the default lets an issuer without key
@@ -564,7 +574,8 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 	    !(X509_get_extension_flags(chain.first()->getCert()) & EXFLAG_KUSAGE))
 		throw serviceError("policy_issuer_key_usage",
 			tr("Policy '%1': the issuer '%2' has no key usage extension (rule issuer.require_key_usage)")
-			.arg(id, chain.first()->getSubject().oneLine()));
+			.arg(id, chain.first()->getSubject().oneLine()))
+			.with("rule", "issuer.require_key_usage");
 
 	/* uniqueness among the certificates of the scope with a status */
 	QJsonObject u = doc["uniqueness"].toObject();
@@ -622,6 +633,7 @@ void Policy::check(const IssuanceSpec &spec, const pki_x509 *cert,
 		if (!field.isEmpty())
 			throw serviceError("policy_not_unique",
 				tr("Policy '%1': '%2' (%3) has the same %4 (rule uniqueness)")
-				.arg(id, q.value(4).toString(), st, field));
+				.arg(id, q.value(4).toString(), st, field))
+				.with("rule", "uniqueness");
 	}
 }

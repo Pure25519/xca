@@ -202,6 +202,10 @@ endforeach()
 xca_run("xca not confirmed" 1 --database "${DB}" ${PW} --json
     --keygen RSA:768 --name small)
 expect_error("xca not confirmed" not_confirmed)
+string(JSON question ERROR_VARIABLE q_err GET "${_edoc}" question)
+if(q_err OR NOT question MATCHES "^[a-z][a-z0-9_.]*$")
+  fail("xca not confirmed: no question id (BTD-153): ${_edoc}")
+endif()
 
 # the rejected key generations are audited (after the rollback)
 audit_entries(lines)

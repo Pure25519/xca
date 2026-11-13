@@ -62,6 +62,12 @@ class usageError: public serviceError
 		: serviceError(c, txt)
 	{
 	}
+	/* keeps the type: a thrown usageError still exits with 2 */
+	usageError &with(const QString &member, const QJsonValue &v)
+	{
+		serviceError::with(member, v);
+		return *this;
+	}
 };
 
 enum exitCode { exitOk = 0, exitFailure = 1, exitUsage = 2 };
@@ -269,6 +275,9 @@ class ResultCollector
 	/* "certificate 7 'plc10', crl 8 'BxC Root'": the objects that are
 	 * stored, for an error after the commit (rule 11) */
 	QString storedText() const;
+	/* the same objects as type, id and name (bxc-pki error.schema.json
+	 * stored_objects, BTD-153) */
+	QJsonArray storedObjects() const;
 
   private:
 	QJsonObject extra{};
