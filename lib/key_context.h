@@ -33,9 +33,14 @@ class KeyContext
 	KeyContext() = default;
 	KeyContext(const KeyContext &) = delete;
 	KeyContext &operator=(const KeyContext &) = delete;
+	/* A context that ends while it is the session's (also when the
+	 * database_model constructor throws after its try block, BTD-296)
+	 * leaves no pointer to itself behind */
 	~KeyContext()
 	{
 		cleanse();
+		if (current == this)
+			current = nullptr;
 	}
 	void cleanse()
 	{
