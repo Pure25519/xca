@@ -132,13 +132,15 @@ ok "no answer without a certificate of the client CA"
 # 5. 50 requests at once
 mkdir -p "$WORK/load"
 i=0
+# the PIDs by $!: in dash, $(jobs -p) runs in a subshell and lists nothing
+load_pids=""
 while [ $i -lt 50 ]; do
     req /v1/status "$P/client.pem" "$P/client.key" > "$WORK/load/$i.txt" &
+    load_pids="$load_pids $!"
     i=$((i + 1))
 done
 wait_load=0
-for j in $(jobs -p); do
-    [ "$j" = "$PID" ] && continue
+for j in $load_pids; do
     wait "$j" || wait_load=1
 done
 n200=$(grep -l '^HTTP/1.1 200' "$WORK"/load/*.txt | wc -l)
