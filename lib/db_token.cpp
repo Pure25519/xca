@@ -142,7 +142,19 @@ void db_token::rename(const ServiceContext &ctx, pki_base *pki,
 			return;
 		}
 #endif
-		change = pki->prepareTokenRename(slot, name);
+		/* a failed login (a wrong PIN) or token call is a
+		 * token_error, as the failure on the token below (BTD-126) */
+		try {
+			change = pki->prepareTokenRename(slot, name);
+		} catch (serviceError &) {
+			throw;
+		} catch (secretError &) {
+			throw;
+		} catch (errorEx &err) {
+			throw serviceError("token_error",
+				tr("The object '%1' was not renamed on the "
+				"token: %2").arg(oldName, err.getString()));
+		}
 	}, [&]() {
 		/* The database first and the label on the token last: a
 		 * database failure leaves the token as it was, a token
