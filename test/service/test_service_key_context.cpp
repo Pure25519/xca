@@ -135,12 +135,9 @@ void test_service_key_context::failedOpenLeavesNoContext()
 	QVERIFY2(!KeyContext::session(),
 		"KeyContext::session() points at the destroyed context");
 	QVERIFY(!pki_evp::validateDatabasePassword(Passwd(pass)));
-	/* the constructor left its connection open (BTD-296 side finding):
-	 * close it, so the harness can open its database again */
-	QString conn = QSqlDatabase::database().connectionName();
-	QSqlDatabase::database().close();
-	QSqlDatabase::removeDatabase(conn);
-	Settings.clear();
+	/* the failed constructor closed its connection itself (BTD-299) */
+	QVERIFY2(QSqlDatabase::connectionNames().isEmpty(), CCHAR(
+		"connections left: " + QSqlDatabase::connectionNames().join(", ")));
 	openDatabase();
 }
 
