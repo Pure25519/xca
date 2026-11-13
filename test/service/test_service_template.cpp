@@ -59,6 +59,10 @@ class test_service_template : public ServiceTestCase
 	void validityPeriod();
 	void updateTemplate();
 	void updateRejected();
+	void updateUnchanged_data();
+	void updateUnchanged();
+	void pathLengthRejected_data();
+	void pathLengthRejected();
 	void fromObject();
 	void crlIssuerKept();
 	void crlIssuerUnconvertible();
@@ -231,7 +235,7 @@ void test_service_template::templateRoundTrip()
 	QCOMPARE(e.objectType, QString("template"));
 	QCOMPARE(e.objectId, temp->getSqlItemId().toString());
 	QCOMPARE(e.params.value("name").toString(), spec.name);
-	QCOMPARE(e.params.value("subject").toString(), spec.subject.oneLine());
+	QCOMPARE(e.params.value("subject").toString(), spec.subject.rfc4514());
 	QCOMPARE(temp->getIntName(), spec.name);
 	QCOMPARE(temp->getComment(), spec.comment);
 	QVERIFY(Store.getAll<pki_temp>().contains(temp));
@@ -372,6 +376,95 @@ void test_service_template::updateRejected()
 	} catch (serviceError &err) {
 		QCOMPARE(err.code, QString("missing_template"));
 	}
+	verifyChain();
+}
+
+/* Saving a template without a change writes nothing and no entry, and
+ * the EKUs are stored in one order from the start, so the bytes stay the
+ * same (BTD-131). Before, toTemplate() wrote the caller's order and
+ * fromTemplate() read the dialog's order: the first save of the same
+ * content wrote new bytes and a template.update entry. */
+void test_service_template::updateUnchanged_data()
+{
+	QTest::addColumn<QStringList>("eku");
+
+	QTest::newRow("serverAuth first") << QStringList{ "serverAuth", "clientAuth" };
+	QTest::newRow("clientAuth first") << QStringList{ "clientAuth", "serverAuth" };
+}
+
+void test_service_template::updateUnchanged()
+{
+	QFETCH(QStringList, eku);
+	TemplateSpec created = serverTemplate();
+	created.extensions.extKeyUsage = eku;
+	pki_temp *temp = temps()->newTemplate(ctx, created);
+	QVERIFY(temp);
+	QString stored = temp->toB64Data();
+	int entries = AuditLog::entries().size();
+
+	temps()->updateTemplate(ctx, temp, TemplateSpec::fromTemplate(temp));
+	QCOMPARE(temp->toB64Data(), stored);
+	QCOMPARE(AuditLog::entries().size(), entries);
+
+	temps()->updateTemplate(ctx, temp, TemplateSpec::fromTemplate(temp));
+	QCOMPARE(temp->toB64Data(), stored);
+	QCOMPARE(AuditLog::entries().size(), entries);
+
+	QVariant id = temp->getSqlItemId();
+	reopenDatabase();
+	temp = Store.lookupPki<pki_temp>(id);
+	QVERIFY(temp);
+	QCOMPARE(temp->toB64Data(), stored);
+	verifyChain();
+}
+
+/* A CA template whose path length is not a number of 0 or more is
+ * refused when it is stored, with the code of the issuance check, not
+ * only when it is used (BTD-131) */
+void test_service_template::pathLengthRejected_data()
+{
+	QTest::addColumn<bool>("update");
+	QTest::addColumn<QString>("pathLen");
+
+	QTest::newRow("create abc") << false << "abc";
+	QTest::newRow("create -1") << false << "-1";
+	QTest::newRow("update abc") << true << "abc";
+	QTest::newRow("update 1x") << true << "1x";
+}
+
+void test_service_template::pathLengthRejected()
+{
+	QFETCH(bool, update);
+	QFETCH(QString, pathLen);
+	TemplateSpec spec = serverTemplate();
+	spec.extensions.basicCA = ExtensionSpec::bc_ca;
+	spec.extensions.pathLen = "1";
+	pki_temp *temp = nullptr;
+	QString stored;
+
+	if (update) {
+		temp = temps()->newTemplate(ctx, spec);
+		QVERIFY(temp);
+		stored = temp->toB64Data();
+	}
+	int items = Store.getAll<pki_temp>().size();
+	int entries = AuditLog::entries().size();
+	spec.extensions.pathLen = pathLen;
+	try {
+		if (update)
+			temps()->updateTemplate(ctx, temp, spec);
+		else
+			temps()->newTemplate(ctx, spec);
+		QFAIL("no serviceError");
+	} catch (serviceError &err) {
+		QCOMPARE(err.code, QString("invalid_path_length"));
+	}
+	QCOMPARE(AuditLog::entries().size(), entries + 1);
+	lastEntry(update ? "template.update" : "template.create", "failure",
+		"invalid_path_length");
+	QCOMPARE(Store.getAll<pki_temp>().size(), items);
+	if (update)
+		QCOMPARE(temp->toB64Data(), stored);
 	verifyChain();
 }
 

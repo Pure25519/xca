@@ -13,9 +13,17 @@ Certificate issuance is the reference implementation.
 | Value object | `<Action>Spec` in its own file `lib/<area>.h/.cpp`; plain public members, defaults that match the dialog's defaults; references to database objects are non-owning pointers; created per call, nothing static or shared | `IssuanceSpec`, `ExtensionSpec` in `lib/issuance.h` |
 | Errors | a rejected spec throws `serviceError(code, message)` (`lib/exception.h`); `code` is stable snake_case and becomes the audit `error_code`; any other `errorEx` is an internal error | `missing_key`, `invalid_public_key`, `no_private_signing_key`, `duplicate_certificate`, `serial_exhausted`, `random_failure`, `database_error`, `read_only_database`, `disk_full`; every other exception is audited as `internal_error` and rethrown |
 | No interaction | no dialog, message box, question or password prompt in the service path; secrets come from `PasswordSource` (BTD-30); success messages (`createSuccess`) and follow-up questions belong to the GUI caller | the token question "Store the certificate to the key on the token?" moved to the GUI caller |
-| Audit | exactly one `AuditLog::append()` per call: `success` inside the operation's transaction, `failure` (or `denied`) after the rollback, with the parameters known at that point (allow-list of `AuditParams`, no secrets) | action `certificate.issue`, object type `certificate`, object id = item id (empty on failure); params `name`, `subject`, `issuer`, `ca_id`, `serial`, `not_before`, `not_after` (the certificate's end date after the cap at the issuer chain; null for the undefined date 99991231235959Z), `validity_capped`, `requested_not_after` (only when capped, BTD-51; a cap that leaves no window, end at or before `not_before`, fails with `invalid_validity`), `hash_algo`, `template`, `fingerprint` |
+| Audit | exactly one `AuditLog::append()` per call: `success` inside the operation's transaction, `failure` (or `denied`) after the rollback, with the parameters known at that point (allow-list of `AuditParams`, no secrets) | action `certificate.issue`, object type `certificate`, object id = item id (empty on failure); params `name`, `subject`, `issuer`, `ca_id`, `serial`, `not_before`, `not_after` (the certificate's end date after the cap at the issuer chain; null for the undefined date 99991231235959Z), `validity_capped`, `requested_not_after` (only when capped, BTD-51; null when the requested end was the undefined date, like `not_after`, BTD-118; a cap that leaves no window, end at or before `not_before`, fails with `invalid_validity`), `hash_algo`, `template`, `fingerprint` |
 | GUI caller | the dialog only fills the value object (`NewX509::getIssuanceSpec()`), calls the service function with `ServiceContext::localUser(ServiceContext::gui)` and shows the `serviceError` with `XCA_ERROR` | `widgets/NewX509_issue.cpp` |
 | Tests | `test/service/test_service_<area>.cpp` on the harness of BTD-28; check the result with openssl where possible, the audit entry of success and of every rejection, and `AuditLog::verify()` | `test/service/test_service_issuance.cpp` |
+
+DN parameters of audit entries (`subject`, `issuer`) are RFC 4514 strings from `x509name::rfc4514()`
+(BTD-104): most significant RDN last, the members of a multi-valued RDN joined with `+`, special
+characters escaped with `\`, UTF-8 as it is, e.g. `CN=device.example,O=BxC Security,C=DE`. It is
+the same form as `rfc4514` in the JSON reports. Entries written before BTD-104 keep the OpenSSL
+one-line form (`C = DE, O = BxC Security, CN = device.example`, non-ASCII escaped as `\C3\BC`);
+the hash chain forbids rewriting them, and `--audit-verify` does not read DNs, so a log with both
+forms verifies.
 
 Structure of the service function: a public wrapper builds the audit parameters, calls a private
 worker that does the work in one `Transaction`, and appends the `failure` entry when the worker
@@ -27,6 +35,36 @@ which never throws; when the database is the reason of the failure (locked, read
 entry is lost and logged, and the wrapper rethrows its own error (BTD-138). Since BTD-33, `auditedTransaction()`
 in `lib/audit.h` is that wrapper: the service function passes the work as a lambda
 (`db_x509::revoke`, `unrevoke`, `setRevocations`, `db_crl::newCrl`).
+
+Spelling of audit values (BTD-97): one spelling per value, so that filters and the JSON Schema
+need no aliases. `key_type` is the name of the key type table in `lib/pki_key.h` (`keytype::name`:
+`RSA`, `DSA`, `EC`, `ED25519`, `ED448`, `ML-DSA-65`, `SLH-DSA-SHA2-128s`, ...), the same name
+`--keygen`, the GUI and the `--json` reports use; the audit key of `audit.key_create` is `ED25519`.
+`object_type` of every certificate entry is `certificate`. Entries written before BTD-97 keep
+`ed25519` (`audit.key_create`) and `cert` (`revocation.baseline`): the hash chain forbids
+rewriting them, and readers accept both spellings.
+
+A lost entry is not silent (BTD-274): `appendFailure()` keeps it, and the command lines (`bxc-pki`,
+`xca --no-gui`) end such a command with exit code 1 and the error `audit_entry_lost`, whose detail
+names the lost entries and the original error with its code; a command that succeeded otherwise
+fails too. A read-only database can hold no entry: there the code stays `read_only_database` and
+the detail names the lost entries. The GUI only logs the loss.
+
+Transaction kinds and the write lock (BTD-274): `Transaction` (kind `write`) takes the write lock
+of the database at its outermost BEGIN, `BEGIN IMMEDIATE` on SQLite and a no-op update of the
+`settings` row `schema` on PostgreSQL and MariaDB. A second process therefore waits at BEGIN
+instead of failing at its first write after it read under a deferred BEGIN, where SQLite returns
+"database is locked" at once to avoid a deadlock; nothing a transaction reads changes before its
+COMMIT (the uniqueness rule of policies relies on that, BTD-201). The wait is the busy timeout of
+SQLite, `DbTransaction::busyTimeoutMs` = 10 s, set when the database is opened; after it the
+command fails typed (`database_error`, "database is locked"). `ReadTransaction` (kind `read`)
+takes no lock and must not write: the bxc-pki `--plan` run and the TA key lookup use it; reading
+commands open no transaction at all. A nested transaction belongs to the outermost one, so a
+write inside a read transaction holds no lock. On a database file that cannot be written SQLite
+refuses `BEGIN IMMEDIATE` (SQLITE_READONLY); then the transaction begins deferred, the reads run
+and the first write fails with `read_only_database` as before. A write transaction holds the
+lock until its COMMIT, also while a dialog or PIN prompt inside it waits for the user (BTD-273):
+until that is fixed a parallel process waits up to the busy timeout and then fails.
 
 `TransCommit()` is false when the outermost commit fails and also when any inner transaction
 rolled back, e.g. a helper that returned without commit and whose caller carried on: the outermost
@@ -55,6 +93,11 @@ A failed SQL write is a typed error, never a message box in a service path (BTD-
   - `execOrThrow(q, what)`;
   - `TransThrow()`;
   - `TransCommitThrow()`, which carries the error of the failed COMMIT.
+  - Since BTD-214 also every other SQL error path: the audit log and the audit keys (before an untyped
+    error "Database error: …", audited as `internal_error`), the profile store, the CRL settings of a
+    CA, the profile and predecessor rows of an issuance, revocation rows, templates, the revocation
+    count of a CA and the bootstrap state of `bxc-pki` (before `database_error` in every case). A
+    read-only or full database therefore gives `read_only_database` or `disk_full` there too.
 - **The text.** It is `what` and SQLite's reason, never the statement and its values (they may hold key material). The full statement goes to the debug log.
 - **Helpers throw instead of returning false.** This covers `x509revList::sqlUpdate()`, `pki_x509req::markSigned()`, `pki_evp::sqlUpdatePrivateKey()` and the UPDATEs of `db_x509::markRequestSigned()`, `pki_x509::getTaKey()` and `pki_scard::updateLabel()`. Their callers therefore stop at the first failure instead of running on in a transaction that can only roll back.
 - **`db_base::insertPKI()` and the `insert()` overrides** throw without deleting:
@@ -66,6 +109,27 @@ An operation that changes several revocation rows (`db_x509::setRevocations`, th
 revocations dialog) writes one `certificate.revoke` or `certificate.unrevoke` entry per changed
 row in its transaction, because `AuditLog::verify()` recomputes the revocations table from those
 entries; a rejection writes one `ca.set_revocations` failure entry.
+
+The import reads the revocation table before and after an object only if the object can change revocation rows: a CRL, a CA certificate, or any certificate while a CRL waits for its CA (BTD-115). Before, it read the table twice for every object, so an import cost O(objects x revocations).
+
+No user interaction inside a transaction (BTD-273): a question (`XCA_YESNO`, `XCA_OKCANCEL`,
+`xcaWarning::confirm`), a password or PIN prompt (`PwDialogCore::execute`, `pkcs11::tokenLogin`,
+PIN pad) runs before the transaction that needs its answer, never while the database is locked;
+a REST request of Phase 3 cannot answer a dialog at all. The patterns: `KeyUnlock` decrypts the
+signing key before the transaction of an issuance, a renewal (every signer), a CRL and a request,
+and `pki_x509::sign()`, `pki_crl::sign()` and `pki_x509req::createReq()` take that key without
+asking again (`KeyUnlock::decrypt()`); `auditedTransaction()` takes a prepare step that runs
+before the transaction and is audited like the work; the token steps are prepared (question,
+login, finding the objects) before the transaction and applied inside it or after the COMMIT
+(`TokenDeletion` for `deleteItems()`, BTD-272; `TokenRename` for `db_token::rename()`; the token
+session stays open in the prepared step, because closing the last session logs out). The service
+tests enforce it: the strict password dialog and the strict questions of
+`test/service/ServiceTestCase.cpp` record a violation when they run inside a transaction.
+Known exceptions with their own tickets: bxc-pki runs every writing command inside one outer
+transaction (`runInTransaction`), so with `--interactive` a password or PIN read from the terminal
+waits with the lock held; information boxes (`XCA_INFO`) inside the import transaction; key
+encryption and decryption with an unverified database password (import, change of the database
+password).
 
 Memory follows the database (BTD-130): after a rollback the in-memory store and the views show
 what the database holds. A change of memory that later steps of the transaction need (a new object
@@ -91,6 +155,45 @@ Who owns an object that a rollback took out of the store (BTD-228): the undo of
   server of BTD-154) and when the database closes. Not at the next transaction: the failure entry
   of `auditedTransaction()` is one, written before the caller's catch block deletes its object.
 
+## Requests refused before the service
+
+Decision of the boss, 2026-10-28 (BTD-106):
+
+- A command line write request may fail before any service function runs. If the database is already open, it writes one `failure` entry. The entry has the action the service would have written, the error code as `error_code`, and no secrets.
+- If the database is not open, there is nothing to write into. The request fails with its message on stderr and an exit code other than 0.
+- Read requests write nothing.
+- The rule holds for every channel. A later REST server applies it to its own checks (BTD-154).
+
+Where a check can live in the service, it lives there, and the service audits it. A lookup that only the command line does (a name or id given on the command line) audits its own refusal with `AuditLog::appendFailure()`.
+
+How each command handles it:
+
+| Command | Check before the service | Handling |
+|---|---|---|
+| `xca --keygen` | key type | none left: `db_key::newKey(ctx, ...)` checks type, size and curve and audits `key.generate` failure (`invalid_key_type`, `invalid_key_size`, `invalid_curve`). The interactive wrapper asks the key-size question only for a known type, so an unknown type with a large size stays `invalid_key_type`. The message names the type as given. |
+| `xca --crlgen` | CA by name or id | `crl.generate` failure `unknown_issuer`, parameter `issuer` = the given reference (`lib/cmdline.cpp`) |
+| `xca --migrate-template` | template by name or id | `profile.migrate` failure `unknown_template` (BTD-167, already so) |
+| `xca --import` | none: the files the command line could not read go to `importItems()` (`ImportSpec::failedFiles`) | one `object.import` failure entry per file with `file` and `unreadable_input` or `no_pki_data`, written by the service; the readable items are imported; exit code 1 (BTD-270) |
+| `xca --list-items`, `--issuers`, `--index`, `--hierarchy`, `--print`, `--select`, `--audit-verify`, `--audit-export` | reads | no entry |
+| `xca --audit-adopt` | none | the audit function writes its own entry |
+| `bxc-pki init`, `sign` | options, references, keys | `certificate.issue` |
+| `bxc-pki request-cert` | options, key type, `--hash` | `request.create` |
+| `bxc-pki renew` | references, options | `certificate.renew`; the handler's own refusal entry (`auditRefusal`) as before |
+| `bxc-pki revoke` | selectors, reason, dates | `certificate.revoke`; `auditRefusal` as before |
+| `bxc-pki crl` | `--ca`, `--this-update`, CRL options, `--out` | `crl.generate` |
+| `bxc-pki export` | reference, format options, budgets | `object.export`; `auditRefusal` as before |
+| `bxc-pki bootstrap` | file, schema, references | its own `bootstrap.apply` failure entry (BTD-166); file errors before the database is open write none |
+| `bxc-pki list`, `show` | reads | no entry |
+| any bxc-pki command | `--plan` | the `cli.plan` entry, success or failure (BTD-41) |
+
+For the bxc-pki commands the runner does it, not every handler. `Command::auditAction` and `auditObject` declare the intended action and object type. `runInTransaction()` writes their failure entry after the rollback, with the parameter `command`, but only when the failed run left no failure entry of a service call or an `auditRefusal()`. Its `AuditFailureCapture` sees those entries, so no request is audited twice.
+
+The runner also writes this entry for a failure after a service call whose `success` entry the rollback took back, such as a file `--out` cannot stage. The entry for the request is then the `failure`.
+
+Option parsing (unknown option, missing value) and the opening of the database come before it, so they write nothing. Tests: `test_cli_precheck_audit` (xca), `test_cli_refusal_audit` (bxc-pki).
+
+Files that cannot be read (BTD-270): `importItems()` writes one `object.import` failure entry per file before it stores anything. The entry has object type `object`, the parameter `file`, and the error code `unreadable_input` (missing or not readable) or `no_pki_data`. This covers its own files and those of `ImportSpec::failedFiles`. The readable objects are stored and audited as before. When nothing is readable, the import fails with `no_pki_data`, and there is no second entry for the run as a whole. A file whose reading throws (BTD-115) still aborts the import with `unreadable_input`.
+
 ## Service functions so far
 
 | Ticket | Service function | Value object | Audit action | Error codes |
@@ -100,7 +203,7 @@ Who owns an object that a rollback took out of the store (BTD-228): the undo of
 | BTD-32 | `db_x509req::newRequest(ctx, RequestSpec)` | `RequestSpec` (`lib/request.h`, shares `ExtensionSpec`) | `request.create` | `missing_key`, `no_private_key`, `duplicate_request`, `database_error` |
 | BTD-34 | `database_model::importItems(ctx, ImportSpec)` | `ImportSpec` (`lib/importexport.h`): files, bytes or read objects, password source | `object.import` per object (`outcome` created, completed, existing), plus `certificate.revoke`/`unrevoke` for the revocation rows a CRL or a renewed CA adds | `missing_password`, `wrong_password`, `unreadable_input`, `no_pki_data`, `nothing_to_import`, `unsupported_type`, `database_error` |
 | BTD-34 | `db_base::exportItems(ctx, ExportSpec)` | `ExportSpec` (`lib/importexport.h`): items, `pki_export` format or clipboard text, password source, file or bytes | `object.export` per written object, `key.export_private` per private key in the output (`encrypted`, no key, no password), `secret.export` per symmetric secret in the output (BTD-90) | `nothing_to_export`, `wrong_object_type`, `invalid_format`, `single_item_format`, `format_not_applicable`, `invalid_pkcs12_mac`, `invalid_pkcs12_iterations`, `missing_password`, `cancelled`, `export_failed`, `write_failed`, `database_error` |
-| BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `database_error` |
+| BTD-35 | `db_temp::newTemplate(ctx, TemplateSpec)`, `db_temp::updateTemplate(ctx, temp, TemplateSpec)` | `TemplateSpec` (`lib/template.h`): name, comment, subject, `ExtensionSpec`, validity period | `template.create`, `template.update` | `missing_template`, `invalid_path_length`, `database_error` |
 | BTD-35 | `db_base::rename(ctx, pki, name)`, `db_base::updateProperties(ctx, pki, name, comment)`, `db_token::rename(ctx, pki, name)` | the new values | `object.rename`, `object.update_comment` | `missing_object`, `wrong_object_type`, `token_error`, `database_error` |
 | BTD-224 | `settings::update(ctx, changes)` (`lib/settings.h`), used by the Options dialog | key/value map | `settings.update` per changed setting: `setting` (a host-specific key with `:<hostId>`), `old_value`/`new_value` only for the 15 Options keys, `redacted` for any other key and never a value for `pwhash` or a key with "pass" | `read_only_database`, `database_error` (neither setting nor entry stored) |
 | BTD-35 | `db_base::deleteItems(ctx, items)` | `pki_base *` list; returns `DeleteResult` | `object.delete` (`template.delete` for templates) per object | `nothing_to_delete`, `wrong_object_type`, `missing_object`, `database_error` |
@@ -112,6 +215,16 @@ Import and export (BTD-34):
   (`lib/PwDialogCore.h`), whatever GUI or headless configuration is set; without it
   `PwDialogCore` asks as before. The export writers no longer prompt: they take the password
   (`pki_evp::writeKey`/`writePKCS8`, `pki_pkcs12::writePKCS12`).
+- Secrets in memory (BTD-74): a `Passwd` owns its bytes (copies never share the buffer), so its
+  destructor and `cleanse()` zero the bytes it used, with `OPENSSL_cleanse`. `secretWipe()` and
+  `secretCleanse()` (`lib/Passwd.h`) zero a `QByteArray` or `QString` in place; a buffer shared
+  with another array is detached first, so every holder wipes its own copy. The headless sources
+  keep their own copy of the source string (for `pass:` the secret) and wipe it with the entry;
+  `readSource()` copies the secret straight into the `Passwd`. The parsed command line wipes the
+  values of `--password`/`--sqlpass` once the sources are set (`arguments::forgetSecrets()`), the
+  `bxc-pki` options wipe theirs on destruction. Not covered: the process arguments and
+  environment, the internals of `QCommandLineParser`, swap (no `mlock`), and the database password
+  `pki_evp::passwd`, which is kept for the session by design.
 - Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
   audit entries, then writes the file and commits: no file without its entries, no entries
   without the file (the file is removed when the commit fails).
@@ -134,7 +247,7 @@ Import and export (BTD-34):
 - The import dialog (`ImportMulti`) and the detail dialog only read and show objects; storing
   goes through `importItems()` with the read objects. The export dialog fills an `ExportSpec`
   (`ExportDialog::exportSpec()`); Ctrl+C and dragging items out are exports with
-  `ExportSpec::clipboard`. `xca --import` uses `importItems()` with channel `cli`.
+  `ExportSpec::clipboard`. A drag writes its export entries when it starts, because Qt asks for the data (`db_base::mimeData()`) before anyone knows whether the drop will happen. So a drag that is cancelled, or dropped where nothing takes it, is still audited as an export (BTD-115). `xca --import` uses `importItems()` with channel `cli`.
 - `lib/` signatures of the group take `pki_base *` lists, no `QModelIndex`; only the Qt model
   override `db_base::mimeData(QModelIndexList)` remains and calls `exportItems()`.
 
@@ -148,19 +261,47 @@ Templates, rename and delete (BTD-35):
   `fromObject()` (Transform > Template) make one. The dialog fills and reads its widgets through
   `TemplateSpec` (`NewX509::extensionsFromTemplate()`, `NewX509::templateSpec()`), so the mapping
   exists once. Applying a template changes nothing in the database and writes no entry.
+- Saving (BTD-131): `toTemplate()` stores the EKUs in the order `fromTemplate()` reads them (the
+  dialog's list), so a template has the same bytes after every save of the same content.
+  `updateTemplate()` writes nothing and no `template.update` entry when bytes, name and comment
+  do not change. `newTemplate()` and `updateTemplate()` check the path length of a CA with the
+  rule of the issuance (`IssuanceChecks::pathLength()`, `invalid_path_length`), so a bad value is
+  refused when it is stored, not first when the template is used.
 - Audit parameters: `template.create`/`template.update` `name`, `subject`, `old_name` (only when
   the name changed); `object.rename` `name`, `old_name`, `on_token` (renamed on a token,
-  `db_token`); `object.update_comment` `name` (never the comment); `object.delete` and
+  `db_token`; `object_id` is the CKA_ID of a key or the SHA-256 fingerprint of a certificate,
+  BTD-128); `object.update_comment` `name` (never the comment); `object.delete` and
   `template.delete` `name`, `dependents` (objects that stay and referred to it),
-  `revocations` (certificates only: the revocation rows it had as a CA).
+  `revocations` (certificates only: the revocation rows it had as a CA), `on_token` (the GUI
+  deletion found it on a token and the user confirmed deleting it there) and `warning`
+  `token_delete_failed` (preparing the deletion on the token failed, the database deletion went
+  on); `token.delete` (failure, `token_error`) `name`, `on_token`: the deletion on the token
+  after the COMMIT failed, the object is left on its token (BTD-272).
 - `deleteItems()` deletes all objects of the call in one transaction or none. The objects that
   refer to a deleted one are handled as XCA always did and listed in `DeleteResult::dependents`:
   certificates and requests lose their private key; certificates lose their issuer (and move to
   another certificate with the issuer's subject and key, if there is one); CRLs lose their issuer;
   the CA's revocation rows are deleted. `AuditLog::verify()` replays an `object.delete` of a
-  certificate as the removal of its revocation rows. The question `item.delete` and the deletion
-  on a token (`pki_base::deleteFromToken()`) stay with the GUI caller (`XcaTreeView::deleteItems`,
-  `xcaWarning::confirmOkCancel()` records the answer in the `ServiceContext`).
+  certificate as the removal of its revocation rows. The question `item.delete` stays with the
+  GUI caller (`XcaTreeView::deleteItems`, `xcaWarning::confirmOkCancel()` records the answer in
+  the `ServiceContext`). With `fromToken` (the GUI's delete) `deleteItems()` also deletes each
+  object on its token, in three steps (BTD-128, BTD-272, BTD-273): after all checks, so a
+  rejected call never touches a token, and before the transaction
+  `pki_base::prepareTokenDeletion()` asks (`token.delete_key`, `token.delete_certificate`), logs
+  in and finds the objects, so no question or PIN dialog runs while the database is locked;
+  inside the transaction each entry records `on_token`; after the COMMIT
+  (`DbTransaction::afterCommit()`) the found objects are deleted on the token, so a rollback
+  leaves every token unchanged. A "no" at the question of the token keeps the object there and
+  deletes the row (`on_token` false): `item.delete` already confirmed that. A failure on the
+  token after the COMMIT is one `token.delete` failure entry per object left on its token and a
+  line in `DeleteResult::tokenErrors`; inside a caller's transaction the token step waits for
+  the caller's COMMIT and its errors reach only the audit log. `db_token::rename()` updates the database
+  first and the label on the token last. Deleting on a token only, with the database row kept
+  (Delete from token of a certificate, the import dialog), goes through the static
+  `db_token::deleteOnToken()`: one `object.delete` with `on_token` and the token object as
+  `object_id` (CKA_ID or fingerprint, never a numeric item id, so `verify()` does not replay it
+  as a removed CA); nothing deleted is the failure `nothing_deleted`, a token error
+  `token_error` (BTD-248).
 - `lib/` signatures of the group take `pki_base *`; `db_base::remFromCont(pki_base *)` replaces
   the `QModelIndex` variant and `db_base::removeItem()` the old `deletePKI(QModelIndex)` (no
   audit, used by the import that completes a public key). Only the Qt model override
@@ -182,6 +323,19 @@ is recorded in the `ServiceContext`, and `AuditLog::append()` writes it as param
 `denied` entry with error code `confirmation_required` and parameter `question`, and nothing is
 changed. Service functions themselves still never ask; a caller without a GUI (REST, EST, CMP)
 passes its confirmations in the `ServiceContext`.
+
+A service function whose operation needs a confirmation checks it itself (BTD-116, decision of
+2026-11-04): `db_key::newKey(ctx, ...)` refuses an RSA/DSA size outside 1024..8192 unless
+`ctx.isConfirmed("key.size")` (sizes above 16384 bit, and DSA below 512 bit, fail with
+`invalid_key_size` without a question, BTD-113), with the `denied` entry `confirmation_required` and
+`confirmationError`, before anything is generated and before its transaction starts. So a caller
+collects its confirmations before the service call, never inside a transaction. The interactive
+wrapper still asks first and records the answer in the `ServiceContext`. `item.delete` and
+`token.replace_key` are GUI questions: the GUI caller asks before it calls `deleteItems()` or
+replaces a key, and the service functions do the requested change without a confirmation, the
+same as for REST. The `token.*` questions inside `pki_scard` and `pki_x509` concern the token
+in the reader. `xcaWarningCore::questionIds()` is the one list of question ids; `--confirm`
+trims each id and refuses an unknown one with the list (exit 1, nothing opened).
 
 OpenSSL errors are checked where they happen (BTD-95, decision of 2026-10-28). `_openssl_error()`
 in `lib/func_base.cpp` and the macros `openssl_error()`, `openssl_error_msg()` and
@@ -279,6 +433,9 @@ the request; the dialog's own context is set up only by some widget events
   questions `xcaWarning`, secrets and token choices `PwDialogCore`, progress `XcaProgress`, item
   icons, row colours and the wait cursor `XcaPresentation`. The ctests `test_core_sources` (grep)
   and `test_core_link` (whole-archive link, readelf) fail on any GUI reference in the core.
+  Without Linux or readelf, `test_core_link` is skipped with a CMake warning, and
+  `-DXCA_REQUIRE_CORE_LINK=ON` (set in the bxc-pki build image) turns that into a configure
+  error (BTD-178). On Windows the skip stays visible until BTD-13 decides on an equivalent check.
 - Where the GUI used to show an information box and stop (for issuance: the certificate already
   exists, practically unreachable with random serials), the service throws a `serviceError` and
   the GUI shows it as an error.

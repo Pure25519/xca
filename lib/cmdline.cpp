@@ -30,6 +30,7 @@
 #include "pki_temp.h"
 #include "profile_store.h"
 #include "template.h"
+#include "staged_file.h"
 
 static const char *xca_name = "xca";
 static void cmd_version(FILE *fp)
@@ -87,7 +88,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	/* --json (BTD-39): the outputs as JSON Lines, errors as JSON on stderr */
 	bool json = cmd_opts.has("json");
 	JsonReport::setActive(json);
-	auto report = [json](const errorEx &err) {
+	/* a failure entry that was not written turns the error into
+	 * audit_entry_lost, which keeps the original in its detail
+	 * (BTD-274) */
+	auto report = [json](const errorEx &error) {
+		QStringList lost = AuditLog::takeLostEntries();
+		serviceError lostError = AuditLog::lostEntriesError(lost,
+			JsonReport::error(error)["code"].toString(),
+			error.getString());
+		const errorEx &err = lost.isEmpty() ? error : lostError;
 		if (json)
 			JsonReport::write(stderr, JsonReport::error(err));
 		else
@@ -106,6 +115,18 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 	}
+	/* An empty --password or --sqlpass is most likely an unset
+	 * variable: the command ends before anything is opened instead of
+	 * running as if the option were missing (BTD-136, BTD-268) */
+	for (const char *opt : { "password", "sqlpass" }) {
+		if (cmd_opts.has(opt) && cmd_opts[opt].isEmpty()) {
+			report(serviceError("missing_password", QObject::tr(
+				"--%1 is empty; give a password source (pass:, "
+				"env:, file:, fd: or stdin) or leave the option "
+				"out").arg(opt)));
+			return EXIT_FAILURE;
+		}
+	}
 	QString dbpass = password_source(cmd_opts["password"], "password");
 	QString sqlpass = password_source(cmd_opts["sqlpass"], "sqlpass");
 	PwDialogHeadless *headless = PwDialogCore::headless();
@@ -118,11 +139,23 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		headless->setSource(pass_info::DatabasePassword, dbpass);
 		headless->setSource(pass_info::KeyPassword, dbpass);
 		headless->setSource(pass_info::SqlPassword, sqlpass);
+		/* the options of xca; nothing gives an import password */
+		headless->setOption(pass_info::DatabasePassword, "--password");
+		headless->setOption(pass_info::KeyPassword, "--password");
+		headless->setOption(pass_info::SqlPassword, "--sqlpass");
 		if (!sqlpass.isEmpty())
 			sqlpw = headless->secret(pass_info::SqlPassword);
-		/* Questions likewise: "yes" only if confirmed here */
-		xcaWarningCore::setConfirmations(cmd_opts.has("yes"),
-				cmd_opts["confirm"].split(","));
+		/* Questions likewise: "yes" only if confirmed here; a
+		 * mistyped id would leave its question unanswered (BTD-116) */
+		QStringList unknown = xcaWarningCore::setConfirmations(
+			cmd_opts.has("yes"), cmd_opts["confirm"].split(","));
+		if (!unknown.isEmpty()) {
+			report(serviceError("usage", QObject::tr(
+				"--confirm: unknown question id %1; the ids are: %2")
+				.arg(unknown.join(", "))
+				.arg(xcaWarningCore::questionIds().join(", "))));
+			return EXIT_FAILURE;
+		}
 	} else {
 		/* The GUI uses the password once, to unlock the database */
 		if (!dbpass.isEmpty())
@@ -131,6 +164,12 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!sqlpass.isEmpty())
 			sqlpw = PwDialogHeadless::readSource(sqlpass);
 	}
+	/* The sources are set: the parsed values are no longer needed, a
+	 * pass: value is the secret itself (BTD-74) */
+	bool dbPassGiven = !dbpass.isEmpty();
+	secretCleanse(dbpass);
+	secretCleanse(sqlpass);
+	cmd_opts.forgetSecrets();
 
 	if (cmd_opts.has("verbose")) {
 		QString all = cmd_opts["verbose"];
@@ -140,7 +179,7 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		/* A given database password is checked on open, a wrong one
 		 * ends the command; without one, the public objects can
 		 * still be listed as upstream allows (BTD-78) */
-		database_model::open_without_password = dbpass.isEmpty();
+		database_model::open_without_password = !dbPassGiven;
 		ServiceContext::processChannel = ServiceContext::cli;
 	}
 
@@ -170,7 +209,18 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 
 	foreach(QString file, cmd_opts.getFiles()) {
 		qDebug() << "Probe" << file;
-		cmdline_items->probeAnything(file);
+		/* --import: a file that cannot be opened is a failed file of
+		 * the import, audited by importItems(), not the end of the
+		 * command (BTD-270) */
+		try {
+			cmdline_items->probeAnything(file);
+		} catch (secretError &) {
+			throw;
+		} catch (errorEx &) {
+			if (!cmd_opts.has("import"))
+				throw;
+			cmdline_items->failed_files << file;
+		}
 	}
 	QStringList names = cmd_opts["import-names"].split(";");
 	foreach(pki_base *pki, cmdline_items->get()) {
@@ -180,7 +230,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		if (!name.isEmpty())
 			pki->setIntName(name);
 	}
-	if (cmdline_items->failed_files.size() > 0) {
+	/* --import audits and reports them itself (BTD-270) */
+	if (cmdline_items->failed_files.size() > 0 && !cmd_opts.has("import")) {
 		XCA_WARN(QString("Failed to import from '%1'")
 			.arg(cmdline_items->failed_files.join("' '")));
 	}
@@ -211,6 +262,24 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	}
 	database_model::open_without_password = false;
 
+	/* A read-only database (BTD-214): reading goes on, a writing
+	 * command ends here, before any key, template or file work */
+	if (Database.isOpen() && database_model::read_only) {
+		console_write(stderr, QObject::tr("Notice: the database %1 is "
+			"read-only; commands that write to it are refused\n")
+			.arg(compressFilename(Database.name())).toUtf8());
+		for (const char *opt : { "keygen", "import", "crlgen",
+				"migrate-template", "audit-adopt" }) {
+			if (cmd_opts.has(opt)) {
+				report(serviceError("read_only_database",
+					QObject::tr("--%1 writes to the database "
+					"%2, which is read-only").arg(opt)
+					.arg(compressFilename(Database.name()))));
+				return EXIT_FAILURE;
+			}
+		}
+	}
+
 	if (cmd_opts.has("list-curves")) {
 		QStringList list;
 		foreach(const builtin_curve &c, builtinCurves) {
@@ -236,29 +305,80 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 		else
 			console_write(stdout, list.join("\n").toUtf8() + '\n');
 	}
+	/* A write error is reported like one of --pem-file and the other
+	 * options still run (BTD-182) */
 	if (!cmd_opts["index"].isEmpty()) {
 		qDebug() << cmd_opts["index"];
 		db_x509 *certs = Database.model<db_x509>();
-		if (json)
-			JsonReport::writeTo(cmd_opts["index"], JsonReport::index());
-		else
-			certs->writeIndex(cmd_opts["index"], false);
-		if (!json || cmd_opts["index"] != "-")
-			XCA_INFO(QObject::tr("Index file written to '%1'")
-					.arg(cmd_opts["index"]));
+		try {
+			if (json)
+				JsonReport::writeTo(cmd_opts["index"],
+						JsonReport::index());
+			else
+				certs->writeIndex(cmd_opts["index"], false);
+			if (!json || cmd_opts["index"] != "-")
+				XCA_INFO(QObject::tr("Index file written to '%1'")
+						.arg(cmd_opts["index"]));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	if (!cmd_opts["hierarchy"].isEmpty()) {
 		qDebug() << cmd_opts["hierarchy"];
 		db_x509 *certs = Database.model<db_x509>();
-		/* With --json one document for all CAs, no directory */
-		if (json)
-			JsonReport::writeTo(cmd_opts["hierarchy"],
-					JsonReport::hierarchy());
-		else
-			certs->writeIndex(cmd_opts["hierarchy"], true);
-		if (!json || cmd_opts["hierarchy"] != "-")
-			XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
-					.arg(cmd_opts["hierarchy"]));
+		try {
+			/* With --json one document for all CAs, no directory */
+			if (json)
+				JsonReport::writeTo(cmd_opts["hierarchy"],
+						JsonReport::hierarchy());
+			else
+				certs->writeIndex(cmd_opts["hierarchy"], true);
+			if (!json || cmd_opts["hierarchy"] != "-")
+				XCA_INFO(QObject::tr("Index hierarchy written to '%1'")
+						.arg(cmd_opts["hierarchy"]));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
+	/* The audit controls (BTD-100), before the verification and the
+	 * export, so that both see their result */
+	if (cmd_opts.has("audit-checkpoint-interval")) {
+		QString value = cmd_opts["audit-checkpoint-interval"];
+		try {
+			QVariantMap m { { "setting", "audit_checkpoint_interval" } };
+			if (value == "current") {
+				m["value"] = AuditLog::checkpointInterval();
+			} else {
+				bool ok;
+				int n = value.toInt(&ok);
+				if (!ok)
+					throw serviceError("invalid_value", QObject::tr(
+						"The audit checkpoint interval must be a "
+						"number or 'current', not '%1'").arg(value));
+				m["old_value"] = AuditLog::checkpointInterval();
+				AuditLog::setCheckpointInterval(
+					ServiceContext::localUser(ServiceContext::cli), n);
+				m["new_value"] = AuditLog::checkpointInterval();
+			}
+			console_write(stdout, AuditLog::canonicalJson(m) + '\n');
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
+	}
+	if (cmd_opts.has("audit-rotate-key")) {
+		try {
+			AuditEntry e = AuditLog::rotateKey(
+				ServiceContext::localUser(ServiceContext::cli));
+			XCA_INFO(QObject::tr("Audit key rotated: checkpoint %1 hands "
+				"over to the new audit key %2")
+				.arg(e.seq).arg(e.params.value("next_key_id").toString()));
+		} catch (errorEx &err) {
+			report(err);
+			exitcode = EXIT_FAILURE;
+		}
 	}
 	/* Before the verification, so that it reports the adoption */
 	if (cmd_opts.has("audit-adopt")) {
@@ -306,7 +426,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			QByteArray lines = AuditLog::exportJsonLines(
 					&unsignedEntries, &skipped);
 			bool broken = !skipped.code.isEmpty() &&
-				skipped.code != "audit_key_unavailable";
+				skipped.code != "audit_key_unavailable" &&
+				skipped.code != "read_only_database";
 			/* A log no checkpoint may sign: exported read-only
 			 * for forensics, but not a clean run (BTD-112) */
 			if (broken)
@@ -314,6 +435,15 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 					"Warning: the audit log was exported read-only, no audit checkpoint signed: "
 					"%1: %2\n")
 					.arg(skipped.code, skipped.reason).toUtf8());
+			/* A read-only database cannot take a checkpoint
+			 * (BTD-214) */
+			else if (skipped.code == "read_only_database" &&
+				 unsignedEntries > 0)
+				console_write(stderr, QObject::tr(
+					"Warning: the database is read-only, no audit checkpoint signed; "
+					"the newest %1 audit entries are not covered by a checkpoint "
+					"(unanchored_entries of --audit-verify).\n")
+					.arg(unsignedEntries).toUtf8());
 			/* Without --password the export only reads (BTD-70);
 			 * a signed export leaves only its checkpoint row
 			 * unanchored and stays silent (BTD-134) */
@@ -327,12 +457,10 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			if (filename == "-") {
 				console_write(stdout, lines);
 			} else {
-				XFile f(filename);
-				if (!f.open_write() ||
-				    f.write(lines) != lines.size())
-					throw errorEx(QObject::tr("Failed to write the audit log to '%1'")
-							.arg(filename));
-				f.close();
+				/* staged: a failed write keeps an old
+				 * file (BTD-139) */
+				StagedFile::writeFile(filename, lines, false,
+						true);
 			}
 			if (broken)
 				exitcode = EXIT_FAILURE;
@@ -349,16 +477,20 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 
 	if (cmd_opts.has("keygen")) {
 		keyjob task(cmd_opts["keygen"]);
-		/* Only the type here: size and curve are checked by the
-		 * key generation service, which audits a rejection (BTD-41) */
-		if (!task.ktype.isValid()) {
-			Database.close();
-			throw serviceError("invalid_key_type",
+		db_key *keys = Database.model<db_key>();
+		pki_key *pki;
+		/* type, size and curve are checked by the key generation
+		 * service, which audits a rejection (BTD-41, BTD-106); the
+		 * message names the type as given */
+		try {
+			pki = keys->newKey(task, cmd_opts["name"], false);
+		} catch (serviceError &err) {
+			if (err.code != "invalid_key_type")
+				throw;
+			throw serviceError(err.code,
 				QObject::tr("Unknown key type %1")
 					.arg(cmd_opts["keygen"]));
 		}
-		db_key *keys = Database.model<db_key>();
-		pki_key *pki = keys->newKey(task, cmd_opts["name"], false);
 		if (pki)
 			cmdline_items->append_item(pki);
 	}
@@ -434,6 +566,13 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 			}
 		}
 		if (!issuer) {
+			/* the lookup is the command line's own: it audits
+			 * the refusal like the service would (BTD-106) */
+			AuditParams params;
+			params.set("issuer", ca);
+			AuditLog::appendFailure(ServiceContext::localUser(
+				ServiceContext::cli), AuditLog::actionCrlGenerate,
+				"crl", QString(), params, "unknown_issuer");
 			report(serviceError("unknown_issuer",
 				QString("Issuer '%1' not found")
 					.arg(cmd_opts["crlgen"])));
@@ -497,32 +636,63 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 	if (bbafile.size() > 0)
 	{
 		QString filename = cmd_opts["pem-file"];
-		XFile f(filename);
-		if (f.open_write()) {
-			f.write(bbafile);
-		} else {
+		/* staged: a failed write keeps an old file (BTD-139) */
+		try {
+			StagedFile::writeFile(filename, bbafile.byteArray(),
+					false, true);
+		} catch (errorEx &err) {
 			report(serviceError("write_failed",
-				QObject::tr("Failed to write PEM data to '%1'")
-					.arg(filename)));
+				QObject::tr("Failed to write PEM data to '%1': %2")
+					.arg(filename, err.getString())));
 			exitcode = EXIT_FAILURE;
 		}
-		f.close();
 	}
 	if (cmd_opts.has("import")) {
 		ImportSpec spec;
+		/* importItems() audits the files it could not read and stores
+		 * the rest; each failed file is reported with its code and
+		 * the command exits 1 (BTD-270) */
+		QStringList failed = cmdline_items->failed_files;
+		spec.failedFiles = failed;
 		/* importItems() takes the items over */
 		spec.items << cmdline_items;
 		*_cmdline_items = nullptr;
+		auto reportFailed = [&]() {
+			for (const QString &f : failed) {
+				QString code = importFailureCode(f);
+				report(serviceError(code, code == "no_pki_data" ?
+					QObject::tr("No PKI data found in '%1'").arg(f) :
+					QObject::tr("Cannot read '%1'").arg(f)));
+			}
+			if (!failed.isEmpty())
+				exitcode = EXIT_FAILURE;
+		};
 		try {
 			ImportResult result = Database.importItems(
 				ServiceContext::localUser(ServiceContext::cli),
 				spec);
 			foreach(pki_base *pki, result.existing)
 				XCA_INFO(importExistsMessage(pki));
+			foreach(const QString &w, result.warnings)
+				XCA_WARN(w);
+			reportFailed();
+		} catch (serviceError &err) {
+			/* nothing readable: the files are the error */
+			if (err.code == "no_pki_data" && !failed.isEmpty())
+				reportFailed();
+			else
+				report(err);
+			exitcode = EXIT_FAILURE;
 		} catch (errorEx &err) {
 			report(err);
 			exitcode = EXIT_FAILURE;
 		}
+	}
+	/* a lost failure entry no error reported yet: never exit 0 */
+	QStringList lost = AuditLog::takeLostEntries();
+	if (!lost.isEmpty()) {
+		report(AuditLog::lostEntriesError(lost));
+		exitcode = EXIT_FAILURE;
 	}
 	return exitcode;
 }

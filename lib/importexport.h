@@ -8,12 +8,15 @@
 #ifndef __IMPORTEXPORT_H
 #define __IMPORTEXPORT_H
 
+#include <functional>
+
 #include <QByteArray>
 #include <QList>
 #include <QMap>
 #include <QString>
 #include <QStringList>
 
+class QSaveFile;
 class pki_base;
 class pki_export;
 
@@ -41,6 +44,9 @@ class ImportSpec
 	 * PwDialogCore asks (the GUI dialog, or the headless source of
 	 * the purpose ImportPassword) */
 	QString passwordSource{};
+	/* Files the caller probed itself and could not read (the xca
+	 * command line, BTD-270): audited like the files of files */
+	QStringList failedFiles{};
 };
 
 class ImportResult
@@ -50,14 +56,24 @@ class ImportResult
 	QList<pki_base *> created{};
 	/* Already in the database; the imported copy was dropped */
 	QList<pki_base *> existing{};
-	/* Files (or dataName) that contained no PKI object */
+	/* Files (or dataName) that contained no PKI object, also those of
+	 * ImportSpec::failedFiles; each has one object.import failure
+	 * entry with the code of importFailureCode() (BTD-270) */
 	QStringList failedFiles{};
+	/* Notes for the user, e.g. a CRL number above the limit that the
+	 * CA did not adopt (BTD-123) */
+	QStringList warnings{};
 
 	QList<pki_base *> all() const
 	{
 		return created + existing;
 	}
 };
+
+/* The error code of a file no loader could read (BTD-270):
+ * unreadable_input when it is missing or not readable, otherwise
+ * no_pki_data. data is true for ImportSpec::data, which has no file. */
+QString importFailureCode(const QString &file, bool data = false);
 
 /* What to export */
 /* How a PKCS#12 export protects its content, as written (BTD-175) */
@@ -116,6 +132,11 @@ class ExportSpec
 	 * its item id, as the audit entry key.export_private names it
 	 * (the bxc-pki command line reports it, BTD-42) */
 	QMap<QString, QString> *mlDsaWritten{};
+	/* The last step of a file export, after the COMMIT: puts the
+	 * written temporary file in place. Empty: QSaveFile::commit(). A
+	 * caller (a test, BTD-147) can pass one that fails, to see the
+	 * entries that a failed rename leaves */
+	std::function<bool(QSaveFile &)> commitFile{};
 };
 
 /* The PKCS#12 algorithm, MAC and iteration count of an export of spec:

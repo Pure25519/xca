@@ -174,7 +174,10 @@ void TemplateSpec::toTemplate(pki_temp *temp) const
 	temp->setSetting("authKey", e.authorityKeyId);
 	temp->setSetting("keyUse", toMask(e.keyUsage, keyUsageNames));
 	temp->setSetting("kuCritical", e.keyUsageCritical);
-	temp->setSetting("eKeyUse", e.extKeyUsage.join(", "));
+	/* in the order fromTemplate() reads, so that a save of the same
+	 * content writes the same bytes (BTD-131) */
+	temp->setSetting("eKeyUse",
+		extKeyUsageList(e.extKeyUsage.join(", ")).join(", "));
 	temp->setSetting("ekuCritical", e.extKeyUsageCritical);
 	temp->setSetting("nameCons", e.nameConstraints);
 	temp->setSetting("subAltName", e.subjectAltName);

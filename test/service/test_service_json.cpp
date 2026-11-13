@@ -6,6 +6,10 @@
  * with the fixed expected JSON in the same folder. Only the creation date
  * is volatile: it is checked against the item and then set to the value
  * of the expected file. Ids are those of a fresh database in import order.
+ * The display text of extensions is not compared (BTD-182). gen.sh
+ * re-issues the certificates and the CRL with the same keys; afterwards
+ * the .actual files of a run in the temporary directory are the new
+ * expected files, after a review of their diff.
  */
 
 #include <QDir>
@@ -13,6 +17,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QRegularExpression>
+
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 
 #include "lib/asn1int.h"
 #include "lib/audit.h"
@@ -46,6 +55,7 @@ class test_service_json : public ServiceTestCase
 	static void compare(QJsonObject actual, const QString &expectedFile,
 				const pki_base *pki);
 	static void noSecrets(const QJsonObject &doc);
+	static pki_crl *makeCrl(const char *number, bool nextUpdate);
 
   private slots:
 	void certificate();
@@ -53,6 +63,9 @@ class test_service_json : public ServiceTestCase
 	void request();
 	void requestWithoutChallenge();
 	void crl();
+	void crlNumberRange_data();
+	void crlNumberRange();
+	void crlWithoutNextUpdate();
 	void keys();
 	void templates();
 	void lists();
@@ -69,6 +82,7 @@ void test_service_json::importFixtures()
 	static const char * const files[] = {
 		"ca.crt", "ca.key", "device.crt", "device.csr", "ca.crl",
 		"device.pub", "rsa-enc.key", "ec.key", "own.key",
+		"rsa-pss.key",
 	};
 	for (const char *f : files) {
 		ImportSpec spec;
@@ -102,6 +116,41 @@ void test_service_json::noSecrets(const QJsonObject &doc)
 	}
 }
 
+/* The value of an extension is the display text of OpenSSL, which
+ * changes between OpenSSL versions (AKID with or without "keyid:", the
+ * names of extended key usages). It must be there but is not compared;
+ * name, oid, critical and everything else are (BTD-182). Returns the
+ * document without these texts; *missing names an extension without
+ * one. */
+static QJsonValue withoutExtensionText(const QJsonValue &v, QString *missing)
+{
+	if (v.isArray()) {
+		QJsonArray a;
+		for (const QJsonValue &e : v.toArray())
+			a.append(withoutExtensionText(e, missing));
+		return a;
+	}
+	if (!v.isObject())
+		return v;
+	QJsonObject o = v.toObject();
+	for (auto it = o.begin(); it != o.end(); ++it) {
+		if (it.key() != "extensions" || !it.value().isArray()) {
+			it.value() = withoutExtensionText(it.value(), missing);
+			continue;
+		}
+		QJsonArray exts;
+		for (const QJsonValue &e : it.value().toArray()) {
+			QJsonObject ext = e.toObject();
+			if (ext.value("value").toString().isEmpty())
+				*missing = ext.value("oid").toString();
+			ext.remove("value");
+			exts.append(ext);
+		}
+		it.value() = exts;
+	}
+	return o;
+}
+
 void test_service_json::compare(QJsonObject actual,
 			const QString &expectedFile, const pki_base *pki)
 {
@@ -131,13 +180,20 @@ void test_service_json::compare(QJsonObject actual,
 			.match(actual.value("created").toString()).hasMatch());
 		actual["created"] = expected.value("created");
 	}
+	QString missing;
+	QJsonObject full = actual;
+	actual = withoutExtensionText(actual, &missing).toObject();
+	QVERIFY2(missing.isEmpty(), CCHAR(QString("extension %1 has no value")
+		.arg(missing)));
+	QString ignored;
+	expected = withoutExtensionText(expected, &ignored).toObject();
 	if (actual != expected) {
 		QFile out(QDir::temp().filePath(expectedFile + ".actual"));
 		if (out.open(QIODevice::WriteOnly))
-			out.write(QJsonDocument(actual).toJson());
+			out.write(QJsonDocument(full).toJson());
 		QFAIL(CCHAR(QString("%1 differs, actual in %2:\n%3")
 			.arg(expectedFile).arg(out.fileName())
-			.arg(QString(QJsonDocument(actual).toJson()))));
+			.arg(QString(QJsonDocument(full).toJson()))));
 	}
 }
 
@@ -222,6 +278,92 @@ void test_service_json::crl()
 	compare(doc, "ca.crl.json", c);
 }
 
+/* A CRL of its own key, signed here, with the given cRLNumber (decimal,
+ * or none for nullptr) and with or without nextUpdate (BTD-182) */
+pki_crl *test_service_json::makeCrl(const char *number, bool nextUpdate)
+{
+	EVP_PKEY *key = EVP_EC_gen("P-256");
+	X509_CRL *c = X509_CRL_new();
+	X509_NAME *name = X509_NAME_new();
+	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_UTF8,
+		(const unsigned char *)"JSON Range CA", -1, -1, 0);
+	X509_CRL_set_version(c, X509_CRL_VERSION_2);
+	X509_CRL_set_issuer_name(c, name);
+	ASN1_TIME *t = ASN1_TIME_new();
+	ASN1_TIME_set_string_X509(t, "20261101000000Z");
+	X509_CRL_set1_lastUpdate(c, t);
+	if (nextUpdate) {
+		ASN1_TIME_set_string_X509(t, "20261108000000Z");
+		X509_CRL_set1_nextUpdate(c, t);
+	}
+	if (number) {
+		BIGNUM *bn = nullptr;
+		BN_dec2bn(&bn, number);
+		ASN1_INTEGER *n = BN_to_ASN1_INTEGER(bn, nullptr);
+		X509_CRL_add1_ext_i2d(c, NID_crl_number, n, 0, 0);
+		ASN1_INTEGER_free(n);
+		BN_free(bn);
+	}
+	X509_CRL_sign(c, key, EVP_sha256());
+	BIO *bio = BIO_new(BIO_s_mem());
+	PEM_write_bio_X509_CRL(bio, c);
+	pki_crl *crl = new pki_crl("range");
+	crl->fromPEM_BIO(bio, "range");
+	BIO_free(bio);
+	ASN1_TIME_free(t);
+	X509_NAME_free(name);
+	X509_CRL_free(c);
+	EVP_PKEY_free(key);
+	return crl;
+}
+
+/* MINOR 4 of the review of BTD-39 (BTD-182): a cRLNumber is exact, an
+ * integer up to 2^53-1 (what a JSON parser keeps exactly) and the
+ * decimal string beyond, never 0 or a rounded number */
+void test_service_json::crlNumberRange_data()
+{
+	QTest::addColumn<QString>("number");
+	QTest::addColumn<bool>("asInteger");
+	QTest::newRow("1") << "1" << true;
+	QTest::newRow("2^53-1") << "9007199254740991" << true;
+	QTest::newRow("2^53") << "9007199254740992" << false;
+	QTest::newRow("2^63") << "9223372036854775808" << false;
+	QTest::newRow("2^159") <<
+		"730750818665451459101842416358141509827966271488" << false;
+}
+
+void test_service_json::crlNumberRange()
+{
+	QFETCH(QString, number);
+	QFETCH(bool, asInteger);
+	pki_crl *c = makeCrl(CCHAR(number), true);
+	QJsonValue v = JsonReport::crl(c).value("crl_number");
+	delete c;
+	if (asInteger) {
+		QVERIFY2(v.isDouble(), CCHAR(QString("type %1").arg(v.type())));
+		QCOMPARE(QString::number(v.toInteger()), number);
+	} else {
+		QVERIFY2(v.isString(), CCHAR(QString("type %1, value %2")
+			.arg(v.type()).arg(v.toVariant().toString())));
+		QCOMPARE(v.toString(), number);
+	}
+}
+
+/* MINOR 10 (BTD-182): a CRL without nextUpdate has next_update null; the
+ * document goes to schemas/examples/crl of bxc-pki */
+void test_service_json::crlWithoutNextUpdate()
+{
+	pki_crl *c = makeCrl("7", false);
+	QJsonObject doc = JsonReport::crl(c);
+	delete c;
+	QVERIFY(doc.contains("next_update"));
+	QVERIFY(doc.value("next_update").isNull());
+	QCOMPARE(doc.value("crl_number"), QJsonValue(7));
+	QFile out(QDir::temp().filePath("crl-without-next-update.json"));
+	if (out.open(QIODevice::WriteOnly))
+		out.write(QJsonDocument(doc).toJson());
+}
+
 /* Acceptance criterion 4: an encrypted key and one with its own
  * password give their public part and the kind of protection only */
 void test_service_json::keys()
@@ -239,6 +381,8 @@ void test_service_json::keys()
 		{ "rsa-enc", "rsa-enc.key.json" },
 		{ "ec", "ec.key.json" },
 		{ "own", "own.key.json" },
+		/* MINOR 10 of the review of BTD-39 (BTD-182) */
+		{ "rsa-pss", "rsa-pss.key.json" },
 	};
 	for (const auto &k : keys) {
 		pki_key *key = dynamic_cast<pki_key *>(item("key", k.name));
@@ -345,7 +489,9 @@ void test_service_json::timestamps()
 		QString("2026-10-28T21:35:42Z"));
 	QCOMPARE(JsonReport::revocationReason(10).toString(),
 		QString("aACompromise"));
-	QVERIFY(JsonReport::revocationReason(7).isNull());
+	/* a code RFC 5280 does not name is its number, no reason is null
+	 * (BTD-170) */
+	QCOMPARE(JsonReport::revocationReason(7).toInt(-1), 7);
 	QVERIFY(JsonReport::revocationReason(-1).isNull());
 
 	/* Serials of legacy objects (BTD-41): whole octets, "00" for zero,

@@ -88,6 +88,7 @@ class MainWindow: public QMainWindow, public Ui::MainWindow
 		void keyPressEvent(QKeyEvent *e);
 		void update_history_menu();
 		void showDatabaseName();
+		void enableWriteActions(bool enable);
 
 	public:
 		static bool legacy_loaded;
@@ -130,6 +131,7 @@ class MainWindow: public QMainWindow, public Ui::MainWindow
 		bool pastePem(const QString &text, bool silent=false);
 		void pastePem();
 		void changeDbPass();
+		void verifyAudit();
 		void openURLs(QStringList &files);
 		void openURLs();
 		void changeEvent(QEvent *event);

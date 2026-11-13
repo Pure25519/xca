@@ -21,8 +21,10 @@ class db_token: public db_base
 	public:
 		db_token();
 		/* object.rename of an object on the token of the slot
-		 * (BTD-35): the label on the token, then the name of the
-		 * matching keys in the database; parameter on_token. The
+		 * (BTD-35): the matching keys in the database first, the
+		 * label on the token last, so a failure leaves both as they
+		 * were; parameter on_token, object_id the CKA_ID of a key or
+		 * the SHA-256 fingerprint of a certificate (BTD-128). The
 		 * token login may ask for the PIN (PwDialogCore). */
 		void rename(const ServiceContext &ctx, pki_base *pki,
 				const QString &name) override;
@@ -30,8 +32,27 @@ class db_token: public db_base
 		{
 			slot = s;
 		}
+		/* Deletes an object on a token only, the database stays
+		 * (Delete from token, the import dialog): one object.delete
+		 * with on_token and object_id the CKA_ID or the fingerprint;
+		 * nothing deleted (declined, not found) is the failure
+		 * nothing_deleted, a token error token_error (BTD-248).
+		 * slot: the slot to use, or the object finds its token. */
+		static void deleteOnToken(const ServiceContext &ctx,
+				pki_base *pki, const slotid *slot = nullptr);
 		void saveHeaderState();
 		void rename_token_in_database(pki_scard *token);
+#ifdef BXC_PKI_TEST_SEAMS
+		/* Tests only (BTD-128; test builds only, BTD-271): replaces
+		 * the label change on the token in rename(); false or an
+		 * exception is a failure on the token */
+		static std::function<bool(pki_base *, const QString &)>
+			tokenRenameHook;
+		/* Tests only (BTD-273; test builds only, BTD-271): replaces
+		 * pki_base::prepareTokenRename() in rename() */
+		static std::function<TokenRename(pki_base *, const QString &)>
+			tokenRenamePrepareHook;
+#endif
 };
 
 #endif

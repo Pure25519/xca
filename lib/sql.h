@@ -20,12 +20,22 @@
 
 class DbTransaction
 {
+	public:
+		/* What the outermost transaction may do (BTD-274). A write
+		 * transaction takes the write lock at BEGIN: BEGIN IMMEDIATE
+		 * on SQLite, lockForWrite() on the other drivers. Another
+		 * process then waits for the busy timeout, instead of failing
+		 * at its first write after it read under a deferred BEGIN. A
+		 * read transaction takes no lock and must not write. A nested
+		 * transaction is part of the outermost one: a write inside a read
+		 * transaction holds no lock. */
+		enum Kind { write, read };
+
 	private:
 		static int mutex;
 		static int error;
 		static QList<quint64> items;
 		static bool hasTransaction;
-		static int injected;
 		static QString firstRollback;
 		static QSqlError failure;
 		static QList<std::function<void()> > undoActions;
@@ -33,26 +43,14 @@ class DbTransaction
 		static void runActions(QList<std::function<void()> > &list,
 				bool lastFirst);
 		bool has_begun{};
+		Kind kind{write};
 		const char *beginFile{};
 		int beginLine{};
 		void debug(const char *func, const char *file, int line);
 		bool finish(bool commit, const char *file, int line);
-		/* Tests only (BTD-142): the nested commit after the next skip
-		 * ones rolls back instead and reports success, like an inner
-		 * helper that rolls back and returns without throwing */
-		static void injectNestedRollback(int skip = 0)
-		{
-			injected = skip + 1;
-		}
-		static bool injectionPending()
-		{
-			return injected > 0;
-		}
-		friend class test_service_transaction;
-		friend class test_service_memory;
 
 	public:
-		DbTransaction() { };
+		DbTransaction(Kind k = write) : kind(k) { };
 		~DbTransaction();
 		bool begin(const char *file, int line);
 		/* False when the outermost commit fails, and also when an
@@ -65,6 +63,11 @@ class DbTransaction
 		static bool active()
 		{
 			return mutex > 0;
+		}
+		/* How many transactions are open; 1 inside the outermost */
+		static int level()
+		{
+			return mutex;
 		}
 		/* The SQL error of the last failed BEGIN or COMMIT; invalid if
 		 * a commit failed because an inner transaction rolled back */
@@ -94,9 +97,13 @@ class DbTransaction
 		 * succeeded, never after a rollback; at once outside a
 		 * transaction */
 		static void afterCommit(std::function<void()> action);
+		/* The busy timeout of SQLite: how long a write transaction
+		 * waits at BEGIN for the write lock of another connection */
+		static const int busyTimeoutMs = 10000;
 };
 
 #define Transaction DbTransaction __trans
+#define ReadTransaction DbTransaction __trans(DbTransaction::read)
 #define TransBegin() __trans.begin(__FILE__, __LINE__)
 #define TransThrow() if (!__trans.begin(__FILE__, __LINE__)) { \
 	throwSqlError(DbTransaction::lastFailure(), \

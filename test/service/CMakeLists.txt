@@ -21,10 +21,8 @@ target_link_libraries(xcaservicetest PUBLIC ${ASAN_LIB} ${QT}::Test xcacore)
 # without a platform plugin, so the QT_QPA_PLATFORM of the environment
 # (offscreen in the build image) is removed for them
 macro(Headless test)
-  if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.22)
-    set_property(TEST ${test} APPEND PROPERTY
+  set_property(TEST ${test} APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
-  endif()
 endmacro()
 
 find_program(OPENSSL_PROGRAM openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
@@ -37,7 +35,7 @@ find_program(SERVICE_SETPRIV setpriv)
 macro(ServiceTest name)
   add_executable(${name} ${SERVICE_TEST_DIR}/${name}.cpp)
   target_link_libraries(${name} xcaservicetest)
-  target_link_options(${name} PRIVATE -pthread)
+  target_link_libraries(${name} Threads::Threads)
   target_compile_definitions(${name} PRIVATE
 	SERVICE_TEST_DATA="${SERVICE_TEST_DIR}/data"
 	XCA_SOURCE_DIR="${PROJECT_SOURCE_DIR}")
@@ -85,7 +83,7 @@ macro(CliScriptTest name)
 endmacro()
 
 # Scripts that need the openssl program; without it they are skipped
-set(cli_needs_openssl password_sources)
+set(cli_needs_openssl password_purpose_hint password_sources json_output)
 
 file(GLOB cli_scripts CONFIGURE_DEPENDS ${SERVICE_TEST_DIR}/cli_*.cmake)
 list(SORT cli_scripts)
@@ -116,9 +114,16 @@ add_test(NAME test_core_sources
 		-P ${SERVICE_TEST_DIR}/core_sources.cmake)
 set_tests_properties(test_core_sources PROPERTIES LABELS service)
 
+# A skipped test_core_link is a warning, not a STATUS line that nobody
+# reads: without it ctest is all green and the main guarantee of BTD-36
+# is not checked. XCA_REQUIRE_CORE_LINK makes the skip an error; the
+# bxc-pki build image and its ASan build set it (BTD-178). Windows has
+# no readelf: the skip stays visible there until BTD-13 decides on an
+# equivalent check (dumpbin /dependents).
+option(XCA_REQUIRE_CORE_LINK
+	"Fail the configure if test_core_link cannot be registered" OFF)
 find_program(READELF_PROGRAM NAMES readelf ${CMAKE_READELF})
-if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
-   CMAKE_VERSION VERSION_GREATER_EQUAL 3.24)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM)
   add_executable(xcacore_linkcheck ${SERVICE_TEST_DIR}/xcacore_linkcheck.cpp)
   target_link_libraries(xcacore_linkcheck
 	"$<LINK_LIBRARY:WHOLE_ARCHIVE,xcacore>")
@@ -136,7 +141,75 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND READELF_PROGRAM AND
 		-P ${SERVICE_TEST_DIR}/core_link.cmake)
   set_tests_properties(test_core_link PROPERTIES LABELS service)
 else()
-  message(STATUS "readelf, Linux or CMake 3.24 missing: test_core_link skipped")
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    set(core_link_missing "the system is ${CMAKE_SYSTEM_NAME}, not Linux")
+  else()
+    set(core_link_missing "readelf was not found")
+  endif()
+  if(XCA_REQUIRE_CORE_LINK)
+    message(FATAL_ERROR "test_core_link cannot be registered: "
+	"${core_link_missing} (XCA_REQUIRE_CORE_LINK is ON)")
+  endif()
+  message(WARNING "test_core_link skipped: ${core_link_missing}; "
+	"nothing checks that xcacore links no Qt Gui, Widgets or Help")
+endif()
+
+# The test seams of xcacore are compiled only into test builds (BTD-271).
+# The xcacore sources with seams (the known ones and every one that uses
+# BXC_PKI_TEST_SEAMS) are compiled once more without the definition, as
+# a build with BUILD_TESTING=OFF compiles them, into the object library
+# xcacore_release_seams; test_release_no_seams checks them with nm.
+if(CMAKE_NM)
+  set(seam_sources
+	${PROJECT_SOURCE_DIR}/lib/sql.cpp
+	${PROJECT_SOURCE_DIR}/lib/db_base.cpp
+	${PROJECT_SOURCE_DIR}/lib/db_token.cpp
+	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp
+	${PROJECT_SOURCE_DIR}/lib/test_seams.cpp)
+  get_target_property(core_all xcacore SOURCES)
+  foreach(src IN LISTS core_all)
+    if(src MATCHES "\\.cpp$" AND EXISTS "${src}")
+      file(STRINGS "${src}" uses REGEX "BXC_PKI_TEST_SEAMS")
+      if(uses)
+        list(APPEND seam_sources "${src}")
+      endif()
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES seam_sources)
+  add_library(xcacore_release_seams OBJECT ${seam_sources})
+  target_link_libraries(xcacore_release_seams PRIVATE
+	OpenSSL::Crypto ${QT}::Core ${QT}::Sql)
+  add_dependencies(tests xcacore_release_seams)
+  add_test(NAME test_release_no_seams
+	COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
+		"-DOBJECTS=$<JOIN:$<TARGET_OBJECTS:xcacore_release_seams>,|>"
+		-DCORE=$<TARGET_FILE:xcacore>
+		-P ${SERVICE_TEST_DIR}/release_no_seams.cmake)
+  set_tests_properties(test_release_no_seams PROPERTIES LABELS service)
+else()
+  message(STATUS "nm missing: test_release_no_seams skipped")
+endif()
+
+# configuring against OpenSSL 3 stops with the version message (BTD-253);
+# the stand-in prefix uses the Unix library names
+if(UNIX)
+  add_test(NAME test_openssl_minimum
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		"-DGENERATOR=${CMAKE_GENERATOR}"
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/openssl_minimum
+		-P ${SERVICE_TEST_DIR}/openssl_minimum.cmake)
+  set_tests_properties(test_openssl_minimum PROPERTIES LABELS service)
+endif()
+
+# the legacy-key fixture is what its generator makes (BTD-269)
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND AND OPENSSL_PROGRAM)
+  add_test(NAME test_legacy_key_fixture
+	COMMAND ${CMAKE_COMMAND} -DPYTHON=${Python3_EXECUTABLE}
+		-DOPENSSL=${OPENSSL_PROGRAM} -DDATA=${SERVICE_TEST_DIR}/data
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/legacy_key_fixture
+		-P ${SERVICE_TEST_DIR}/legacy_key_fixture.cmake)
+  set_tests_properties(test_legacy_key_fixture PROPERTIES LABELS service)
 endif()
 
 # no internal references in the public fork (BTD-236)
@@ -175,3 +248,11 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
 	ENVIRONMENT "OPENSSL_CONF=${SERVICE_TEST_DIR}/data/mldsa-${mode}.cnf;XCA_TEST_MLDSA_CNF=${mode}")
   Headless(test_service_importexport_cnf_${mode})
 endforeach()
+
+# The Windows packaging follows MSVC and OpenSSL 4 (BTD-252), checked on
+# every platform
+add_test(NAME test_windows_packaging
+	COMMAND ${CMAKE_COMMAND} -DSRC=${PROJECT_SOURCE_DIR}
+		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/windows_packaging
+		-P ${SERVICE_TEST_DIR}/windows_packaging.cmake)
+set_tests_properties(test_windows_packaging PROPERTIES LABELS service)

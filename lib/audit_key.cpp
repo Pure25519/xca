@@ -28,13 +28,14 @@
 #include <openssl/pkcs12.h>
 #include <openssl/x509.h>
 
-const char AuditKey::typeEd25519[] = "ed25519";
+const char AuditKey::typeEd25519[] = "ED25519";
 
 static void throwOnError(XSqlQuery &q)
 {
 	QSqlError e = q.lastError();
 	if (e.isValid())
-		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
+		throwSqlError(e, QObject::tr("The audit keys could not be "
+			"read or written"));
 }
 
 Passwd AuditKey::password(bool ask)

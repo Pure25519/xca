@@ -8,6 +8,8 @@
 #ifndef __PKI_BASE_H
 #define __PKI_BASE_H
 
+#include <functional>
+
 #include <QString>
 #include <QRegularExpression>
 #include <QVariant>
@@ -48,6 +50,32 @@ enum pki_source {
 #define VIEW_item_comment 5
 
 extern pki_lookup Store;
+
+/* Deleting an object on its token in two steps (BTD-272): prepare asks
+ * the user and logs in to the token and finds the objects; destroy()
+ * deletes them and throws errorEx on a failure. deleteItems() prepares
+ * before its database transaction and destroys after the COMMIT, so no
+ * prompt or PIN dialog runs inside the transaction (BTD-273) and a
+ * rollback leaves the token as it was. destroy() needs no pki_base
+ * object: it keeps the token session and the object handles itself.
+ * found is false when nothing is on a token or the user declined. */
+struct TokenDeletion
+{
+	bool found{};
+	std::function<void()> destroy{};
+};
+
+/* Renaming an object on its token in two steps (BTD-273): prepare
+ * logs in to the token and finds the objects, before the database
+ * transaction; apply() writes the label, inside the transaction after
+ * the database, and throws errorEx on a failure. apply() keeps the token
+ * session (and so the login) itself. found is false when the object is
+ * not on the token or the login failed. */
+struct TokenRename
+{
+	bool found{};
+	std::function<void()> apply{};
+};
 
 class pki_base : public QObject
 {
@@ -183,15 +211,27 @@ class pki_base : public QObject
 		pki_base *getParent() const;
 		pki_base *child(int row);
 		void insert(pki_base *item);
+		void insertAt(int row, pki_base *item);
 		int childCount() const;
 		void takeChild(pki_base *pki);
 		pki_base *takeFirst();
 		int indexOf(const pki_base *child) const;
 
 		/* Token handling */
-		virtual void deleteFromToken();
-		virtual void deleteFromToken(const slotid &);
-		virtual int renameOnToken(const slotid &, const QString &);
+		/* true if objects were deleted on a token; false if there
+		 * was none or the user declined (BTD-128); prepares and
+		 * destroys at once */
+		bool deleteFromToken();
+		bool deleteFromToken(const slotid &slot);
+		/* the first step of deleting on the token, see TokenDeletion */
+		virtual TokenDeletion prepareTokenDeletion();
+		virtual TokenDeletion prepareTokenDeletion(const slotid &);
+		/* 1 if the object was renamed on the token; prepares and
+		 * applies at once */
+		int renameOnToken(const slotid &slot, const QString &name);
+		/* the first step of renaming on the token, see TokenRename */
+		virtual TokenRename prepareTokenRename(const slotid &,
+				const QString &name);
 
 		/* Import / Export management */
 		/* The clipboard text; a private key with the ML-DSA encoding of

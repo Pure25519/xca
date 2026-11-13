@@ -298,7 +298,9 @@ static void runPlan(CommandContext &ctx,
 				QString(), params(), code);
 	};
 	try {
-		Transaction;
+		/* writes nothing: no write lock, so a plan runs beside a
+		 * writing process and on a read-only database (BTD-274) */
+		ReadTransaction;
 		TransThrow();
 		for (const auto &step : steps)
 			step(ctx);
@@ -364,6 +366,32 @@ static void publishFiles(CommandContext &ctx)
 	ctx.result->set("files", ctx.files->json());
 }
 
+/* After the rollback of a failed command: the transaction took the
+ * failure entries of the service calls with it, they are written again,
+ * outside of it. A command that failed before any of them, on an option,
+ * a reference or a check of its own, writes the failure entry of the
+ * action it would have audited (BTD-106). Best effort: the error of the
+ * command wins. */
+static void rolledBack(CommandContext &ctx, AuditFailureCapture &capture,
+		const QString &code)
+{
+	if (ctx.files)
+		ctx.files->discard();
+	bool audited = capture.size() > 0;
+	try {
+		capture.replay();
+	} catch (errorEx &err) {
+		qWarning() << "Audit failure entries lost:"
+			<< err.getString();
+	}
+	if (audited || ctx.auditAction.isEmpty())
+		return;
+	AuditParams params;
+	params.set("command", ctx.command);
+	AuditLog::appendFailure(ctx.svc, ctx.auditAction, ctx.auditObject,
+			QString(), params, code);
+}
+
 void runInTransaction(CommandContext &ctx,
 		const QList<std::function<void(CommandContext &)> > &steps)
 {
@@ -385,18 +413,12 @@ void runInTransaction(CommandContext &ctx,
 				"Failed to commit the database transaction"));
 		/* committed with the objects */
 		capture.discard();
+	} catch (errorEx &err) {
+		rolledBack(ctx, capture,
+			JsonReport::error(err)["code"].toString());
+		throw;
 	} catch (...) {
-		if (ctx.files)
-			ctx.files->discard();
-		/* The transaction was rolled back when it went out of
-		 * scope; the failure entries of the service calls went
-		 * with it and are written again, outside of it */
-		try {
-			capture.replay();
-		} catch (errorEx &err) {
-			qWarning() << "Audit failure entries lost:"
-				<< err.getString();
-		}
+		rolledBack(ctx, capture, "internal_error");
 		throw;
 	}
 	publishFiles(ctx);

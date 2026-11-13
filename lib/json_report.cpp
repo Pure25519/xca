@@ -27,6 +27,7 @@
 #include "x509name.h"
 #include "x509rev.h"
 #include "xfile.h"
+#include "staged_file.h"
 
 #define SCHEMA(kind) QString("urn:bxc-pki:schema:" kind ":v1")
 
@@ -81,8 +82,12 @@ QJsonValue JsonReport::revocationReason(int code)
 		"certificateHold", nullptr /* 7 is not used */,
 		"removeFromCRL", "privilegeWithdrawn", "aACompromise",
 	};
-	if (code < 0 || code >= (int)ARRAY_SIZE(names) || !names[code])
+	/* no reason: null; a code RFC 5280 does not name: its number
+	 * (BTD-170) */
+	if (code < 0)
 		return QJsonValue();
+	if (code >= (int)ARRAY_SIZE(names) || !names[code])
+		return code;
 	return QString(names[code]);
 }
 
@@ -112,13 +117,8 @@ QJsonObject JsonReport::dn(const x509name &name)
 {
 	QJsonObject o;
 	QJsonArray attributes;
-	BioByteArray bba;
 
-	/* RFC 4514: most significant RDN last; UTF-8 stays unescaped */
-	X509_NAME_print_ex(bba, name.get0(), 0,
-			XN_FLAG_RFC2253 & ~ASN1_STRFLGS_ESC_MSB);
-	ign_openssl_error();
-	o["rfc4514"] = QString::fromUtf8(bba.byteArray());
+	o["rfc4514"] = name.rfc4514();
 
 	for (int i = 0; i < name.entryCount(); i++) {
 		const X509_NAME_ENTRY *ne = X509_NAME_get_entry(name.get0(), i);
@@ -276,7 +276,7 @@ QJsonObject JsonReport::certificate(const pki_x509 *cert)
 		x509rev rev = cert->getRevocation();
 		QJsonObject r;
 		r["date"] = timestamp(rev.getDate());
-		r["reason"] = revocationReason(rev.getReasonBit());
+		r["reason"] = revocationReason(rev.getReasonCode());
 		r["invalidity_date"] = optionalTimestamp(rev.getInvalDate());
 		revocation = r;
 	}
@@ -376,8 +376,16 @@ QJsonObject JsonReport::crl(const pki_crl *crl)
 	o["this_update"] = timestamp(crl->getLastUpdate());
 	const ASN1_TIME *next = X509_CRL_get0_nextUpdate(c);
 	o["next_update"] = next ? timestamp(a1time(next)) : QJsonValue();
-	o["crl_number"] = crl->getCrlNumber(&number) ?
-			QJsonValue(number.toDec().toLongLong()) : QJsonValue();
+	/* exact: an integer up to 2^53-1, which every JSON parser keeps,
+	 * the decimal string beyond (BTD-182) */
+	if (crl->getCrlNumber(&number)) {
+		bool ok;
+		qint64 n = number.toDec().toLongLong(&ok);
+		o["crl_number"] = ok && n <= (Q_INT64_C(1) << 53) - 1 ?
+			QJsonValue(n) : QJsonValue(number.toDec());
+	} else {
+		o["crl_number"] = QJsonValue();
+	}
 	X509_CRL_get0_signature(c, nullptr, &alg);
 	o["signature_algorithm"] = algorithm(alg);
 
@@ -535,7 +543,7 @@ static QJsonObject indexEntry(pki_x509 *cert)
 	o["revocation_date"] = revoked ?
 			JsonReport::timestamp(rev.getDate()) : QJsonValue();
 	o["reason"] = revoked ?
-			JsonReport::revocationReason(rev.getReasonBit()) :
+			JsonReport::revocationReason(rev.getReasonCode()) :
 			QJsonValue();
 	o["serial"] = JsonReport::serial(cert->getSerial());
 	o["subject"] = JsonReport::dn(cert->getSubject()).value("rfc4514");
@@ -623,9 +631,6 @@ void JsonReport::writeTo(const QString &path, const QJsonObject &doc)
 		write(stdout, doc);
 		return;
 	}
-	QByteArray data = line(doc);
-	XFile file(path);
-	if (!file.open_write() || file.write(data) != data.size())
-		throw errorEx(QObject::tr("Failed to write '%1'").arg(path));
-	file.close();
+	/* staged: a failed write keeps an old file (BTD-139) */
+	StagedFile::writeFile(path, line(doc), false, true);
 }

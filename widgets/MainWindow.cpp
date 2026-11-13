@@ -47,6 +47,7 @@
 #include "OpenDb.h"
 #include "Help.h"
 #include "OidResolver.h"
+#include "AuditVerify.h"
 #include "lib/oid.h"
 
 OidResolver *MainWindow::resolver;
@@ -621,9 +622,37 @@ void MainWindow::showAuditNotice(const QString &msg)
 
 void MainWindow::showDatabaseName()
 {
-	if (Database.isOpen())
+	if (!Database.isOpen())
+		return;
+	if (database_model::read_only)
+		dbindex->setText(tr("Database: %1 (read-only)")
+			.arg(compressFilename(Database.name())));
+	else
 		dbindex->setText(tr("Database: %1")
 			.arg(compressFilename(Database.name())));
+}
+
+/* A read-only database (BTD-214): the actions that write to it are
+ * disabled, the reading ones stay, and the next writable database has
+ * them again. A write started another way still ends with
+ * read_only_database. */
+void MainWindow::enableWriteActions(bool enable)
+{
+	static const QStringList writing {
+		"BNnewKey", "BNimportKey", "BNdeleteKey",
+		"BNnewReq", "BNimportReq", "BNdeleteReq",
+		"BNnewCert", "BNimportCert", "BNimportPKCS12",
+		"BNimportPKCS7", "BNimportPFX", "BNdeleteCert",
+		"BNnewTemp", "BNimportTemp", "BNchangeTemp", "BNdeleteTemp",
+		"BNnewCrl", "BNimportCrl", "BNdeleteCrl",
+		"menu_import", "act_extra_changeDbPassword", "act_file_options",
+	};
+	for (QWidget *w : findChildren<QWidget *>())
+		if (writing.contains(w->objectName()))
+			w->setEnabled(enable);
+	for (QAction *a : findChildren<QAction *>())
+		if (writing.contains(a->objectName()))
+			a->setEnabled(enable);
 }
 
 enum open_result MainWindow::setup_open_database()
@@ -635,6 +664,7 @@ enum open_result MainWindow::setup_open_database()
 		homedir = QFileInfo(Database.name()).canonicalPath();
 
 	setItemEnabled(true);
+	enableWriteActions(!database_model::read_only);
 	showDatabaseName();
 	set_geometry(Settings["mw_geometry"]);
 
@@ -849,6 +879,17 @@ void MainWindow::keyPressEvent(QKeyEvent *e)
 		}
 	}
 	update();
+}
+
+/* Extra > Verify audit log (BTD-103): the report of --audit-verify; not
+ * modal, like the OID resolver */
+void MainWindow::verifyAudit()
+{
+	if (!Database.isOpen())
+		return;
+	AuditVerify *dlg = new AuditVerify(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->show();
 }
 
 void MainWindow::dump_database()

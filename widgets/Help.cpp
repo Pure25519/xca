@@ -7,6 +7,7 @@
 
 #include "Help.h"
 #include "lib/func.h"
+#include "lib/XcaWarningCore.h"
 
 #include <QDebug>
 #include <QDialog>
@@ -42,6 +43,13 @@ void Help::display(const QUrl &url)
 
 void Help::content()
 {
+	/* a build without sphinx-build has no help collection; bxc-pki
+	 * switches it off deliberately (BTD-255): point to the manual */
+	if (!helpengine) {
+		XCA_INFO(tr("This build contains no offline help. The XCA manual is online at %1")
+			.arg("https://www.hohnstaedt.de/xca/index.php/documentation/manual"));
+		return;
+	}
 	display(QUrl("qthelp://org.sphinx.xca/doc/index.html"));
 }
 

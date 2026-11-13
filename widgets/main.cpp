@@ -21,6 +21,7 @@
 #include "lib/arguments.h"
 #include "lib/pki_export.h"
 #include "lib/debug_info.h"
+#include "lib/audit.h"
 #include "lib/json_report.h"
 #if defined(Q_OS_WIN32)
 //For the segfault handler
@@ -197,7 +198,13 @@ int main(int argc, char *argv[])
 			}
 			delete cmdline_items;
 		}
-	} catch (errorEx &ex) {
+	} catch (errorEx &error) {
+		/* a lost failure entry makes it audit_entry_lost (BTD-274) */
+		QStringList lost = AuditLog::takeLostEntries();
+		serviceError lostError = AuditLog::lostEntriesError(lost,
+			JsonReport::error(error)["code"].toString(),
+			error.getString());
+		const errorEx &ex = lost.isEmpty() ? error : lostError;
 		/* xca --no-gui --json: the error object on stderr (BTD-39) */
 		if (console_only && JsonReport::active())
 			JsonReport::write(stderr, JsonReport::error(ex));

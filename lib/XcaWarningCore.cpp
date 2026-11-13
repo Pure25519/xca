@@ -14,6 +14,19 @@
 
 class xcaWarning_i *xcaWarning::gui;
 
+void xcaWarning::error(const errorEx &err)
+{
+	if (err.isEmpty())
+		return;
+	/* --json: the message alone, which the console turns into an error
+	 * object; the prefix belongs to the GUI (BTD-182). Through gui in
+	 * both cases, so a collecting console (bxc-pki's OID check) still
+	 * sees it. */
+	gui->error(JsonReport::active() ? err.getString() :
+		QObject::tr("The following error occurred:") + "\n" +
+		err.getString());
+}
+
 bool xcaWarning::confirm(ServiceContext &ctx, const QString &id,
 			const QString &msg)
 {
@@ -60,11 +73,32 @@ void xcaWarningCore::notice(const QString &msg)
 bool xcaWarningCore::confirmAll = false;
 QStringList xcaWarningCore::confirmed{};
 
-void xcaWarningCore::setConfirmations(bool all, const QStringList &ids)
+const QStringList &xcaWarningCore::questionIds()
 {
+	static const QStringList ids {
+		"dh.abort", "item.delete", "key.size",
+		"token.delete_certificate", "token.delete_key",
+		"token.insert_card", "token.replace_key",
+		"token.store_certificate",
+	};
+	return ids;
+}
+
+QStringList xcaWarningCore::setConfirmations(bool all, const QStringList &ids)
+{
+	QStringList unknown;
+
 	confirmAll = all;
-	confirmed = ids;
-	confirmed.removeAll(QString());
+	confirmed.clear();
+	for (const QString &id : ids) {
+		QString t = id.trimmed();
+		if (t.isEmpty())
+			continue;
+		if (!questionIds().contains(t))
+			unknown << t;
+		confirmed << t;
+	}
+	return unknown;
 }
 
 QString xcaWarningCore::answerSource(const QString &id) const

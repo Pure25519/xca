@@ -5,6 +5,7 @@
 
 #include "audit.h"
 #include "audit_key.h"
+#include "database_model.h"
 #include "asn1time.h"
 #include "exception.h"
 #include "settings.h"
@@ -71,6 +72,14 @@ void ServiceContext::confirm(const QString &id, const QString &source)
 		confirmed << c;
 }
 
+bool ServiceContext::isConfirmed(const QString &id) const
+{
+	for (const QString &c : confirmed)
+		if (c.section(':', 0, 0) == id)
+			return true;
+	return false;
+}
+
 ServiceContext ServiceContext::localUser(enum channel c)
 {
 	ServiceContext ctx(c, "os:" + osUser());
@@ -94,6 +103,8 @@ QString ServiceContext::channelName(enum channel c)
 const QStringList &AuditParams::allowList()
 {
 	static const QStringList list {
+		/* the thisUpdate checks a CRL overrode (BTD-220) */
+		"allow_stale",
 		"authority_updated", "ca_id", "confirmed", "count",
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
@@ -475,7 +486,8 @@ static void throwOnError(XSqlQuery &q)
 {
 	QSqlError e = q.lastError();
 	if (e.isValid())
-		throw errorEx(QObject::tr("Database error: %1").arg(e.text()));
+		throwSqlError(e, QObject::tr("The audit log could not be "
+			"read or written"));
 }
 
 /* seq and hash of the newest entry; seq 0 for an empty log */
@@ -564,8 +576,8 @@ static AuditEntry insertEntry(const ServiceContext &ctx,
 			objectId, params.getValues(), result, errorCode);
 	writeEntry(e);
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit entry was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit entry was not committed"));
 	return e;
 }
 
@@ -612,6 +624,22 @@ static qint64 lastCheckpointSeq(int *interval = nullptr)
 		*interval = signedInterval(QJsonDocument::fromJson(
 			q.value(1).toString().toUtf8()).toVariant().toMap());
 	return q.value(0).toLongLong();
+}
+
+void AuditLog::setCheckpointInterval(const ServiceContext &ctx,
+				int interval)
+{
+	if (interval < 1 || interval > maxCheckpointInterval)
+		throw serviceError("invalid_value", QObject::tr(
+			"The audit checkpoint interval must be between 1 and %1, "
+			"not %2").arg(maxCheckpointInterval).arg(interval));
+	/* Writes only after a verified unlock (BTD-137) */
+	if (!ServiceContext::processPasswordVerified)
+		throw serviceError("missing_password", QObject::tr(
+			"Changing the audit checkpoint interval needs the "
+			"database password (--password)"));
+	Settings.update(ctx, { { "audit_checkpoint_interval",
+				QString::number(interval) } });
 }
 
 int AuditLog::checkpointInterval()
@@ -733,6 +761,8 @@ AuditEntry AuditLog::append(const ServiceContext &ctx,
 	return e;
 }
 
+static QStringList lostEntries;
+
 bool AuditLog::appendFailure(const ServiceContext &ctx,
 		const QString &action, const QString &objectType,
 		const QString &objectId, const AuditParams &params,
@@ -749,7 +779,30 @@ bool AuditLog::appendFailure(const ServiceContext &ctx,
 		qCritical().noquote() << "Audit entry lost:" << action << result
 			<< errorCode;
 	}
+	lostEntries << QString("%1 %2 (%3)").arg(action, result, errorCode);
 	return false;
+}
+
+QStringList AuditLog::takeLostEntries()
+{
+	QStringList lost;
+	lost.swap(lostEntries);
+	return lost;
+}
+
+serviceError AuditLog::lostEntriesError(const QStringList &lost,
+		const QString &originalCode, const QString &originalText)
+{
+	QString detail = QCoreApplication::translate("AuditLog",
+		"Audit entries could not be written: %1").arg(lost.join(", "));
+	if (originalCode == "read_only_database")
+		return serviceError(originalCode, QString("%1 (%2)")
+				.arg(originalText, detail));
+	if (!originalCode.isEmpty())
+		detail += QCoreApplication::translate("AuditLog",
+			"; the error of the command: %1 [%2]")
+			.arg(originalText, originalCode);
+	return serviceError("audit_entry_lost", detail);
 }
 
 /* True if the stored params text is exactly the canonical JSON of an
@@ -1012,8 +1065,8 @@ static AuditEntry writeCheckpoint(const ServiceContext &ctx, bool rotate,
 	if (rotate && !first)
 		AuditKey::retire(key);
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit checkpoint was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit checkpoint was not committed"));
 	return e;
 }
 
@@ -1053,7 +1106,15 @@ QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 	QList<AuditEntry> list = entries();
 	qint64 lastCheckpoint = 0;
 
-	if (!list.isEmpty() && list.last().action != actionCheckpoint) {
+	if (!list.isEmpty() && list.last().action != actionCheckpoint &&
+	    database_model::read_only) {
+		/* nothing can be signed on a read-only database (BTD-214) */
+		if (skipped) {
+			skipped->code = "read_only_database";
+			skipped->reason = QObject::tr("The database is "
+				"read-only");
+		}
+	} else if (!list.isEmpty() && list.last().action != actionCheckpoint) {
 		try {
 			checkpoint(ctx);
 			list = entries();
@@ -1124,15 +1185,15 @@ void AuditLog::writeBaseline()
 	bool verified = ctx.passwordVerified();
 	for (AuditParams &p : rows) {
 		p.set("db_unlock_verified", verified);
-		insertEntry(ctx, actionRevocationBaseline, "cert",
+		insertEntry(ctx, actionRevocationBaseline, "certificate",
 			p.getValues().value("serial").toString(), p);
 	}
 	insertEntry(ctx, actionInit, "database", QString(),
 		AuditParams().set("count", (qint64)rows.size())
 			.set("db_unlock_verified", verified));
 	if (!TransCommit())
-		throw errorEx(QObject::tr("Database error: %1")
-			.arg("the audit baseline was not committed"));
+		throwSqlError(DbTransaction::lastFailure(),
+			QObject::tr("The audit baseline was not committed"));
 }
 
 /* RFC 3339 of a date in the revocations table; empty if undefined */

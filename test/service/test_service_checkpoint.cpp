@@ -91,6 +91,8 @@ class test_service_checkpoint : public ServiceTestCase
 	static QByteArray publicPem(EVP_PKEY *pkey);
 	static QString signature(EVP_PKEY *pkey, const QVariantMap &params);
 	static QString errorCode(std::function<void()> call);
+	/* the text of the error errorCode() caught last */
+	static QString errorText;
 	static int storedIterations();
 	QString writeFile(const QString &name, const QByteArray &data);
 	QString keyAtCheckpoint(int n, const QString &name);
@@ -113,6 +115,10 @@ class test_service_checkpoint : public ServiceTestCase
 	void unannouncedKeyAlone();
 	void forgedDeletionNotSigned();
 	void intervalClamped();
+	void setInterval();
+	void setIntervalRange_data();
+	void setIntervalRange();
+	void setIntervalNeedsVerifiedOpen();
 	void intervalSigned();
 	void raisedIntervalHidesNoDeletion();
 	void intervalChangeKeepsLogValid();
@@ -328,13 +334,18 @@ EVP_PKEY *test_service_checkpoint::auditPrivateKey()
 	return pkey;
 }
 
+QString test_service_checkpoint::errorText;
+
 QString test_service_checkpoint::errorCode(std::function<void()> call)
 {
+	errorText.clear();
 	try {
 		call();
 	} catch (serviceError &err) {
+		errorText = err.getString();
 		return err.code;
 	} catch (errorEx &err) {
+		errorText = err.getString();
 		return "errorEx: " + err.getString();
 	}
 	return QString();
@@ -409,7 +420,9 @@ void test_service_checkpoint::checkpointFailureAfterWrite()
 		"SELECT RAISE(ABORT, 'BTD-144 checkpoint row'); END")
 		.arg(AuditLog::actionCheckpoint));
 	QString code = keyAtCheckpoint(3, "victim");
-	QVERIFY2(code.contains("BTD-144 checkpoint row"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 checkpoint row"), CCHAR(errorText));
 
 	reopenDatabase();
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items WHERE name='victim'")
@@ -444,7 +457,9 @@ void test_service_checkpoint::checkpointRowFailsWithKey()
 					QString::number(10 + i));
 		TransCommitThrow();
 	});
-	QVERIFY2(code.contains("BTD-144 checkpoint row"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 checkpoint row"), CCHAR(errorText));
 	QCOMPARE(AuditLog::entries().size(), before);
 	sql("DROP TRIGGER fault");
 	appendSample(3);
@@ -465,7 +480,9 @@ void test_service_checkpoint::rotationRetireFails()
 	sql("CREATE TRIGGER fault BEFORE UPDATE ON audit_keys BEGIN "
 		"SELECT RAISE(ABORT, 'BTD-144 retire'); END");
 	QString code = errorCode([&]() { AuditLog::rotateKey(ctx); });
-	QVERIFY2(code.contains("BTD-144 retire"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-144 retire"), CCHAR(errorText));
 	QCOMPARE(AuditLog::entries().size(), entries);
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM audit_keys").toInt(), 1);
 	QCOMPARE(AuditKey::current(), key);
@@ -484,9 +501,10 @@ void test_service_checkpoint::checkpointDatabaseErrorReachesCaller()
 	sql("CREATE TRIGGER fault BEFORE INSERT ON audit_keys BEGIN "
 		"SELECT RAISE(ABORT, 'BTD-111 checkpoint write'); END");
 	QString code = keyAtCheckpoint(3, "victim");
-	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
+	QCOMPARE(code, QString("database_error"));
 	/* the checkpoint's error, not one of newKey() (BTD-143) */
-	QVERIFY2(code.contains("BTD-111 checkpoint write"), CCHAR(code));
+	QVERIFY2(errorText.contains("BTD-111 checkpoint write"),
+		CCHAR(errorText));
 	/* nor in memory: on 9121ddcd the key stayed in store and view
 	 * with the id of its rolled-back row (BTD-130) */
 	for (pki_key *key : Store.getAll<pki_key>())
@@ -554,7 +572,9 @@ void test_service_checkpoint::exportCheckpointWriteFails()
 	QString code = errorCode([&]() {
 		Database.model<db_key>()->exportItems(ctx, spec);
 	});
-	QVERIFY2(code.contains("BTD-143 checkpoint write"), CCHAR(code));
+	/* typed since BTD-214, with the reason of the database */
+	QCOMPARE(code, QString("database_error"));
+	QVERIFY2(errorText.contains("BTD-143 checkpoint write"), CCHAR(errorText));
 	/* neither the file nor a temporary file of QSaveFile */
 	QCOMPARE(QDir(dir.path()).entryList({ "btd143.pem*" },
 		QDir::Files | QDir::Hidden).size(), 0);
@@ -634,7 +654,8 @@ void test_service_checkpoint::checkpointEveryN()
 	QString key = AuditKey::current();
 	QCOMPARE(key.size(), 64);
 	QCOMPARE(list[5].objectId, key);
-	QCOMPARE(list[5].params.value("key_type").toString(), QString("ed25519"));
+	/* keytype::name, as every key entry (BTD-97) */
+	QCOMPARE(list[5].params.value("key_type").toString(), QString("ED25519"));
 	QCOMPARE(AuditKey::keyId(list[5].params.value("public_key")
 			.toString().toLatin1()), key);
 	QVariantMap cp = list[6].params;
@@ -992,6 +1013,67 @@ void test_service_checkpoint::intervalClamped()
 	QVERIFY(!r.ok());
 	QCOMPARE(r.reason, QString("checkpoint_missing"));
 	QCOMPARE(r.unanchoredEntries, qint64(1010));
+}
+
+void test_service_checkpoint::setInterval()
+{
+	/* The audit control of BTD-100: one settings.update entry with the
+	 * old and the new value in clear text */
+	appendSample(1);
+	AuditLog::setCheckpointInterval(ctx, 3);
+	QCOMPARE(AuditLog::checkpointInterval(), 3);
+	QList<AuditEntry> updates = byAction("settings.update");
+	QCOMPARE(updates.size(), 1);
+	QCOMPARE(updates[0].params.value("setting").toString(),
+		QString("audit_checkpoint_interval"));
+	QCOMPARE(updates[0].params.value("new_value").toString(), QString("3"));
+	QVERIFY(!updates[0].params.contains("redacted"));
+	/* the next checkpoint comes at the new interval */
+	appendSample(1);
+	QCOMPARE(byAction(AuditLog::actionCheckpoint).size(), 1);
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+}
+
+void test_service_checkpoint::setIntervalRange_data()
+{
+	QTest::addColumn<int>("interval");
+	QTest::newRow("0") << 0;
+	QTest::newRow("negative") << -1;
+	QTest::newRow("above the clamp") << AuditLog::maxCheckpointInterval + 1;
+}
+
+void test_service_checkpoint::setIntervalRange()
+{
+	QFETCH(int, interval);
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	QCOMPARE(errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, interval);
+	}), QString("invalid_value"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
+	/* the bounds themselves are valid */
+	AuditLog::setCheckpointInterval(ctx, AuditLog::maxCheckpointInterval);
+	AuditLog::setCheckpointInterval(ctx, 1);
+	QCOMPARE(AuditLog::checkpointInterval(), 1);
+}
+
+void test_service_checkpoint::setIntervalNeedsVerifiedOpen()
+{
+	/* An open without the verified password writes nothing (BTD-137) */
+	appendSample(1);
+	int entries = AuditLog::entries().size();
+	ServiceContext::processPasswordVerified = false;
+	QString code = errorCode([&]() {
+		AuditLog::setCheckpointInterval(ctx, 5);
+	});
+	ServiceContext::processPasswordVerified = true;
+	QCOMPARE(code, QString("missing_password"));
+	QCOMPARE(AuditLog::checkpointInterval(),
+		AuditLog::defaultCheckpointInterval);
+	QCOMPARE(AuditLog::entries().size(), entries);
 }
 
 void test_service_checkpoint::intervalSigned()

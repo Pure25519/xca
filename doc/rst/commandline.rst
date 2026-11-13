@@ -10,6 +10,30 @@ Arguments
 
 .. include:: arguments.rst
 
+Import
+------
+
+``--import`` stores every item it can read from the given files. If a file
+cannot be read (it is missing or unreadable, or holds no PKI data), the readable
+items are still imported. The command then reports each failed file and exits
+with code 1.
+
+- The report is an error with the code ``unreadable_input`` or ``no_pki_data``.
+  With ``--json`` it is one error object per file on standard error.
+- The audit log has one ``object.import`` entry with result ``failure`` for
+  each failed file, with the file and the code.
+
+Before bxc-pki BTD-270, an import with an unreadable file exited with 0 and
+only printed a warning.
+
+Database password in the GUI
+----------------------------
+
+A password given with ``--password`` is always read and compared with the
+stored one, also in the GUI and also when the database has an empty password.
+If it does not match, XCA shows "Password verify error" and then the unlock
+dialog, instead of opening the database without checking the given password.
+
 JSON output
 -----------
 

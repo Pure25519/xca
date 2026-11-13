@@ -50,7 +50,10 @@
 #include <functional>
 
 #include <QByteArray>
+#include <QIODevice>
 #include <QList>
+#include <memory>
+
 #include <QPair>
 #include <QString>
 #include <QStringList>
@@ -60,7 +63,8 @@ class StagedFile
   public:
 	/* The steps a test can make fail (faultHook) */
 	enum step { create, write, sync, publish_step, recheck, owner_check,
-		swap, probe, noreplace, unlink_temp };
+		swap, probe, noreplace, unlink_temp, subdir, opendir,
+		proc_start };
 	/* A warning for the result: code and detail */
 	typedef QPair<QString, QString> warning;
 
@@ -71,6 +75,9 @@ class StagedFile
 	QString dirPath{};       // its directory, canonical (stage())
 	QString tempName{};      // the temporary file in it
 	int dirFd{ -1 };         // POSIX: the directory, opened once
+	/* POSIX: dirFd, shared with the other staged files of the same
+	 * directory (BTD-213), closed with the last of them */
+	std::shared_ptr<struct SharedDirectory> dirShare{};
 	bool useLink{};          // POSIX: publish with link() (probed)
 	bool secret{};
 	bool replace{};
@@ -95,6 +102,10 @@ class StagedFile
 	StagedFile(const StagedFile &) = delete;
 	StagedFile &operator=(const StagedFile &) = delete;
 
+	/* The directory of the target, already opened without following
+	 * a link (StagedDirectory::makeParents()); stage() uses it instead
+	 * of opening the directory again by its path (BTD-213) */
+	void setDirectory(const std::shared_ptr<struct SharedDirectory> &dir);
 	void stage(const QByteArray &data);
 	void publish();
 	void discard();
@@ -133,14 +144,24 @@ class StagedFile
 	/* stage() and publish() in one */
 	static void writeFile(const QString &target, const QByteArray &data,
 			bool secretFile, bool replaceTarget);
+	/* writeFile() with the bytes a writer puts into a device, for the
+	 * writers that take a QIODevice (BTD-139) */
+	static void writeWith(const QString &target, bool secretFile,
+			bool replaceTarget,
+			const std::function<void(QIODevice &)> &fill);
 
-	/* Tests only (BTD-42 fault injection): called before each step
-	 * with the target; a hook that returns true makes the step fail
-	 * as if the system call had failed (EIO; probe: as on vfat,
-	 * noreplace: as on a file system without RENAME_NOREPLACE). A hook
-	 * may also end the process to simulate a killed run. Never set in
-	 * bxc-pki. */
+#ifdef BXC_PKI_TEST_SEAMS
+	/* Tests only (BTD-42 fault injection; test builds only, BTD-271):
+	 * called before each step with the target; a hook that returns
+	 * true makes the step fail as if the system call had failed (EIO;
+	 * probe: as on vfat, noreplace: as on a file system without
+	 * RENAME_NOREPLACE). A hook may also end the process to simulate a
+	 * killed run. Set only by bxc-pki-faults and the tests. */
 	static std::function<bool(enum step, const QString &)> faultHook;
+#endif
+	/* The fault hook asks to fail step s for path (false without
+	 * test seams) */
+	static bool faultAt(enum step s, const QString &path);
 	static QString stepName(enum step s);
 };
 
@@ -202,6 +223,14 @@ class StagedDirectory
 	void stage();
 	/* path below the target: the same path in the sibling; else "" */
 	QString stagedPath(const QString &path) const;
+	/* The directories above staged (a path of stagedPath()) inside the
+	 * sibling, created one component at a time without following a
+	 * link (BTD-213): a link in their place is
+	 * target_directory_changed. Returns the directory of staged, opened
+	 * on that walk and shared with the other staged files in it, for
+	 * StagedFile::setDirectory() (POSIX; empty on Windows) */
+	std::shared_ptr<struct SharedDirectory> makeParents(
+			const QString &staged);
 	bool contains(const QString &path) const;
 	/* After the files below it are published into the sibling */
 	void publish();

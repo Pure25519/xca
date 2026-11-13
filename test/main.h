@@ -44,6 +44,10 @@ class test_main: public QObject
 	 * tests do not edit the same lines. QTest runs the slots in this
 	 * order. */
 
+	/* auditVerify.cpp */
+	void auditVerifyIntactAndBroken();
+	void auditVerifyAdopt();
+
 	/* automationIds.cpp */
 	void automationIds();
 	void keyboardContextMenu();
@@ -53,6 +57,10 @@ class test_main: public QObject
 
 	/* dialogParent.cpp */
 	void passwordDialogParent();
+	void helpWithoutCollection();
+
+	/* pinHexOption.cpp */
+	void pinHexOption();
 
 	/* dnBounds.cpp */
 	void dnUpperBounds();
@@ -77,6 +85,8 @@ class test_main: public QObject
 	void importLockedKeepsItems();
 	void importOneFailingItem();
 	void importAuditFailureKeepsItem();
+	void importCommitFailsKeepsItems();
+	void importFailuresKeepRows();
 	void tokenDialogClosedDatabase();
 
 	/* issuanceExt.cpp */
@@ -106,6 +116,9 @@ class test_main: public QObject
 	/* policy.cpp */
 	void issueRefusedByPolicy();
 
+	/* readOnlyDb.cpp */
+	void readOnlyDatabaseActions();
+
 	/* renewal.cpp */
 	void revoke();
 	void renewalSigningFails();
@@ -114,9 +127,18 @@ class test_main: public QObject
 	void renewalThroughService();
 	void renewalAllOrNothing();
 
+	/* revokeInvalidity.cpp */
+	void revokeInvalidityDate();
+
 	/* staleReload.cpp */
 	void staleReloadInDelete();
 	void reloadProxyRows();
+
+	/* templateMergeDialog.cpp */
+	void templateMergeShownAndSaved();
+	void templateMergeLegacyKept();
+	void templateMergeDefaultRefused();
+	void templateMergeNoDuplicate();
 
 	/* templateRoundTrip.cpp */
 	void templateMergeRoundTrip();
@@ -127,6 +149,8 @@ class test_main: public QObject
 	void issueBelowExpiredCa();
 	void issueMidnightBelowTodaysCa();
 	void signerCapWithoutContinue();
+	void renewalCapWithoutContinue();
+	void undefinedEndUnderFiniteCa();
 	void issueRefusedInsideDialog();
 
   public:

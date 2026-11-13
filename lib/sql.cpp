@@ -10,6 +10,7 @@
 #include <QDebug>
 #include "base.h"
 #include "sql.h"
+#include "test_seams.h"
 #include "settings.h"
 #include "XcaWarningCore.h"
 #include "exception.h"
@@ -17,7 +18,6 @@
 int DbTransaction::mutex;
 int DbTransaction::error;
 bool DbTransaction::hasTransaction;
-int DbTransaction::injected;
 QString DbTransaction::firstRollback;
 QSqlError DbTransaction::failure;
 QList<quint64> DbTransaction::items;
@@ -45,6 +45,40 @@ DbTransaction::~DbTransaction()
 		rollback("Destructor", 0);
 }
 
+/* The BEGIN of the outermost transaction (BTD-274). Qt's transaction()
+ * is a deferred BEGIN on SQLite, so a write transaction sends BEGIN
+ * IMMEDIATE itself; the commit and rollback of Qt end it. On a database
+ * file that cannot be written SQLite refuses BEGIN IMMEDIATE with
+ * SQLITE_READONLY: there is no lock to wait for, the deferred BEGIN lets
+ * the reads run and the first write fails typed (read_only_database), as
+ * before. On the other drivers a no-op update locks the settings row. */
+static bool beginOutermost(QSqlDatabase &db, bool read, QSqlError *e)
+{
+	if (db.driverName() != "QSQLITE") {
+		if (!db.transaction()) {
+			*e = db.lastError();
+			return false;
+		}
+		if (read)
+			return true;
+		XSqlQuery q;
+		SQL_PREPARE(q, "UPDATE settings SET value=value WHERE key_='schema'");
+		if (q.exec())
+			return true;
+		*e = q.lastError();
+		db.rollback();
+		return false;
+	}
+	QSqlQuery q(db);
+	if (q.exec(read ? "BEGIN" : "BEGIN IMMEDIATE"))
+		return true;
+	/* SQLITE_READONLY */
+	if (!read && q.lastError().nativeErrorCode() == "8" && q.exec("BEGIN"))
+		return true;
+	*e = q.lastError();
+	return false;
+}
+
 bool DbTransaction::begin(const char *file, int line)
 {
 	mutex++;
@@ -57,9 +91,10 @@ bool DbTransaction::begin(const char *file, int line)
 
 	failure = QSqlError();
 	QSqlDatabase db = QSqlDatabase::database();
-	bool ret = db.transaction();
+	QSqlError e;
+	bool ret = beginOutermost(db, kind == read, &e);
 	if (!ret) {
-		failure = db.lastError();
+		failure = e;
 		/* TransThrow() throws it typed, no message box first */
 		qWarning() << "BEGIN failed:" << failure.databaseText();
 		/* Not begun: the level as before, and the destructor ends
@@ -171,10 +206,12 @@ void DbTransaction::afterCommit(std::function<void()> action)
 
 bool DbTransaction::commit(const char *file, int line)
 {
-	if (injected > 0 && has_begun && mutex > 1 && --injected == 0) {
+#ifdef BXC_PKI_TEST_SEAMS
+	if (has_begun && mutex > 1 && TestSeams::nestedCommitRollsBack()) {
 		rollback(file, line);
 		return true;
 	}
+#endif
 	return finish(true, file, line);
 }
 
@@ -237,9 +274,10 @@ void throwSqlError(const QSqlError &e, const QString &what)
 			QSqlDatabase::defaultConnection, false).driverName(),
 			e.nativeErrorCode());
 	qDebug() << "SQL error:" << code << what << e.text();
-	/* The reason of the database only: the driver text of XSqlQuery
-	 * carries the statement and its bound values, which may be a
-	 * tls-auth key or an encrypted private key (review of xca#68) */
+	/* The reason of the database only: a driver text may carry the
+	 * statement and its bound values, which may be a tls-auth key or
+	 * an encrypted private key (review of xca#68); XSqlQuery logs them
+	 * instead (BTD-189) */
 	QString reason = e.databaseText().trimmed();
 	throw serviceError(code, reason.isEmpty() ? what :
 				QString("%1: %2").arg(what, reason));
@@ -311,13 +349,12 @@ QString XSqlQuery::query_details()
 QSqlError XSqlQuery::lastError()
 {
 	QSqlError e = QSqlQuery::lastError();
-	if (!e.isValid())
-		return e;
-	return QSqlError(QString("%1 - %2").arg(e.driverText())
-					.arg(query_details()),
-			 e.databaseText(), e.type(),
-			 e.nativeErrorCode()
-			);
+	/* The statement, its bound values and the source location are for
+	 * the debug log only: the text of the error reaches service errors,
+	 * the CLI, REST and message boxes (BTD-189) */
+	if (e.isValid())
+		qDebug() << "SQL error:" << e.text() << "-" << query_details();
+	return e;
 }
 
 XSqlQuery::XSqlQuery() : QSqlQuery()

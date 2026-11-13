@@ -8,7 +8,7 @@ gap for every entry that a later checkpoint covers (PLAN.md section 6.3).
 
 | Entry action | When | Params |
 |---|---|---|
-| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
+| `audit.key_create` | before the first checkpoint, and on each key rotation | `key_id`, `key_type` (`ED25519`; entries before BTD-97 have `ed25519`), `public_key` (PEM), `adopted_entries` (only on a first key that adopted an unsigned log, see below) |
 | `audit.checkpoint` | after every N entries (database setting `audit_checkpoint_interval`, default 100, at most 1000; see below for a changed setting), before each export unless the newest entry is a checkpoint, on `AuditLog::checkpoint()` and `AuditLog::rotateKey()` | `checkpoint_seq`, `checkpoint_hash`, `checkpoint_time`, `key_id`, `next_key_id` (rotation only), `checkpoint_interval` (BTD-133), `signature` |
 
 A checkpoint signs the entry just before it: `checkpoint_seq` and `checkpoint_hash` are that
@@ -89,6 +89,24 @@ that must not go on with an unsigned tail run `--audit-verify`. The log line
 the number of entries it takes over without proof, and signs. The announcement is covered by the
 checkpoint, so the mark cannot be removed later, and `--audit-verify` reports it as
 `adopted_entries`.
+
+## Interval and key rotation on the command line (BTD-100)
+
+```
+xca --no-gui --database pki.xdb --audit-checkpoint-interval current
+xca --no-gui --database pki.xdb --password file:db.pass --audit-checkpoint-interval 50
+xca --no-gui --database pki.xdb --password file:db.pass --audit-rotate-key
+```
+
+| Option | Effect |
+|---|---|
+| `--audit-checkpoint-interval current` | prints `{"setting":"audit_checkpoint_interval","value":N}`; needs no password |
+| `--audit-checkpoint-interval <n>` | sets the interval (`AuditLog::setCheckpointInterval()`), 1 to 1000 (the clamp of BTD-110); prints `{"new_value":…,"old_value":…,"setting":"audit_checkpoint_interval"}` and writes one `settings.update` entry with both values in clear text. Outside the range or not a number: `invalid_value`, exit 1; without a verified password: `missing_password`, exit 1; nothing is written then |
+| `--audit-rotate-key` | `AuditLog::rotateKey()`: announces a new key and signs a checkpoint with the old one that names it in `next_key_id`; the old key is retired. Without the password `audit_key_unavailable`, exit 1. `--audit-verify` afterwards lists both keys in `audit_keys` |
+
+The interval decides when the next automatic checkpoint is written. Both options run before
+`--audit-verify` and `--audit-export` of the same command. REST endpoints for both are a
+requirement for the REST work of Phase 3; there are none yet.
 
 ## Export with and without a password
 
@@ -215,6 +233,18 @@ otherwise intact. The report always carries `pinned_keys` (empty without `--audi
 anchor it was checked against. A rewritten log (new first key) and a log cut off with its newest
 checkpoints both fail with a pin. Keep the pins outside the database host, e.g. with the
 exports.
+
+## The check in the GUI (BTD-103)
+
+**Extra > Verify audit log** (`act_extra_verifyAudit`) runs the same `AuditLog::verify()` as
+`--audit-verify` and shows its report: result, entries, first entry not anchored, reason,
+valid checkpoints with the last one, unanchored entries, audit keys, adopted entries, unaudited
+revocations and the revocation state mismatches. The fields "Pinned audit key ids" and
+"Minimum checkpoint" are the trust anchor of `--audit-key` and `--audit-min-checkpoint`;
+**Verify** runs the check again with them. When the log has no audit key yet and verify reports
+`checkpoint_missing`, **Adopt unanchored entries** does what `--audit-adopt` does, after a
+question that names the number of entries (id `audit.adopt`); the announcement records them as
+`adopted_entries`. The dialog is not modal and needs an open database.
 
 ## Checking an export with the OpenSSL CLI
 

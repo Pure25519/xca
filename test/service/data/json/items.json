@@ -46,6 +46,11 @@
       "id": 9,
       "name": "own",
       "type": "key"
+    },
+    {
+      "id": 10,
+      "name": "rsa-pss",
+      "type": "key"
     }
   ]
 }

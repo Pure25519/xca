@@ -47,6 +47,7 @@ bxc-pki export "BxC OT Issuing" --format trustlist --target-format opcua-dir --o
   (`oid_init_failed`).
 - Every write goes through the service layer, which writes the audit entries (channel `cli`,
   actor `os:<login>`). `list` and `show` only read and write no audit entry (PLAN.md 6.1).
+- A write command that fails after the database is open but before any service call wrote a failure entry (for example on an option value, an unknown reference or a key it cannot unlock) writes one: result `failure`, the command's action (`Command::auditAction`: `init` and `sign` `certificate.issue`, `request-cert` `request.create`, `renew` `certificate.renew`, `revoke` `certificate.revoke`, `crl` `crl.generate`, `export` `object.export`), the error code and the parameter `command` (BTD-106, `doc/service-pattern.md`). Errors while parsing options and opening the database write none.
 
 Result document of `init`, `request-cert`, `sign`, `revoke`, `crl`, `export` and `renew` (schema
 `urn:bxc-pki:schema:cli-result:v1`):
@@ -144,7 +145,9 @@ Design ideas (job validation, staged atomic output with owner-only key files, na
   `--reason` is required and takes the RFC 5280 names (`removeFromCRL` is refused: delta CRLs
   only). With `--ca` the issuer must be that CA (`wrong_issuer`). `--invalidity-date` must not
   be after the revocation date, which is now: a later one, also within a clock skew, is
-  `invalid_invalidity_date` (exit code 2, audited like the refusals above; BTD-211). The
+  `invalid_invalidity_date` (exit code 2, audited like the refusals above; BTD-211); the
+  service refuses it with the same code for every front end (BTD-206). Without
+  `--invalidity-date` the CRL entry has no Invalidity Date (BTD-206). The
   revocation and the new CRL
   of the issuing CA are written in one transaction; sign, revoke and crl unlock the CA key the
   same way (`--password`, also for a key with a password of its own).

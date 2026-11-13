@@ -20,6 +20,7 @@
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/exception.h"
+#include "lib/PwDialogCore.h"
 #include "lib/pki_evp.h"
 #include "lib/pki_multi.h"
 #include "lib/sql.h"
@@ -75,8 +76,13 @@ class test_service_audit : public ServiceTestCase
 	void upgradeForkDatabase();
 	void upgradeKeyTypeColumn();
 	void upgradeProfileTables();
+	void legacySpellingVerifies();
 	void upgradeWaitsForPassword_data();
 	void upgradeWaitsForPassword();
+	void upgradeRejectsGivenSource_data();
+	void upgradeRejectsGivenSource();
+	void emptyPasswordFixtureHash();
+	void commandLinePasswordOnEmptyDb();
 	void unverifiedOpenWritesNothing_data();
 	void unverifiedOpenWritesNothing();
 	void currentDatabaseOpensUnverified();
@@ -254,6 +260,8 @@ void test_service_audit::upgradeForkDatabase()
 	QList<AuditEntry> baseline = AuditLog::entries();
 	QCOMPARE(baseline.size(), 2);
 	QCOMPARE(baseline[0].action, QString(AuditLog::actionRevocationBaseline));
+	/* "certificate" as every certificate entry (BTD-97) */
+	QCOMPARE(baseline[0].objectType, QString("certificate"));
 	QCOMPARE(baseline[0].objectId, QString("01A2B3"));
 	QCOMPARE(baseline[0].params.value("ca_id").toLongLong(), qint64(2));
 	QCOMPARE(baseline[0].params.value("revocation_date").toString(),
@@ -415,6 +423,47 @@ void test_service_audit::upgradeProfileTables()
 			"one predecessor per certificate");
 }
 
+/* Entries written before BTD-97 keep their spelling: the hash chain
+ * forbids rewriting them. A log with the baseline object_type "cert"
+ * and the audit key type "ed25519" still verifies, also after entries
+ * in the new spelling. */
+void test_service_audit::legacySpellingVerifies()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "audit-legacy-spelling.sql");
+	openDatabase();
+
+	QList<AuditEntry> entries = AuditLog::entries();
+	QStringList legacy;
+	for (const AuditEntry &e : entries) {
+		if (e.action == AuditLog::actionRevocationBaseline)
+			legacy << "baseline:" + e.objectType;
+		if (e.action == AuditLog::actionKeyCreate)
+			legacy << "key_create:" +
+				e.params.value("key_type").toString();
+	}
+	QCOMPARE(legacy, QStringList({ "baseline:cert",
+				"key_create:ed25519" }));
+	AuditVerifyResult r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.checkpoints, qint64(1));
+
+	/* New entries and a new audit key in the new spelling */
+	appendSample(2);
+	AuditLog::rotateKey(cliAlice);
+	reopenDatabase();
+	entries = AuditLog::entries();
+	QVERIFY(entries.size() > before["audit_log"].size());
+	r = AuditLog::verify();
+	QVERIFY2(r.ok(), r.toJson().constData());
+	QCOMPARE(r.auditKeys.size(), 2);
+	QString lastKeyType;
+	for (const AuditEntry &e : entries)
+		if (e.action == AuditLog::actionKeyCreate)
+			lastKeyType = e.params.value("key_type").toString();
+	QCOMPARE(lastKeyType, QString("ED25519"));
+}
+
 void test_service_audit::upgradeWaitsForPassword_data()
 {
 	QTest::addColumn<QString>("dump");
@@ -437,7 +486,6 @@ void test_service_audit::upgradeWaitsForPassword()
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
 	pwdialog->delegateTo(h);
-	warning->expectMessage("Password verify error");
 	bool rejected = false;
 	try {
 		Database.open(dbFile);
@@ -447,6 +495,91 @@ void test_service_audit::upgradeWaitsForPassword()
 	QVERIFY(rejected);
 	QVERIFY(!Database.isOpen());
 	QCOMPARE(fileRows(), before);
+}
+
+/* BTD-141 (5b): the same with a given source (PasswordSourceScope, as an
+ * import or export with --password has): initPass() reads it even though
+ * the empty password the dialog starts with matches nothing, and the
+ * rejected source leaves every row as it was. upgradeWaitsForPassword
+ * answers through the test dialog, where hasSource() is false. */
+void test_service_audit::upgradeRejectsGivenSource_data()
+{
+	upgradeWaitsForPassword_data();
+}
+
+void test_service_audit::upgradeRejectsGivenSource()
+{
+	QFETCH(QString, dump);
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, dump);
+
+	PasswordSourceScope given(pass_info::DatabasePassword,
+				"pass:wrong-db-pass");
+	QVERIFY(PwDialogCore::hasSource(pass_info::DatabasePassword));
+	/* no "Password verify error": a source is not asked again (BTD-89) */
+	bool rejected = false;
+	try {
+		Database.open(dbFile);
+	} catch (secretError &err) {
+		rejected = err.why == secretError::rejected;
+	}
+	QVERIFY(rejected);
+	QVERIFY(!Database.isOpen());
+	QCOMPARE(fileRows(), before);
+}
+
+/* The pwhash of the empty password that cli_password_empty_db.cmake
+ * writes into its fixture (BTD-141, 5a): sha512passwT() of "" with the
+ * salt of the constant must give the constant, or the "empty-password
+ * database" tests test an ordinary database */
+static QString emptyHashOfFixture()
+{
+	QFile f(QString(SERVICE_TEST_DATA "/../cli_password_empty_db.cmake"));
+	if (!f.open(QIODevice::ReadOnly))
+		return QString();
+	QRegularExpressionMatch m = QRegularExpression(
+		"set\\(empty_hash \"([^\"]+)\"\\)").match(QString::fromUtf8(f.readAll()));
+	return m.hasMatch() ? m.captured(1) : QString();
+}
+
+void test_service_audit::emptyPasswordFixtureHash()
+{
+	QString constant = emptyHashOfFixture();
+	QVERIFY2(!constant.isEmpty(), "no empty_hash in cli_password_empty_db.cmake");
+	QCOMPARE(pki_evp::sha512passwT(QByteArray(""), constant), constant);
+	QVERIFY(pki_evp::sha512passwT(QByteArray("x"), constant) != constant);
+}
+
+/* BTD-141 (2): the GUI command-line password (xca --password X, kept in
+ * PwDialogCore::cmdline_passwd) on a database with an empty password.
+ * Since BTD-117 it is read and compared: a wrong one gives "Password
+ * verify error" and the unlock dialog, where the empty password opens
+ * the database verified. Before, the empty current password matched and
+ * X passed unread. */
+void test_service_audit::commandLinePasswordOnEmptyDb()
+{
+	QMap<QString, QStringList> before;
+	loadForkDump(&before, "schema8-fork.sql");
+	QString constant = emptyHashOfFixture();
+	QVERIFY(!constant.isEmpty());
+	{
+		QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE", "btd141");
+		db.setDatabaseName(dbFile);
+		QVERIFY(db.open());
+		QSqlQuery q(db);
+		QVERIFY(q.exec(QString("UPDATE settings SET value='%1' WHERE "
+			"key_='pwhash'").arg(constant)));
+		db.close();
+	}
+	QSqlDatabase::removeDatabase("btd141");
+
+	PwDialogCore::cmdline_passwd = "not-the-empty-password";
+	warning->expectMessage("Password verify error");
+	pwdialog->expect(QByteArray(""));
+	Database.open(dbFile);
+	PwDialogCore::cmdline_passwd = QByteArray();
+	QVERIFY(Database.isOpen());
+	QVERIFY(ServiceContext::processPasswordVerified);
 }
 
 void test_service_audit::unverifiedOpenWritesNothing_data()
@@ -530,7 +663,7 @@ void test_service_audit::optionflagsWrongPassword()
 	PwDialogHeadless *h = new PwDialogHeadless();
 	h->setSource(pass_info::DatabasePassword, "pass:wrong-db-pass");
 	pwdialog->delegateTo(h);
-	warning->expectMessage("Password verify error");
+	/* no "Password verify error": a source is not asked again (BTD-89) */
 	bool rejected = false;
 	try {
 		Database.open(dbFile);
@@ -1128,8 +1261,9 @@ void test_service_audit::cliExitCodes()
 	QCOMPARE(f.readAll().count('\n'), 5);
 	f.close();
 
-	/* Export that cannot be written (XFile::open_write() throws) */
-	warning->expectMessage("Error opening file");
+	/* Export that cannot be written (StagedFile refuses the target
+	 * before it writes, BTD-139) */
+	warning->expectMessage("does not exist");
 	QCOMPARE(xcaCli({ "--audit-export",
 			"/nonexistent-btd29-dir/audit.jsonl" }), EXIT_FAILURE);
 

@@ -9,7 +9,7 @@
  * imported CRL and keys re-encrypted for a new database password stayed
  * changed as well, and taking a certificate out of the view after the
  * rollback wrote to the database. The failures are injected with a
- * trigger or with DbTransaction::injectNestedRollback() (BTD-142).
+ * trigger or with TestSeams::injectNestedRollback() (BTD-142).
  */
 
 #include <functional>
@@ -43,6 +43,7 @@
 #include "lib/pki_x509req.h"
 #include "lib/request.h"
 #include "lib/sql.h"
+#include "lib/test_seams.h"
 #include "lib/template.h"
 
 #include "ServiceTestCase.h"
@@ -195,8 +196,8 @@ int test_service_memory::entries(const QString &action,
 
 void test_service_memory::cleanup()
 {
-	bool pending = DbTransaction::injectionPending();
-	DbTransaction::injectNestedRollback(-1);
+	bool pending = TestSeams::injectionPending();
+	TestSeams::injectNestedRollback(-1);
 	ServiceTestCase::cleanup();
 	QVERIFY(!pending);
 }
@@ -240,7 +241,7 @@ void test_service_memory::deleteCommitFailsKeepsAll()
 	QVERIFY(!keys.contains(nullptr));
 	const db_key *db = Database.model<db_key>();
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->deleteItems(ctx, keys); }),
 		QString("database_error"));
@@ -265,7 +266,7 @@ void test_service_memory::newTemplateRollback()
 	TemplateSpec spec;
 	spec.name = "BTD-130 template";
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_temp>()->newTemplate(ctx, spec); }),
 		QString("database_error"));
@@ -277,7 +278,7 @@ void test_service_memory::newTemplateRollback()
 
 void test_service_memory::newKeyRollback()
 {
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_key>()->newKey(ctx,
 			keyjob("EC:prime256v1"), "BTD-130 key"); }),
@@ -296,7 +297,7 @@ void test_service_memory::newCertRollback()
 	QVERIFY(key);
 	IssuanceSpec spec = caSpec("BTD-130 CA", key, 1);
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_x509>()->newCert(ctx, spec); }),
 		QString("database_error"));
@@ -320,7 +321,7 @@ void test_service_memory::newRequestRollback()
 	spec.key = key;
 	spec.hashAlgo = digest(NID_sha256);
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_x509req>()->newRequest(ctx, spec); }),
 		QString("database_error"));
@@ -340,7 +341,7 @@ void test_service_memory::newCrlRollback()
 	rev.setReason("Key Compromise");
 	Database.model<db_x509>()->revoke(ctx, ee, rev);
 
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	QCOMPARE(errorCode([&]() {
 		Database.model<db_crl>()->newCrl(ctx, crljob(ca)); }),
 		QString("database_error"));
@@ -557,9 +558,9 @@ void test_service_memory::pkcs12MigrationCommitFails()
 	Database.close();
 	/* the first nested commit of the open is the algorithm of the
 	 * migration: it rolls back, the outer commit fails */
-	DbTransaction::injectNestedRollback();
+	TestSeams::injectNestedRollback();
 	openDatabase();
-	QVERIFY(!DbTransaction::injectionPending());
+	QVERIFY(!TestSeams::injectionPending());
 
 	/* a query of the new connection */
 	q = QSqlQuery();

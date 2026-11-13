@@ -39,6 +39,10 @@ class crljob
 	 * (BTD-42): command, init, revoke, reissue_due, missing; empty
 	 * for the GUI */
 	QString trigger{};
+	/* The checks of thisUpdate that bxc-pki crl --allow-stale-crl
+	 * overrode, the audit param allow_stale (BTD-220): a comma list of
+	 * expired_at_issue, this_update_before_latest; empty for none */
+	QString allowStale{};
 
 	crljob(pki_x509 *x = nullptr) : issuer(x),
 		withReason(true),

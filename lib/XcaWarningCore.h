@@ -67,7 +67,11 @@ class xcaWarningCore : public QObject, public xcaWarning_i
 	virtual bool print_cmdline(const char *color, const QString &msg);
 
   public:
-	static void setConfirmations(bool all, const QStringList &ids);
+	/* The ids of all questions (XCA_YESNO, XCA_OKCANCEL,
+	 * xcaWarning::confirm()), the one list --confirm accepts */
+	static const QStringList &questionIds();
+	/* ids are trimmed; returns the ids that name no question */
+	static QStringList setConfirmations(bool all, const QStringList &ids);
 
 	void information(const QString &msg);
 	void warning(const QString &msg);
@@ -129,14 +133,7 @@ class xcaWarning
 		if (err.isValid())
 			gui->sqlerror(err);
 	}
-	static void error(const errorEx &err)
-	{
-		if (err.isEmpty())
-			return;
-		QString msg = QObject::tr("The following error occurred:") +
-			"\n" + err.getString();
-		gui->error(msg);
-	}
+	static void error(const errorEx &err);
 	static void setGui(class xcaWarning_i *g)
 	{
 		delete gui;

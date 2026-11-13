@@ -9,6 +9,7 @@
 #include <QDebug>
 
 #include "arguments.h"
+#include "Passwd.h"
 
 #include <stdio.h>
 #include <QCommandLineParser>
@@ -22,16 +23,20 @@
 const QList<arg_option> arguments::opts = {
 	arg_option("audit-adopt", NULL, no_argument, true, true,
 		"Sign an audit log that has no audit key yet and more unsigned entries than the checkpoint interval allows, e.g. written without the database password. Records the number of adopted entries in the log; check the log first. Needs --password."),
+	arg_option("audit-checkpoint-interval", "n|current", required_argument, true, true,
+		"Set the audit checkpoint interval to <n> (1 to 1000; needs --password; written as a settings.update audit entry), or show it with 'current'. Prints one JSON line with the old and the new value, or the value."),
 	arg_option("audit-export", "file", file_argument, true, true,
 		"Write the audit log as JSON Lines to <file>, '-' for standard output."),
 	arg_option("audit-key", "key-id-list", required_argument, false, true,
 		"Trust anchor for --audit-verify: comma separated audit key ids (audit_keys of an earlier report or export). The check fails with reason untrusted_key unless the first audit key of the log is one of them."),
 	arg_option("audit-min-checkpoint", "seq", required_argument, false, true,
 		"Trust anchor for --audit-verify: the newest checkpoint sequence number an earlier report saw. The check fails with reason checkpoint_truncated if the log has no checkpoint up to <seq>."),
+	arg_option("audit-rotate-key", NULL, no_argument, true, true,
+		"Create a new audit key and hand over to it with a checkpoint signed by the old key, which is retired. Needs --password."),
 	arg_option("audit-verify", NULL, no_argument, true, true,
 		"Verify the hash chain of the audit log and the revocations against it. Prints a JSON report and exits with 1 if the check fails."),
 	arg_option("confirm", "id-list", required_argument, false, false,
-		"Answer the questions in the comma separated id-list with 'yes' (e.g. key.size for an RSA or DSA key outside 1024..8192 bit). Without GUI any other question ends the command with an error; the error names the id."),
+		"Answer the questions in the comma separated id-list with 'yes' (e.g. key.size for an RSA or DSA key outside 1024..8192 bit; above 16384 bit, and DSA below 512 bit, the key is refused). Without GUI any other question ends the command with an error; the error names the id. An unknown id is an error and nothing is opened."),
 	arg_option("crlgen", "ca-identifier", required_argument, true, true,
 		"Generate CRL for <ca>. Use the 'name' option to set the internal name of the new CRL."),
 	arg_option("database", "database", file_argument, false, false,
@@ -45,7 +50,9 @@ const QList<arg_option> arguments::opts = {
 	arg_option("index", "file", file_argument, true, true,
 		"Save OpenSSL index in <file>."),
 	arg_option("import", NULL, no_argument, false, true,
-		"Import all provided items into the database."),
+		"Import all provided items into the database. A file that "
+		"cannot be read is reported and audited, and the exit code "
+		"is 1; the readable items are imported."),
 	arg_option("import-names", NULL, required_argument, false, true,
 		"A semicolon separated list of names applied to the imported items in the order found in the PEM file and on the commandline."),
 	arg_option("interactive", NULL, no_argument, false, false,
@@ -69,7 +76,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("no-gui", NULL, no_argument, true, false,
 		"Do not start the GUI. Alternatively set environment variable XCA_NO_GUI=1 or call xca as 'xca-console' symlink."),
 	arg_option("password", "password", required_argument, false, false,
-		"Database password for unlocking the database. Without GUI it is checked when the database is opened, a wrong one ends the command with an error; without this option only the public objects can be listed. An empty value (--password \"\") counts as no option, while a source that yields an empty password is an error; a database with an empty password is therefore opened without this option. It also answers every request for the database password and for keys with their own password. See below for password format options."),
+		"Database password for unlocking the database. Without GUI it is checked when the database is opened, a wrong one ends the command with an error; without this option only the public objects can be listed. An empty value (--password \"\") is an error and nothing is opened, as is a source that yields an empty password; a database with an empty password is opened without this option. It also answers every request for the database password and for keys with their own password. See below for password format options."),
 	arg_option("pem", NULL, no_argument, true, false,
 		"Print PEM representation of provided files. Prints only the public part of private keys."),
 	arg_option("pem-file", NULL, file_argument, true, false,
@@ -79,7 +86,7 @@ const QList<arg_option> arguments::opts = {
 	arg_option("select", "id-list", required_argument, true, true,
 		"Selects all items in the comma separated id-list to be shown with 'print', 'text' or 'pem'."),
 	arg_option("sqlpass", "password", required_argument, false, false,
-		"Password to access the remote SQL server. See below for password format options."),
+		"Password to access the remote SQL server. An empty value (--sqlpass \"\") is an error and nothing is opened. See below for password format options."),
 	arg_option("text", NULL, no_argument, true, false,
 		"Print the content of provided files as OpenSSL does."),
 	arg_option("verbose", NULL, no_argument, false, false,
@@ -311,36 +318,40 @@ int arguments::parse(int argc, char *argv[])
 	files.clear();
 	need_db = false;
 
-	QCommandLineParser parser;
-	foreach(const arg_option &opt, opts)
-		parser.addOption(opt.getCmdOption());
-
-	/* Parse cmdline options argv */
+	/* Parse cmdline options argv. The copies may hold a --password
+	 * value: they are wiped once the parser is gone (BTD-74) */
 	QStringList args;
 	for (int i =0; i < argc; i++)
 		args << QString::fromUtf8(argv[i]);
-	parser.process(args);
+	{
+		QCommandLineParser parser;
+		foreach(const arg_option &opt, opts)
+			parser.addOption(opt.getCmdOption());
+		parser.process(args);
 
-	QStringList found = parser.optionNames();
-	foreach(const arg_option &opt, opts) {
-		if (found.contains(opt.long_opt)) {
-			/* value() of a flag warns "option not expecting values" */
-			found_options[opt.long_opt] = opt.arg_type == no_argument ?
-				QString() : parser.value(opt.long_opt);
-			if (opt.need_db)
-				need_db = true;
+		QStringList found = parser.optionNames();
+		foreach(const arg_option &opt, opts) {
+			if (found.contains(opt.long_opt)) {
+				/* value() of a flag warns "option not expecting values" */
+				found_options[opt.long_opt] = opt.arg_type == no_argument ?
+					QString() : parser.value(opt.long_opt);
+				if (opt.need_db)
+					need_db = true;
+			}
+		}
+		foreach(const QString &file, parser.positionalArguments()) {
+			if (!has("database") && file.endsWith(".xdb")) {
+				/* No database given, but here is an xdb file
+				 * Try to be clever.
+				 */
+				found_options["database"] = file;
+			} else {
+				files << file;
+			}
 		}
 	}
-	foreach(const QString &file, parser.positionalArguments()) {
-		if (!has("database") && file.endsWith(".xdb")) {
-			/* No database given, but here is an xdb file
-			 * Try to be clever.
-			 */
-			found_options["database"] = file;
-		} else {
-			files << file;
-		}
-	}
+	for (QString &arg : args)
+		secretCleanse(arg);
 	return result;
 }
 
@@ -352,6 +363,20 @@ arguments::arguments(int argc, char *argv[])
 arguments::arguments(const arguments &a)
 {
 	*this = a;
+}
+
+arguments::~arguments()
+{
+	forgetSecrets();
+}
+
+void arguments::forgetSecrets()
+{
+	for (const QString &opt : secret_opts) {
+		auto it = found_options.find(opt);
+		if (it != found_options.end())
+			secretCleanse(*it);
+	}
 }
 
 arguments &arguments::operator = (const arguments &a)

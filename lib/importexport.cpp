@@ -21,8 +21,10 @@
 #include "pki_crl.h"
 #include "PwDialogCore.h"
 #include "sql.h"
+#include "template.h"
 
 #include <QBuffer>
+#include <QFileInfo>
 #include <QMap>
 #include <QSaveFile>
 
@@ -172,20 +174,31 @@ pki_base *findExisting(db_base *db, pki_base *pki, pki_key **completes)
 
 /* A stored CRL: its CA, number and nextUpdate, and whether it raised the
  * CA's last CRL number (BTD-49) */
-bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p)
+bool raiseCrlNumber(db_crl *db, pki_crl *crl, AuditParams &p,
+			QStringList *warnings)
 {
 	pki_x509 *ca = crl->getIssuer();
 	a1int num;
 
 	if (ca && ca->getSqlItemId().isValid())
 		p.set("ca_id", ca->getSqlItemId().toLongLong());
-	bool numeric = crl->getCrlNumber(&num);
-	qint64 number = numeric ? num.toDec().toLongLong(&numeric) : 0;
-	if (numeric)
+	qint64 number = 0;
+	/* only a JSON-safe number goes into the audit entry (BTD-123) */
+	if (crl->getCrlNumber(&num) &&
+	    db_crl::crlNumberValue(num, &number))
 		p.set("crl_number", number);
 	p.set("next_update", (QDateTime)crl->getNextUpdate());
-	bool raised = db->raiseCrlNumber(crl);
+	bool outOfRange = false;
+	bool raised = db->raiseCrlNumber(crl, &outOfRange);
 	p.set("authority_updated", raised);
+	if (outOfRange) {
+		p.set("warning", "crl_number_out_of_range");
+		*warnings << QObject::tr("The CRL number %1 of '%2' is above "
+			"the limit %3: the CA '%4' keeps its CRL number")
+			.arg(num.toDec(), crl->getIntName())
+			.arg(db_crl::maxCrlNumber)
+			.arg(ca->getIntName());
+	}
 	return raised;
 }
 }
@@ -207,6 +220,23 @@ static void dropItems(const QList<pki_base *> &items, const ImportSpec &spec)
 	}
 }
 
+/* A CRL in the store whose CA is not stored yet: a certificate of any
+ * kind may turn out to be its issuer when it is stored (BTD-122) */
+static bool orphanCrls()
+{
+	for (pki_crl *c : Store.getAll<pki_crl>())
+		if (!c->getIssuer())
+			return true;
+	return false;
+}
+
+QString importFailureCode(const QString &file, bool data)
+{
+	QFileInfo fi(file);
+	return data || (fi.isFile() && fi.isReadable()) ? "no_pki_data" :
+		"unreadable_input";
+}
+
 ImportResult database_model::importItems(const ServiceContext &ctx,
 				const ImportSpec &spec)
 {
@@ -215,6 +245,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 	QList<pki_crl *> raised;
 	AuditParams params;
 	QStringList sources = spec.files;
+	/* every failed file has its own failure entry: no second one for
+	 * the import as a whole (BTD-270) */
+	bool perFile = false;
 
 	if (!spec.data.isEmpty())
 		sources << (spec.dataName.isEmpty() ?
@@ -255,10 +288,24 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		}
 		items += read.pull();
 		result.failedFiles = read.failed_files;
+		for (const QString &f : spec.failedFiles)
+			if (!result.failedFiles.contains(f))
+				result.failedFiles << f;
+		/* one failure entry per file that could not be read, before
+		 * anything is stored; the readable objects are imported all
+		 * the same (BTD-270) */
+		for (const QString &f : result.failedFiles) {
+			AuditParams p;
+			p.set("file", f);
+			AuditLog::appendFailure(ctx, "object.import", "object",
+				QString(), p, importFailureCode(f,
+					!spec.data.isEmpty() && f == spec.dataName));
+		}
 		params.set("count", (qint64)items.size());
 
 		if (items.isEmpty()) {
-			if (!result.failedFiles.isEmpty())
+			perFile = !result.failedFiles.isEmpty();
+			if (perFile)
 				throw serviceError("no_pki_data",
 					tr("No PKI data found in: '%1'").arg(
 					result.failedFiles.join("', '")));
@@ -270,6 +317,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 				throw serviceError("unsupported_type",
 					tr("The type of the item '%1' is not recognized")
 					.arg(pki->getIntName()));
+			/* the check of db_temp::newTemplate() (BTD-192) */
+			if (pki_temp *t = dynamic_cast<pki_temp *>(pki))
+				TemplateSpec::fromTemplate(t).extensions.checkEkuNames();
 		}
 
 		Transaction;
@@ -311,7 +361,16 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 			if (completes)
 				p.set("item_id", itemId(completes));
 
-			revocationTable before = readRevocations();
+			/* Only a CRL or a CA certificate can change revocation
+			 * rows (revokeCerts(), the CRLs stored before their CA,
+			 * the take-over of db_x509::inToCont()); a key, request
+			 * or template does not read the table (BTD-115) */
+			pki_x509 *cert = dynamic_cast<pki_x509 *>(pki);
+			bool revocations = dynamic_cast<pki_crl *>(pki) ||
+				(cert && (cert->isCA() || orphanCrls()));
+			revocationTable before;
+			if (revocations)
+				before = readRevocations();
 			items.removeFirst();
 			pki_base *stored;
 			try {
@@ -346,17 +405,21 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 					linked << c;
 				}
 			}
-			auditRevocationChanges(ctx, before, readRevocations());
+			if (revocations)
+				auditRevocationChanges(ctx, before,
+						readRevocations());
 			for (pki_crl *c : linked) {
 				AuditParams lp;
 				lp.set("name", c->getIntName());
-				if (raiseCrlNumber(model<db_crl>(), c, lp))
+				if (raiseCrlNumber(model<db_crl>(), c, lp,
+						&result.warnings))
 					raised << c;
 				AuditLog::append(ctx, "crl.link", auditObjectType(c),
 					itemId(c), lp);
 			}
 			pki_crl *crl = dynamic_cast<pki_crl *>(stored);
-			if (crl && raiseCrlNumber(model<db_crl>(), crl, p))
+			if (crl && raiseCrlNumber(model<db_crl>(), crl, p,
+						&result.warnings))
 				raised << crl;
 
 			p.set("name", stored->getIntName());
@@ -376,8 +439,9 @@ ImportResult database_model::importItems(const ServiceContext &ctx,
 		 * back to the caller or is deleted (BTD-114) */
 		dropItems(items + result.created, spec);
 		/* after the rollback, so the entry is kept (lib/audit.h) */
-		AuditLog::appendFailure(ctx, "object.import", "object", QString(),
-				params, err.code);
+		if (!perFile)
+			AuditLog::appendFailure(ctx, "object.import", "object",
+					QString(), params, err.code);
 		throw;
 	} catch (...) {
 		dropItems(items + result.created, spec);
@@ -679,7 +743,8 @@ QByteArray db_base::exportItems(const ServiceContext &ctx,
 		 * temporary file carries the permissions set above (POSIX);
 		 * on Windows the inherited ACL of the directory, and the
 		 * directory must be writable (no direct-write fallback) */
-		if (!spec.fileName.isEmpty() && !file.commit())
+		if (!spec.fileName.isEmpty() && !(spec.commitFile ?
+				spec.commitFile(file) : file.commit()))
 			throw serviceError("write_failed",
 				tr("Failed writing to %1: %2").arg(spec.fileName)
 				.arg(file.errorString()));

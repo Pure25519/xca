@@ -78,8 +78,27 @@ void pki_base::autoIntName(const QString &file)
 	setIntName(rmslashdot(file));
 }
 
-void pki_base::deleteFromToken() { }
-void pki_base::deleteFromToken(const slotid &) { }
+TokenDeletion pki_base::prepareTokenDeletion() { return TokenDeletion(); }
+TokenDeletion pki_base::prepareTokenDeletion(const slotid &)
+{
+	return TokenDeletion();
+}
+
+bool pki_base::deleteFromToken()
+{
+	TokenDeletion d = prepareTokenDeletion();
+	if (d.found)
+		d.destroy();
+	return d.found;
+}
+
+bool pki_base::deleteFromToken(const slotid &slot)
+{
+	TokenDeletion d = prepareTokenDeletion(slot);
+	if (d.found)
+		d.destroy();
+	return d.found;
+}
 void pki_base::writeDefault(const QString&) const { }
 void pki_base::fromPEM_BIO(BIO *, const QString &) { }
 void pki_base::fload(const QString &fname)
@@ -90,9 +109,18 @@ void pki_base::fload(const QString &fname)
 }
 
 void pki_base::fromBytes(const QByteArray &, const QString &) { }
-int pki_base::renameOnToken(const slotid &, const QString &)
+TokenRename pki_base::prepareTokenRename(const slotid &, const QString &)
 {
-	return 0;
+	return TokenRename();
+}
+
+int pki_base::renameOnToken(const slotid &slot, const QString &name)
+{
+	TokenRename r = prepareTokenRename(slot, name);
+	if (!r.found)
+		return 0;
+	r.apply();
+	return 1;
 }
 
 QString pki_base::getUnderlinedName() const
@@ -278,6 +306,14 @@ void pki_base::insert(pki_base *item)
 {
 	if (!childItems.contains(item)) {
 		childItems.prepend(item);
+		item->setParent(this);
+	}
+}
+
+void pki_base::insertAt(int row, pki_base *item)
+{
+	if (!childItems.contains(item)) {
+		childItems.insert(qBound(0, row, childItems.size()), item);
 		item->setParent(this);
 	}
 }

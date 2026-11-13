@@ -9,6 +9,7 @@
 #include <QThread>
 #include <QDialog>
 #include <QCheckBox>
+#include <QPushButton>
 
 #include "widgets/MainWindow.h"
 #include "ui_MainWindow.h"
@@ -63,6 +64,11 @@ static void renew_del_keep_serial(CertExtend *dlg)
 	dlg->revoke->setCheckState(Qt::Unchecked);
 	dlg->noWellDefinedExpDate->setCheckState(Qt::Checked);
 	dlg->keepSerial->setCheckState(Qt::Checked);
+	/* the undefined end outlives the finite Root CA: the dialog warns
+	 * since BTD-118; "Adjust date and continue" takes the CA's end */
+	whenShown<xcaWarningBox>("dlg_warning", [](xcaWarningBox *box) {
+		box->button(QMessageBox::Yes)->click();
+	});
 	dlg->buttonBox->button(QDialogButtonBox::Ok)->click();
 }
 
@@ -195,8 +201,13 @@ void test_main::revoke()
 	bool found = false;
 	x509revList revs = dynamic_cast<pki_x509*>(certs->getByName("Root CA"))->getRevList();
 	for (x509rev r : revs) {
-		if (r.getSerial() == serial)
-			found = true;
+		if (r.getSerial() != serial)
+			continue;
+		found = true;
+		/* BTD-206: the dialog left as it opens gives no invalidity
+		 * date, so the CRL entry gets no Invalidity Date */
+		QVERIFY2(r.getInvalDate().isUndefined(),
+			CCHAR(r.getInvalDate().toPlain()));
 	}
 	QVERIFY2(found, "Revoked serial not found");
 

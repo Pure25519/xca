@@ -22,11 +22,13 @@
 #include "audit.h"
 #include "issuance.h"
 #include "issuance_checks.h"
+#include "crl_policy.h"
 #include "profile_store.h"
 #include "request.h"
 
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
+#include "staged_file.h"
 
 #include <QCoreApplication>
 #include <algorithm>
@@ -272,18 +274,20 @@ void db_x509::writeIndex(const QString &fname, bool hierarchy) const
 		QList<pki_x509*> issuers = Store.sqlSELECTpki<pki_x509>(
 			"SELECT DISTINCT issuer FROM certs WHERE issuer != item");
 		foreach(pki_x509 *ca, issuers) {
-			XFile file(dir + ca->getUnderlinedName() + ".txt");
-			file.open_write();
-			writeIndex(file, Store.sqlSELECTpki<pki_x509>(
+			QList<pki_x509*> certs = Store.sqlSELECTpki<pki_x509>(
 				"SELECT item FROM certs WHERE issuer=?",
-				QList<QVariant>()<<QVariant(ca->getSqlItemId()))
-			);
+				QList<QVariant>()<<QVariant(ca->getSqlItemId()));
+			StagedFile::writeWith(dir + ca->getUnderlinedName() +
+				".txt", false, true, [&](QIODevice &file) {
+					writeIndex(file, certs);
+				});
 		}
 	} else {
-		XFile file(fname);
-		file.open_write();
-		writeIndex(file, Store.sqlSELECTpki<pki_x509>(
-					"SELECT item FROM certs"));
+		QList<pki_x509*> certs = Store.sqlSELECTpki<pki_x509>(
+					"SELECT item FROM certs");
+		/* staged: a failed write keeps an old index (BTD-139) */
+		StagedFile::writeWith(fname, false, true,
+			[&](QIODevice &file) { writeIndex(file, certs); });
 	}
 }
 
@@ -408,9 +412,9 @@ static AuditParams issuanceParams(const IssuanceSpec &spec)
 {
 	AuditParams p;
 	p.set("name", spec.name);
-	p.set("subject", spec.subject.oneLine());
+	p.set("subject", spec.subject.rfc4514());
 	if (spec.signer) {
-		p.set("issuer", spec.signer->getSubject().oneLine());
+		p.set("issuer", spec.signer->getSubject().rfc4514());
 		p.set("ca_id", spec.signer->getSqlItemId().toLongLong());
 	}
 	p.set("not_before", (QDateTime)spec.notBefore);
@@ -470,15 +474,15 @@ static void recordProfile(const IssuanceSpec &spec, pki_x509 *cert)
 	SQL_PREPARE(q, "INSERT INTO issued_profiles (item, profile, version, "
 		"policy_names) VALUES (?, ?, ?, ?)");
 	q.bindValue(0, cert->getSqlItemId());
-	q.bindValue(1, spec.profile);
-	q.bindValue(2, spec.profileVersion);
+	q.bindValue(1, spec.profileVersion ? QVariant(spec.profile) : QVariant());
+	q.bindValue(2, spec.profileVersion ? QVariant(spec.profileVersion) :
+						QVariant());
 	q.bindValue(3, policies.join(","));
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The profile of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The profile of the certificate could not "
+			"be stored"));
 }
 
 /* The predecessor of a renewal (BTD-56); inside the issuing transaction.
@@ -496,10 +500,9 @@ static void recordRenewal(const IssuanceSpec &spec, pki_x509 *cert)
 			X509_get0_pubkey(old->getCert())) == 1 ? 0 : 1);
 	q.exec();
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QCoreApplication::translate("db_x509",
-			"The predecessor of the certificate could not be stored: %1")
-			.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QCoreApplication::translate(
+			"db_x509", "The predecessor of the certificate could "
+			"not be stored"));
 }
 
 /* The extensions of the predecessor in their order (BTD-56). A new key
@@ -661,17 +664,28 @@ static void *requestedExt(X509_REQ *req, int nid, int *critical)
 	return value;
 }
 
-/* Replaces or adds the extension nid of cert, keeping its place */
+X509_EXTENSION *(*db_x509::encodeExtension)(int, int, void *) =
+	X509V3_EXT_i2d;
+
+/* Replaces or adds the extension nid of cert, keeping its place. Encodes
+ * first: a value that does not encode is an error and the template's
+ * extension stays, never a certificate without it (BTD-192) */
 static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 {
 	X509 *x = cert->getCert();
+	X509_EXTENSION *ext = db_x509::encodeExtension(nid, critical, value);
 	int at = X509_get_ext_by_NID(x, nid, -1);
-	if (at >= 0)
-		X509_EXTENSION_free(X509_delete_ext(x, at));
-	X509_EXTENSION *ext = X509V3_EXT_i2d(nid, critical, value);
-	if (ext)
-		X509_add_ext(x, ext, at);
+	X509_EXTENSION *old = ext && at >= 0 ? X509_delete_ext(x, at) : nullptr;
+	bool added = ext && X509_add_ext(x, ext, at);
+	if (!added && old)
+		X509_add_ext(x, old, at);
+	X509_EXTENSION_free(old);
 	X509_EXTENSION_free(ext);
+	if (!added)
+		throw serviceError("invalid_extension", QString("%1\n%2")
+			.arg(QCoreApplication::translate("db_x509",
+				"The extension %1 cannot be added.")
+				.arg(OBJ_nid2sn(nid)), take_openssl_errors()));
 }
 
 /* The EKU a CSR asks for: its own, or ekuDefault when it has none
@@ -681,6 +695,8 @@ static void putExt(pki_x509 *cert, int nid, void *value, int critical)
 static EXTENDED_KEY_USAGE *requestedEku(const ExtensionSpec &e,
 			X509_REQ *req, int *critical, bool leaf, bool *fromDefault)
 {
+	/* a spec that bypassed the template check (BTD-192) */
+	e.checkEkuNames();
 	EXTENDED_KEY_USAGE *eku = (EXTENDED_KEY_USAGE *)
 			requestedExt(req, NID_ext_key_usage, critical);
 	*fromDefault = !eku && !e.ekuDefault.isEmpty();
@@ -846,7 +862,12 @@ static void mergeRequest(const IssuanceSpec &spec, pki_x509 *cert,
 			crit = templCrit;
 		}
 		freeExtValue(nid, t);
-		putExt(cert, nid, value, crit > 0);
+		try {
+			putExt(cert, nid, value, crit > 0);
+		} catch (...) {
+			freeExtValue(nid, value);
+			throw;
+		}
 		freeExtValue(nid, value);
 	}
 	*merge = decisions.join(",");
@@ -899,6 +920,14 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	X509V3_CTX ext_ctx{};
 
     try {
+	/* the password or PIN of the signing key before the transaction:
+	 * no prompt while the database is locked (BTD-273) */
+	KeyUnlock unlock;
+	unlock.add(spec.signer ? spec.signer->getRefKey() : spec.key ?
+		spec.key : spec.request ? spec.request->getRefKey() : nullptr);
+	/* the write lock is taken at the outermost BEGIN (BTD-274): the
+	 * uniqueness rule reads the certificates of the database, and no
+	 * other process stores one until this issuance commits (BTD-201) */
 	Transaction;
 	TransThrow();
 
@@ -955,7 +984,19 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	// set the issuers name
 	cert->setIssuer(signcert->getSubject());
 
-	// Step 3 - Choose the Date, capped at the issuer chain
+	// Step 3 - Choose the Date, capped at the issuer chain; a CA whose
+	// end is no valid time would cap nothing (BTD-118)
+	QList<const pki_x509 *> chainSeen;
+	for (const pki_x509 *ca = spec.signer; ca && !chainSeen.contains(ca);
+	     ca = ca->getSigner()) {
+		chainSeen << ca;
+		a1time caEnd = ca->getNotAfter();
+		/* isUndefined() is true for an invalid time as well */
+		if (!caEnd.isValid())
+			throw serviceError("invalid_validity",
+				tr("The certificate of the CA '%1' has no valid end date")
+				.arg(ca->getIntName()));
+	}
 	bool capped;
 	a1time notAfter = spec.effectiveNotAfter(&capped);
 	if (capped && notAfter <= spec.notBefore)
@@ -1057,7 +1098,7 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	cert->pkiSource = spec.source;
 
 	params.set("serial", cert->getSerial().toHex());
-	params.set("subject", cert->getSubject().oneLine());
+	params.set("subject", cert->getSubject().rfc4514());
 	params.set("name", cert->getIntName());
 	params.set("fingerprint", cert->fingerprint(EVP_sha256()));
 	/* what was signed with: hash_algo is what the spec asked for, a
@@ -1078,7 +1119,9 @@ pki_x509 *db_x509::issue(const IssuanceSpec &spec, AuditParams &params,
 	delete tempkey;
 	tempkey = nullptr;
 	markRequestSigned(spec.request, stored);
-	if (spec.profileVersion)
+	/* every issuance under a profile or a policy, also policies of the
+	 * CA only, so that a used policy cannot be deleted (BTD-201) */
+	if (spec.profileVersion || !named.policies.isEmpty())
 		recordProfile(named, stored);
 	if (spec.predecessor)
 		recordRenewal(spec, stored);
@@ -1122,10 +1165,53 @@ pki_x509 *db_x509::newCert(const ServiceContext &ctx,
 	return issueAudited(ctx, spec, "certificate.issue");
 }
 
+/* The parameters of a renewal's failure entry before its spec exists */
+static AuditParams renewalParams(const RenewalSpec &r)
+{
+	AuditParams p;
+	if (r.predecessor) {
+		p.set("name", r.predecessor->getIntName());
+		p.set("predecessor_id",
+			r.predecessor->getSqlItemId().toLongLong());
+		p.set("predecessor_serial", r.predecessor->getSerial().toHex());
+	}
+	return p;
+}
+
+/* The key that signs a renewal: the issuer's, or for a self-signed
+ * predecessor its new or own key (RenewalSpec::issuanceSpec()) */
+static pki_key *renewalSigningKey(const RenewalSpec &r)
+{
+	if (!r.predecessor)
+		return nullptr;
+	pki_x509 *signer = r.predecessor->getSigner();
+	if (signer && signer != r.predecessor)
+		return signer->getRefKey();
+	return r.newKey ? r.newKey : r.predecessor->getRefKey();
+}
+
 QList<pki_x509 *> db_x509::renew(const ServiceContext &ctx,
 			const QList<RenewalSpec> &specs)
 {
 	QList<pki_x509 *> renewed;
+	/* every signing key before the transaction: no prompt while the
+	 * database is locked (BTD-273) */
+	KeyUnlock unlock;
+	for (const RenewalSpec &r : specs) {
+		try {
+			unlock.add(renewalSigningKey(r));
+		} catch (serviceError &err) {
+			AuditLog::appendFailure(ctx, "certificate.renew",
+				"certificate", QString(), renewalParams(r),
+				err.code);
+			throw;
+		} catch (...) {
+			AuditLog::appendFailure(ctx, "certificate.renew",
+				"certificate", QString(), renewalParams(r),
+				"internal_error");
+			throw;
+		}
+	}
 	/* the failure entry of a renewal is written inside this
 	 * transaction and rolled back with it: kept and written again
 	 * after the rollback, unless a caller's transaction (the command
@@ -1141,16 +1227,9 @@ QList<pki_x509 *> db_x509::renew(const ServiceContext &ctx,
 			try {
 				spec = r.issuanceSpec();
 			} catch (serviceError &err) {
-				AuditParams p;
-				if (r.predecessor) {
-					p.set("name", r.predecessor->getIntName());
-					p.set("predecessor_id", r.predecessor->
-						getSqlItemId().toLongLong());
-					p.set("predecessor_serial",
-						r.predecessor->getSerial().toHex());
-				}
 				AuditLog::appendFailure(ctx, "certificate.renew",
-					"certificate", QString(), p, err.code);
+					"certificate", QString(),
+					renewalParams(r), err.code);
 				throw;
 			}
 			renewed << issueAudited(ctx, spec, "certificate.renew");
@@ -1490,9 +1569,8 @@ static void insertRevocation(const QVariant &caId, x509rev rev)
 	q.bindValue(0, caId);
 	rev.executeQuery(q);
 	if (q.lastError().isValid())
-		throw serviceError("database_error",
-			QObject::tr("Database error: %1")
-				.arg(q.lastError().text()));
+		throwSqlError(q.lastError(), QObject::tr("The revocation "
+			"could not be stored"));
 }
 
 /* Reason and dates only: the CRL number of the first appearance stays */
@@ -1528,7 +1606,7 @@ static AuditParams revocationParams(const pki_x509 *ca, const QString &serial,
 	AuditParams p = AuditParams::revocation(
 		ca ? ca->getSqlItemId().toLongLong() : 0, serial,
 		rev.getReasonBit(), rev.getDate(), rev.getInvalDate());
-	if (rev.getReasonBit() >= 0)
+	if (rev.hasReason())
 		p.set("reason", rev.getReason());
 	if (rev.getCrlNo())
 		p.set("crl_number", (qint64)rev.getCrlNo());
@@ -1590,6 +1668,14 @@ void db_x509::revoke(const ServiceContext &ctx, pki_x509 *cert,
 		if (rev.getReasonBit() < 0)
 			throw serviceError("invalid_reason",
 				tr("Unknown revocation reason"));
+		/* the key cannot become invalid after its revocation; the
+		 * command line refuses it earlier with the same code (BTD-206) */
+		if (!rev.getInvalDate().isUndefined() &&
+		    (QDateTime)rev.getInvalDate() > (QDateTime)rev.getDate())
+			throw serviceError("invalid_invalidity_date",
+				tr("The invalidity date %1 is after the revocation date %2")
+					.arg(rev.getInvalDate().toPrettyGMT())
+					.arg(rev.getDate().toPrettyGMT()));
 		if (cert->isRevoked() || indexOfSerial(revocationRows(
 				ca->getSqlItemId()), rev.getSerial()) != -1)
 			throw serviceError("already_revoked",
@@ -1775,21 +1861,57 @@ void db_x509::toToken(QModelIndex idx, bool alwaysSelect)
         }
 }
 
-void db_x509::updateCaProperties(pki_x509 *cert)
+const char db_x509::actionSetTemplate[] = "ca.set_template";
+
+void db_x509::setCaProperties(const ServiceContext &ctx, pki_x509 *ca,
+		int crlDays, const QVariant &templateId)
 {
-	XSqlQuery q;
-	Transaction;
-	TransThrow();
+	if (!ca)
+		throw serviceError("issuer_not_ca",
+			tr("No CA certificate given"));
+	bool daysChanged = crlDays != ca->getCrlDays();
+	bool templateChanged = templateId != ca->getTemplateSqlId();
+	if (!daysChanged && !templateChanged)
+		return;
 
-	SQL_PREPARE(q, "UPDATE authority SET crlDays=?, "
-			"template=? WHERE item=?");
+	/* the setting the command line uses, with the GUI's days; a
+	 * broken stored row is refused here like in the command line */
+	CrlPolicy policy = CrlPolicy::of(ca);
+	if (daysChanged)
+		policy.validity = CrlPolicy::checkValidity(IsoDuration::parse(
+				QString("P%1D").arg(crlDays)), "crl_days");
+	pki_temp *temp = Store.lookupPki<pki_temp>(templateId);
+	AuditParams templateParams;
+	templateParams.set("ca_id", ca->getSqlItemId().toLongLong());
+	templateParams.set("name", ca->getIntName());
+	templateParams.set("template", temp ? temp->getIntName() : QString());
 
-	q.bindValue(0, cert->getCrlDays());
-	q.bindValue(1, cert->getTemplateSqlId());
-	q.bindValue(2, cert->getSqlItemId());
-
-	AffectedItems(cert->getSqlItemId());
-	execOrThrow(q, tr("The CA properties of '%1' could not be stored")
-			.arg(cert->getIntName()));
-	TransCommitThrow();
+	QString id = ca->getSqlItemId().toString();
+	auditedTransaction(ctx, daysChanged ? CrlPolicy::actionSettings :
+			actionSetTemplate, "certificate", id,
+			daysChanged ? policy.auditParams(ca) : templateParams,
+			[&]() {
+		if (!ca->isCA())
+			throw serviceError("issuer_not_ca",
+				tr("'%1' is no CA certificate")
+					.arg(ca->getIntName()));
+		if (daysChanged)
+			policy.storeIn(ctx, ca);
+		if (!templateChanged)
+			return;
+		XSqlQuery q;
+		SQL_PREPARE(q, "UPDATE authority SET template=? WHERE item=?");
+		q.bindValue(0, templateId);
+		q.bindValue(1, ca->getSqlItemId());
+		AffectedItems(ca->getSqlItemId());
+		execOrThrow(q, tr("The CA properties of '%1' could not be "
+				"stored").arg(ca->getIntName()));
+		QVariant old = ca->getTemplateSqlId();
+		ca->setTemplateSqlId(templateId);
+		DbTransaction::onRollback([ca, old]() {
+			ca->setTemplateSqlId(old);
+		});
+		AuditLog::append(ctx, actionSetTemplate, "certificate", id,
+				templateParams);
+	});
 }

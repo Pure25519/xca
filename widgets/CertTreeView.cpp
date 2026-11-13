@@ -15,6 +15,7 @@
 #include "NewCrl.h"
 #include "AutomationId.h"
 #include "lib/audit.h"
+#include "lib/db_token.h"
 #include "lib/database_model.h"
 #include "lib/db_crl.h"
 #include "lib/load_obj.h"
@@ -193,8 +194,14 @@ void CertTreeView::deleteFromToken()
 		XCA_WARN(tr("No certificate selected"));
 		return;
 	}
+	/* audited, the database row stays (BTD-248); a declined
+	 * question is no error */
 	try {
-		cert->deleteFromToken();
+		db_token::deleteOnToken(ServiceContext::localUser(
+				ServiceContext::gui), cert);
+	} catch (serviceError &err) {
+		if (err.code != "nothing_deleted")
+			XCA_ERROR(err);
 	} catch (errorEx &err) {
 		XCA_ERROR(err);
 	}
@@ -257,17 +264,14 @@ void CertTreeView::caProperties()
 		cert->getIntName(), "ca_properties");
 
 	if (dlg->exec()) {
-		int oldDays = cert->getCrlDays();
 		templ = ui.temp->currentPkiItem();
-		cert->setTemplateSqlId(templ ? templ->getSqlItemId() :
-						QVariant());
-		cert->setCrlDays(ui.days->value());
+		/* the CRL setting of the command line and the audit follow
+		 * (BTD-219); not stored: memory keeps the stored values */
 		try {
-			certs()->updateCaProperties(cert);
+			certs()->setCaProperties(ServiceContext::localUser(
+					ServiceContext::gui), cert, ui.days->value(),
+				templ ? templ->getSqlItemId() : QVariant());
 		} catch (errorEx &err) {
-			/* not stored: memory keeps the stored values (BTD-50) */
-			cert->setTemplateSqlId(tmplId);
-			cert->setCrlDays(oldDays);
 			XCA_ERROR(err);
 		}
 		columnsChanged();
