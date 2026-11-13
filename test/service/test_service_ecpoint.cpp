@@ -10,7 +10,6 @@
  * need no token.
  */
 
-#include <openssl/core_names.h>
 #include <openssl/evp.h>
 
 #include "lib/pki_scard.h"
@@ -36,7 +35,10 @@ class test_service_ecpoint : public ServiceTestCase
 };
 
 /* The encoded public point of a new key on curve; with firstX >= 0, of
- * the first key whose X coordinate starts with that byte */
+ * the first key whose X coordinate starts with that byte. The compressed
+ * form is built from the uncompressed one (02 or 03 by the parity of Y,
+ * then X): the conversion format parameter does not change the encoding
+ * of a generated key */
 QByteArray test_service_ecpoint::point(const char *curve, bool compressed,
 		int firstX)
 {
@@ -45,18 +47,20 @@ QByteArray test_service_ecpoint::point(const char *curve, bool compressed,
 				curve);
 		if (!pkey)
 			return QByteArray();
-		if (compressed)
-			EVP_PKEY_set_utf8_string_param(pkey,
-				OSSL_PKEY_PARAM_EC_POINT_CONVERSION_FORMAT,
-				"compressed");
 		unsigned char *buf = nullptr;
 		size_t len = EVP_PKEY_get1_encoded_public_key(pkey, &buf);
 		QByteArray pt((const char *)buf, (int)len);
 		OPENSSL_free(buf);
 		EVP_PKEY_free(pkey);
-		if (firstX < 0 || (pt.size() > 1 &&
-				(unsigned char)pt[1] == firstX))
-			return pt;
+		if (firstX >= 0 && (pt.size() < 2 ||
+				(unsigned char)pt[1] != firstX))
+			continue;
+		if (compressed) {
+			int f = (pt.size() - 1) / 2;
+			QByteArray c(1, char(0x02 | (pt.back() & 1)));
+			return c + pt.mid(1, f);
+		}
+		return pt;
 	}
 	return QByteArray();
 }
@@ -105,6 +109,7 @@ void test_service_ecpoint::derCompressed()
 void test_service_ecpoint::bareCompressed()
 {
 	QByteArray pt = point("P-256", true);
+	QCOMPARE(pt.size(), 33);
 	QCOMPARE(pki_scard::ecPointFromAttribute(pt, 32), pt);
 }
 

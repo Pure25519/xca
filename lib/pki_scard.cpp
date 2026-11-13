@@ -137,18 +137,27 @@ static QByteArray attribute2bytearray(pkcs11 &p11, CK_OBJECT_HANDLE object, unsi
 }
 
 /* CKA_EC_POINT is the DER encoding of an OCTET STRING with the point
- * (PKCS#11 2.40, 10.10); a token that gives the bare point is taken as it
- * is (BTD-126) */
+ * (PKCS#11 2.40, 10.10); some tokens give the bare point (BTD-126). Both
+ * start with 0x04, the OCTET STRING tag and the prefix of an uncompressed
+ * point, so a bare point can parse as a complete OCTET STRING (P-256 with
+ * X[0] = 0x3f). The rule (BTD-298): the attribute is DER only when it is
+ * one complete OCTET STRING whose content has the length of a point of
+ * the curve, 1 + 2 * fieldBytes (uncompressed, hybrid) or 1 + fieldBytes
+ * (compressed); else it is the bare point. The content of a bare point
+ * read as DER is 2 or more bytes shorter than the point, so it never has
+ * a point length. */
 QByteArray pki_scard::ecPointFromAttribute(const QByteArray &attr,
 		int fieldBytes)
 {
-	Q_UNUSED(fieldBytes);
 	const unsigned char *p = (const unsigned char *)attr.constData();
 	ASN1_OCTET_STRING *os = d2i_ASN1_OCTET_STRING(NULL, &p, attr.size());
 	QByteArray point = attr;
-	if (os && p == (const unsigned char *)attr.constData() + attr.size())
-		point = QByteArray((const char *)ASN1_STRING_get0_data(os),
-			ASN1_STRING_get_length(os));
+	if (os && p == (const unsigned char *)attr.constData() + attr.size()) {
+		int len = ASN1_STRING_get_length(os);
+		if (len == 1 + 2 * fieldBytes || len == 1 + fieldBytes)
+			point = QByteArray((const char *)
+				ASN1_STRING_get0_data(os), len);
+	}
 	ASN1_OCTET_STRING_free(os);
 	ign_openssl_error();
 	return point;
