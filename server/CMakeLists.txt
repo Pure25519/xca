@@ -42,6 +42,14 @@ if(NOT WIN32)
   target_include_directories(xca-server SYSTEM PRIVATE ${SERVER_DIR}/third_party)
   # server code only, no httplib::Client is used (condition 4)
   target_compile_definitions(xca-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+  # GCC 14 with -fsanitize=address (dev.py asan) reports a false
+  # -Wmaybe-uninitialized inside libstdc++'s std::regex, which the route
+  # patterns of cpp-httplib instantiate in routes.cpp; SYSTEM does not
+  # hide it, because the location is the inlined libstdc++ code
+  if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND ADDRESS_SANITIZER)
+    set_source_files_properties(${SERVER_DIR}/routes.cpp PROPERTIES
+	COMPILE_OPTIONS -Wno-maybe-uninitialized)
+  endif()
   target_link_libraries(xca-server xcacore OpenSSL::SSL Threads::Threads
 	${ASAN_LIB})
   set_target_properties(xca-server PROPERTIES MACOSX_BUNDLE FALSE
