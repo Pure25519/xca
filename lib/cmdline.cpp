@@ -489,7 +489,8 @@ int read_cmdline(int argc, char *argv[], bool console_only,
 				throw;
 			throw serviceError(err.code,
 				QObject::tr("Unknown key type %1")
-					.arg(cmd_opts["keygen"]));
+					.arg(cmd_opts["keygen"]))
+				.with("field", "--keygen");
 		}
 		if (pki)
 			cmdline_items->append_item(pki);

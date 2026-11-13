@@ -10,6 +10,8 @@
 
 #include <QString>
 #include <QObject>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QSqlError>
 
 #include "base.h"
@@ -97,15 +99,26 @@ class confirmationError: public errorEx
 /* A rejected service call (BTD-31, pattern for BTD-32..35).
  * code is the stable snake_case reason that also goes into the
  * error_code of the audit entry, e.g. "no_private_signing_key";
- * the message is for humans. */
+ * the message is for humans. details holds the machine-readable
+ * members of the error object (bxc-pki schemas/error.schema.json,
+ * BTD-153): candidates of an ambiguous reference, stored_objects after
+ * a failure past the commit, the field (JSON pointer or option) and
+ * the policy rule. JsonReport::error() writes them beside code, so
+ * no client parses the message. */
 class serviceError: public errorEx
 {
 	public:
 		QString code;
+		QJsonObject details{};
 
 		serviceError(const QString &c, const QString &txt)
 			: errorEx(txt), code(c)
 		{
+		}
+		serviceError &with(const QString &member, const QJsonValue &v)
+		{
+			details[member] = v;
+			return *this;
 		}
 };
 #endif

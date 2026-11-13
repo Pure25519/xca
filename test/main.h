@@ -109,6 +109,10 @@ class test_main: public QObject
 	/* nullHandlers.cpp */
 	void tokenHandlersWithoutToken();
 
+	/* storeOnToken.cpp */
+	void storeOnTokenReplacesKey();
+	void storeOnTokenFailureKeepsKey();
+
 	/* optionsChanged.cpp */
 	void optionsStoreChangedOnly();
 	void optionsAudited();
@@ -138,6 +142,8 @@ class test_main: public QObject
 	void templateMergeShownAndSaved();
 	void templateMergeLegacyKept();
 	void templateMergeDefaultRefused();
+	void templateEkuUnknownRefused_data();
+	void templateEkuUnknownRefused();
 	void templateMergeNoDuplicate();
 
 	/* templateRoundTrip.cpp */

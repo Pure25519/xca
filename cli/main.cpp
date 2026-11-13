@@ -174,6 +174,9 @@ static int report(const errorEx &error, const CommandContext &ctx)
 		/* the message may name it already (BTD-196) */
 		if (!o.isEmpty() && !detail.contains(o))
 			detail += QObject::tr(" (option %1)").arg(o);
+		/* the option as data (BTD-153) */
+		if (!o.isEmpty() && !doc.contains("field"))
+			doc["field"] = o;
 	}
 	/* rule 11: a write error names the object and the cause; the
 	 * code stays the one of the error (review of xca#54) */
@@ -192,7 +195,11 @@ static int report(const errorEx &error, const CommandContext &ctx)
 		console_write(stderr, QString("Error: %1 [%2]\n")
 				.arg(detail).arg(code).toUtf8());
 	} else {
-		QJsonObject e = JsonReport::error(code, detail);
+		/* the document of the error with its structured members
+		 * (candidates, field, ..., BTD-153); only the detail is
+		 * the one completed above */
+		QJsonObject e = doc;
+		e["detail"] = detail;
 		if (!ctx.errorWarnings.isEmpty()) {
 			QJsonArray a;
 			for (const auto &w : ctx.errorWarnings)
