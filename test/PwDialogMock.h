@@ -51,8 +51,14 @@ class PwDialogMock: public PwDialogUI_i
 		return pwe->result;
 	}
 
-	int selectToken(const QStringList &)
+	/* the token whose name starts with tokenPrefix, if set (the
+	 * SoftHSM token of storeOnToken.cpp, BTD-126); else none */
+	int selectToken(const QStringList &names)
 	{
+		for (int i = 0; !tokenPrefix.isEmpty() && i < names.size(); i++) {
+			if (names[i].startsWith(tokenPrefix))
+				return i;
+		}
 		return -1;
 	}
 
@@ -75,6 +81,7 @@ class PwDialogMock: public PwDialogUI_i
 	public:
 
 	int expect_idx{};
+	QString tokenPrefix{};
 	QList<pw_expect*> pw_expectations{};
 
 	void setExpectations(const QList<pw_expect*> pwe)

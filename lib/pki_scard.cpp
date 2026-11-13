@@ -140,6 +140,11 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 {
 	unsigned long keytype;
 	EVP_PKEY *pkey = NULL;
+	/* the EVP_PKEY type for fromParamData(), not the CKK_* value
+	 * (BTD-126) */
+	int evpType = EVP_PKEY_NONE;
+	/* the builder keeps a pointer to the point until fromParamData() */
+	QByteArray ecPoint;
 
 	pk11_attr_ulong type(CKA_KEY_TYPE);
 	p11.loadAttribute(type, object);
@@ -152,10 +157,12 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 
 	switch (keytype) {
 	case CKK_RSA:
+		evpType = EVP_PKEY_RSA;
 		params[OSSL_PKEY_PARAM_RSA_E] = attribute2bignum(p11, object, CKA_PUBLIC_EXPONENT);
 		params[OSSL_PKEY_PARAM_RSA_N] = attribute2bignum(p11, object, CKA_MODULUS);
 		break;
 	case CKK_DSA:
+		evpType = EVP_PKEY_DSA;
 		params[OSSL_PKEY_PARAM_FFC_P] = attribute2bignum(p11, object, CKA_PRIME);
 		params[OSSL_PKEY_PARAM_FFC_Q] = attribute2bignum(p11, object, CKA_SUBPRIME);
 		params[OSSL_PKEY_PARAM_FFC_G] = attribute2bignum(p11, object, CKA_BASE);
@@ -174,9 +181,24 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 		OSSL_PARAM_BLD_push_utf8_string(bld.get(), OSSL_PKEY_PARAM_GROUP_NAME,
 			OBJ_nid2sn(nid), 0);
 
+		/* CKA_EC_POINT is the DER encoding of an OCTET STRING with
+		 * the point (PKCS#11 2.40, 10.10); a token that gives the bare
+		 * point is taken as it is (BTD-126) */
 		ba = attribute2bytearray(p11, object, CKA_EC_POINT);
+		const unsigned char *p = (const unsigned char *)ba.constData();
+		ASN1_OCTET_STRING *os = d2i_ASN1_OCTET_STRING(NULL, &p,
+				ba.size());
+		if (os && p == (const unsigned char *)ba.constData() + ba.size())
+			ecPoint = QByteArray((const char *)
+				ASN1_STRING_get0_data(os),
+				ASN1_STRING_get_length(os));
+		else
+			ecPoint = ba;
+		ASN1_OCTET_STRING_free(os);
+		ign_openssl_error();
+		evpType = EVP_PKEY_EC;
 		OSSL_PARAM_BLD_push_octet_string(bld.get(), OSSL_PKEY_PARAM_PUB_KEY,
-			ba.data(), ba.size());
+			ecPoint.data(), ecPoint.size());
 		break;
 	}
 #ifdef EVP_PKEY_ED25519
@@ -205,8 +227,10 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 		throw errorEx(QString("Unsupported CKA_KEY_TYPE: %1\n").arg(keytype));
 	}
 	pki_openssl_error();
-	if (pkey)
-		pkey = fromParamData(bld, params, keytype);
+	/* RSA, DSA and EC are built from their parameters; EdDSA is
+	 * built above (BTD-126: the condition was inverted) */
+	if (!pkey)
+		pkey = fromParamData(bld, params, evpType);
 	return pkey;
 }
 
@@ -288,6 +312,38 @@ static errorEx unknownKeytype(const EVP_PKEY *pkey)
 			QString::number(EVP_PKEY_get_id(pkey))));
 }
 
+/* A parameter of the key pk that is stored on the token, not of the
+ * (still empty) key of this object (BTD-126: store_token() read every
+ * parameter from this->key) */
+static BIGNUM *bnParam(const EVP_PKEY *pk, const char *name)
+{
+	BIGNUM *bn = nullptr;
+	if (EVP_PKEY_get_bn_param(pk, name, &bn) <= 0 || !bn)
+		throw errorEx(QString("The key has no parameter %1").arg(name));
+	return bn;
+}
+
+static QByteArray octetParam(const EVP_PKEY *pk, const char *name)
+{
+	size_t len = 0;
+	if (EVP_PKEY_get_octet_string_param(pk, name, nullptr, 0, &len) <= 0)
+		throw errorEx(QString("The key has no parameter %1").arg(name));
+	QByteArray ba(len, 0);
+	if (EVP_PKEY_get_octet_string_param(pk, name,
+			(unsigned char *)ba.data(), ba.size(), &len) <= 0)
+		throw errorEx(QString("The key has no parameter %1").arg(name));
+	ba.resize(len);
+	return ba;
+}
+
+static int curveNid(const EVP_PKEY *pk)
+{
+	char gname[80];
+	if (EVP_PKEY_get_group_name(pk, gname, sizeof gname, nullptr) <= 0)
+		return NID_undef;
+	return OBJ_txt2nid(gname);
+}
+
 pk11_attlist pki_scard::objectAttributesNoId(EVP_PKEY *pk, bool priv) const
 {
 	QByteArray ba;
@@ -299,18 +355,18 @@ pk11_attlist pki_scard::objectAttributesNoId(EVP_PKEY *pk, bool priv) const
 	switch (EVP_PKEY_type(EVP_PKEY_id(pk))) {
 	case EVP_PKEY_RSA:
 		attrs << pk11_attr_ulong(CKA_KEY_TYPE, CKK_RSA) <<
-			pk11_attr_data(CKA_MODULUS, BignumParam(OSSL_PKEY_PARAM_RSA_N)) <<
-			pk11_attr_data(CKA_PUBLIC_EXPONENT, BignumParam(OSSL_PKEY_PARAM_RSA_E));
+			pk11_attr_data(CKA_MODULUS, bnParam(pk, OSSL_PKEY_PARAM_RSA_N)) <<
+			pk11_attr_data(CKA_PUBLIC_EXPONENT, bnParam(pk, OSSL_PKEY_PARAM_RSA_E));
 		break;
 	case EVP_PKEY_DSA:
 		attrs << pk11_attr_ulong(CKA_KEY_TYPE, CKK_DSA) <<
-			pk11_attr_data(CKA_PRIME, BignumParam(OSSL_PKEY_PARAM_FFC_P)) <<
-			pk11_attr_data(CKA_SUBPRIME, BignumParam(OSSL_PKEY_PARAM_FFC_Q)) <<
-			pk11_attr_data(CKA_BASE, BignumParam(OSSL_PKEY_PARAM_FFC_G));
+			pk11_attr_data(CKA_PRIME, bnParam(pk, OSSL_PKEY_PARAM_FFC_P)) <<
+			pk11_attr_data(CKA_SUBPRIME, bnParam(pk, OSSL_PKEY_PARAM_FFC_Q)) <<
+			pk11_attr_data(CKA_BASE, bnParam(pk, OSSL_PKEY_PARAM_FFC_G));
 		break;
 #ifndef OPENSSL_NO_EC
 	case EVP_PKEY_EC:
-		group = EC_GROUP_new_by_curve_name(ecParamNid());
+		group = EC_GROUP_new_by_curve_name(curveNid(pk));
 		if (group) {
 			ba = i2d_bytearray(I2D_VOID(i2d_ECPKParameters), group);
 			EC_GROUP_free(group);
@@ -437,21 +493,22 @@ void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
 	switch (EVP_PKEY_type(EVP_PKEY_id(pkey))) {
 	case EVP_PKEY_RSA:
 		priv_atts <<
-		pk11_attr_data(CKA_PRIVATE_EXPONENT, BignumParam(OSSL_PKEY_PARAM_RSA_D)) <<
-		pk11_attr_data(CKA_PRIME_1, BignumParam(OSSL_PKEY_PARAM_RSA_FACTOR1)) <<
-		pk11_attr_data(CKA_PRIME_2, BignumParam(OSSL_PKEY_PARAM_RSA_FACTOR2)) <<
-		pk11_attr_data(CKA_EXPONENT_1, BignumParam(OSSL_PKEY_PARAM_RSA_EXPONENT1)) <<
-		pk11_attr_data(CKA_EXPONENT_2, BignumParam(OSSL_PKEY_PARAM_RSA_EXPONENT2)) <<
-		pk11_attr_data(CKA_COEFFICIENT, BignumParam(OSSL_PKEY_PARAM_RSA_COEFFICIENT1));
+		pk11_attr_data(CKA_PRIVATE_EXPONENT, bnParam(pkey, OSSL_PKEY_PARAM_RSA_D)) <<
+		pk11_attr_data(CKA_PRIME_1, bnParam(pkey, OSSL_PKEY_PARAM_RSA_FACTOR1)) <<
+		pk11_attr_data(CKA_PRIME_2, bnParam(pkey, OSSL_PKEY_PARAM_RSA_FACTOR2)) <<
+		pk11_attr_data(CKA_EXPONENT_1, bnParam(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1)) <<
+		pk11_attr_data(CKA_EXPONENT_2, bnParam(pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2)) <<
+		pk11_attr_data(CKA_COEFFICIENT, bnParam(pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1));
 		break;
 	case EVP_PKEY_DSA:
-		priv_atts << pk11_attr_data(CKA_VALUE, BignumParam(OSSL_PKEY_PARAM_PRIV_KEY));
-		pub_atts << pk11_attr_data(CKA_VALUE, BignumParam(OSSL_PKEY_PARAM_PUB_KEY));
+		priv_atts << pk11_attr_data(CKA_VALUE, bnParam(pkey, OSSL_PKEY_PARAM_PRIV_KEY));
+		pub_atts << pk11_attr_data(CKA_VALUE, bnParam(pkey, OSSL_PKEY_PARAM_PUB_KEY));
 		break;
 #ifndef OPENSSL_NO_EC
 	case EVP_PKEY_EC: {
-		/* Public Key */
-		QByteArray ba = QByteArrayParam(OSSL_PKEY_PARAM_EC_GENERATOR);
+		/* Public Key: the point of pkey (BTD-126: it was the curve's
+		 * generator), as the DER OCTET STRING of CKA_EC_POINT */
+		QByteArray ba = octetParam(pkey, OSSL_PKEY_PARAM_PUB_KEY);
 		ASN1_OCTET_STRING *os = ASN1_OCTET_STRING_new();
 		ASN1_STRING_set1_data(os, (const uint8_t *)ba.constData(),
 				      ba.size());
@@ -461,7 +518,7 @@ void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
 		pub_atts << pk11_attr_data(CKA_EC_POINT, ba);
 
 		/* Private key */
-		priv_atts << pk11_attr_data(CKA_VALUE, BignumParam(OSSL_PKEY_PARAM_PRIV_KEY));
+		priv_atts << pk11_attr_data(CKA_VALUE, bnParam(pkey, OSSL_PKEY_PARAM_PRIV_KEY));
 		break;
 	}
 #endif
