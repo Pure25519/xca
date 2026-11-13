@@ -420,7 +420,7 @@ void db_key::updateKeyEncryptionScheme()
 	bool common_success = true;
 	/* It writes: only after a verified open (BTD-246) */
 	if (!ServiceContext::processPasswordVerified ||
-	    !pki_evp::validateDatabasePassword(pki_evp::passwd))
+	    !pki_evp::validateDatabasePassword(pki_evp::sessionPassword()))
 		return;
 	if (Settings["legacy-keys-updated"])
 		return;
@@ -501,8 +501,11 @@ void db_key::changeDatabasePassword(const Passwd &pass)
 		Settings.clear();
 		throw;
 	}
-	pki_evp::passHash = passhash;
-	pki_evp::passwd = pass;
+	/* the session's key context from now on (BTD-72) */
+	if (KeyContext *keys = KeyContext::session()) {
+		keys->passHash = passhash;
+		keys->password = pass;
+	}
 }
 
 void db_key::setOwnPass(QModelIndex idx, enum pki_key::passType x)

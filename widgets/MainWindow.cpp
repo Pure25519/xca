@@ -668,7 +668,8 @@ enum open_result MainWindow::setup_open_database()
 	showDatabaseName();
 	set_geometry(Settings["mw_geometry"]);
 
-	if (pki_evp::passwd.isNull())
+	KeyContext *keys = KeyContext::session();
+	if (!keys || keys->password.isNull())
 		XCA_INFO(tr("Using or exporting private keys will not be possible without providing the correct password"));
 
 	enableTokenMenu(pkcs11::libraries.loaded());

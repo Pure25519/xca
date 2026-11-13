@@ -13,6 +13,7 @@
 #include <openssl/evp.h>
 #include "pki_key.h"
 #include "Passwd.h"
+#include "key_context.h"
 
 #define VIEW_private_ownpass 9
 
@@ -40,8 +41,10 @@ class pki_evp: public pki_key
 		bool openssl_pw_error() const;
 
 	public:
-		static QString passHash;
-		static Passwd passwd;
+		/* The database password and its hash of the open session
+		 * (KeyContext, BTD-72); empty without an open database */
+		static Passwd sessionPassword();
+		static QString sessionHash();
 		static QString md5passwd(QByteArray pass);
 		static QString sha512passwd(QByteArray pass, QString salt);
 		static QString sha512passwT(QByteArray pass, QString salt);
