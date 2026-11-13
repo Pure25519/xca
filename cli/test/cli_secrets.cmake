@@ -136,6 +136,19 @@ if(NOT n_named EQUAL 1 OR detail MATCHES "--password")
 endif()
 bxc("import wrong" 1 show --file enc.pem --import-pass pass:nope)
 expect_error("import wrong" password_rejected)
+# A wrong password can decrypt to valid padding (about 1 in 300 for AES-CBC):
+# OpenSSL then reports an ASN.1 error, not a bad decrypt. enc.pem above has a
+# new salt in every run, so the case needs a file where it always happens
+# (BTD-294): with pass:nope this one decodes to garbage, its password is
+# other-secret.
+file(COPY "${CMAKE_CURRENT_LIST_DIR}/data/secrets/enc-nope-decodes.pem"
+    DESTINATION "${WORK}")
+bxc("import wrong, decodes" 1 show --file enc-nope-decodes.pem
+    --import-pass pass:nope)
+expect_error("import wrong, decodes" password_rejected)
+bxc("import right, decodes" 0 show --file enc-nope-decodes.pem
+    --import-pass pass:other-secret)
+one_doc("import right, decodes" "${out}" key k)
 
 # --- --interactive without a terminal: a typed password error (BTD-145) --
 # stdin is /dev/null (bxc()), the existing database needs its password
