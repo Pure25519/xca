@@ -60,6 +60,7 @@ class test_service_key_context : public ServiceTestCase
 	void closeForgetsPassword();
 	void secondDatabaseOwnPassword();
 	void noStaticPasswordInLib();
+	void frontEndSecretsStayInFrontEnds();
 };
 
 /* After the close, the password of the closed database is not valid any
@@ -148,6 +149,43 @@ void test_service_key_context::noStaticPasswordInLib()
 		}
 	}
 	QVERIFY2(found.isEmpty(), CCHAR(found.join("\n")));
+}
+
+/* The two process-global secret holders the static check allows are input
+ * of the CLI and GUI front ends only (boss decision 2026-11-13):
+ * PwDialogCore::cmdline_passwd and the headless secret sources behind
+ * PwDialogCore::headless(). A service caller such as xca-server takes its
+ * secrets per request through PasswordSourceScope. A source check instead
+ * of a runtime assert, because no server code path exists yet to assert
+ * on, and it catches any new file outside the front ends whatever the
+ * server's directory will be called. */
+void test_service_key_context::frontEndSecretsStayInFrontEnds()
+{
+	const QStringList allowedPrefixes{ "lib/PwDialogCore.", "lib/cmdline.cpp",
+		"lib/test_takey.cpp", "widgets/", "cli/", "test/" };
+	QRegularExpression re("\\bcmdline_passwd\\b|"
+		"\\bPwDialogCore::headless\\s*\\(");
+	QString root = QString(XCA_SOURCE_DIR "/");
+	QStringList found;
+	QDirIterator it(root, { "*.h", "*.cpp" }, QDir::Files,
+		QDirIterator::Subdirectories);
+	while (it.hasNext()) {
+		QString path = it.next();
+		QString rel = path.mid(root.size());
+		if (rel.startsWith(".git/"))
+			continue;
+		bool allowed = false;
+		for (const QString &prefix : allowedPrefixes)
+			allowed = allowed || rel.startsWith(prefix);
+		if (allowed)
+			continue;
+		QFile f(path);
+		QVERIFY(f.open(QIODevice::ReadOnly));
+		if (re.match(QString::fromUtf8(f.readAll())).hasMatch())
+			found << rel;
+	}
+	QVERIFY2(found.isEmpty(), CCHAR("front-end secret holder used "
+		"outside the CLI and GUI front ends: " + found.join(", ")));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_key_context)
