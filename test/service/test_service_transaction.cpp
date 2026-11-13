@@ -407,9 +407,11 @@ void test_service_transaction::templateNestedRollback()
 	lastFailure("template.create");
 }
 
-/* The automatic checkpoint behind the rename's entry: its nested commit
- * rolls back (the entry's own commit is skipped). The failure entry
- * that follows gets its checkpoint. */
+/* The automatic checkpoint behind the rename's entry fails, so the whole
+ * rename rolls back. The failure entry that follows gets its checkpoint.
+ * The checkpoint is refused at the COMMIT (a dangling deferred foreign
+ * key) only while the rename's success entry exists, whatever nested
+ * commits run before it (BTD-151; it was injectNestedRollback(1)). */
 void test_service_transaction::checkpointNestedRollback()
 {
 	pki_key *key = newKey("BTD-142 old");
@@ -419,10 +421,21 @@ void test_service_transaction::checkpointNestedRollback()
 	Settings["audit_checkpoint_interval"] =
 		(int)AuditLog::entries().size() + 1;
 
-	TestSeams::injectNestedRollback(1);
-	QCOMPARE(errorCode([&]() {
-		Database.model<db_key>()->rename(ctx, key, "BTD-142 new"); }),
-		QString("database_error"));
+	sql("PRAGMA foreign_keys=ON");
+	sql("CREATE TEMP TABLE btd151_parent (id INTEGER PRIMARY KEY)");
+	sql("CREATE TEMP TABLE btd151_child (p INTEGER REFERENCES "
+		"btd151_parent(id) DEFERRABLE INITIALLY DEFERRED)");
+	sql(QString("CREATE TEMP TRIGGER btd151_checkpoint AFTER INSERT ON "
+		"audit_log WHEN NEW.action='%1' AND EXISTS (SELECT 1 FROM "
+		"audit_log WHERE action='object.rename' AND result='success') "
+		"BEGIN INSERT INTO btd151_child VALUES (42); END")
+		.arg(AuditLog::actionCheckpoint));
+	QString code = errorCode([&]() {
+		Database.model<db_key>()->rename(ctx, key, "BTD-142 new"); });
+	sql("DROP TRIGGER temp.btd151_checkpoint");
+	sql("DROP TABLE temp.btd151_child");
+	sql("DROP TABLE temp.btd151_parent");
+	QCOMPARE(code, QString("database_error"));
 
 	QCOMPARE(sqlValue("SELECT COUNT(*) FROM items "
 		"WHERE name='BTD-142 new'").toInt(), 0);
