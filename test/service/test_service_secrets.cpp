@@ -300,7 +300,7 @@ void test_service_secrets::keyUpdateNeedsVerifiedOpen()
 	QSqlQuery q(QSqlDatabase::database());
 	QVERIFY(q.exec("DELETE FROM settings WHERE key_='legacy-keys-updated'"));
 	Settings.clear();
-	QVERIFY(pki_evp::validateDatabasePassword(pki_evp::passwd));
+	QVERIFY(pki_evp::validateDatabasePassword(KeyContext::session()->password));
 	auto marker = []() {
 		QSqlQuery c(QSqlDatabase::database());
 		c.exec("SELECT COUNT(*) FROM settings "

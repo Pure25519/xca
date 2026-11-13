@@ -142,7 +142,7 @@ void test_service_legacy_keys::fixtureMatchesReader()
 		int id = k->getSqlItemId().toInt();
 		QByteArray blob = legacy[id];
 		QVERIFY2(!isPkcs8(blob), CCHAR(QString::number(id)));
-		EVP_PKEY *pkey = k->legacyDecryptKey(blob, pki_evp::passwd);
+		EVP_PKEY *pkey = k->legacyDecryptKey(blob, KeyContext::session()->password);
 		QVERIFY2(pkey, CCHAR(QString::number(id)));
 		QCOMPARE(der(pkey), source[id]);
 		EVP_PKEY_free(pkey);

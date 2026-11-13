@@ -55,9 +55,17 @@ static int recordingCallback(char *buf, int size, int rwflag, void *userdata)
 	return len;
 }
 
-Passwd pki_evp::passwd;
+Passwd pki_evp::sessionPassword()
+{
+	KeyContext *keys = KeyContext::session();
+	return keys ? keys->password : Passwd();
+}
 
-QString pki_evp::passHash = QString();
+QString pki_evp::sessionHash()
+{
+	KeyContext *keys = KeyContext::session();
+	return keys ? keys->passHash : QString();
+}
 
 void pki_evp::init()
 {
@@ -520,6 +528,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 
 bool pki_evp::validateDatabasePassword(const Passwd &passwd)
 {
+	QString passHash = sessionHash();
 	return !passHash.isEmpty() &&
 			(sha512passwT(passwd, passHash) == passHash ||
 			 sha512passwd(passwd, passHash) == passHash);
@@ -545,12 +554,12 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 	} else if (ownPass == ptBogus) { // BOGUS pass
 		ownPassBuf = "Bogus";
 	} else {
-		ownPassBuf = passwd;
+		ownPassBuf = sessionPassword();
 		pass_info p(XCA_TITLE, tr("Please enter the database password for decrypting the key '%1'").arg(getIntName()));
 		p.setPurpose(pass_info::DatabasePassword);
 		while (!validateDatabasePassword(ownPassBuf)) {
 			ret = PwDialogCore::execute(&p, &ownPassBuf,
-							passHash.isEmpty());
+							sessionHash().isEmpty());
 			if (ret != 1)
 				throw errorEx(tr("Password input aborted"),
 						getClassName());
@@ -662,7 +671,8 @@ bool pki_evp::updateLegacyEncryption()
 		}
 		pki_ign_openssl_error();
 
-		EVP_PKEY *newkey = legacyDecryptKey(myencKey, passwd);
+		EVP_PKEY *newkey = legacyDecryptKey(myencKey,
+				sessionPassword());
 		ign_openssl_error();
 		if (newkey) {
 			set_evp_key(newkey);
@@ -900,12 +910,12 @@ void pki_evp::encryptKey(const char *password)
 			pki_openssl_error();
 		} else {
 			int ret = 0;
-			ownPassBuf = passwd;
+			ownPassBuf = sessionPassword();
 			pass_info p(XCA_TITLE, tr("Please enter the database password for encrypting the key"));
 			p.setPurpose(pass_info::DatabasePassword);
 			while (!validateDatabasePassword(ownPassBuf)) {
 				ret = PwDialogCore::execute(&p, &ownPassBuf,
-							passHash.isEmpty());
+							sessionHash().isEmpty());
 				if (ret != 1)
 					throw errorEx("Password input aborted",
 							getClassName());
@@ -1063,6 +1073,7 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
 		pkey = decryptKeyForExport(opts);
+		Passwd passwd = sessionPassword();
 		int ok = PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
@@ -1153,8 +1164,9 @@ void pki_evp::writeDefault(const QString &dirname) const
 		}
 		/* PKCS#8 PBES2, not the RFC 1423 encryption of writeKey()
 		 * (BTD-52) */
-		writePKCS8(file, pki_evp::passwd.isEmpty() ? NULL :
-			EVP_aes_256_cbc(), pki_evp::passwd, true);
+		Passwd passwd = sessionPassword();
+		writePKCS8(file, passwd.isEmpty() ? NULL :
+			EVP_aes_256_cbc(), passwd, true);
 		});
 }
 

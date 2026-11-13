@@ -17,6 +17,7 @@
 #include "sql.h"
 #include "db_base.h"
 #include "lib/Passwd.h"
+#include "lib/key_context.h"
 #include "importexport.h"
 
 class ServiceContext;
@@ -35,6 +36,10 @@ class database_model: public QObject
 		/* SQLite file change counter at the open, -1 if unknown
 		 * (BTD-225) */
 		qint64 openChangeCounter{-1};
+		/* database password and pwhash of this session (BTD-72) */
+		KeyContext keys{};
+		void endKeySession();
+		void pwhashUpgrade();
 		void openSqlDB();
 
 		QSqlError initSqlDB();
@@ -46,7 +51,7 @@ class database_model: public QObject
 		QString get_default_db() const;
 		QString checkPre2Xdatabase() const;
 		enum open_result initPass(const QString &dbName,
-				const QString &passhash) const;
+				const QString &passhash);
 		void restart_timer();
 		static void openDatabase(const QString &descriptor,
 					 const Passwd &pass);
