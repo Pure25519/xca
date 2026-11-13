@@ -14,6 +14,7 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
+#include "lib/audit.h"
 #include "lib/database_model.h"
 #include "lib/db_key.h"
 #include "lib/Passwd.h"
