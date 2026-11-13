@@ -113,6 +113,26 @@ QString JsonReport::objectType(const pki_base *pki)
 	}
 }
 
+QJsonObject JsonReport::objectRef(const pki_base *pki)
+{
+	QJsonObject o;
+	o["type"] = objectType(pki);
+	const pki_temp *t = dynamic_cast<const pki_temp *>(pki);
+	if (t && t->isPreDefined()) {
+		o["id"] = t->comboText();
+		o["name"] = t->comboText();
+		return o;
+	}
+	o["id"] = pki->getSqlItemId().toLongLong();
+	o["name"] = pki->getIntName();
+	const pki_x509 *cert = dynamic_cast<const pki_x509 *>(pki);
+	if (cert) {
+		o["serial"] = serial(cert->getSerial());
+		o["issuer"] = cert->getIssuerName().rfc4514();
+	}
+	return o;
+}
+
 QJsonObject JsonReport::dn(const x509name &name)
 {
 	QJsonObject o;
@@ -610,9 +630,21 @@ QJsonObject JsonReport::error(const errorEx &err)
 	if (pw)
 		code = pw->why == secretError::rejected ?
 			"password_rejected" : "missing_password";
-	if (dynamic_cast<const confirmationError *>(&err))
+	const confirmationError *question =
+		dynamic_cast<const confirmationError *>(&err);
+	if (question)
 		code = "not_confirmed";
-	return error(code, err.getString());
+	QJsonObject o = error(code, err.getString());
+	/* the structured members (BTD-153); they never replace one of the
+	 * members above */
+	if (s) {
+		for (auto it = s->details.begin(); it != s->details.end(); ++it)
+			if (!o.contains(it.key()))
+				o[it.key()] = it.value();
+	}
+	if (question && !question->question.isEmpty())
+		o["question"] = question->question;
+	return o;
 }
 
 QByteArray JsonReport::line(const QJsonObject &doc)

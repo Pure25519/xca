@@ -52,8 +52,18 @@ serviceError located(const QString &ptr, const errorEx &err,
 		c = s ? s->code : QString("internal_error");
 	if (dynamic_cast<const secretError *>(&err))
 		c = "missing_password";
-	return serviceError(c, QString("%1: %2").arg(shownPointer(ptr))
+	serviceError e(c, QString("%1: %2").arg(shownPointer(ptr))
 			.arg(err.getString()));
+	if (s)
+		e.details = s->details;
+	return atMember(e, ptr);
+}
+
+serviceError atMember(serviceError err, const QString &ptr)
+{
+	if (!ptr.isEmpty())
+		err.with("field", ptr);
+	return err;
 }
 
 namespace {
@@ -65,8 +75,8 @@ QString tr(const char *s)
 
 [[noreturn]] void bad(const QString &ptr, const QString &why)
 {
-	throw serviceError("invalid_bootstrap_file",
-		QString("%1: %2").arg(shownPointer(ptr), why));
+	throw atMember(serviceError("invalid_bootstrap_file",
+		QString("%1: %2").arg(shownPointer(ptr), why)), ptr);
 }
 
 #define DOT "[^\\n\\r\\x{2028}\\x{2029}]"
@@ -226,14 +236,14 @@ QString timestamp(const QJsonValue &v, const QString &ptr)
 	if (dot > 0) {
 		QString frac = s.mid(dot + 1).chopped(1);
 		if (frac.count('0') != frac.size())
-			throw serviceError("invalid_value", QString("%1: %2")
+			throw atMember(serviceError("invalid_value", QString("%1: %2")
 				.arg(ptr, tr("'%1' has a fraction of a second; "
-				"certificate times are whole seconds").arg(s)));
+				"certificate times are whole seconds").arg(s))), ptr);
 		s = s.left(dot) + "Z";
 	}
 	if (!QDateTime::fromString(s, Qt::ISODate).isValid())
-		throw serviceError("invalid_value", QString("%1: %2").arg(ptr,
-			tr("'%1' is no valid date-time").arg(s)));
+		throw atMember(serviceError("invalid_value", QString("%1: %2").arg(ptr,
+			tr("'%1' is no valid date-time").arg(s))), ptr);
 	return s;
 }
 
@@ -358,8 +368,8 @@ void readCrl(CaDef &c, const QJsonValue &v, const QString &ptr)
 		/* whole days of at least P1D (BTD-211) */
 		QString why = CrlPolicy::validityError(d);
 		if (!why.isEmpty())
-			throw serviceError("invalid_validity",
-				QString("%1: %2").arg(vp, why));
+			throw atMember(serviceError("invalid_validity",
+				QString("%1: %2").arg(vp, why)), vp);
 		c.crl.validity = d;
 	}
 	if (o.contains("reissue_fraction")) {

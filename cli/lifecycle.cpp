@@ -6,6 +6,7 @@
  * layer only and run inside the runner's transaction (cli.h).
  */
 
+#include <QJsonArray>
 #include <QRegularExpression>
 
 #include <openssl/evp.h>
@@ -70,7 +71,9 @@ CrlPolicy crlPolicy(const Options &o, const pki_x509 *ca)
 	} catch (usageError &) {
 		throw;
 	} catch (serviceError &err) {
-		throw usageError(err.code, err.getString());
+		usageError e(err.code, err.getString());
+		e.details = err.details;
+		throw e;
 	}
 	if (o.has("crl-size-budget")) {
 		qint64 b = o.value("crl-size-budget").toLongLong();
@@ -255,10 +258,16 @@ static pki_x509 *byFingerprint(const QString &given)
 			"--fingerprint: no certificate with the SHA-256 "
 			"fingerprint %1").arg(given));
 	/* the same DER twice cannot be stored; kept for safety */
-	if (hits.size() > 1)
+	if (hits.size() > 1) {
+		QJsonArray candidates;
+		for (pki_x509 *c : hits)
+			candidates << JsonReport::objectRef(c);
 		throw serviceError("ambiguous_reference", QObject::tr(
 			"--fingerprint %1 matches %2 certificates")
-			.arg(given).arg(hits.size()));
+			.arg(given).arg(hits.size()))
+			.with("candidates", candidates)
+			.with("field", "--fingerprint");
+	}
 	return hits[0];
 }
 

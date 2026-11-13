@@ -173,9 +173,12 @@ static void exportObject(CommandContext &ctx, pki_base *pki)
 	} catch (serviceError &err) {
 		if ((err.code == "missing_password" ||
 		     err.code == "wrong_password") &&
-		    !err.getString().contains("--export-pass"))
-			throw serviceError(err.code, err.getString() +
+		    !err.getString().contains("--export-pass")) {
+			serviceError e(err.code, err.getString() +
 				QObject::tr(" (option --export-pass)"));
+			e.details = err.details;
+			throw e.with("field", "--export-pass");
+		}
 		throw;
 	}
 	QJsonObject info;

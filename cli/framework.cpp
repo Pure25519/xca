@@ -137,6 +137,19 @@ QString ResultCollector::storedText() const
 	return l.join(", ");
 }
 
+QJsonArray ResultCollector::storedObjects() const
+{
+	QJsonArray a;
+	for (const QJsonValue &v : objects) {
+		QJsonObject o = v.toObject();
+		if (o["id"].isNull())
+			continue;
+		a << QJsonObject{ { "type", o["type"] }, { "id", o["id"] },
+				  { "name", o["name"] } };
+	}
+	return a;
+}
+
 QString ResultCollector::text() const
 {
 	QString s;
@@ -348,13 +361,18 @@ static void publishFiles(CommandContext &ctx)
 		}
 		ctx.files->discard();
 		QString stored = ctx.result->storedText();
-		throw serviceError("publish_failed", QObject::tr(
+		serviceError e("publish_failed", QObject::tr(
 			"The database is committed, but not every file was "
 			"written (%1: %2). Stored: %3. Not written: %4. Export "
 			"the stored objects again with 'bxc-pki export' instead "
 			"of issuing them twice.").arg(err.code, err.getString(),
 			stored.isEmpty() ? QObject::tr("nothing") : stored,
 			missing.join(", ")));
+		/* what is stored, as data (BTD-153) */
+		QJsonArray objects = ctx.result->storedObjects();
+		if (!objects.isEmpty())
+			e.with("stored_objects", objects);
+		throw e;
 	}
 	for (const auto &w : ctx.files->warnings())
 		ctx.result->warning(w.first, w.second);
@@ -481,21 +499,28 @@ pki_base *resolve(const QString &ref, const QStringList &kinds,
 	if (hits.isEmpty())
 		throw serviceError("unknown_reference", QObject::tr(
 			"%1: no %2 with the id or name '%3'")
-			.arg(option).arg(what).arg(ref));
+			.arg(option).arg(what).arg(ref))
+			.with("field", option);
 	if (hits.size() > 1) {
 		QStringList c;
+		QJsonArray candidates;
 		std::sort(hits.begin(), hits.end(),
 			[](pki_base *a, pki_base *b) {
 				return a->getSqlItemId().toLongLong() <
 					b->getSqlItemId().toLongLong();
 			});
-		for (pki_base *pki : hits)
+		for (pki_base *pki : hits) {
 			c << describe(pki);
+			candidates << JsonReport::objectRef(pki);
+		}
+		/* the candidates as data, so a client picks one by id
+		 * without parsing the message (BTD-153) */
 		throw serviceError("ambiguous_reference", QObject::tr(
 			"%1: the name '%2' matches more than one %3: %4; use "
 			"the id%5").arg(option).arg(ref).arg(what)
 			.arg(c.join(", ")).arg(kinds.size() == 1 ? QString() :
-				QObject::tr(" or --type")));
+				QObject::tr(" or --type")))
+			.with("candidates", candidates).with("field", option);
 	}
 	return hits[0];
 }
