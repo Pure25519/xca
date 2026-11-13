@@ -145,6 +145,68 @@ void test_main::templateMergeDefaultRefused()
 	delete temp;
 }
 
+void test_main::templateEkuUnknownRefused_data()
+{
+	QTest::addColumn<QString>("allowed");
+	QTest::addColumn<QString>("def");
+	/* the field and entry the warning names; empty: accepted */
+	QTest::addColumn<QString>("field");
+	QTest::addColumn<QString>("entry");
+	QTest::newRow("unknown in ekuAllowed") << "serverAuth, serverAuthh"
+		<< "" << "ekuAllowed" << "serverAuthh";
+	QTest::newRow("unknown in ekuDefault") << "" << "clientAuthh"
+		<< "ekuDefault" << "clientAuthh";
+	QTest::newRow("long name and OID accepted")
+		<< "TLS Web Client Authentication, 1.3.6.1.5.5.7.3.1"
+		<< "clientAuth" << "" << "";
+}
+
+/* An EKU name OpenSSL does not know (BTD-192 AC2, GUI part): the dialog
+ * shows the template_eku_unknown error of the service check, naming the
+ * field and the entry, stays open and changes nothing; short names, long
+ * names and dotted OIDs are accepted */
+void test_main::templateEkuUnknownRefused()
+{
+	QFETCH(QString, allowed);
+	QFETCH(QString, def);
+	QFETCH(QString, field);
+	QFETCH(QString, entry);
+
+	pki_temp *temp = new pki_temp("eku names template");
+	QString beforeAllowed = temp->getSetting("ekuAllowed"),
+		beforeDefault = temp->getSetting("ekuDefault");
+	NewX509 *dlg = new NewX509(mainwin);
+	dlg->setTemp(temp, true);
+	QLineEdit *allowedEdit = ekuEdit(dlg, "ekuAllowed"),
+		  *defEdit = ekuEdit(dlg, "ekuDefault");
+	QVERIFY(allowedEdit && defEdit);
+	allowedEdit->setText(allowed);
+	defEdit->setText(def);
+
+	mergeBoxText.clear();
+	if (!field.isEmpty()) {
+		whenShown<xcaWarningBox>("dlg_warning", [](xcaWarningBox *box) {
+			mergeBoxText = box->text();
+			box->button(QMessageBox::Ok)->click();
+		});
+	}
+	dlg->accept();
+	if (field.isEmpty()) {
+		QVERIFY2(mergeBoxText.isEmpty(), CCHAR(mergeBoxText));
+		QCOMPARE(dlg->result(), (int)QDialog::Accepted);
+	} else {
+		/* the text of template_eku_unknown (ExtensionSpec::checkEkuNames) */
+		QVERIFY2(mergeBoxText.contains(QString("%1: '%2' is no known "
+			"extended key usage").arg(field, entry)),
+			CCHAR(mergeBoxText));
+		QVERIFY(dlg->result() != QDialog::Accepted);
+		QCOMPARE(temp->getSetting("ekuAllowed"), beforeAllowed);
+		QCOMPARE(temp->getSetting("ekuDefault"), beforeDefault);
+	}
+	delete dlg;
+	delete temp;
+}
+
 /* Signing a request with a template whose SAN mode merges: the dialog's
  * check does not count the request's SAN as a duplicate, the issuance
  * merges both into one (found by the GUI case gui.template.request_merge).
