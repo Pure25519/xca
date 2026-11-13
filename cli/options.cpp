@@ -101,7 +101,7 @@ static void checkSecret(const OptionSpec &o, const QString &v)
 			"--%1 takes a source: pass:<password>, env:<variable>, "
 			"file:<path>, fd:<number> or stdin; the given value "
 			"is not one and is never used as the password")
-			.arg(o.name));
+			.arg(o.name)).with("field", "--" + o.name);
 	if (v.startsWith("pass:"))
 		console_write(stderr, QObject::tr("Warning: --%1 pass:... puts "
 			"the secret on the command line, where other users and "
@@ -121,13 +121,13 @@ static void checkValue(const OptionSpec &o, const QString &v)
 		if (v.isEmpty())
 			throw usageError("invalid_value",
 				QObject::tr("--%1 needs a non-empty value")
-					.arg(o.name));
+					.arg(o.name)).with("field", "--" + o.name);
 		break;
 	case OptionSpec::integer:
 		if (!number.match(v).hasMatch())
 			throw usageError("invalid_value", QObject::tr(
 				"--%1 needs a non-negative integer, not '%2'")
-				.arg(o.name).arg(v));
+				.arg(o.name).arg(v)).with("field", "--" + o.name);
 		break;
 	case OptionSpec::duration:
 		parseDuration(v, o.name);
@@ -172,27 +172,30 @@ Options parseOptions(const Command &cmd, const QStringList &argv)
 		if (!byName.contains(name))
 			throw usageError("unknown_option", QObject::tr(
 				"Unknown option --%1 for '%2'; see bxc-pki %2 --help")
-				.arg(name).arg(cmd.name));
+				.arg(name).arg(cmd.name)).with("field", "--" + name);
 		const OptionSpec &o = byName[name];
 		if (o.type == OptionSpec::flag) {
 			if (inlineValue)
 				throw usageError("invalid_value", QObject::tr(
-					"--%1 takes no value").arg(name));
+					"--%1 takes no value").arg(name))
+					.with("field", "--" + name);
 		} else if (!inlineValue) {
 			/* "--cn --db x": the next option is no value; a
 			 * value starting with "--" needs --name=value */
 			if (i + 1 >= argv.size() || argv[i + 1].startsWith("--"))
 				throw usageError("missing_value", QObject::tr(
 					"--%1 needs a value %2").arg(name)
-					.arg(o.valueName));
+					.arg(o.valueName)).with("field", "--" + name);
 			value = argv[++i];
 		}
 		if (opts.has(name) && !o.repeatable)
 			throw usageError("duplicate_option", QObject::tr(
-				"--%1 is given more than once").arg(name));
+				"--%1 is given more than once").arg(name))
+				.with("field", "--" + name);
 		if (!o.reserved.isEmpty())
 			throw usageError("not_supported", QObject::tr(
-				"--%1 is reserved: %2").arg(name).arg(o.reserved));
+				"--%1 is reserved: %2").arg(name).arg(o.reserved))
+				.with("field", "--" + name);
 		checkValue(o, value);
 		opts.add(name, value);
 	}
@@ -203,7 +206,7 @@ Options parseOptions(const Command &cmd, const QStringList &argv)
 		if (o.required && !opts.has(o.name))
 			throw usageError("missing_option", QObject::tr(
 				"'%1' needs --%2 %3").arg(cmd.name).arg(o.name)
-				.arg(o.valueName));
+				.arg(o.valueName)).with("field", "--" + o.name);
 	for (const auto &c : Registry::globalConflicts() + cmd.conflicts)
 		if (opts.has(c.first) && opts.has(c.second))
 			throw usageError("conflicting_options", QObject::tr(

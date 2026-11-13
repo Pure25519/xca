@@ -443,6 +443,17 @@ void test_service_json::lists()
 							"JSON Test CA"));
 	compare(JsonReport::issuerList(QList<pki_x509 *>() << ca),
 		"issuers.json", nullptr);
+	/* the object of an error (BTD-153) */
+	QJsonObject ref = JsonReport::objectRef(ca);
+	QCOMPARE(ref.value("type").toString(), QString("certificate"));
+	QCOMPARE(ref.value("id").toVariant().toLongLong(),
+		ca->getSqlItemId().toLongLong());
+	QCOMPARE(ref.value("name").toString(), QString("JSON Test CA"));
+	QCOMPARE(ref.value("serial").toString(),
+		JsonReport::serial(ca->getSerial()));
+	QCOMPARE(ref.value("issuer").toString(),
+		ca->getIssuerName().rfc4514());
+	QCOMPARE(ref.size(), 5);
 	compare(JsonReport::index(), "index.json", nullptr);
 	compare(JsonReport::hierarchy(), "hierarchy.json", nullptr);
 }
@@ -476,6 +487,24 @@ void test_service_json::errors()
 	QCOMPARE(e.value("code").toString(), QString("not_confirmed"));
 	QCOMPARE(e.value("type").toString(),
 		QString("urn:bxc-pki:error:not_confirmed"));
+	/* the question as data (BTD-153) */
+	QCOMPARE(e.value("question").toString(), QString("key.size"));
+
+	/* Structured members (BTD-153): written beside code, never in
+	 * place of one of the five base members */
+	serviceError s("ambiguous_reference", "two");
+	s.with("candidates", QJsonArray{ QJsonObject{ { "type", "key" },
+			{ "id", 1 }, { "name", "a" } } })
+	 .with("field", "--use-key").with("code", "overwritten")
+	 .with("detail", "overwritten");
+	e = JsonReport::error(s);
+	QCOMPARE(e.value("code").toString(), QString("ambiguous_reference"));
+	QCOMPARE(e.value("detail").toString(), QString("two"));
+	QCOMPARE(e.value("field").toString(), QString("--use-key"));
+	QCOMPARE(e.value("candidates").toArray().size(), 1);
+	QCOMPARE(e.value("candidates").toArray()[0].toObject()
+		.value("id").toInt(), 1);
+	QCOMPARE(e.size(), 7);
 }
 
 void test_service_json::timestamps()

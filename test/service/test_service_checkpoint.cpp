@@ -610,7 +610,7 @@ void test_service_checkpoint::automaticCheckpointNeverAsks()
 	 * cancelled: the automatic checkpoints do not ask (any prompt is a
 	 * violation of the strict dialog); explicit ones still do */
 	Settings["audit_checkpoint_interval"] = 2;
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	appendSample(5);
 	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
 	QCOMPARE(AuditLog::entries().size(), 5);
@@ -933,7 +933,7 @@ void test_service_checkpoint::unsignedTailLimit()
 	 * unsigned entries are what a working writer leaves, more means
 	 * checkpoints are missing */
 	Settings["audit_checkpoint_interval"] = 3;
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	appendSample(4);
 	AuditVerifyResult r = AuditLog::verify();
 	QVERIFY2(r.ok(), r.toJson().constData());
@@ -949,7 +949,7 @@ void test_service_checkpoint::unsignedTailLimit()
 
 	/* Unlocked, the next append does not sign so long a tail on its
 	 * own, the explicit adoption does (review of #27) */
-	pki_evp::passwd = dbPassword;
+	KeyContext::session()->password = dbPassword;
 	appendSample(1);
 	QVERIFY(byAction(AuditLog::actionCheckpoint).isEmpty());
 	AuditLog::adoptUnanchored(ctx);
@@ -1168,11 +1168,11 @@ void test_service_checkpoint::adoptUnanchored()
 		appendSample(10);
 		removeCheckpoints(true);
 	} else {
-		pki_evp::passwd.cleanse();
+		KeyContext::session()->password.cleanse();
 		PwDialogHeadless *headless = new PwDialogHeadless();
 		pwdialog->delegateTo(headless);
 		appendSample(10);
-		pki_evp::passwd = dbPassword;
+		KeyContext::session()->password = dbPassword;
 	}
 	/* Unlocked: the automatic checkpoint is refused, the entry stays */
 	appendSample(1);
@@ -1236,7 +1236,7 @@ void test_service_checkpoint::baselineException()
 			"invaldate, crlNo, reasonBit) VALUES (1, '0%1', "
 			"'20260101000000Z', '20260101000000Z', NULL, 0)").arg(i));
 	AuditLog::writeBaseline();
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	PwDialogHeadless *headless = new PwDialogHeadless();
 	pwdialog->delegateTo(headless);
 	appendSample(3);
@@ -1262,15 +1262,15 @@ void test_service_checkpoint::baselineException()
 void test_service_checkpoint::skippedCheckpointNotice()
 {
 	Settings["audit_checkpoint_interval"] = 2;
-	Passwd pass = pki_evp::passwd;
-	pki_evp::passwd.cleanse();
+	Passwd pass = KeyContext::session()->password;
+	KeyContext::session()->password.cleanse();
 	appendSample(5);
 	QStringList n = warning->takeNotices();
 	QCOMPARE(n.size(), 1);
 	QVERIFY2(n[0].contains("audit_key_unavailable"), CCHAR(n[0]));
 
 	/* With the password the unsigned tail is too long: a new code */
-	pki_evp::passwd = pass;
+	KeyContext::session()->password = pass;
 	appendSample(3);
 	n = warning->takeNotices();
 	QCOMPARE(n.size(), 1);
@@ -1311,7 +1311,7 @@ void test_service_checkpoint::skippedCheckpointNoticeSigning()
 	QVERIFY(x25519);
 	BioByteArray der;
 	QVERIFY(i2d_PKCS8PrivateKey_bio(der, x25519, EVP_aes_256_cbc(),
-		(char *)pki_evp::passwd.constData(), pki_evp::passwd.size(),
+		(char *)KeyContext::session()->password.constData(), KeyContext::session()->password.size(),
 		nullptr, nullptr) > 0);
 	EVP_PKEY_free(x25519);
 	sql(QString("UPDATE audit_keys SET private='%1'")
@@ -1523,7 +1523,7 @@ void test_service_checkpoint::exportWithoutPassword()
 	/* As xca --no-gui without --password: the database is open, not
 	 * unlocked, and the password request has no source */
 	appendSample(2);
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	PwDialogHeadless *headless = new PwDialogHeadless();
 	pwdialog->delegateTo(headless);
 	QMap<QString, QStringList> before = tableRows();
@@ -1562,7 +1562,7 @@ void test_service_checkpoint::exportCountMatchesVerify()
 	appendSample(3);
 	AuditLog::checkpoint(ctx);
 	appendSample(2);
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	pwdialog->delegateTo(new PwDialogHeadless());
 	qint64 unsignedEntries = -1;
 	AuditSkippedCheckpoint skipped;
@@ -1578,7 +1578,7 @@ void test_service_checkpoint::exportWithWrongPassword()
 {
 	/* A wrong source is an error, not a read-only export */
 	appendSample(1);
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 	PwDialogHeadless *headless = new PwDialogHeadless();
 	headless->setSource(pass_info::DatabasePassword, "pass:wrong");
 	pwdialog->delegateTo(headless);
@@ -1592,7 +1592,7 @@ void test_service_checkpoint::noPasswordKeepsEntry()
 {
 	Settings["audit_checkpoint_interval"] = 2;
 	appendSample(1);
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->password.cleanse();
 
 	/* The checkpoint is due but cannot be signed: the entry and the
 	 * caller's transaction stay. No password prompt (BTD-111) */
@@ -1824,9 +1824,9 @@ void test_service_checkpoint::emptyPasswordSigns()
 {
 	/* A database whose password is empty (the GUI allows it): the
 	 * audit key is encrypted with the empty password and signs */
-	pki_evp::passHash = pki_evp::sha512passwT(QByteArray(),
-						pki_evp::passHash);
-	pki_evp::passwd.cleanse();
+	KeyContext::session()->passHash = pki_evp::sha512passwT(QByteArray(),
+						KeyContext::session()->passHash);
+	KeyContext::session()->password.cleanse();
 	QVERIFY(pki_evp::validateDatabasePassword(Passwd()));
 	appendSample(2);
 	AuditLog::checkpoint(ctx);
@@ -2001,8 +2001,8 @@ void test_service_checkpoint::passwordChange()
 					Entropy::makeSalt());
 		Settings["pwhash"] = hash;
 		QVERIFY(TransCommit());
-		pki_evp::passHash = hash;
-		pki_evp::passwd = newPass;
+		KeyContext::session()->passHash = hash;
+		KeyContext::session()->password = newPass;
 	}
 	appendSample(1);
 	AuditLog::checkpoint(ctx);
@@ -2012,8 +2012,8 @@ void test_service_checkpoint::passwordChange()
 
 	/* The old password no longer opens the audit key */
 	QVERIFY(!auditPrivateKey());
-	pki_evp::passwd = dbPassword;
-	pki_evp::passHash = pki_evp::sha512passwT(pki_evp::passwd,
+	KeyContext::session()->password = dbPassword;
+	KeyContext::session()->passHash = pki_evp::sha512passwT(KeyContext::session()->password,
 					Entropy::makeSalt());
 }
 

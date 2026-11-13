@@ -420,6 +420,9 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			throw errorEx(tr("Failed to update the database schema: %1")
 				.arg(e.text()));
 	};
+	/* The key context of this session from the unlock on; every
+	 * failure below ends it again (BTD-72) */
+	KeyContext::current = &keys;
 	try {
 		Entropy::seed_rng();
 		/* An existing database is unlocked before the schema upgrade
@@ -465,7 +468,7 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		 * connection here, or the next open() inherits its state */
 		QString connName = QSqlDatabase::database().connectionName();
 		QSqlDatabase::database().close();
-		pki_evp::passwd.cleanse();
+		endKeySession();
 		QSqlDatabase::removeDatabase(connName);
 		Settings.clear();
 		throw;
@@ -626,6 +629,7 @@ database_model::~database_model()
 	DbTransaction::setHasTransaction(false);
 	read_only = false;
 	if (!QSqlDatabase::database().isOpen()) {
+		endKeySession();
 		QSqlDatabase::removeDatabase(connName);
 		Settings.clear();
 		return;
@@ -657,7 +661,7 @@ database_model::~database_model()
 	}
 
 	QSqlDatabase::database().close();
-	pki_evp::passwd.cleanse();
+	endKeySession();
 
 	pkcs11::libraries.remove_libs();
 	QSqlDatabase::removeDatabase(connName);
@@ -812,7 +816,18 @@ void database_model::openDatabase(const QString &descriptor, const Passwd &pass)
 	}
 }
 
-static void pwhash_upgrade()
+KeyContext *KeyContext::current = nullptr;
+
+/* Cleanses the password and pwhash of this session; nothing of them stays
+ * in the process after the close or a failed open (BTD-72) */
+void database_model::endKeySession()
+{
+	keys.cleanse();
+	if (KeyContext::current == &keys)
+		KeyContext::current = nullptr;
+}
+
+void database_model::pwhashUpgrade()
 {
 	/* Start automatic update from sha512 to sha512*8000
 	 * if the password is correct. The old sha512 hash does
@@ -821,21 +836,20 @@ static void pwhash_upgrade()
 	/* Start automatic update from md5 to salted sha512*8000
 	 * if the password is correct. The md5 hash does not
 	 * start with 'S' or 'T, but with a hex-digit */
-	if (pki_evp::passHash.startsWith("T")) {
+	if (keys.passHash.startsWith("T")) {
 		/* Fine, current hash function used. */
 		return;
 	}
-	if (pki_evp::sha512passwd(pki_evp::passwd,
-				pki_evp::passHash) == pki_evp::passHash ||
-	    pki_evp::md5passwd(pki_evp::passwd) == pki_evp::passHash)
+	if (pki_evp::sha512passwd(keys.password,
+				keys.passHash) == keys.passHash ||
+	    pki_evp::md5passwd(keys.password) == keys.passHash)
 	{
 		QString salt = Entropy::makeSalt();
-		pki_evp::passHash = pki_evp::sha512passwT(
-				pki_evp::passwd, salt);
+		keys.passHash = pki_evp::sha512passwT(keys.password, salt);
 	}
 }
 
-enum open_result database_model::initPass(const QString &dbName, const QString &passhash) const
+enum open_result database_model::initPass(const QString &dbName, const QString &passhash)
 {
 	QString salt, pass;
 	enum open_result result = pw_cancel;
@@ -847,46 +861,47 @@ enum open_result database_model::initPass(const QString &dbName, const QString &
 	p.setPurpose(pass_info::DatabasePassword);
 
 	ServiceContext::processPasswordVerified = false;
-	pki_evp::passHash = passhash;
+	keys.passHash = passhash;
 	/* Without a password source the empty password is tried: if it
 	 * is the database's password, the open is verified (BTD-246) */
 	bool checked = !open_without_password || passhash.isEmpty() ||
 		pki_evp::sha512passwT(QByteArray(""), passhash) == passhash;
-	if (pki_evp::passHash.isEmpty()) {
-		result = PwDialogCore::execute(&p, &pki_evp::passwd,true,true);
+	if (keys.passHash.isEmpty()) {
+		result = PwDialogCore::execute(&p, &keys.password, true, true);
 		if (result != pw_ok)
 			return result;
 		salt = Entropy::makeSalt();
-		pki_evp::passHash =pki_evp::sha512passwT(pki_evp::passwd,salt);
-		Settings["pwhash"] = pki_evp::passHash;
+		keys.passHash = pki_evp::sha512passwT(keys.password, salt);
+		Settings["pwhash"] = keys.passHash;
 	} else if (!open_without_password) {
 		/* A given password is read and compared even if the current
 		 * one (empty at first) already matches: on a database with an
 		 * empty password any given one passed unread (BTD-117) */
 		bool given = PwDialogCore::hasSource(p.getPurpose());
-		pwhash_upgrade();
-		while (given || pki_evp::sha512passwT(pki_evp::passwd,
-				pki_evp::passHash) != pki_evp::passHash)
+		pwhashUpgrade();
+		while (given || pki_evp::sha512passwT(keys.password,
+				keys.passHash) != keys.passHash)
 		{
 			given = false;
 			if (result == pw_ok)
 				PwDialogCore::passwordRetry(p.getPurpose());
 			p.setTitle(tr("Password"));
 			p.setDescription(tr("Please enter the password for unlocking the database:\n%1").arg(compressFilename(dbName)));
-			result = PwDialogCore::execute(&p, &pki_evp::passwd,
+			result = PwDialogCore::execute(&p, &keys.password,
 						false, true);
 			if (result != pw_ok) {
-				pki_evp::passwd = QByteArray();
+				keys.password.cleanse();
+				keys.password = QByteArray();
 				return result;
 			}
-			pwhash_upgrade();
+			pwhashUpgrade();
 		}
 	}
 	/* The password is new or matched pwhash (BTD-78) */
 	ServiceContext::processPasswordVerified = checked;
 	open_without_password = false;
-	if (pki_evp::passwd.isNull())
-		pki_evp::passwd = "";
+	if (keys.password.isNull())
+		keys.password = "";
 	return pw_ok;
 }
 

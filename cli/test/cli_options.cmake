@@ -34,6 +34,13 @@ foreach(case
   list(SUBLIST parts 1 -1 args)
   bxc("${code}: ${args}" 2 ${args} ${db})
   expect_error("${code}: ${args}" ${code})
+  # the option as data (BTD-153) where one option is at fault
+  if(code MATCHES "^(duplicate_option|invalid_value|missing_value|unknown_option|missing_option|invalid_secret_source)$")
+    string(JSON field ERROR_VARIABLE field_err GET "${_edoc}" field)
+    if(field_err OR NOT field MATCHES "^--[a-z]")
+      fail("${code}: ${args}: no option in field: ${_edoc}")
+    endif()
+  endif()
 endforeach()
 if(EXISTS "${DB}")
   fail("a usage error created the database")

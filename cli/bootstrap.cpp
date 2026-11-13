@@ -99,12 +99,12 @@ QJsonObject readRow(const QString &kind, const QString &id,
 			q.value(0).toString().toUtf8()).object();
 	if (row["kind"].toString() != kind ||
 	    row["bootstrap_id"].toString() != id)
-		throw serviceError("bootstrap_conflict", QString("%1: %2")
+		throw atMember(serviceError("bootstrap_conflict", QString("%1: %2")
 			.arg(ptr, tr("the settings row %1 of the %2 '%3' holds "
 			"something else (%4 '%5'); repair or remove the row")
 			.arg(rowKey(kind, id), kind, id,
 				row["kind"].toString(),
-				row["bootstrap_id"].toString())));
+				row["bootstrap_id"].toString()))), ptr);
 	return row;
 }
 
@@ -150,7 +150,9 @@ x509name parsedDn(const QString &text, const QString &ptr)
 	try {
 		return parseDn(text, ptr);
 	} catch (serviceError &err) {
-		throw serviceError(err.code, err.getString());
+		serviceError e(err.code, err.getString());
+		e.details = err.details;
+		throw atMember(e, ptr);
 	}
 }
 
@@ -370,12 +372,12 @@ QList<SecretField> Run::secrets() const
 
 serviceError unresolvedReference(const SecretField &s)
 {
-	return serviceError("unresolved_secret_reference", QString("%1: %2")
+	return atMember(serviceError("unresolved_secret_reference", QString("%1: %2")
 		.arg(s.pointer, tr("holds the 1Password reference %1, which "
 		"bxc-pki does not resolve (the fork contains no 1Password "
 		"code); resolve it outside with `op run` or `op inject` into "
 		"an environment variable and write env:<VARIABLE> in the file")
-		.arg(s.value)));
+		.arg(s.value))), s.pointer);
 }
 
 /* The real run reads every secret before it opens the database: an
@@ -526,12 +528,13 @@ void Run::evaluateCa(Decision &d)
 	int below = 1;
 	for (const CaDef *p = f.ca(c.parent); p; p = f.ca(p->parent)) {
 		if (p->pathLen >= 0 && below > p->pathLen)
-			throw serviceError("path_length_exceeded",
+			throw atMember(serviceError("path_length_exceeded",
 				QString("%1: %2").arg(jsonMember(c.pointer,
 				"parent"), tr("the CA '%1' allows %2 CA "
 				"certificate(s) below it (path_len %2); '%3' "
 				"would be number %4").arg(p->id)
-				.arg(p->pathLen).arg(c.id).arg(below)));
+				.arg(p->pathLen).arg(c.id).arg(below))), jsonMember(c.pointer,
+				"parent"));
 		below++;
 	}
 
@@ -545,11 +548,11 @@ void Run::evaluateCa(Decision &d)
 			throw located(jsonMember(c.pointer, "key"), err);
 		}
 		if (c.rsaPadding == "pss")
-			throw serviceError("not_supported", QString("%1: %2")
+			throw atMember(serviceError("not_supported", QString("%1: %2")
 				.arg(jsonMember(c.pointer, "rsa_padding"),
 				tr("RSASSA-PSS signatures are not supported by "
 				"the signing service of this build; use "
-				"pkcs1v15")));
+				"pkcs1v15"))), jsonMember(c.pointer, "rsa_padding"));
 		return;
 	}
 	d.hasRow = true;
@@ -558,13 +561,13 @@ void Run::evaluateCa(Decision &d)
 		if (x->getSqlItemId().toLongLong() == item)
 			d.existing = x;
 	if (!d.existing || !d.existing->isCA())
-		throw serviceError("bootstrap_conflict", QString("%1: %2")
+		throw atMember(serviceError("bootstrap_conflict", QString("%1: %2")
 			.arg(c.pointer, tr("the CA '%1' was set up by an "
 			"earlier bootstrap as certificate %2 '%3', which is no "
 			"CA of the database (anymore); bootstrap never makes "
 			"another one in its place: remove the settings row %4 "
 			"or give the CA another id").arg(c.id).arg(item)
-			.arg(row["name"].toString(), rowKey("ca", c.id))));
+			.arg(row["name"].toString(), rowKey("ca", c.id)))), c.pointer);
 
 	QJsonObject old = row["definition"].toObject();
 	for (const QString &m : conflictMembers) {
@@ -585,7 +588,7 @@ void Run::evaluateCa(Decision &d)
 			return v.isUndefined() ? tr("(none)") : compact(v)
 				.mid(1).chopped(1);
 		};
-		throw serviceError("bootstrap_conflict", QString("%1: %2")
+		throw atMember(serviceError("bootstrap_conflict", QString("%1: %2")
 			.arg(ptr, tr("the CA '%1' exists (certificate %2 "
 			"'%3') with %4 %5; the file has %6. That change needs "
 			"a new CA certificate, which bootstrap never issues in "
@@ -593,7 +596,7 @@ void Run::evaluateCa(Decision &d)
 			"or keep %4 as it is").arg(c.id)
 			.arg(d.existing->getSqlItemId().toString(),
 				d.existing->getIntName(), what,
-				text(old.value(m)), text(d.def.value(m)))));
+				text(old.value(m)), text(d.def.value(m))))), ptr);
 	}
 
 	/* applicable without a new certificate: CRL settings, assignments */
@@ -665,14 +668,14 @@ void Run::references(const CaDef &c) const
 			const QString &ptr, bool assigned) {
 		bool retired;
 		if (!known(kind, id, &retired))
-			throw serviceError("unknown_reference",
+			throw atMember(serviceError("unknown_reference",
 				QString("%1: %2").arg(ptr, tr("there is no %1 "
 				"'%2' in the file or the database")
-				.arg(kind, id)));
+				.arg(kind, id))), ptr);
 		if (assigned && retired)
-			throw serviceError("document_retired",
+			throw atMember(serviceError("document_retired",
 				QString("%1: %2").arg(ptr, tr("the %1 '%2' "
-				"of the database is retired").arg(kind, id)));
+				"of the database is retired").arg(kind, id))), ptr);
 	};
 	if (!c.issuedWith.isEmpty())
 		check("profile", c.issuedWith,
@@ -763,9 +766,12 @@ void Run::apply(const AuditParams &params)
 				if (!step.isEmpty())
 					detail = tr("%1 was not written: %2")
 						.arg(step, detail);
-				throw serviceError(JsonReport::error(err)["code"]
+				serviceError e(JsonReport::error(err)["code"]
 					.toString(), QString("%1: %2")
 					.arg(d.pointer, detail));
+				if (auto *s = dynamic_cast<serviceError *>(&err))
+					e.details = s->details;
+				throw atMember(e, d.pointer);
 			}
 		}
 		ctx.step.clear();

@@ -13,6 +13,7 @@
 #include <openssl/evp.h>
 #include "pki_key.h"
 #include "Passwd.h"
+#include "key_context.h"
 
 #define VIEW_private_ownpass 9
 
@@ -37,11 +38,15 @@ class pki_evp: public pki_key
 				const Passwd *pass = nullptr);
 
 	protected:
-		bool openssl_pw_error() const;
+		/* decrypted: the password callback answered for this read,
+		 * so a decoding error is a wrong password too (BTD-294) */
+		bool openssl_pw_error(bool decrypted = false) const;
 
 	public:
-		static QString passHash;
-		static Passwd passwd;
+		/* The database password and its hash of the open session
+		 * (KeyContext, BTD-72); empty without an open database */
+		static Passwd sessionPassword();
+		static QString sessionHash();
 		static QString md5passwd(QByteArray pass);
 		static QString sha512passwd(QByteArray pass, QString salt);
 		static QString sha512passwT(QByteArray pass, QString salt);

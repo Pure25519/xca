@@ -224,7 +224,15 @@ Import and export (BTD-34):
   values of `--password`/`--sqlpass` once the sources are set (`arguments::forgetSecrets()`), the
   `bxc-pki` options wipe theirs on destruction. Not covered: the process arguments and
   environment, the internals of `QCommandLineParser`, swap (no `mlock`), and the database password
-  `pki_evp::passwd`, which is kept for the session by design.
+  in the session's `KeyContext`, which is kept for the session by design.
+- The database password and its hash (`pwhash`) belong to the open database, not to the process
+  (BTD-72): `database_model` owns a `KeyContext` (`lib/key_context.h`) from the unlock to the
+  close and cleanses it then, also when the open fails. lib/ reads it through
+  `KeyContext::session()` (`pki_evp::sessionPassword()`, `sessionHash()`); no static password or
+  hash member is left (`test_service_key_context::noStaticPasswordInLib`). One session at a time:
+  lib/ works on one database (default SQL connection, `Store`, `Settings`), and xca-server owns one
+  database on one worker thread (boss decision 2026-11-13); several databases at once would need
+  all of that per database.
 - Writers take any `QIODevice`, so `exportItems()` builds the output in memory, appends the
   audit entries, then writes the file and commits: no file without its entries, no entries
   without the file (the file is removed when the commit fails).

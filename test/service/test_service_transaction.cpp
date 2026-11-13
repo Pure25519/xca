@@ -537,7 +537,7 @@ void test_service_transaction::passwordChangeRollbackKeepsOld()
 	QVERIFY2(code.startsWith("errorEx: "), CCHAR(code));
 
 	QCOMPARE(QString(Settings["pwhash"]), oldHash);
-	QCOMPARE(pki_evp::passHash, oldHash);
+	QCOMPARE(KeyContext::session()->passHash, oldHash);
 	QCOMPARE(sqlValue("SELECT value FROM settings WHERE key_='pwhash'")
 		.toString(), oldHash);
 	/* the key in memory still decrypts with the old password: on
