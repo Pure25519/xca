@@ -104,6 +104,9 @@ QString shownPointer(const QString &ptr);
  * secret error is missing_password) unless code is given */
 serviceError located(const QString &ptr, const errorEx &err,
 		const QString &code = QString());
+/* err with the JSON pointer of the member as its field (bxc-pki
+ * error.schema.json, BTD-153); the document itself ("") has no field */
+serviceError atMember(serviceError err, const QString &ptr);
 
 } // namespace bxcpki
 

@@ -38,7 +38,9 @@ class pki_evp: public pki_key
 				const Passwd *pass = nullptr);
 
 	protected:
-		bool openssl_pw_error() const;
+		/* decrypted: the password callback answered for this read,
+		 * so a decoding error is a wrong password too (BTD-294) */
+		bool openssl_pw_error(bool decrypted = false) const;
 
 	public:
 		/* The database password and its hash of the open session
