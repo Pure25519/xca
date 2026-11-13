@@ -157,6 +157,7 @@ class test_service_softhsm : public ServiceTestCase
 	void oneLibcryptoWithModule();
 	void storeRsaKeyOnToken();
 	void storeEcKeyOnToken();
+	void loadEd25519KeyFromToken();
 	void generateOnToken();
 	void renameKeyOnToken();
 	void renameCertificateOnToken();
@@ -255,6 +256,51 @@ void test_service_softhsm::storeEcKeyOnToken()
 	QVERIFY(token.labels(CKO_PUBLIC_KEY).contains("BTD-126 ec"));
 	QCOMPARE(EVP_PKEY_get_id(card.getPubKey()), EVP_PKEY_EC);
 	QCOMPARE(EVP_PKEY_eq(card.getPubKey(), soft->getPubKey()), 1);
+}
+
+/* An Ed25519 public key on the token read as the token key: XCA cannot
+ * generate or store one there (no mechanism), so the object is created
+ * with PKCS#11 directly (CKA_EC_POINT as DER OCTET STRING, PKCS#11 3.0).
+ * BTD-292 (ticket-writer's note): the inverted condition of load_pubkey()
+ * passed the key built by the EdDSA branch on to fromParamData() with
+ * CKK_EC_EDWARDS, whose EVP_PKEY_CTX_new_id() gave NULL: std::bad_alloc. */
+void test_service_softhsm::loadEd25519KeyFromToken()
+{
+	EVP_PKEY *soft = EVP_PKEY_Q_keygen(nullptr, nullptr, "ED25519");
+	QVERIFY(soft);
+	unsigned char raw[32];
+	size_t rawLen = sizeof raw;
+	QVERIFY(EVP_PKEY_get_raw_public_key(soft, raw, &rawLen) == 1);
+	ASN1_OCTET_STRING *os = ASN1_OCTET_STRING_new();
+	ASN1_STRING_set1_data(os, raw, rawLen);
+	unsigned char *der = nullptr;
+	int derLen = i2d_ASN1_OCTET_STRING(os, &der);
+	ASN1_OCTET_STRING_free(os);
+	QByteArray point((const char *)der, derLen);
+	OPENSSL_free(der);
+	/* the OID 1.3.101.112 (id-Ed25519) */
+	const unsigned char ed25519Oid[] = { 0x06, 0x03, 0x2b, 0x65, 0x70 };
+
+	TokenPinScope pin;
+	pki_scard card("BTD-292 ed25519");
+	TRY({
+		pkcs11 p11;
+		p11.startSession(token.slot(), true);
+		p11.tokenLogin(SoftHsmToken::label, false);
+		pk11_attlist atts(pk11_attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY));
+		atts << pk11_attr_ulong(CKA_KEY_TYPE, CKK_EC_EDWARDS) <<
+			pk11_attr_bool(CKA_TOKEN, true) <<
+			pk11_attr_data(CKA_LABEL, QByteArray("BTD-292 ed25519")) <<
+			pk11_attr_data(CKA_EC_PARAMS, QByteArray(
+				(const char *)ed25519Oid, sizeof ed25519Oid)) <<
+			pk11_attr_data(CKA_EC_POINT, point);
+		CK_OBJECT_HANDLE h = p11.createObject(atts);
+		card.load_token(p11, h);
+		p11.logout();
+	});
+	QCOMPARE(EVP_PKEY_get_id(card.getPubKey()), EVP_PKEY_ED25519);
+	QCOMPARE(EVP_PKEY_eq(card.getPubKey(), soft), 1);
+	EVP_PKEY_free(soft);
 }
 
 /* A key generated on the token: on the token, in the database as a
