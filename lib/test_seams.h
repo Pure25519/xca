@@ -27,6 +27,13 @@ namespace TestSeams
 	/* Called by DbTransaction::commit() for a nested commit: true if
 	 * this one rolls back */
 	bool nestedCommitRollsBack();
+	/* database_model (BTD-296): the next open throws errorEx right
+	 * after the unlock and the schema check, outside their try block,
+	 * as a later step of the constructor would */
+	void failNextOpenAfterUnlock();
+	/* Called by the database_model constructor: true once after
+	 * failNextOpenAfterUnlock() */
+	bool openFailsAfterUnlock();
 }
 
 #endif

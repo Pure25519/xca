@@ -12,6 +12,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSqlDatabase>
 #include <QTemporaryDir>
 
 #include "lib/audit.h"
@@ -19,6 +20,7 @@
 #include "lib/db_key.h"
 #include "lib/Passwd.h"
 #include "lib/pki_evp.h"
+#include "lib/test_seams.h"
 
 #include "ServiceTestCase.h"
 
@@ -59,6 +61,7 @@ class test_service_key_context : public ServiceTestCase
   private slots:
 	void closeForgetsPassword();
 	void secondDatabaseOwnPassword();
+	void failedOpenLeavesNoContext();
 	void noStaticPasswordInLib();
 	void frontEndSecretsStayInFrontEnds();
 };
@@ -105,6 +108,38 @@ void test_service_key_context::secondDatabaseOwnPassword()
 	QVERIFY(decrypts("key-a"));
 	Database.close();
 	QVERIFY(!pki_evp::validateDatabasePassword(Passwd(passA)));
+	openDatabase();
+}
+
+/* An open that fails after the unlock, outside the constructor's try
+ * block (BTD-296): the constructor ends without the destructor, the member
+ * keys is destroyed, and KeyContext::session() must not point at it any
+ * more. Before the fix it did, and the next session() was a use-after-free
+ * (AddressSanitizer: heap-use-after-free in validateDatabasePassword). */
+void test_service_key_context::failedOpenLeavesNoContext()
+{
+	const QByteArray pass("key-context-failed");
+	Database.close();
+	QVERIFY(!KeyContext::session());
+	TestSeams::failNextOpenAfterUnlock();
+	pwdialog->expect(pass);
+	bool thrown = false;
+	try {
+		Database.open(dir.filePath("failed.xdb"));
+	} catch (errorEx &) {
+		thrown = true;
+	}
+	QVERIFY(thrown);
+	QVERIFY(!Database.isOpen());
+	QVERIFY2(!KeyContext::session(),
+		"KeyContext::session() points at the destroyed context");
+	QVERIFY(!pki_evp::validateDatabasePassword(Passwd(pass)));
+	/* the constructor left its connection open (BTD-296 side finding):
+	 * close it, so the harness can open its database again */
+	QString conn = QSqlDatabase::database().connectionName();
+	QSqlDatabase::database().close();
+	QSqlDatabase::removeDatabase(conn);
+	Settings.clear();
 	openDatabase();
 }
 
