@@ -4,6 +4,25 @@
 # bxc-pki docs/dependencies.json). No Qt Network, Gui, Widgets or Help.
 
 set(SERVER_DIR ${PROJECT_SOURCE_DIR}/server)
+
+# The vendored cpp-httplib, pinned by release tag and SHA-256 (condition 1
+# of bxc-pki docs/xca-server-architecture.md; bxc-pki docs/dependencies.json
+# reads both lines). Every security advisory of yhirose/cpp-httplib means a
+# new tag here, with full gates. A changed header fails the configure.
+set(CPPHTTPLIB_VERSION "0.66.0")
+set(CPPHTTPLIB_SHA256 "51ddd1482c67acb31f3064e48329aade14acc7dd0fab31ee5397193697ea1c35")
+file(SHA256 ${SERVER_DIR}/third_party/httplib.h cpphttplib_sha256)
+if(NOT cpphttplib_sha256 STREQUAL CPPHTTPLIB_SHA256)
+  message(FATAL_ERROR "server/third_party/httplib.h has SHA-256 "
+	"${cpphttplib_sha256}, not the pinned ${CPPHTTPLIB_SHA256} of "
+	"cpp-httplib v${CPPHTTPLIB_VERSION}")
+endif()
+file(STRINGS ${SERVER_DIR}/third_party/httplib.h cpphttplib_version_line
+	REGEX "^#define CPPHTTPLIB_VERSION \"")
+if(NOT cpphttplib_version_line STREQUAL "#define CPPHTTPLIB_VERSION \"${CPPHTTPLIB_VERSION}\"")
+  message(FATAL_ERROR "server/third_party/httplib.h is not cpp-httplib "
+	"v${CPPHTTPLIB_VERSION}: ${cpphttplib_version_line}")
+endif()
 # The tests name the binary by its path, so they run (and fail) also before
 # the target exists
 set(XCA_SERVER_BIN ${PROJECT_BINARY_DIR}/xca-server)
