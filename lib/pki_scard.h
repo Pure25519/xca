@@ -69,6 +69,10 @@ class pki_scard: public pki_key
 			return card_label;
 		}
 		EVP_PKEY *decryptKey() const;
+		/* The EC point of a CKA_EC_POINT attribute of a key on a
+		 * curve with fieldBytes bytes per coordinate (BTD-298) */
+		static QByteArray ecPointFromAttribute(const QByteArray &attr,
+				int fieldBytes);
 		QString scardLogin(pkcs11 &p11, bool so, bool force=false)const;
 		void changePin();
 		void initPin();

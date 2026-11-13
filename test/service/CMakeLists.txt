@@ -251,6 +251,14 @@ foreach(mode output retain prefer prefer-false prefer-0 prefer-off)
   Headless(test_service_importexport_cnf_${mode})
 endforeach()
 
+# With SOFTHSM2_MODULE set, a SoftHSM token that cannot be set up is a
+# broken fixture: the token tests fail instead of skipping (BTD-298)
+add_test(NAME test_service_softhsm_broken COMMAND test_service_softhsm)
+set_tests_properties(test_service_softhsm_broken PROPERTIES LABELS service
+	ENVIRONMENT SOFTHSM2_MODULE=/nonexistent/libsofthsm2.so
+	PASS_REGULAR_EXPRESSION "FAIL!  : test_service_softhsm::initTestCase\\(\\)[^\n]*SOFTHSM2_MODULE[^\n]*does not exist")
+Headless(test_service_softhsm_broken)
+
 # The Windows packaging follows MSVC and OpenSSL 4 (BTD-252), checked on
 # every platform
 add_test(NAME test_windows_packaging

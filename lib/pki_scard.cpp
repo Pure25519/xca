@@ -136,6 +136,24 @@ static QByteArray attribute2bytearray(pkcs11 &p11, CK_OBJECT_HANDLE object, unsi
 	return bn.getData();
 }
 
+/* CKA_EC_POINT is the DER encoding of an OCTET STRING with the point
+ * (PKCS#11 2.40, 10.10); a token that gives the bare point is taken as it
+ * is (BTD-126) */
+QByteArray pki_scard::ecPointFromAttribute(const QByteArray &attr,
+		int fieldBytes)
+{
+	Q_UNUSED(fieldBytes);
+	const unsigned char *p = (const unsigned char *)attr.constData();
+	ASN1_OCTET_STRING *os = d2i_ASN1_OCTET_STRING(NULL, &p, attr.size());
+	QByteArray point = attr;
+	if (os && p == (const unsigned char *)attr.constData() + attr.size())
+		point = QByteArray((const char *)ASN1_STRING_get0_data(os),
+			ASN1_STRING_get_length(os));
+	ASN1_OCTET_STRING_free(os);
+	ign_openssl_error();
+	return point;
+}
+
 EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 {
 	unsigned long keytype;
@@ -176,26 +194,15 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 		EC_GROUP *group = (EC_GROUP *)
 			d2i_bytearray(D2I_VOID(d2i_ECPKParameters), ba);
 		int nid = EC_GROUP_get_curve_name(group);
+		int fieldBytes = (EC_GROUP_get_degree(group) + 7) / 8;
 		EC_GROUP_free(group);
 		pki_openssl_error();
 		OSSL_PARAM_BLD_push_utf8_string(bld.get(), OSSL_PKEY_PARAM_GROUP_NAME,
 			OBJ_nid2sn(nid), 0);
 
-		/* CKA_EC_POINT is the DER encoding of an OCTET STRING with
-		 * the point (PKCS#11 2.40, 10.10); a token that gives the bare
-		 * point is taken as it is (BTD-126) */
-		ba = attribute2bytearray(p11, object, CKA_EC_POINT);
-		const unsigned char *p = (const unsigned char *)ba.constData();
-		ASN1_OCTET_STRING *os = d2i_ASN1_OCTET_STRING(NULL, &p,
-				ba.size());
-		if (os && p == (const unsigned char *)ba.constData() + ba.size())
-			ecPoint = QByteArray((const char *)
-				ASN1_STRING_get0_data(os),
-				ASN1_STRING_get_length(os));
-		else
-			ecPoint = ba;
-		ASN1_OCTET_STRING_free(os);
-		ign_openssl_error();
+		ecPoint = ecPointFromAttribute(
+			attribute2bytearray(p11, object, CKA_EC_POINT),
+			fieldBytes);
 		evpType = EVP_PKEY_EC;
 		OSSL_PARAM_BLD_push_octet_string(bld.get(), OSSL_PKEY_PARAM_PUB_KEY,
 			ecPoint.data(), ecPoint.size());
