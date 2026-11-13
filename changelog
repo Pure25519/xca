@@ -1,6 +1,30 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-296 (xca#191): a database open that fails after the unlock no
+   longer leaves a dangling pointer to the destroyed key context of the
+   session.
+ * BTD-292 (xca#190): keys on a PKCS#11 token work again (RSA, DSA, EC):
+   a key generated on or stored to a token, the token key list, Store on
+   Security token, and rename and delete on the token failed since
+   upstream be0d7e3a (empty public key, an abort, the wrong EC point;
+   storing read the parameters of the wrong key and stored the curve's
+   generator as the EC point). A wrong PIN when renaming on a token is
+   token_error (BTD-126). Tests with a SoftHSM token per run (BTD-126).
+ * BTD-294 (xca#189): a wrong password for an encrypted key that
+   decrypts to garbage (about 1 in 300 for AES-CBC) is a wrong password:
+   the password is asked for again, and a password source ends with
+   password_rejected instead of no_pki_data.
+ * BTD-153 (xca#188): the JSON error object names what a client acts on
+   as data: candidates (type, id, name, serial, issuer) of an ambiguous
+   reference, stored_objects after publish_failed, field (the option or
+   the JSON pointer of the bootstrap member), rule (the deciding member
+   of a name policy) and question (the id of a question that was not
+   confirmed).
+ * BTD-72 (xca#187): the database password and its hash belong to the
+   open database session (KeyContext, owned by database_model) instead
+   of static members of pki_evp; closing the database, or a failed open,
+   cleanses both, so nothing of a closed database stays in the process.
  * BTD-131 (xca#183): saving a template without a change writes nothing
    and no template.update entry, and the EKUs are stored in one order; a
    CA template with a path length that is not a number of 0 or more is
