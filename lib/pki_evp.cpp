@@ -671,8 +671,8 @@ bool pki_evp::updateLegacyEncryption()
 		}
 		pki_ign_openssl_error();
 
-		EVP_PKEY *newkey = legacyDecryptKey(myencKey,
-				sessionPassword());
+		Passwd passwd = sessionPassword();
+		EVP_PKEY *newkey = legacyDecryptKey(myencKey, passwd);
 		ign_openssl_error();
 		if (newkey) {
 			set_evp_key(newkey);
