@@ -35,6 +35,7 @@
 #include "db_x509req.h"
 #include "db_temp.h"
 #include "audit.h"
+#include "test_seams.h"
 
 xca_db Database;
 
@@ -473,6 +474,11 @@ database_model::database_model(const QString &name, const Passwd &pass)
 		Settings.clear();
 		throw;
 	}
+#ifdef BXC_PKI_TEST_SEAMS
+	if (TestSeams::openFailsAfterUnlock())
+		throw errorEx("test seam: the open fails after the unlock "
+			"(BTD-296)");
+#endif
 
 	/* Assure initialisation order:
 	 * keys first, followed by x509[req], and crls last.
