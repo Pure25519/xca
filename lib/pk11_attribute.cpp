@@ -9,6 +9,7 @@
 #include "pk11_attribute.h"
 #include "exception.h"
 #include <QObject>
+#include <openssl/crypto.h>
 
 void pk11_attribute::load(const slotid &slot,
 			CK_SESSION_HANDLE sess, CK_OBJECT_HANDLE obj)
@@ -83,7 +84,12 @@ void pk11_attribute::store(const slotid &slot,
 
 void pk11_attlist::copy(const pk11_attlist &a)
 {
+	if (&a == this)
+		return;
 	reset();
+	/* the array of the old list (BTD-292: it leaked on assignment) */
+	free(attributes);
+	attributes = NULL;
 	attlen = a.attlen;
 	alloc_len = a.alloc_len;
 	if (alloc_len) {
@@ -103,6 +109,8 @@ void pk11_attlist::copy(const pk11_attlist &a)
 
 pk11_attlist::pk11_attlist(const pk11_attlist &a)
 {
+	/* copy() frees what the list holds: start empty */
+	init();
 	copy(a);
 }
 
@@ -136,8 +144,11 @@ void pk11_attlist::addAttribute(const pk11_attribute &a)
 
 void pk11_attlist::reset()
 {
-	for (unsigned long i=0; i<attlen; i++)
+	/* the values may be private key parts (store_token()): wiped
+	 * before they are freed, as in the destructor (BTD-292) */
+	for (unsigned long i=0; i<attlen; i++) {
+		OPENSSL_cleanse(attributes[i].pValue, attributes[i].ulValueLen);
 		free(attributes[i].pValue);
-
+	}
 	attlen = 0;
 }
