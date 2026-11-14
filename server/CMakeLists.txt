@@ -95,9 +95,50 @@ if(BUILD_TESTING)
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lifecycle
 		${SERVER_SH} ${SERVER_DIR}/test/server_lifecycle.sh)
+  # The operation table of roles.json (BTD-155) as lines for the shell test:
+  # <operation_id> <METHOD> <path> <roles, comma separated> <ca_param or ->
+  set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+	${SERVER_DIR}/roles.json)
+  file(READ ${SERVER_DIR}/roles.json server_roles_json)
+  string(JSON server_ops_n LENGTH "${server_roles_json}" operations)
+  math(EXPR server_ops_last "${server_ops_n} - 1")
+  set(server_roles_tsv "")
+  foreach(i RANGE ${server_ops_last})
+    string(JSON op GET "${server_roles_json}" operations ${i} operation_id)
+    string(JSON method GET "${server_roles_json}" operations ${i} method)
+    string(JSON path GET "${server_roles_json}" operations ${i} path)
+    string(JSON ca_type TYPE "${server_roles_json}" operations ${i} ca_param)
+    if(ca_type STREQUAL "NULL")
+      set(ca "-")
+    else()
+      string(JSON ca GET "${server_roles_json}" operations ${i} ca_param)
+    endif()
+    string(JSON roles_n LENGTH "${server_roles_json}" operations ${i} roles)
+    math(EXPR roles_last "${roles_n} - 1")
+    set(roles "")
+    foreach(j RANGE ${roles_last})
+      string(JSON role GET "${server_roles_json}" operations ${i} roles ${j})
+      list(APPEND roles ${role})
+    endforeach()
+    string(REPLACE ";" "," roles "${roles}")
+    string(APPEND server_roles_tsv "${op} ${method} ${path} ${roles} ${ca}\n")
+  endforeach()
+  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/server_roles.tsv "${server_roles_tsv}")
+  # TLS, mTLS or API keys, the roles of every operation, the CA scope, the
+  # audit entries auth.login and auth.denied with their rate limit, reload
+  add_test(NAME test_server_auth
+	COMMAND ${CMAKE_COMMAND} -E env
+		SERVER=${XCA_SERVER_BIN}
+		BXC_PKI=$<TARGET_FILE:bxc-pki>
+		XCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
+		SQL_EXEC=$<TARGET_FILE:sql_exec>
+		OPENSSL=${SERVER_OPENSSL}
+		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_auth
+		ROLES_TSV=${CMAKE_CURRENT_BINARY_DIR}/server_roles.tsv
+		${SERVER_SH} ${SERVER_DIR}/test/server_auth.sh)
   set_tests_properties(test_server_link test_server_config
-	test_server_lifecycle PROPERTIES LABELS server)
+	test_server_lifecycle test_server_auth PROPERTIES LABELS server)
   set_property(TEST test_server_link test_server_config
-	test_server_lifecycle APPEND PROPERTY
+	test_server_lifecycle test_server_auth APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()
