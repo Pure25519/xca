@@ -15,6 +15,7 @@
 
 #include "exception.h"
 #include "database_model.h"
+#include "database_lock.h"
 #include "pki_temp.h"
 #include "pki_x509req.h"
 #include "pki_evp.h"
@@ -389,6 +390,10 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	if (dbName.isEmpty())
 		throw open_abort;
+	/* xca-server owns its database while it runs (BTD-154): nothing
+	 * else opens it, the GUI and the CLI only check the lock */
+	if (!isRemoteDB(dbName))
+		DatabaseLock::refuseIfInUse(dbName);
 
 	Passwd passwd(pass);
 	pass_info p(XCA_TITLE, QString());

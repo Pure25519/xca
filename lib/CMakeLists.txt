@@ -56,6 +56,7 @@ json_report.cpp	json_report.h
 staged_file.cpp	staged_file.h
 test_seams.cpp	test_seams.h
 crl_policy.cpp	crl_policy.h
+database_lock.cpp	database_lock.h
 )
 macro(ExpandSources target)
   list(TRANSFORM ${target}_sources PREPEND ${PROJECT_SOURCE_DIR}/lib/)
