@@ -98,6 +98,10 @@ class pki_scard: public pki_key
 		TokenDeletion prepareTokenDeletion();
 		TokenDeletion prepareTokenDeletion(const slotid &slot);
 		void store_token(const slotid &slot, EVP_PKEY *pkey);
+		/* Stores the private key of a software key: decrypts it and
+		 * frees the decrypted key right after the store, also when
+		 * the store throws (BTD-293, BTD-307) */
+		void store_token(const slotid &slot, const pki_key *key);
 		TokenRename prepareTokenRename(const slotid &slot,
 				const QString &name);
 		QString getMsg(msg_type msg, int n = 1) const;
