@@ -1,14 +1,19 @@
 /* vi: set sw=4 ts=4:
  *
- * The database session of xca-server (BTD-154), see session.h. Runs on
+ * The database session of xca-server (BTD-154, BTD-155), see session.h. Runs on
  * the DB worker only.
  */
 
 #include "session.h"
 
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
 #include <QObject>
+#include <QRegularExpression>
+#include <QSet>
 #include <QStringList>
 
 #include "lib/audit.h"
@@ -168,6 +173,88 @@ QJsonObject statusJob(const QString &actor)
 		{ "objects", objects },
 		{ "audit_entries", count("SELECT COUNT(*) FROM audit_log") },
 	};
+}
+
+QJsonObject appendEntry(const QString &actor, const QString &action,
+		const QString &objectType, const QString &objectId,
+		const QVariantMap &params, const QString &result,
+		const QString &errorCode)
+{
+	if (!Database.isOpen())
+		throw serviceError("no_database",
+			QObject::tr("No database is open"));
+	ServiceContext ctx = actor.isEmpty() ? serverContext() :
+			ServiceContext(ServiceContext::rest, actor);
+	AuditEntry e = AuditLog::append(ctx, action, objectType, objectId,
+			AuditParams::fromMap(params), result, errorCode);
+	return QJsonObject{ { "seq", e.seq } };
+}
+
+QJsonObject caScopeJob(const QJsonValue &reference, bool issuerOf)
+{
+	static const QRegularExpression digits("^[0-9]{1,18}$");
+	static const QRegularExpression hex("^[0-9a-f]{64}$");
+	if (!Database.isOpen())
+		throw serviceError("no_database",
+			QObject::tr("No database is open"));
+	QString text = reference.isDouble() ?
+		QString::number(qint64(reference.toDouble())) :
+		reference.toString();
+	QSet<qint64> hits;
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT items.id, items.name, certs.cert FROM items "
+		"JOIN certs ON certs.item = items.id WHERE items.del = 0");
+	execOrThrow(q, "CA scope");
+	QString fingerprint = text.toLower().remove(':');
+	bool byId = digits.match(text).hasMatch();
+	bool byFingerprint = !reference.isDouble() &&
+				hex.match(fingerprint).hasMatch();
+	while (q.next()) {
+		qint64 id = q.value(0).toLongLong();
+		if ((byId && QString::number(id) == text) ||
+		    (!reference.isDouble() && q.value(1).toString() == text)) {
+			hits << id;
+			continue;
+		}
+		if (byFingerprint) {
+			QByteArray der = QByteArray::fromBase64(
+					q.value(2).toByteArray());
+			if (QString::fromLatin1(QCryptographicHash::hash(der,
+				QCryptographicHash::Sha256).toHex()) ==
+			    fingerprint)
+				hits << id;
+		}
+	}
+	if (hits.isEmpty())
+		throw serviceError("unknown_reference", QObject::tr(
+			"No certificate with the id, name or fingerprint "
+			"'%1'").arg(text));
+	if (hits.size() > 1)
+		throw serviceError("ambiguous_reference", QObject::tr(
+			"'%1' names more than one certificate").arg(text));
+	qint64 item = *hits.begin();
+	if (issuerOf) {
+		SQL_PREPARE(q, "SELECT issuer FROM certs WHERE item = ?");
+		q.bindValue(0, item);
+		execOrThrow(q, "CA scope");
+		if (!q.next() || q.value(0).isNull())
+			throw serviceError("unknown_reference", QObject::tr(
+				"The issuer of certificate %1 is not in the "
+				"database").arg(item));
+		item = q.value(0).toLongLong();
+	}
+	QJsonArray ids;
+	SQL_PREPARE(q, "SELECT value FROM settings WHERE key_ LIKE "
+		"'bootstrap_%'");
+	execOrThrow(q, "CA scope");
+	while (q.next()) {
+		QJsonObject row = QJsonDocument::fromJson(
+			q.value(0).toString().toUtf8()).object();
+		if (row.value("kind").toString() == "ca" &&
+		    qint64(row.value("item").toDouble()) == item)
+			ids << row.value("bootstrap_id").toString();
+	}
+	return QJsonObject{ { "item", item }, { "bootstrap_ids", ids } };
 }
 
 QJsonObject closeSession()
