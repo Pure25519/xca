@@ -5,6 +5,26 @@
 
 set(SERVER_DIR ${PROJECT_SOURCE_DIR}/server)
 
+# XCA_BUILD_SERVER (BTD-305): build, test and install xca-server. ON by
+# default where the server is set up (POSIX hosts), OFF on Windows, where
+# the server is not set up yet. A GUI-only or a distribution build sets it
+# OFF: then no target, no server test and no install rule exist, and the
+# GUI build is the same. The bxc-pki build image sets it ON explicitly.
+if(WIN32)
+  set(server_default OFF)
+else()
+  set(server_default ON)
+endif()
+option(XCA_BUILD_SERVER "Build, test and install xca-server" ${server_default})
+if(XCA_BUILD_SERVER AND WIN32)
+  message(FATAL_ERROR "XCA_BUILD_SERVER=ON: xca-server is not set up "
+	"for Windows yet")
+endif()
+if(NOT XCA_BUILD_SERVER)
+  message(STATUS "xca-server is not built (XCA_BUILD_SERVER=OFF)")
+  return()
+endif()
+
 # The tests name the binary by its path, so they run (and fail) also before
 # the target exists
 set(XCA_SERVER_BIN ${PROJECT_BINARY_DIR}/xca-server)

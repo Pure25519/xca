@@ -122,7 +122,12 @@ check(xca "${XCA}" --no-gui --database "${DB}" --password "pass:${DB_PW}"
 # the libraries are loaded at start, the whole suite adds only run time
 # the REST server links libssl next to xcacore (BTD-154, rule
 # phase3-http-library of bxc-pki docs/dependencies.json)
-check(xca-server "${XCA_SERVER}" --version)
+# (empty with XCA_BUILD_SERVER=OFF, BTD-305)
+if(XCA_SERVER)
+  check(xca-server "${XCA_SERVER}" --version)
+else()
+  message(STATUS "xca-server is not built (XCA_BUILD_SERVER=OFF)")
+endif()
 check(testxca "${TESTXCA}" automationIds)
 check(service_test "${SERVICE_TEST}" chainValid)
 
