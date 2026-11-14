@@ -12,6 +12,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QRegularExpression>
+#include <QSqlDatabase>
 #include <QTemporaryDir>
 
 #include "lib/audit.h"
@@ -19,6 +20,7 @@
 #include "lib/db_key.h"
 #include "lib/Passwd.h"
 #include "lib/pki_evp.h"
+#include "lib/test_seams.h"
 
 #include "ServiceTestCase.h"
 
@@ -59,6 +61,8 @@ class test_service_key_context : public ServiceTestCase
   private slots:
 	void closeForgetsPassword();
 	void secondDatabaseOwnPassword();
+	void failedOpenLeavesNoContext();
+	void failedOpenLeavesNoState();
 	void noStaticPasswordInLib();
 	void frontEndSecretsStayInFrontEnds();
 };
@@ -105,6 +109,69 @@ void test_service_key_context::secondDatabaseOwnPassword()
 	QVERIFY(decrypts("key-a"));
 	Database.close();
 	QVERIFY(!pki_evp::validateDatabasePassword(Passwd(passA)));
+	openDatabase();
+}
+
+/* An open that fails after the unlock, outside the constructor's try
+ * block (BTD-296): the constructor ends without the destructor, the member
+ * keys is destroyed, and KeyContext::session() must not point at it any
+ * more. Before the fix it did, and the next session() was a use-after-free
+ * (AddressSanitizer: heap-use-after-free in validateDatabasePassword). */
+void test_service_key_context::failedOpenLeavesNoContext()
+{
+	const QByteArray pass("key-context-failed");
+	Database.close();
+	QVERIFY(!KeyContext::session());
+	TestSeams::failNextOpenAfterUnlock();
+	pwdialog->expect(pass);
+	bool thrown = false;
+	try {
+		Database.open(dir.filePath("failed.xdb"));
+	} catch (errorEx &) {
+		thrown = true;
+	}
+	QVERIFY(thrown);
+	QVERIFY(!Database.isOpen());
+	QVERIFY2(!KeyContext::session(),
+		"KeyContext::session() points at the destroyed context");
+	QVERIFY(!pki_evp::validateDatabasePassword(Passwd(pass)));
+	/* the failed constructor closed its connection itself (BTD-299) */
+	QVERIFY2(QSqlDatabase::connectionNames().isEmpty(), CCHAR(
+		"connections left: " + QSqlDatabase::connectionNames().join(", ")));
+	openDatabase();
+}
+
+/* An open that fails at the end of the constructor, after the models are
+ * created and have loaded the objects (BTD-299): nothing of it stays. The
+ * connection is closed and removed, the models and their objects are gone,
+ * the settings are cleared, there is no session context, and the next
+ * open works without any manual cleanup. Before the fix only the try
+ * block around the unlock cleaned up: the connection stayed open and the
+ * models and their objects stayed allocated (LeakSanitizer). */
+void test_service_key_context::failedOpenLeavesNoState()
+{
+	const QByteArray pass("key-context-late");
+	QString file = dir.filePath("late.xdb");
+	open(file, pass);
+	QVERIFY(Database.model<db_key>()->newKey(ctx,
+		keyjob("EC:prime256v1"), "key-late"));
+	Database.close();
+
+	TestSeams::failNextOpenAfterModels();
+	pwdialog->expect(pass);
+	bool thrown = false;
+	try {
+		Database.open(file);
+	} catch (errorEx &) {
+		thrown = true;
+	}
+	QVERIFY(thrown);
+	QVERIFY(!Database.isOpen());
+	QVERIFY(!KeyContext::session());
+	QVERIFY2(QSqlDatabase::connectionNames().isEmpty(), CCHAR(
+		"connections left: " + QSqlDatabase::connectionNames().join(", ")));
+	QVERIFY2(Store.getAll<pki_base>().isEmpty(),
+		"objects of the failed open are still in the store");
 	openDatabase();
 }
 

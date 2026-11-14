@@ -24,4 +24,32 @@ bool TestSeams::nestedCommitRollsBack()
 	return nestedRollback > 0 && --nestedRollback == 0;
 }
 
+static bool openFailure;
+
+void TestSeams::failNextOpenAfterUnlock()
+{
+	openFailure = true;
+}
+
+bool TestSeams::openFailsAfterUnlock()
+{
+	bool fail = openFailure;
+	openFailure = false;
+	return fail;
+}
+
+static bool lateOpenFailure;
+
+void TestSeams::failNextOpenAfterModels()
+{
+	lateOpenFailure = true;
+}
+
+bool TestSeams::openFailsAfterModels()
+{
+	bool fail = lateOpenFailure;
+	lateOpenFailure = false;
+	return fail;
+}
+
 #endif

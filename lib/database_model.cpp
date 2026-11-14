@@ -36,6 +36,7 @@
 #include "db_x509req.h"
 #include "db_temp.h"
 #include "audit.h"
+#include "test_seams.h"
 
 xca_db Database;
 
@@ -471,40 +472,59 @@ database_model::database_model(const QString &name, const Passwd &pass)
 			Settings.migrateOptionflags();
 			migratePkcs12Default(existing);
 		}
+#ifdef BXC_PKI_TEST_SEAMS
+		if (TestSeams::openFailsAfterUnlock())
+			throw errorEx("test seam: the open fails after the unlock "
+				"(BTD-296)");
+#endif
+
+		/* Assure initialisation order:
+		 * keys first, followed by x509[req], and crls last.
+		 * Templates don't care.
+		 */
+		db_key *dbkey = new db_key();
+		models << dbkey;
+		models << new db_x509req();
+		models << new db_x509();
+		models << new db_crl();
+		models << new db_temp();
+
+		if (dbkey && !read_only)
+			dbkey->updateKeyEncryptionScheme();
+		reportSkippedRows(ServiceContext::processPasswordVerified &&
+				  !read_only);
+
+		foreach(db_base *m, models) {
+			Q_CHECK_PTR(m);
+			connect(m, SIGNAL(pkiChanged(pki_base*)),
+				this, SLOT(pkiChangedSlot(pki_base*)));
+		}
+
+#ifdef BXC_PKI_TEST_SEAMS
+		if (TestSeams::openFailsAfterModels())
+			throw errorEx("test seam: the open fails after the models "
+				"(BTD-299)");
+#endif
+		pkcs11::libraries.load(Settings["pkcs11path"]);
 	} catch (...) {
-		/* No destructor runs for a failed constructor: close the
-		 * connection here, or the next open() inherits its state */
+		/* No destructor runs for a failed constructor: undo here
+		 * what the destructor would, or the next open() inherits the
+		 * connection, the models and their objects, and the settings
+		 * (BTD-299). Every step of the open is inside this block. */
+		qDeleteAll(models);
+		models.clear();
+		Store.flush();
+		pki_base::freeUnstored();
+		DbTransaction::setHasTransaction(false);
+		read_only = false;
 		QString connName = QSqlDatabase::database().connectionName();
 		QSqlDatabase::database().close();
 		endKeySession();
 		QSqlDatabase::removeDatabase(connName);
 		Settings.clear();
+		XSqlQuery::clearTablePrefix();
 		throw;
 	}
-
-	/* Assure initialisation order:
-	 * keys first, followed by x509[req], and crls last.
-	 * Templates don't care.
-	 */
-	db_key *dbkey = new db_key();
-	models << dbkey;
-	models << new db_x509req();
-	models << new db_x509();
-	models << new db_crl();
-	models << new db_temp();
-
-	if (dbkey && !read_only)
-		dbkey->updateKeyEncryptionScheme();
-	reportSkippedRows(ServiceContext::processPasswordVerified &&
-			  !read_only);
-
-	foreach(db_base *m, models) {
-		Q_CHECK_PTR(m);
-		connect(m, SIGNAL(pkiChanged(pki_base*)),
-			this, SLOT(pkiChangedSlot(pki_base*)));
-	}
-
-	pkcs11::libraries.load(Settings["pkcs11path"]);
 	restart_timer();
 }
 
