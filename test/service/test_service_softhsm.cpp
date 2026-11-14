@@ -157,6 +157,8 @@ class test_service_softhsm : public ServiceTestCase
 	void storeRsaKeyOnToken();
 	void storeEcKeyOnToken();
 	void loadEd25519KeyFromToken();
+	void ecKeyWithBrokenParamsIsTokenError();
+	void ecKeyWithoutParams();
 	void generateOnToken();
 	void renameKeyOnToken();
 	void renameCertificateOnToken();
@@ -451,6 +453,73 @@ void test_service_softhsm::wrongPinIsTokenError()
 	QCOMPARE(e.result, QString("failure"));
 	QCOMPARE(e.errorCode, QString("token_error"));
 	QCOMPARE(e.params.value("on_token").toBool(), true);
+}
+
+/* An EC public key object on the token, made with PKCS#11 directly;
+ * params is CKA_EC_PARAMS, left out if null (BTD-309). Returns the error
+ * code of loading it as a token key, "created: <error>" if the token
+ * refuses the object, or "" if it loads. */
+static QString loadEcObject(SoftHsmToken &token, const QByteArray &params,
+		bool withParams)
+{
+	EVP_PKEY *soft = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
+	unsigned char *buf = nullptr;
+	size_t len = EVP_PKEY_get1_encoded_public_key(soft, &buf);
+	QByteArray der = QByteArray(1, '\x04') + QByteArray(1, char(len)) +
+		QByteArray((const char *)buf, int(len));
+	OPENSSL_free(buf);
+	EVP_PKEY_free(soft);
+
+	TokenPinScope pin;
+	pki_scard card("BTD-309 ec");
+	pkcs11 p11;
+	p11.startSession(token.slot(), true);
+	p11.tokenLogin(SoftHsmToken::label, false);
+	pk11_attlist atts(pk11_attr_ulong(CKA_CLASS, CKO_PUBLIC_KEY));
+	atts << pk11_attr_ulong(CKA_KEY_TYPE, CKK_EC) <<
+		pk11_attr_bool(CKA_TOKEN, false) <<
+		pk11_attr_data(CKA_LABEL, QByteArray("BTD-309 ec")) <<
+		pk11_attr_data(CKA_EC_POINT, der);
+	if (withParams)
+		atts << pk11_attr_data(CKA_EC_PARAMS, params);
+	CK_OBJECT_HANDLE h;
+	try {
+		h = p11.createObject(atts);
+	} catch (errorEx &err) {
+		p11.logout();
+		return "created: " + err.getString();
+	}
+	QString code;
+	try {
+		card.load_token(p11, h);
+	} catch (serviceError &err) {
+		code = err.code;
+	} catch (errorEx &err) {
+		code = "untyped: " + err.getString();
+	}
+	p11.logout();
+	return code;
+}
+
+/* Garbage in CKA_EC_PARAMS: a typed error, no EC_GROUP_* call with a NULL
+ * group; under ASan no finding (BTD-309) */
+void test_service_softhsm::ecKeyWithBrokenParamsIsTokenError()
+{
+	QCOMPARE(loadEcObject(token, QByteArray("\x30\x03\x01\x02\x03", 5),
+		true), QString("token_error"));
+}
+
+/* No CKA_EC_PARAMS at all: SoftHSM refuses such an object
+ * (CKR_TEMPLATE_INCOMPLETE); a token that has one gives a typed error
+ * (BTD-309) */
+void test_service_softhsm::ecKeyWithoutParams()
+{
+	QString result = loadEcObject(token, QByteArray(), false);
+	if (result.startsWith("created: "))
+		qInfo("SoftHSM refuses an EC key without CKA_EC_PARAMS: %s",
+			CCHAR(result));
+	else
+		QCOMPARE(result, QString("token_error"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_softhsm)
