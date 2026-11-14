@@ -63,7 +63,26 @@ Constants (`static const`, `constexpr`, the action names of `AuditLog`) are immu
 | `staged_file.cpp` directory table | `lib/staged_file.cpp` | worker only (no file output in the skeleton) |
 | `JsonReport::json`, `is_gui_app`, `debug_info` patterns | `lib/json_report.h`, `lib/func_base.cpp`, `lib/debug_info.*` | set in `main()` before the threads start, read only afterwards |
 | function-local caches in `lib/func.cpp` (`portable`, `docdir`, `dir`, `qm`, `id`) | `lib/func.cpp` | worker only (file locations, filled on first use) |
-| `DatabaseLock` | `lib/database_lock.*` | no state: the lock file of the server is a `QLockFile` in `main()` |
+| `DatabaseLock` (set of exclusively held lock files) | `lib/database_lock.*` | thread-safe: guarded by its `QMutex`; written in `main()` before the threads start and at the end, read by the open on the worker |
+
+## The database lock (BTD-302, BTD-303)
+
+`<database>.lock` next to the SQLite file carries a kernel lock on an open file: `flock()` on Linux and the other
+POSIX hosts, `LockFileEx()` on Windows (`lib/database_lock.*`). xca-server holds it exclusive for its run
+(`main()`); the GUI and the command line hold it shared while `database_model` has the database open. So the
+server refuses a database that a GUI or CLI has open, they refuse one the server runs on, and several GUI and CLI
+instances share a database as before. The open on the server's worker takes no second lock: the process already
+holds it exclusive.
+
+The kernel releases the lock when its holder ends, also after SIGKILL, so a killed server never locks the database
+for good, whatever its PID or host name was (a recreated container). The PID, application and host the server writes
+into the file are only a hint for the `database_in_use` message.
+
+Network file systems: on NFS, Linux maps `flock()` to NFS byte-range locks that the NFS server coordinates
+between clients (NFSv4, or NFSv3 with lockd); a client that dies keeps its lock until its lease ends (NFSv4:
+about 90 seconds), and with the mount option `nolock` the lock covers only one client. SMB/CIFS mounts may keep
+the lock on the client. SQLite is not safe on such file systems either: keep the database on a local disk or
+on a volume of one host (one Docker host for the container).
 
 ## Conclusion
 

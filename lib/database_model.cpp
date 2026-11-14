@@ -390,10 +390,13 @@ database_model::database_model(const QString &name, const Passwd &pass)
 
 	if (dbName.isEmpty())
 		throw open_abort;
-	/* xca-server owns its database while it runs (BTD-154): nothing
-	 * else opens it, the GUI and the CLI only check the lock */
-	if (!isRemoteDB(dbName))
-		DatabaseLock::refuseIfInUse(dbName);
+	/* xca-server owns its database while it runs (BTD-154): the GUI
+	 * and the CLI hold the lock shared while the database is open, so
+	 * neither opens it while the server runs nor does the server start
+	 * while one of them has it open (BTD-303). The server's own worker
+	 * opens it under the server's exclusive lock. */
+	if (!isRemoteDB(dbName) && !DatabaseLock::heldExclusive(dbName))
+		lock.reset(new DatabaseLock(dbName, DatabaseLock::Shared));
 
 	Passwd passwd(pass);
 	pass_info p(XCA_TITLE, QString());
