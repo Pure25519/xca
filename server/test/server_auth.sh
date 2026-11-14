@@ -330,7 +330,8 @@ if start a "$WORK/a.json"; then
         printf 'GET /v1/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n'
     } | timeout 30 "$OPENSSL" s_client -quiet -connect "127.0.0.1:$PORT" -CAfile "$P/ca.pem" \
         -cert "$P/keepalive.pem" -key "$P/keepalive.key" > "$R/a-ka" 2> /dev/null
-    n=$(grep -c '^HTTP/1.1 200' "$R/a-ka")
+    # the second status line follows the first body, which ends without a newline
+    n=$(grep -o 'HTTP/1.1 200' "$R/a-ka" | wc -l | tr -d ' ')
     [ "$n" = 2 ] || fail "keep-alive: $n answers 200 on one connection, expected 2"
     send "$R/a-ka2" keepalive GET /v1/status
     expect "keep-alive, second connection" "$R/a-ka2" 200
