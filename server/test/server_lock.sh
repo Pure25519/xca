@@ -182,6 +182,7 @@ after_kill pid1
 
 # 4. a live server keeps the database
 start_server live || die "xca-server does not start: $(cat "$WORK/server-live.err")"
+before=$fails
 if hold live; then
     fail "db_hold opened the database of a running server"
     release_holds
@@ -194,10 +195,11 @@ rc=$?
 [ "$rc" -ne 0 ] && grep -q '"code": *"database_in_use"' "$WORK/second.err" ||
     fail "a second server on the database: exit $rc, $(cat "$WORK/second.err")"
 stop_server
-ok "a running server: db_hold and a second server refused"
+[ "$fails" -eq "$before" ] && ok "a running server: db_hold and a second server refused"
 
 # 5. the GUI or the CLI has the database open: the server does not start
 hold gui || die "db_hold cannot open the database: $(cat "$WORK/hold-gui.err")"
+before=$fails
 if start_server while-open; then
     fail "xca-server started while db_hold has the database open"
     stop_server
@@ -205,7 +207,8 @@ else
     grep -q '"code": *"database_in_use"' "$WORK/server-while-open.err" ||
         fail "xca-server while db_hold has the database open: $(cat "$WORK/server-while-open.err")"
 fi
-ok "the server refuses a database that the GUI or the CLI has open"
+[ "$fails" -eq "$before" ] &&
+    ok "the server refuses a database that the GUI or the CLI has open"
 
 # 6. GUI and CLI instances share the database
 if hold second; then
