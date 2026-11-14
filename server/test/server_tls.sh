@@ -94,7 +94,7 @@ req() {
     out=$1; shift
     printf 'GET /v1/health HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' |
         timeout 30 "$OPENSSL" s_client -connect "127.0.0.1:$PORT" -CAfile "$P/ca.pem" \
-            -ign_eof "$@" > "$out" 2>&1
+            -quiet "$@" > "$out" 2>&1
 }
 
 alive() {
