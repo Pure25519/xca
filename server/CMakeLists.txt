@@ -161,10 +161,17 @@ if(BUILD_TESTING)
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
 		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
-  set_tests_properties(test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
-  set_property(TEST test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock
+  # every mTLS refusal with its alert, the server alive afterwards (BTD-306)
+  add_test(NAME test_server_tls
+	COMMAND ${CMAKE_COMMAND} -E env
+		SERVER=${XCA_SERVER_BIN}
+		BXC_PKI=$<TARGET_FILE:bxc-pki>
+		OPENSSL=${SERVER_OPENSSL}
+		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_tls
+		${SERVER_SH} ${SERVER_DIR}/test/server_tls.sh)
+  set_tests_properties(test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls
+	PROPERTIES LABELS server)
+  set_property(TEST test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls
 	APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()
