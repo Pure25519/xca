@@ -344,6 +344,11 @@ class AuditLog
 	/* Rows of the database left out on open because they did not
 	 * decode (BTD-209): count, skipped_items, warning rows_skipped */
 	static const char actionRowsSkipped[];
+	/* xca-server (BTD-154): server.start after the database was opened
+	 * (listen_address, listen_port, http_library, pid), server.stop on
+	 * SIGTERM or SIGINT before it is closed (pid); channel rest */
+	static const char actionServerStart[];
+	static const char actionServerStop[];
 	static const int defaultCheckpointInterval;
 	static const int maxCheckpointInterval;   // bound of the setting
 

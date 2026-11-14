@@ -36,6 +36,8 @@ const char AuditLog::actionKeyCreate[] = "audit.key_create";
 const char AuditLog::actionSettingsMigrate[] = "settings.migrate";
 const char AuditLog::actionSettingsUpdate[] = "settings.update";
 const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
+const char AuditLog::actionServerStart[] = "server.start";
+const char AuditLog::actionServerStop[] = "server.stop";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -164,6 +166,9 @@ const QStringList &AuditParams::allowList()
 		 * only for the options of the Options dialog, otherwise
 		 * redacted */
 		"setting", "old_value", "new_value", "redacted",
+		/* xca-server start and stop (BTD-154): where it listens,
+		 * the cpp-httplib version and the process id */
+		"listen_address", "listen_port", "http_library", "pid",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {

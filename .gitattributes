@@ -1,0 +1,4 @@
+# Vendored third-party files are pinned by SHA-256 (server/CMakeLists.txt,
+# bxc-pki docs/dependencies.json): Git must never convert their line endings,
+# also not with core.autocrlf=true, the default of Git for Windows (BTD-154).
+server/third_party/** -text

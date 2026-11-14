@@ -220,6 +220,7 @@ add_subdirectory(lib)
 add_subdirectory(widgets)
 # bxc-pki, the headless command line (BTD-41)
 include(cli/CMakeLists.txt)
+include(server/CMakeLists.txt)
 
 include(lang/CMakeLists.txt)
 include(misc/CMakeLists.txt)
