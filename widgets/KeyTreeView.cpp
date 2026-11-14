@@ -17,7 +17,6 @@
 #include "AutomationId.h"
 #include <QAbstractItemView>
 #include <QMenu>
-#include <memory>
 
 void KeyTreeView::fillContextMenu(QMenu *menu, QMenu *subExport,
 			const QModelIndex &index, QModelIndexList indexes)
@@ -169,14 +168,8 @@ void KeyTreeView::toToken()
 		if (!p11.selectToken(&slot))
 			return;
 		card = new pki_scard(key->getIntName());
-		{
-			/* the decrypted key is freed right after the store,
-			 * also when it throws: it stayed in memory until
-			 * exit (BTD-293) */
-			std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>
-				priv(key->decryptKey(), &EVP_PKEY_free);
-			card->store_token(slot, priv.get());
-		}
+		/* frees the decrypted key (BTD-293, BTD-307) */
+		card->store_token(slot, key);
 		card->pkiSource = key->pkiSource;
 		QString msg = tr("Shall the original key '%1' be replaced by the key on the token?\nThis will delete the key '%1' and make it unexportable").
 			arg(key->getIntName());

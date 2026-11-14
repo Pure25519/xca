@@ -21,6 +21,8 @@
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
 
+#include <memory>
+
 #include <QThread>
 #include <QSharedPointer>
 
@@ -465,6 +467,16 @@ TokenRename pki_scard::prepareTokenRename(const slotid &slot,
 			p11->storeAttribute(label, pub[0]);
 	};
 	return r;
+}
+
+void pki_scard::store_token(const slotid &slot, const pki_key *key)
+{
+	/* the decrypted key stayed in memory until exit when the caller
+	 * passed decryptKey() straight on (BTD-293); here, in lib/, the
+	 * SoftHSM service tests reach it under ASan (BTD-307) */
+	std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)>
+		priv(key->decryptKey(), &EVP_PKEY_free);
+	store_token(slot, priv.get());
 }
 
 void pki_scard::store_token(const slotid &slot, EVP_PKEY *pkey)
