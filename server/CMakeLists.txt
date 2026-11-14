@@ -169,9 +169,18 @@ if(BUILD_TESTING)
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_tls
 		${SERVER_SH} ${SERVER_DIR}/test/server_tls.sh)
-  set_tests_properties(test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls
+  # threads and accept queue of cpp-httplib bounded by the config (BTD-304)
+  add_test(NAME test_server_limits
+	COMMAND ${CMAKE_COMMAND} -E env
+		SERVER=${XCA_SERVER_BIN}
+		BXC_PKI=$<TARGET_FILE:bxc-pki>
+		OPENSSL=${SERVER_OPENSSL}
+		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_limits
+		${SERVER_SH} ${SERVER_DIR}/test/server_limits.sh)
+  set_tests_properties(test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls test_server_limits
 	PROPERTIES LABELS server)
-  set_property(TEST test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls
+  set_property(TEST test_server_link test_server_config test_server_lifecycle test_server_auth test_server_lock test_server_tls test_server_limits
+	APPEND PROPERTY
 	APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()

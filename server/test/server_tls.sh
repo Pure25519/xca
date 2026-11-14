@@ -78,7 +78,8 @@ cat > "$WORK/xca-server.json" <<EOF
   "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem" },
   "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
-              "job_timeout_s": 60, "queue_max": 64 },
+              "job_timeout_s": 60, "queue_max": 64,
+              "worker_threads": 8, "accept_queue_max": 64 },
   "auth": { "api_keys": false, "denied_per_minute": 1000 },
   "roles": [ { "name": "reader",
                "client_certs": [

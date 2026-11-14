@@ -25,7 +25,8 @@ set(VALID [=[
            "client_ca": "/etc/xca-server/clients.pem" },
   "limits": { "payload_max_bytes": 1048576, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 100,
-              "job_timeout_s": 60, "queue_max": 64 },
+              "job_timeout_s": 60, "queue_max": 64,
+              "worker_threads": 8, "accept_queue_max": 64 },
   "auth": { "api_keys": false, "denied_per_minute": 30 },
   "roles": [
     { "name": "ca-admin",
@@ -83,6 +84,28 @@ string(JSON j SET "${VALID}" limits payload_max_bytes "\"1M\"")
 check(limit-type 2 "/limits/payload_max_bytes" "${j}")
 string(JSON j SET "${VALID}" limits header_max_bytes "0")
 check(limit-zero 2 "/limits/header_max_bytes" "${j}")
+# BTD-304: the threads and the accept queue of cpp-httplib are explicit;
+# read and write timeouts at most 300 s
+string(JSON j REMOVE "${VALID}" limits worker_threads)
+check(missing-worker-threads 2 "/limits/worker_threads" "${j}")
+string(JSON j REMOVE "${VALID}" limits accept_queue_max)
+check(missing-accept-queue 2 "/limits/accept_queue_max" "${j}")
+string(JSON j SET "${VALID}" limits worker_threads "0")
+check(worker-threads-zero 2 "/limits/worker_threads" "${j}")
+string(JSON j SET "${VALID}" limits worker_threads "65")
+check(worker-threads-max 2 "/limits/worker_threads" "${j}")
+string(JSON j SET "${VALID}" limits worker_threads "64")
+check(worker-threads-64 0 "" "${j}")
+string(JSON j SET "${VALID}" limits accept_queue_max "0")
+check(accept-queue-zero 2 "/limits/accept_queue_max" "${j}")
+string(JSON j SET "${VALID}" limits accept_queue_max "1025")
+check(accept-queue-max 2 "/limits/accept_queue_max" "${j}")
+string(JSON j SET "${VALID}" limits read_timeout_s "301")
+check(read-timeout-max 2 "/limits/read_timeout_s" "${j}")
+string(JSON j SET "${VALID}" limits write_timeout_s "301")
+check(write-timeout-max 2 "/limits/write_timeout_s" "${j}")
+string(JSON j SET "${VALID}" limits read_timeout_s "300")
+check(read-timeout-300 0 "" "${j}")
 # a literal secret is refused, whatever it looks like
 string(JSON j SET "${VALID}" database password "\"hunter2\"")
 check(literal-secret 2 "/database/password" "${j}")
