@@ -34,8 +34,15 @@ class SoftHsmToken
 	static const char soPinSource[];
 	static const char wrongPinSource[];
 
-	/* Empty when the token is ready, else the reason to skip */
+	/* Empty when the token is ready, else the reason; see
+	 * SOFTHSM_SET_UP() */
 	QString setUp();
+	/* SOFTHSM2_MODULE is set: a test must run with the token, a
+	 * setup error is a broken fixture (BTD-298) */
+	bool configured() const
+	{
+		return !module.isEmpty();
+	}
 	/* Loads the module into XCA (pkcs11::libraries); a database close
 	 * unloads it again (remove_libs) */
 	bool load() const;
@@ -64,6 +71,11 @@ class SoftHsmToken
 		return soPin;
 	}
 };
+
+/* Sets up token in a test function: without SOFTHSM2_MODULE the test
+ * skips with the reason; with it a setup error fails the test, so that a
+ * broken fixture does not silently stop the token tests (BTD-298) */
+#define SOFTHSM_SET_UP(token) do { 	QString softHsmWhy_ = (token).setUp(); 	if (!softHsmWhy_.isEmpty()) { 		if ((token).configured()) 			QFAIL(qPrintable(softHsmWhy_)); 		QSKIP(qPrintable(softHsmWhy_)); 	} } while (0)
 
 /* SoftHSM always offers one free slot next to the token of setUp(), so
  * a path that lets the user choose the token asks; this answers with the

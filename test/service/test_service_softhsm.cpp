@@ -60,7 +60,6 @@ class test_service_softhsm : public ServiceTestCase
 
 	ServiceContext ctx{ ServiceContext::cli, "os:service-test" };
 	SoftHsmToken token{};
-	QString skip{};
 
 	static db_key *keys()
 	{
@@ -170,9 +169,7 @@ void test_service_softhsm::initTestCase()
 {
 	ServiceTestCase::initTestCase();
 	SoftHsmToken::watchMessages();
-	skip = token.setUp();
-	if (!skip.isEmpty())
-		QSKIP(CCHAR(skip));
+	SOFTHSM_SET_UP(token);
 }
 
 void test_service_softhsm::init()
