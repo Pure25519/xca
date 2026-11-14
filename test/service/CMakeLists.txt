@@ -64,6 +64,13 @@ endforeach()
 add_executable(sql_exec ${SERVICE_TEST_DIR}/sql_exec.cpp)
 target_link_libraries(sql_exec ${QT}::Sql ${ASAN_LIB})
 add_dependencies(tests sql_exec)
+
+# db_hold for the database lock tests: opens a database like the CLI and
+# keeps it open (BTD-302, BTD-303)
+add_executable(db_hold ${SERVICE_TEST_DIR}/db_hold.cpp
+	${PROJECT_BINARY_DIR}/local.h)
+target_link_libraries(db_hold xcacore ${ASAN_LIB})
+add_dependencies(tests db_hold)
 add_dependencies(tests ${CMAKE_PROJECT_NAME})
 
 # CliScriptTest(<name>) runs test/service/cli_<name>.cmake as the ctest
