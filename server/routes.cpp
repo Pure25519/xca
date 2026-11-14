@@ -395,6 +395,24 @@ void installRoutes(httplib::Server &srv, DbWorker &worker,
 	srv.set_read_timeout(time_t(limits.readTimeoutS), 0);
 	srv.set_write_timeout(time_t(limits.writeTimeoutS), 0);
 	srv.set_keep_alive_max_count(size_t(limits.keepAliveMaxCount));
+	/* a fixed number of threads and a bounded accept queue: a
+	 * connection beyond them is closed at once and logged, not queued
+	 * without bound (BTD-304) */
+	const size_t threads = size_t(limits.workerThreads);
+	const size_t queue = size_t(limits.acceptQueueMax);
+	srv.new_task_queue = [threads, queue]() {
+		return new httplib::ThreadPool(threads, threads, queue);
+	};
+	srv.set_error_logger([threads, queue](const httplib::Error &err,
+				const httplib::Request *) {
+		if (err != httplib::Error::ResourceExhaustion)
+			return;
+		JsonReport::write(stderr, JsonReport::error(
+			"accept_queue_full", QObject::tr("A connection was "
+			"closed: all %1 worker threads are busy and %2 "
+			"connections wait (limits.worker_threads, "
+			"limits.accept_queue_max)").arg(threads).arg(queue)));
+	});
 
 	auto ctx = std::make_shared<Context>(Context{ worker, config,
 		operations, roles, audit, limits.jobTimeoutS });
