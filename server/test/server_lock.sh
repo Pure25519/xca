@@ -118,16 +118,23 @@ kill_server() {
     PID=""
 }
 
-# after_kill <tag>: bxc-pki list and a new server work without cleanup
+# after_kill <tag>: bxc-pki list and a new server work without cleanup;
+# after a failure the lock file is removed by hand, so that the later
+# checks still run
 after_kill() {
+    before=$fails
     "$BXC_PKI" list --db "$DB" --password env:XCA_SERVER_DB_PASSWORD \
         > "$WORK/list-$1.out" 2> "$WORK/list-$1.err" ||
         fail "$1: bxc-pki list after kill -9: $(cat "$WORK/list-$1.err")"
     if start_server "$1-restart"; then
         stop_server
-        ok "$1: bxc-pki list and a new server after kill -9"
     else
         fail "$1: no new server after kill -9: $(cat "$WORK/server-$1-restart.err")"
+    fi
+    if [ "$fails" -eq "$before" ]; then
+        ok "$1: bxc-pki list and a new server after kill -9"
+    else
+        rm -f "$LOCK"
     fi
 }
 
