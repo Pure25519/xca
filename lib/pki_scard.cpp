@@ -163,6 +163,18 @@ QByteArray pki_scard::ecPointFromAttribute(const QByteArray &attr,
 	return point;
 }
 
+int pki_scard::ecCurveFromParams(const QByteArray &params, int *fieldBytes)
+{
+	QByteArray ba(params);
+	EC_GROUP *group = (EC_GROUP *)
+		d2i_bytearray(D2I_VOID(d2i_ECPKParameters), ba);
+	int nid = EC_GROUP_get_curve_name(group);
+	*fieldBytes = (EC_GROUP_get_degree(group) + 7) / 8;
+	EC_GROUP_free(group);
+	openssl_error();
+	return nid;
+}
+
 EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 {
 	unsigned long keytype;
@@ -199,13 +211,10 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 	case CKK_EC: {
 		QByteArray ba;
 
-		ba = attribute2bytearray(p11, object, CKA_EC_PARAMS);
-		EC_GROUP *group = (EC_GROUP *)
-			d2i_bytearray(D2I_VOID(d2i_ECPKParameters), ba);
-		int nid = EC_GROUP_get_curve_name(group);
-		int fieldBytes = (EC_GROUP_get_degree(group) + 7) / 8;
-		EC_GROUP_free(group);
-		pki_openssl_error();
+		int fieldBytes = 0;
+		int nid = ecCurveFromParams(
+			attribute2bytearray(p11, object, CKA_EC_PARAMS),
+			&fieldBytes);
 		OSSL_PARAM_BLD_push_utf8_string(bld.get(), OSSL_PKEY_PARAM_GROUP_NAME,
 			OBJ_nid2sn(nid), 0);
 
