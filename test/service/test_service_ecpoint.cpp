@@ -113,9 +113,11 @@ void test_service_ecpoint::derUncompressed()
 void test_service_ecpoint::bareUncompressed()
 {
 	QByteArray pt = point("P-256", false);
-	if ((unsigned char)pt[1] == 0x3f)
-		pt = point("P-256", false);
-	QVERIFY((unsigned char)pt[1] != 0x3f);
+	QCOMPARE(pt.size(), 65);
+	/* deterministic (BTD-308): X[0] fixed to a byte that is no
+	 * remaining length; the rule only looks at lengths, and the
+	 * 0x3f case is bareLooksLikeDer */
+	pt[1] = '\x01';
 	QCOMPARE(pki_scard::ecPointFromAttribute(pt, 32), pt);
 }
 
@@ -167,10 +169,15 @@ void test_service_ecpoint::bareP521LooksLikeLongDer()
 void test_service_ecpoint::curveFromNamedParams()
 {
 	/* OID 1.2.840.10045.3.1.7 (prime256v1) */
-	const char p256[] = "*HÎ=";
-	int fieldBytes = 0;
-	QCOMPARE(pki_scard::ecCurveFromParams(QByteArray(p256, 10),
-		&fieldBytes), NID_X9_62_prime256v1);
+	const char p256[] = "\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
+	int fieldBytes = 0, nid = 0;
+	try {
+		nid = pki_scard::ecCurveFromParams(QByteArray(p256, 10),
+						   &fieldBytes);
+	} catch (errorEx &err) {
+		QFAIL(CCHAR(err.getString()));
+	}
+	QCOMPARE(nid, NID_X9_62_prime256v1);
 	QCOMPARE(fieldBytes, 32);
 }
 
@@ -188,7 +195,7 @@ void test_service_ecpoint::curveFromBrokenParams()
 {
 	int fieldBytes = 0;
 	QCOMPARE(errorCode([&]() {
-		pki_scard::ecCurveFromParams(QByteArray("0",
+		pki_scard::ecCurveFromParams(QByteArray("\x30\x03\x01\x02\x03",
 			5), &fieldBytes); }), QString("token_error"));
 }
 

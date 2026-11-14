@@ -465,7 +465,7 @@ static QString loadEcObject(SoftHsmToken &token, const QByteArray &params,
 	EVP_PKEY *soft = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
 	unsigned char *buf = nullptr;
 	size_t len = EVP_PKEY_get1_encoded_public_key(soft, &buf);
-	QByteArray der = QByteArray(1, '') + QByteArray(1, char(len)) +
+	QByteArray der = QByteArray(1, '\x04') + QByteArray(1, char(len)) +
 		QByteArray((const char *)buf, int(len));
 	OPENSSL_free(buf);
 	EVP_PKEY_free(soft);
@@ -505,7 +505,7 @@ static QString loadEcObject(SoftHsmToken &token, const QByteArray &params,
  * group; under ASan no finding (BTD-309) */
 void test_service_softhsm::ecKeyWithBrokenParamsIsTokenError()
 {
-	QCOMPARE(loadEcObject(token, QByteArray("0", 5),
+	QCOMPARE(loadEcObject(token, QByteArray("\x30\x03\x01\x02\x03", 5),
 		true), QString("token_error"));
 }
 

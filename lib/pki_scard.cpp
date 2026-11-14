@@ -163,15 +163,27 @@ QByteArray pki_scard::ecPointFromAttribute(const QByteArray &attr,
 	return point;
 }
 
+/* No EC_GROUP_* call with a NULL group: missing, undecodable or
+ * explicit (unnamed) parameters are a token_error (BTD-309) */
 int pki_scard::ecCurveFromParams(const QByteArray &params, int *fieldBytes)
 {
+	if (params.isEmpty())
+		throw serviceError("token_error", tr("The EC key on the token "
+			"has no curve parameters (CKA_EC_PARAMS)"));
 	QByteArray ba(params);
 	EC_GROUP *group = (EC_GROUP *)
 		d2i_bytearray(D2I_VOID(d2i_ECPKParameters), ba);
+	if (!group)
+		throw serviceError("token_error", tr("The curve parameters "
+			"(CKA_EC_PARAMS) of the EC key on the token cannot be "
+			"decoded: %1").arg(take_openssl_errors()));
 	int nid = EC_GROUP_get_curve_name(group);
-	*fieldBytes = (EC_GROUP_get_degree(group) + 7) / 8;
+	int bits = EC_GROUP_get_degree(group);
 	EC_GROUP_free(group);
-	openssl_error();
+	if (nid == NID_undef || bits <= 0)
+		throw serviceError("token_error", tr("The EC key on the token "
+			"does not name its curve (CKA_EC_PARAMS)"));
+	*fieldBytes = (bits + 7) / 8;
 	return nid;
 }
 
@@ -211,10 +223,18 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 	case CKK_EC: {
 		QByteArray ba;
 
+		QByteArray params;
+		try {
+			params = attribute2bytearray(p11, object,
+					CKA_EC_PARAMS);
+		} catch (errorEx &err) {
+			throw serviceError("token_error", tr("The curve "
+				"parameters (CKA_EC_PARAMS) of the EC key on "
+				"the token cannot be read: %1")
+				.arg(err.getString()));
+		}
 		int fieldBytes = 0;
-		int nid = ecCurveFromParams(
-			attribute2bytearray(p11, object, CKA_EC_PARAMS),
-			&fieldBytes);
+		int nid = ecCurveFromParams(params, &fieldBytes);
 		OSSL_PARAM_BLD_push_utf8_string(bld.get(), OSSL_PKEY_PARAM_GROUP_NAME,
 			OBJ_nid2sn(nid), 0);
 
