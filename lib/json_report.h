@@ -107,6 +107,11 @@ class JsonReport
 	 * longer than 20 octets. */
 	static QString serial(const a1int &serial);
 	static QString objectType(const pki_base *pki);
+	/* An object in an error (bxc-pki error.schema.json $defs/objectRef,
+	 * BTD-153): type, id and name; serial and issuer (RFC 4514) for a
+	 * certificate. A predefined template has no database id; its id is
+	 * its name. */
+	static QJsonObject objectRef(const pki_base *pki);
 };
 
 #endif

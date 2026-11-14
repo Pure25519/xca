@@ -54,8 +54,10 @@ class test_service_names : public ServiceTestCase
 					.arg(id));
 	}
 	pki_x509 *issue(const IssuanceSpec &spec);
-	/* the code, "" when issued; a refusal must store nothing */
-	QString attempt(const IssuanceSpec &spec, QString *message = nullptr);
+	/* the code, "" when issued; a refusal must store nothing. rule:
+	 * the rule member of the error (BTD-153) */
+	QString attempt(const IssuanceSpec &spec, QString *message = nullptr,
+			QString *rule = nullptr);
 
   private slots:
 	void dnsSyntax_data();
@@ -128,7 +130,8 @@ pki_x509 *test_service_names::issue(const IssuanceSpec &spec)
 	}
 }
 
-QString test_service_names::attempt(const IssuanceSpec &spec, QString *message)
+QString test_service_names::attempt(const IssuanceSpec &spec, QString *message,
+		QString *rule)
 {
 	int stored = Store.getAll<pki_x509>().size();
 	int audit = AuditLog::entries().size();
@@ -141,6 +144,8 @@ QString test_service_names::attempt(const IssuanceSpec &spec, QString *message)
 	} catch (serviceError &err) {
 		if (message)
 			*message = err.getString();
+		if (rule)
+			*rule = err.details.value("rule").toString();
 		/* refused before the serial: nothing stored, one failure entry */
 		if (Store.getAll<pki_x509>().size() != stored)
 			return "<stored>";
@@ -314,10 +319,15 @@ void test_service_names::policyNames()
 	IssuanceSpec spec = leafSpec(san, ca);
 	spec.subject = dn("leaf", o);
 	spec.policies << test_service_names::policy(policy);
-	QString message;
-	QCOMPARE(attempt(spec, &message), code);
-	if (!code.isEmpty())
+	QString message, rule;
+	QCOMPARE(attempt(spec, &message, &rule), code);
+	if (!code.isEmpty()) {
 		QVERIFY2(message.contains(policy), CCHAR(message));
+		/* the deciding member of the policy as data (BTD-153) */
+		QVERIFY2(rule.startsWith("names."), CCHAR(rule));
+		if (code == "policy_name_denied")
+			QVERIFY2(rule.endsWith(".deny"), CCHAR(rule));
+	}
 }
 
 /* The error names the policy, the rule and the value */
@@ -326,8 +336,9 @@ void test_service_names::policyIsTyped()
 	pki_x509 *ca = issue(caSpec("Policy CA", nullptr));
 	IssuanceSpec spec = leafSpec("DNS:ca.lab.example.org", ca);
 	spec.policies << policy("ot-lab-names");
-	QString message;
-	QCOMPARE(attempt(spec, &message), QString("policy_name_denied"));
+	QString message, rule;
+	QCOMPARE(attempt(spec, &message, &rule), QString("policy_name_denied"));
+	QCOMPARE(rule, QString("names.dns.deny"));
 	QVERIFY2(message.contains("ot-lab-names") &&
 		 message.contains("ca.lab.example.org") &&
 		 message.contains("\"type\":\"exact\""), CCHAR(message));

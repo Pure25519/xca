@@ -55,9 +55,17 @@ static int recordingCallback(char *buf, int size, int rwflag, void *userdata)
 	return len;
 }
 
-Passwd pki_evp::passwd;
+Passwd pki_evp::sessionPassword()
+{
+	KeyContext *keys = KeyContext::session();
+	return keys ? keys->password : Passwd();
+}
 
-QString pki_evp::passHash = QString();
+QString pki_evp::sessionHash()
+{
+	KeyContext *keys = KeyContext::session();
+	return keys ? keys->passHash : QString();
+}
 
 void pki_evp::init()
 {
@@ -260,10 +268,20 @@ pki_evp::pki_evp(EVP_PKEY *pkey)
 	set_EVP_PKEY(pkey);
 }
 
-bool pki_evp::openssl_pw_error() const
+bool pki_evp::openssl_pw_error(bool decrypted) const
 {
 	unsigned long e = ERR_peek_error();
 
+	/* A wrong password can decrypt to valid padding (about 1 in 300
+	 * for AES-CBC); OpenSSL then reports that the garbage does not
+	 * decode, not a bad decrypt. After the password was used, a
+	 * decoding error means the same as a bad decrypt (BTD-294). A
+	 * damaged file with the right password is reported the same way:
+	 * without a MAC the two cannot be told apart. */
+	if (decrypted && ERR_GET_LIB(e) == ERR_LIB_ASN1) {
+		pki_ign_openssl_error();
+		return true;
+	}
 	switch (ERR_PACK(ERR_GET_LIB(e), 0, ERR_GET_REASON(e))) {
 	case ERR_PACK(ERR_LIB_PEM, 0, PEM_R_BAD_DECRYPT):
 	case ERR_PACK(ERR_LIB_PEM, 0, PEM_R_BAD_PASSWORD_READ):
@@ -290,12 +308,13 @@ void pki_evp::fromPEMbyteArray(const QByteArray &ba, const QString &name)
 	QString reason;
 	RecordedPass rec{ &p };
 	while (!pkey) {
+		int asked = p.getAttempts();
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(), NULL,
 						recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
-		if (openssl_pw_error())
+		if (!pkey && openssl_pw_error(p.getAttempts() > asked))
 			PwDialogCore::passwordRetry(p.getPurpose());
 		/* an empty queue asks again; take_openssl_errors() names an
 		 * empty queue too (BTD-95), so look first */
@@ -452,12 +471,13 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 	EVP_PKEY *pkey;
 
 	do {
+		int asked = p.getAttempts();
 		pkey = PEM_read_bio_PrivateKey(BioByteArray(ba).ro(),
 						NULL, recordingCallback, &rec);
 		p.throwError();
 		if (p.getResult() != pw_ok)
 			throw p.getResult();
-		if (openssl_pw_error())
+		if (!pkey && openssl_pw_error(p.getAttempts() > asked))
 			PwDialogCore::passwordRetry(p.getPurpose());
 		if (pki_ign_openssl_error())
 			break;
@@ -520,6 +540,7 @@ void pki_evp::fromBytes(const QByteArray &ba, const QString &fname)
 
 bool pki_evp::validateDatabasePassword(const Passwd &passwd)
 {
+	QString passHash = sessionHash();
 	return !passHash.isEmpty() &&
 			(sha512passwT(passwd, passHash) == passHash ||
 			 sha512passwd(passwd, passHash) == passHash);
@@ -545,12 +566,12 @@ EVP_PKEY *pki_evp::tryDecryptKey() const
 	} else if (ownPass == ptBogus) { // BOGUS pass
 		ownPassBuf = "Bogus";
 	} else {
-		ownPassBuf = passwd;
+		ownPassBuf = sessionPassword();
 		pass_info p(XCA_TITLE, tr("Please enter the database password for decrypting the key '%1'").arg(getIntName()));
 		p.setPurpose(pass_info::DatabasePassword);
 		while (!validateDatabasePassword(ownPassBuf)) {
 			ret = PwDialogCore::execute(&p, &ownPassBuf,
-							passHash.isEmpty());
+							sessionHash().isEmpty());
 			if (ret != 1)
 				throw errorEx(tr("Password input aborted"),
 						getClassName());
@@ -662,6 +683,7 @@ bool pki_evp::updateLegacyEncryption()
 		}
 		pki_ign_openssl_error();
 
+		Passwd passwd = sessionPassword();
 		EVP_PKEY *newkey = legacyDecryptKey(myencKey, passwd);
 		ign_openssl_error();
 		if (newkey) {
@@ -900,12 +922,12 @@ void pki_evp::encryptKey(const char *password)
 			pki_openssl_error();
 		} else {
 			int ret = 0;
-			ownPassBuf = passwd;
+			ownPassBuf = sessionPassword();
 			pass_info p(XCA_TITLE, tr("Please enter the database password for encrypting the key"));
 			p.setPurpose(pass_info::DatabasePassword);
 			while (!validateDatabasePassword(ownPassBuf)) {
 				ret = PwDialogCore::execute(&p, &ownPassBuf,
-							passHash.isEmpty());
+							sessionHash().isEmpty());
 				if (ret != 1)
 					throw errorEx("Password input aborted",
 							getClassName());
@@ -1063,6 +1085,7 @@ bool pki_evp::pem(BioByteArray &b, const pki_export *xport,
 		const EVP_CIPHER *algo = xport->match_all(F_CRYPT) ?
 			EVP_aes_256_cbc() : NULL;
 		pkey = decryptKeyForExport(opts);
+		Passwd passwd = sessionPassword();
 		int ok = PEM_write_bio_PrivateKey(b, pkey, algo,
 					 passwd.constUchar(), passwd.size(),
 					 NULL, NULL);
@@ -1153,8 +1176,9 @@ void pki_evp::writeDefault(const QString &dirname) const
 		}
 		/* PKCS#8 PBES2, not the RFC 1423 encryption of writeKey()
 		 * (BTD-52) */
-		writePKCS8(file, pki_evp::passwd.isEmpty() ? NULL :
-			EVP_aes_256_cbc(), pki_evp::passwd, true);
+		Passwd passwd = sessionPassword();
+		writePKCS8(file, passwd.isEmpty() ? NULL :
+			EVP_aes_256_cbc(), passwd, true);
 		});
 }
 

@@ -40,7 +40,7 @@ static void throwOnError(XSqlQuery &q)
 
 Passwd AuditKey::password(bool ask)
 {
-	Passwd pass = pki_evp::passwd;
+	Passwd pass = pki_evp::sessionPassword();
 	pass_info p(XCA_TITLE, QObject::tr("Please enter the database password "
 			"to sign the audit checkpoint"));
 	p.setPurpose(pass_info::DatabasePassword);
@@ -48,7 +48,7 @@ Passwd AuditKey::password(bool ask)
 	try {
 		while (ask && !pki_evp::validateDatabasePassword(pass)) {
 			if (PwDialogCore::execute(&p, &pass,
-					pki_evp::passHash.isEmpty()) != pw_ok)
+					pki_evp::sessionHash().isEmpty()) != pw_ok)
 				break;
 		}
 	} catch (secretError &err) {

@@ -125,13 +125,13 @@ void test_main::auditVerifyAdopt()
 		/* A log written without the password for longer than the
 		 * interval allows: no key, checkpoint_missing */
 		Settings["audit_checkpoint_interval"] = 1;
-		Passwd pass = pki_evp::passwd;
-		pki_evp::passwd.cleanse();
+		Passwd pass = KeyContext::session()->password;
+		KeyContext::session()->password.cleanse();
 		ServiceContext ctx(ServiceContext::cli, "os:test");
 		for (int i = 0; i < 4; i++)
 			AuditLog::append(ctx, "key.generate", "key",
 					QString::number(i + 100));
-		pki_evp::passwd = pass;
+		KeyContext::session()->password = pass;
 
 		QDialog *dlg = openAuditVerify(mainwin);
 		QVERIFY2(dlg, "Extra > Verify audit log missing");
