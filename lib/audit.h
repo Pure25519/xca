@@ -349,6 +349,19 @@ class AuditLog
 	 * SIGTERM or SIGINT before it is closed (pid); channel rest */
 	static const char actionServerStart[];
 	static const char actionServerStop[];
+	/* xca-server authentication (BTD-155), channel rest:
+	 * auth.login once per TLS connection and identity (actor_kind,
+	 * subject and issuer of a certificate or api_key_id, peer_address);
+	 * auth.denied for every refusal, result denied: error_code
+	 * tls_handshake_failed (peer_address, tls_alert, verify_error and
+	 * subject and issuer of a refused certificate), unauthenticated (401)
+	 * or forbidden (403) with operation_id, reason and ca_ref, or
+	 * rate_limited for the summary of the entries left out per peer and
+	 * minute (suppressed, window_start, denied_per_minute); never a
+	 * secret. config.reload: the result of POST /v1/reload (changed). */
+	static const char actionAuthLogin[];
+	static const char actionAuthDenied[];
+	static const char actionConfigReload[];
 	static const int defaultCheckpointInterval;
 	static const int maxCheckpointInterval;   // bound of the setting
 
