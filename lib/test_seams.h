@@ -34,6 +34,10 @@ namespace TestSeams
 	/* Called by the database_model constructor: true once after
 	 * failNextOpenAfterUnlock() */
 	bool openFailsAfterUnlock();
+	/* database_model (BTD-299): the next open throws errorEx at the end
+	 * of the constructor, after the models are created and loaded */
+	void failNextOpenAfterModels();
+	bool openFailsAfterModels();
 }
 
 #endif
