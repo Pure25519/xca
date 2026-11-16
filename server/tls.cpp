@@ -331,12 +331,15 @@ std::shared_ptr<const ClientCrls> loadClientCrls(const QString &crlFile,
 			return refuse(QObject::tr("the CRL of '%1' has no "
 				"nextUpdate").arg(issuer));
 		}
-		if (X509_cmp_current_time(next) <= 0) {
+		time_t now = std::time(nullptr);
+		/* ASN1_TIME_cmp_time_t: -1 before, 0 equal, 1 after, -2 error */
+		if (ASN1_TIME_cmp_time_t(next, now) != 1) {
 			BIO_free(bio);
 			return refuse(QObject::tr("the CRL of '%1' expired at "
 				"%2").arg(issuer, isoTime(next)));
 		}
-		if (!last || X509_cmp_current_time(last) > 0) {
+		int lastCmp = last ? ASN1_TIME_cmp_time_t(last, now) : -2;
+		if (lastCmp == 1 || lastCmp == -2) {
 			BIO_free(bio);
 			return refuse(QObject::tr("the CRL of '%1' is not valid "
 				"before %2").arg(issuer, isoTime(last)));
