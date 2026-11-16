@@ -38,6 +38,9 @@ const char AuditLog::actionSettingsUpdate[] = "settings.update";
 const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
 const char AuditLog::actionServerStart[] = "server.start";
 const char AuditLog::actionServerStop[] = "server.stop";
+const char AuditLog::actionAuthLogin[] = "auth.login";
+const char AuditLog::actionAuthDenied[] = "auth.denied";
+const char AuditLog::actionConfigReload[] = "config.reload";
 const int AuditLog::defaultCheckpointInterval = 100;
 const int AuditLog::maxCheckpointInterval = 1000;
 
@@ -169,6 +172,13 @@ const QStringList &AuditParams::allowList()
 		/* xca-server start and stop (BTD-154): where it listens,
 		 * the cpp-httplib version and the process id */
 		"listen_address", "listen_port", "http_library", "pid",
+		/* xca-server authentication (BTD-155): who connected from
+		 * where, why a request or a TLS handshake was refused, the
+		 * rate limit summary and what a reload changed; the key id,
+		 * never the key */
+		"actor_kind", "peer_address", "api_key_id", "operation_id",
+		"tls_alert", "verify_error", "ca_ref", "suppressed",
+		"window_start", "denied_per_minute", "changed",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
