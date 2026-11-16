@@ -86,6 +86,7 @@ if(BUILD_TESTING)
   find_program(SERVER_LDD ldd)
   find_program(SERVER_SH sh)
   find_program(SERVER_OPENSSL openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
+  find_program(SERVER_SETPRIV setpriv)
 
   # the binary links no Qt Gui, Widgets, Help or Network and only the
   # libssl/libcrypto of OpenSSL 4 (architecture conditions 6 and 7)
@@ -158,6 +159,7 @@ if(BUILD_TESTING)
 		SERVER=${XCA_SERVER_BIN}
 		BXC_PKI=$<TARGET_FILE:bxc-pki>
 		DB_HOLD=$<TARGET_FILE:db_hold>
+		SETPRIV=${SERVER_SETPRIV}
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
 		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
