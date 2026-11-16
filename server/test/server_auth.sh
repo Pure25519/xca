@@ -584,7 +584,9 @@ if start g "$WORK/g.json"; then
     ok "G2 reload of the CRLs"
     stop g
     have "auth.denied revoked" +3 "action = 'auth.denied' AND error_code = 'tls_handshake_failed' AND $(pj reason) = 'revoked' AND $(pj subject) IN ('CN=revoked', 'CN=rvalid')"
-    have "server.start crl_next_update" 1 "action = 'server.start' AND $(pj crl_next_update) LIKE '20%Z'"
+    # the run's own server.start is START itself (count() reads after it)
+    n=$("$SQL_EXEC" "$DB" -c "SELECT COUNT(*) FROM audit_log WHERE seq = $START AND action = 'server.start' AND $(pj crl_next_update) LIKE '20%Z'" 2>&1)
+    [ "$n" = 1 ] || fail "server.start of the run has no crl_next_update: $n"
     have "reload with the CRL" 1 "action = 'config.reload' AND result = 'success' AND $(pj crl_next_update) LIKE '20%Z'"
     have "failed CRL reload" 1 "action = 'config.reload' AND result = 'failure' AND $(pj reason) LIKE '/tls/client_crl:%'"
     ok "G1/G2 audit entries"
