@@ -25,6 +25,15 @@
 #     changes nothing; one config.reload entry each
 #  F. no key value in the server's output or the audit export; xca
 #     --audit-verify is ok
+# BTD-311, BTD-312, BTD-314:
+#  A8. a role limited to ca-a (cas [ca-a]) sees only ca-a in GET /v1/status
+#     (its CA certificate, the certificates it issued, their keys and CRLs;
+#     no counters that belong to no CA), a role with cas ["*"] sees both CAs;
+#     every other read without a CA in the request is 403 for it until its
+#     handler filters by CA (reason ca_scope_unfiltered); the table test runs
+#     the limited role over every operation with ca-b as the CA
+#  D2. auth.denied_total_per_minute caps the single entries of all peers;
+#     what it holds back is one summary entry rate_limited_total (peer "*")
 # Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK, ROLES_TSV (the
 # operation table of server/roles.json, made by CMake). POSIX sh (dash).
 
@@ -119,6 +128,10 @@ export XCA_TEST_SHORT_KEY="$KEY_SHORT"
 printf '%s\n' "$KEY_ADMIN" > "$WORK/admin-api.key"
 
 # --- configuration ---------------------------------------------------------------
+# the bound of the peer table and the total cap of auth.denied (BTD-314); D2
+# lowers the total cap
+PEERS_MAX=1024
+TOTAL_MAX=100000
 # config <port> <api_keys> <denied_per_minute> <roles JSON> [<tls key> <key_password>]
 config() {
     if [ $# -ge 6 ]; then
@@ -135,19 +148,20 @@ config() {
   "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
               "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": $2, "denied_per_minute": $3 },
+  "auth": { "api_keys": $2, "denied_per_minute": $3, "denied_peers_max": $PEERS_MAX,
+            "denied_total_per_minute": $TOTAL_MAX },
   "roles": $4
 }
 EOF
 }
 cc() { printf '{ "subject": "CN=%s", "issuer": "%s" }' "$1" "$CA1"; }
 ROLES_A="[
-  { \"name\": \"reader\", \"client_certs\": [ $(cc reader), $(cc keepalive) ] },
-  { \"name\": \"ra-operator\", \"client_certs\": [ $(cc ra) ] },
+  { \"name\": \"reader\", \"client_certs\": [ $(cc reader), $(cc keepalive) ], \"cas\": [ \"*\" ] },
+  { \"name\": \"ra-operator\", \"client_certs\": [ $(cc ra) ], \"cas\": [ \"*\" ] },
   { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin),
       { \"subject\": \"CN=pinned\", \"issuer\": \"$CA1\", \"sha256\": \"$(printf '%064d' 0)\" },
-      { \"subject\": \"CN=pinok\", \"issuer\": \"$CA1\", \"sha256\": \"$(fp pinok)\" } ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ] },
+      { \"subject\": \"CN=pinok\", \"issuer\": \"$CA1\", \"sha256\": \"$(fp pinok)\" } ], \"cas\": [ \"*\" ] },
+  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] },
   { \"name\": \"ca-admin\", \"client_certs\": [ $(cc scoped) ], \"cas\": [ \"ca-a\" ] }
 ]"
 
@@ -297,6 +311,19 @@ if start a "$WORK/a.json"; then
             esac
             table=$((table + 1))
         done
+        # BTD-311: the role limited to ca-a, every CA in the request is ca-b:
+        # only getStatus (filtered by CA) passes, nothing else
+        target=/v1$(printf '%s' "$path" | sed -e 's/{collection}/keys/' -e "s/{id}/$ID_B/" \
+            -e 's/{profileId}/p1/' -e 's/{policyId}/p1/' -e 's/{slot}/0/' \
+            -e 's/{tokenObjectId}/AB/' -e 's/{approvalId}/aaaaaaaaaaaaaaaaaaaaaaaaaa/')
+        case "$method" in POST|PUT|PATCH) body="{\"issuer\":$ID_B}" ;; esac
+        out="$R/t-$op-scoped"
+        send "$out" scoped "$method" "$target" "$body" 'If-Match: "1"'
+        case ",$roles,:$op" in
+        *",ca_admin,"*:getStatus) expect "$op as ca_admin of ca-a" "$out" 200 ;;
+        *) expect "$op as ca_admin of ca-a" "$out" 403 forbidden ;;
+        esac
+        table=$((table + 1))
     done < "$ROLES_TSV"
     send "$R/a-404" admin GET /v1/nothing-here
     expect "unknown path" "$R/a-404" 404 not_found
@@ -322,6 +349,39 @@ if start a "$WORK/a.json"; then
     send "$R/a-scope-status" scoped GET /v1/status
     expect "scoped status" "$R/a-scope-status" 200
     ok "A5 CA scope"
+
+    # A8: what a role limited to ca-a reads (BTD-311)
+    sql() { "$SQL_EXEC" "$DB" -c "$1" 2>&1; }
+    # counter <answer> <name>: a counter of the objects of a status answer
+    counter() { grep -o "\"$2\": *[0-9]*" "$1" | head -1 | sed 's/.*: *//'; }
+    of_a="items.del = 0 AND (certs.item = $ID_A OR certs.issuer = $ID_A)"
+    want_certs=$(sql "SELECT COUNT(*) FROM certs JOIN items ON items.id = certs.item WHERE $of_a")
+    want_keys=$(sql "SELECT COUNT(DISTINCT x509super.pkey) FROM certs JOIN items ON items.id = certs.item JOIN x509super ON x509super.item = certs.item WHERE $of_a AND x509super.pkey IS NOT NULL")
+    want_crls=$(sql "SELECT COUNT(*) FROM crls JOIN items ON items.id = crls.item WHERE items.del = 0 AND crls.issuer = $ID_A")
+    all_certs=$(sql "SELECT COUNT(*) FROM certs JOIN items ON items.id = certs.item WHERE items.del = 0")
+    f="$R/a-scope-status"
+    got=$(counter "$f" certificates)
+    [ "$got" = "$want_certs" ] || fail "scoped status: '$got' certificates, expected $want_certs of ca-a: $(tail -1 "$f")"
+    got=$(counter "$f" keys)
+    [ "$got" = "$want_keys" ] || fail "scoped status: '$got' keys, expected $want_keys of ca-a: $(tail -1 "$f")"
+    got=$(counter "$f" crls)
+    [ "$got" = "$want_crls" ] || fail "scoped status: '$got' CRLs, expected $want_crls of ca-a: $(tail -1 "$f")"
+    for m in requests templates audit_entries; do
+        grep -q "\"$m\"" "$f" && fail "scoped status: the counter $m belongs to no CA: $(tail -1 "$f")"
+    done
+    grep -q '"ca_scope": *\["ca-a"\]' "$f" || fail "scoped status: no ca_scope [ca-a]: $(tail -1 "$f")"
+    [ "$want_certs" -lt "$all_certs" ] 2> /dev/null ||
+        fail "scoped status: ca-b has no certificate to hide ($want_certs of $all_certs)"
+    f="$R/a-status"
+    got=$(counter "$f" certificates)
+    [ "$got" = "$all_certs" ] || fail "status with cas [*]: '$got' certificates, expected $all_certs: $(tail -1 "$f")"
+    grep -q '"ca_scope": *\["\*"\]' "$f" || fail "status with cas [*]: no ca_scope [*]: $(tail -1 "$f")"
+    grep -q '"audit_entries"' "$f" || fail "status with cas [*]: no audit_entries: $(tail -1 "$f")"
+    send "$R/a-scope-list" scoped GET /v1/certificates
+    expect "scoped listObjects" "$R/a-scope-list" 403 forbidden
+    send "$R/a-scope-get" scoped GET "/v1/certificates/$ID_B"
+    expect "scoped getObject of ca-b" "$R/a-scope-get" 403 forbidden
+    ok "A8 a role of ca-a sees nothing of ca-b"
 
     # A6: keep-alive, one connection with two requests
     {
@@ -364,7 +424,9 @@ if start a "$WORK/a.json"; then
     have "no role" 1 "action = 'auth.denied' AND actor = 'cert:$(fp norole)' AND error_code = 'forbidden' AND $(pj reason) = 'role' AND $(pj operation_id) = 'getStatus' AND $(pj subject) = 'CN=norole' AND $(pj issuer) = '$CA1' AND $w_peer AND result = 'denied'"
     have "other issuer" 1 "action = 'auth.denied' AND actor = 'cert:$(fp twin)' AND $(pj issuer) = 'CN=second client CA'"
     have "pin mismatch" 1 "action = 'auth.denied' AND actor = 'cert:$(fp pinned)' AND $(pj reason) = 'role'"
-    have "CA scope" 3 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope' AND $(pj operation_id) IN ('generateCrl', 'setRevocations')"
+    # 3 of A5 and 2 of the table test (generateCrl, setRevocations for ca-b)
+    have "CA scope" 5 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope' AND $(pj operation_id) IN ('generateCrl', 'setRevocations')"
+    have "unfiltered reads of a scoped role" +2 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope_unfiltered' AND $(pj operation_id) IN ('listObjects', 'getObject')"
     have "write without CA for a scoped role" 1 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'role' AND $(pj operation_id) = 'createProfile'"
     have "auth.login of ca-admin" +1 "action = 'auth.login' AND actor = 'cert:$(fp admin)' AND result = 'success' AND $(pj actor_kind) = 'cert' AND $(pj subject) = 'CN=admin' AND $(pj issuer) = '$CA1' AND $w_peer"
     have "auth.login once per connection" 2 "action = 'auth.login' AND actor = 'cert:$(fp keepalive)'"
@@ -375,9 +437,9 @@ fi
 # === B. auth.api_keys true ===========================================================
 PORT=$((BASE + 1))
 ROLES_B="[
-  { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"reader-key\", \"secret\": \"env:XCA_TEST_READER_KEY\" } ] },
+  { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"reader-key\", \"secret\": \"env:XCA_TEST_READER_KEY\" } ], \"cas\": [ \"*\" ] },
   { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ],
-    \"api_keys\": [ { \"id\": \"admin-key\", \"secret\": \"file:$WORK/admin-api.key\" } ] }
+    \"api_keys\": [ { \"id\": \"admin-key\", \"secret\": \"file:$WORK/admin-api.key\" } ], \"cas\": [ \"*\" ] }
 ]"
 config "$PORT" true 1000 "$ROLES_B" "$P/server-enc.key" env:XCA_TEST_TLS_KEY_PW > "$WORK/b.json"
 if start b "$WORK/b.json"; then
@@ -417,7 +479,7 @@ if start b "$WORK/b.json"; then
 fi
 
 # === C. start refused ===============================================================
-ROLES_C="[ { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"short\", \"secret\": \"env:XCA_TEST_SHORT_KEY\" } ] } ]"
+ROLES_C="[ { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"short\", \"secret\": \"env:XCA_TEST_SHORT_KEY\" } ], \"cas\": [ \"*\" ] } ]"
 config $((BASE + 2)) true 10 "$ROLES_C" > "$WORK/c-short.json"
 timeout 60 "$SERVER" --config "$WORK/c-short.json" > "$WORK/srv/c-short.out" 2> "$WORK/srv/c-short.err"
 rc=$?
@@ -447,15 +509,33 @@ if start d "$WORK/d.json"; then
     have "summary" 1 "action = 'auth.denied' AND error_code = 'rate_limited' AND result = 'denied' AND $(pj peer_address) = '127.0.0.1' AND $(pj suppressed) = 2"
     ok "D rate limit: 3 entries and a summary of 2"
 fi
+# D2: the total cap (BTD-314) below the limit of the peer
+PORT=$((BASE + 5))
+TOTAL_MAX=2
+config "$PORT" false 5 "$ROLES_A" > "$WORK/d2.json"
+TOTAL_MAX=100000
+if start d2 "$WORK/d2.json"; then
+    i=0
+    while [ $i -lt 5 ]; do
+        send "$R/d2-$i" norole GET /v1/status
+        expect "total cap request $i" "$R/d2-$i" 403 forbidden
+        i=$((i + 1))
+    done
+    stop d2
+    have "single refusals under the total cap" 2 "action = 'auth.denied' AND error_code = 'forbidden'"
+    have "total summary" 1 "action = 'auth.denied' AND error_code = 'rate_limited_total' AND result = 'denied' AND $(pj peer_address) = '*' AND $(pj suppressed) = 3 AND $(pj denied_per_minute) = 2"
+    have "no peer summary under the total cap" 0 "action = 'auth.denied' AND error_code = 'rate_limited'"
+    ok "D2 total cap: 2 entries and a summary of 3"
+fi
 
 # === E. reload ======================================================================
 PORT=$((BASE + 4))
-ROLES_E1="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ] } ]"
-ROLES_E2="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ] },
-  { \"name\": \"reader\", \"client_certs\": [ $(cc norole) ] } ]"
-ROLES_E3="[ { \"name\": \"boss\", \"client_certs\": [ $(cc admin) ] } ]"
+ROLES_E1="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] },
+  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] } ]"
+ROLES_E2="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] },
+  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] },
+  { \"name\": \"reader\", \"client_certs\": [ $(cc norole) ], \"cas\": [ \"*\" ] } ]"
+ROLES_E3="[ { \"name\": \"boss\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] } ]"
 config "$PORT" false 1000 "$ROLES_E1" > "$WORK/e.json"
 if start e "$WORK/e.json"; then
     send "$R/e-before" norole GET /v1/status
