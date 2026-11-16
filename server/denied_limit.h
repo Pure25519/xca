@@ -86,6 +86,9 @@ class DeniedLimit
 
 	static void end(const QString &peer, const Window &w, bool total,
 			QList<Summary> *ended);
+	/* peersMax peer windows (the overflow window not counted) */
+	bool full() const;
+	QList<Summary> expirePeers(Clock::time_point now);
 };
 
 }

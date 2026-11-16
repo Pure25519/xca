@@ -51,6 +51,7 @@ const char rolesJson[] = R\"xcaroles(@server_roles_json@)xcaroles\";
   add_executable(xca-server
 	${SERVER_DIR}/main.cpp
 	${SERVER_DIR}/auth.cpp ${SERVER_DIR}/auth.h
+	${SERVER_DIR}/denied_limit.cpp ${SERVER_DIR}/denied_limit.h
 	${SERVER_DIR}/tls.cpp ${SERVER_DIR}/tls.h
 	${PROJECT_BINARY_DIR}/xca_server_roles.cpp
 	${SERVER_DIR}/config.cpp ${SERVER_DIR}/config.h

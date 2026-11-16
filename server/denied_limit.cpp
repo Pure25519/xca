@@ -20,27 +20,54 @@ void DeniedLimit::end(const QString &peer, const Window &w, bool total,
 bool DeniedLimit::admit(const QString &peer, Clock::time_point now,
 		const QString &nowUtc, QList<Summary> *ended)
 {
+	/* the total window first: its minute may have ended */
+	if (allOpen && now - all.start >= window) {
+		end(anyPeer, all, true, ended);
+		allOpen = false;
+	}
+	if (!allOpen) {
+		all = Window{ now, nowUtc, 0, 0 };
+		allOpen = true;
+	}
+
 	auto it = peers.find(peer);
+	if (it == peers.end() && full()) {
+		/* the table is full: drop the windows that ended, else the
+		 * peer shares the overflow window */
+		ended->append(expirePeers(now));
+		if (full())
+			it = peers.find(anyPeer);
+	}
 	if (it != peers.end() && now - it->second.start >= window) {
 		end(it->first, it->second, false, ended);
 		peers.erase(it);
 		it = peers.end();
 	}
 	if (it == peers.end()) {
-		Window w;
-		w.start = now;
-		w.startUtc = nowUtc;
-		it = peers.emplace(peer, w).first;
+		/* the overflow window is the one entry above peersMax */
+		QString key = full() ? anyPeer : peer;
+		it = peers.emplace(key, Window{ now, nowUtc, 0, 0 }).first;
 	}
 	if (it->second.count >= perPeer) {
 		it->second.suppressed++;
 		return false;
 	}
 	it->second.count++;
+	if (all.count >= totalPerMinute) {
+		all.suppressed++;
+		return false;
+	}
+	all.count++;
 	return true;
 }
 
-QList<DeniedLimit::Summary> DeniedLimit::expire(Clock::time_point now)
+bool DeniedLimit::full() const
+{
+	/* the peer windows of the table, without the overflow window */
+	return qint64(peers.size() - peers.count(anyPeer)) >= peersMax;
+}
+
+QList<DeniedLimit::Summary> DeniedLimit::expirePeers(Clock::time_point now)
 {
 	QList<Summary> ended;
 	for (auto it = peers.begin(); it != peers.end();) {
@@ -54,12 +81,25 @@ QList<DeniedLimit::Summary> DeniedLimit::expire(Clock::time_point now)
 	return ended;
 }
 
+QList<DeniedLimit::Summary> DeniedLimit::expire(Clock::time_point now)
+{
+	QList<Summary> ended = expirePeers(now);
+	if (allOpen && now - all.start >= window) {
+		end(anyPeer, all, true, &ended);
+		allOpen = false;
+	}
+	return ended;
+}
+
 QList<DeniedLimit::Summary> DeniedLimit::drain()
 {
 	QList<Summary> ended;
 	for (const auto &p : peers)
 		end(p.first, p.second, false, &ended);
 	peers.clear();
+	if (allOpen)
+		end(anyPeer, all, true, &ended);
+	allOpen = false;
 	return ended;
 }
 
