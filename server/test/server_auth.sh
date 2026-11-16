@@ -427,7 +427,8 @@ if start a "$WORK/a.json"; then
     # 3 of A5 and 2 of the table test (generateCrl, setRevocations for ca-b)
     have "CA scope" 5 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope' AND $(pj operation_id) IN ('generateCrl', 'setRevocations')"
     have "unfiltered reads of a scoped role" +2 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope_unfiltered' AND $(pj operation_id) IN ('listObjects', 'getObject')"
-    have "write without CA for a scoped role" 1 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'role' AND $(pj operation_id) = 'createProfile'"
+    # 1 of A5 and 1 of the table test
+    have "write without CA for a scoped role" 2 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'role' AND $(pj operation_id) = 'createProfile'"
     have "auth.login of ca-admin" +1 "action = 'auth.login' AND actor = 'cert:$(fp admin)' AND result = 'success' AND $(pj actor_kind) = 'cert' AND $(pj subject) = 'CN=admin' AND $(pj issuer) = '$CA1' AND $w_peer"
     have "auth.login once per connection" 2 "action = 'auth.login' AND actor = 'cert:$(fp keepalive)'"
     have "table refusals" +60 "action = 'auth.denied' AND error_code = 'forbidden'"
