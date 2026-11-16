@@ -26,6 +26,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -54,7 +55,12 @@ const DWORD lockOffsetHigh = 0x40000000;
 
 QString DatabaseLock::lockFileName(const QString &database)
 {
-	return QFileInfo(database).absoluteFilePath() + ".lock";
+	/* the canonical path: two paths to one database (a symlink) share
+	 * one lock (BTD-315); a database that does not exist yet has none */
+	QFileInfo info(database);
+	QString path = info.exists() ? info.canonicalFilePath() :
+		info.absoluteFilePath();
+	return path + ".lock";
 }
 
 bool DatabaseLock::heldExclusive(const QString &database)
@@ -102,29 +108,74 @@ DatabaseLock::DatabaseLock(const QString &db, Mode m)
 	}
 #else
 	QByteArray path = QFile::encodeName(lock);
-	fd = ::open(path.constData(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
-	int err = fd < 0 ? errno : 0;
-	if (fd < 0 && mode == Shared &&
-	    (err == EACCES || err == EPERM || err == EROFS)) {
-		fd = ::open(path.constData(), O_RDONLY | O_CLOEXEC);
+	int err = 0;
+	/* a few rounds: the file can be replaced between open and lock */
+	for (int round = 0; ; round++) {
+		/* flock() works on a read-only descriptor, so a lock file
+		 * of another uid can be locked as long as it is readable;
+		 * only the hint needs write access (BTD-315) */
+		fd = ::open(path.constData(), O_RDWR | O_CLOEXEC);
 		err = fd < 0 ? errno : 0;
-		/* no lock file, and none can be made here: no server can
-		 * hold one either */
-		if (err == ENOENT)
-			return;
-	}
-	if (fd < 0)
-		refuse(QObject::tr("The lock file '%1' of the database '%2' "
-			"cannot be opened: %3").arg(lock, database,
-			systemError(err)));
-	if (::flock(fd, (mode == Exclusive ? LOCK_EX : LOCK_SH) |
-			LOCK_NB) != 0) {
-		err = errno;
-		if (err == EWOULDBLOCK)
-			refuse(inUse());
-		refuse(QObject::tr("The lock file '%1' of the database '%2' "
-			"cannot be locked: %3").arg(lock, database,
-			systemError(err)));
+		if (fd < 0 && (err == EACCES || err == EPERM || err == EROFS)) {
+			fd = ::open(path.constData(), O_RDONLY | O_CLOEXEC);
+			err = fd < 0 ? errno : 0;
+		}
+		if (fd < 0 && err == ENOENT) {
+			fd = ::open(path.constData(),
+				O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+			err = fd < 0 ? errno : 0;
+			if (fd < 0 && err == EEXIST && round < 5)
+				continue;
+			/* no lock file and none can be made here: another
+			 * uid could make one and hold it, so only a reader
+			 * that cannot write the database goes on without
+			 * a lock (BTD-315) */
+			if (fd < 0 && mode == Shared &&
+			    (err == EACCES || err == EPERM || err == EROFS) &&
+			    ::access(QFile::encodeName(QFileInfo(database)
+				.absoluteFilePath()).constData(), W_OK) != 0)
+				return;
+			if (fd < 0)
+				refuse(QObject::tr("The lock file '%1' of the "
+					"database '%2' cannot be made in '%3': "
+					"%4. The server, the GUI and the "
+					"command line need it to share the "
+					"database; let every user of the "
+					"database create files there, or "
+					"create the lock file once, readable "
+					"for all of them").arg(lock, database,
+					QFileInfo(lock).absolutePath(),
+					systemError(err)));
+		}
+		if (fd < 0)
+			refuse(QObject::tr("The lock file '%1' of the database "
+				"'%2' cannot be opened: %3").arg(lock, database,
+				systemError(err)));
+		if (::flock(fd, (mode == Exclusive ? LOCK_EX : LOCK_SH) |
+				LOCK_NB) != 0) {
+			err = errno;
+			if (err == EWOULDBLOCK)
+				refuse(inUse());
+			/* NFS emulates flock() with byte-range locks, which
+			 * need a writable descriptor for an exclusive lock */
+			refuse(QObject::tr("The lock file '%1' of the "
+				"database '%2' cannot be locked: %3").arg(lock,
+				database, systemError(err)));
+		}
+		/* the path must still name the locked file: one deleted or
+		 * replaced between open and lock is tried again */
+		struct stat locked, named;
+		if (::fstat(fd, &locked) == 0 &&
+		    ::stat(path.constData(), &named) == 0 &&
+		    locked.st_dev == named.st_dev &&
+		    locked.st_ino == named.st_ino)
+			break;
+		::close(fd);
+		fd = -1;
+		if (round >= 5)
+			refuse(QObject::tr("The lock file '%1' of the database "
+				"'%2' keeps changing while it is locked")
+				.arg(lock, database));
 	}
 #endif
 	if (mode == Exclusive) {

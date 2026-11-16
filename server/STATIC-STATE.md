@@ -78,9 +78,18 @@ The kernel releases the lock when its holder ends, also after SIGKILL, so a kill
 for good, whatever its PID or host name was (a recreated container). The PID, application and host the server writes
 into the file are only a hint for the `database_in_use` message.
 
+The lock file for operators (BTD-315): its name comes from the canonical path of the database, so a symlink to the
+database shares the lock. The first user creates it (mode 0644 less the umask) and owns it; later users of any uid
+lock it read-only if they may not write it, so a server running as uid 1000 locks a file that a GUI run as root
+made. If it is missing and cannot be created (the directory is not writable for that user), the open is refused
+with the directory named; only a user who cannot write the database goes on without a lock. **Do not delete the
+lock file while a server, a GUI or a command line has the database open**: the next user would create a new file
+and lock that one, and two holders would write the database. Delete it only when nothing has the database open.
+
 Network file systems: on NFS, Linux maps `flock()` to NFS byte-range locks that the NFS server coordinates
 between clients (NFSv4, or NFSv3 with lockd); a client that dies keeps its lock until its lease ends (NFSv4:
-about 90 seconds), and with the mount option `nolock` the lock covers only one client. SMB/CIFS mounts may keep
+about 90 seconds), an exclusive lock needs a writable descriptor there (so the lock file must be writable for every
+user of the database), and with the mount option `nolock` the lock covers only one client. SMB/CIFS mounts may keep
 the lock on the client. SQLite is not safe on such file systems either: keep the database on a local disk or
 on a volume of one host (one Docker host for the container).
 

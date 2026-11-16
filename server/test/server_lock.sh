@@ -233,6 +233,7 @@ release_holds
 # 7. a database opened through a symlink shares the lock of its target
 #    (BTD-315)
 ln -s "$DB" "$WORK/link.xdb"
+before=$fails
 start_server symlink || die "xca-server does not start: $(cat "$WORK/server-symlink.err")"
 "$DB_HOLD" "$WORK/link.xdb" > "$WORK/hold-link.out" 2> "$WORK/hold-link.err" &
 h=$!
@@ -250,7 +251,7 @@ fi
 kill -KILL "$h" 2> /dev/null
 wait "$h" 2> /dev/null
 stop_server
-ok "a symlink to the database shares its lock"
+[ "$fails" -eq "$before" ] && ok "a symlink to the database shares its lock"
 
 # 8. and 9. other uids (BTD-315), as root with setpriv only
 if [ "$(id -u)" = 0 ] && [ -n "${SETPRIV:-}" ] && [ -x "$SETPRIV" ]; then
