@@ -20,10 +20,12 @@
 
 #include "XcaWarningCore.h"
 #include "PwDialogCore.h"
+#include "test_seams.h"
 
 #include <memory>
 
 #include <QThread>
+#include <QJsonObject>
 #include <QSharedPointer>
 
 #include <openssl/ec.h>
@@ -226,14 +228,28 @@ EVP_PKEY *pki_scard::load_pubkey(pkcs11 &p11, CK_OBJECT_HANDLE object) const
 		QByteArray ba;
 
 		QByteArray params;
+		/* token_error with the cause in the member "cause": the
+		 * PKCS#11 function and return value, so that callers can
+		 * tell the failures apart (BTD-316) */
+		const QString why = tr("The curve parameters (CKA_EC_PARAMS) "
+			"of the EC key on the token cannot be read: %1");
 		try {
+#ifdef BXC_PKI_TEST_SEAMS
+			if (unsigned long rv = TestSeams::ecParamsReadFailure())
+				pk11error("C_GetAttributeValue(data)", int(rv));
+#endif
 			params = attribute2bytearray(p11, object,
 					CKA_EC_PARAMS);
+		} catch (pkcs11Error &err) {
+			throw serviceError("token_error", why.arg(
+				err.getString())).with("cause", QJsonObject{
+				{ "pkcs11_function", err.function },
+				{ "pkcs11_rv", QString(pk11errorString(
+					err.rv)) } });
 		} catch (errorEx &err) {
-			throw serviceError("token_error", tr("The curve "
-				"parameters (CKA_EC_PARAMS) of the EC key on "
-				"the token cannot be read: %1")
-				.arg(err.getString()));
+			throw serviceError("token_error", why.arg(
+				err.getString())).with("cause", QJsonObject{
+				{ "message", err.getString() } });
 		}
 		int fieldBytes = 0;
 		int nid = ecCurveFromParams(params, &fieldBytes);

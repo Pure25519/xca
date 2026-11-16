@@ -122,6 +122,21 @@ class pkcs11_lib_list: public QAbstractListModel
 	bool insertRows(int row, int count, const QModelIndex &p = QModelIndex());
 };
 
+/* The error of a failed PKCS#11 call, with the function and the return
+ * value, so that a caller can pass the cause on in a structured form
+ * (BTD-316) */
+class pkcs11Error: public errorEx
+{
+  public:
+	QString function;
+	unsigned long rv;
+
+	pkcs11Error(const QString &txt, const QString &f, unsigned long r)
+		: errorEx(txt), function(f), rv(r)
+	{
+	}
+};
+
 void pk11error(const QString &fmt, int r);
 void pk11error(const slotid &slot, const QString &func, int rv);
 const char *pk11errorString(unsigned long rv);

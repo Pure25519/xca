@@ -38,6 +38,12 @@ namespace TestSeams
 	 * of the constructor, after the models are created and loaded */
 	void failNextOpenAfterModels();
 	bool openFailsAfterModels();
+	/* pki_scard (BTD-316): the next read of CKA_EC_PARAMS of a token
+	 * key fails with the PKCS#11 return value rv */
+	void failNextEcParamsRead(unsigned long rv);
+	/* Called by pki_scard::load_pubkey(): the return value set by
+	 * failNextEcParamsRead() once, else 0 */
+	unsigned long ecParamsReadFailure();
 }
 
 #endif
