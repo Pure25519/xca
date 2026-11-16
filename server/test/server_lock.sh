@@ -302,14 +302,14 @@ if [ "$(id -u)" = 0 ] && [ -n "${SETPRIV:-}" ] && [ -x "$SETPRIV" ]; then
     if grep -q '^open$' "$WORK/hold-ro.out"; then
         fail "uid 1000 opened a writable database without a lock file"
     else
-        grep -q '^database_in_use$' "$WORK/hold-ro.err" ||
+        grep -q '^database_lock_unavailable$' "$WORK/hold-ro.err" ||
             fail "uid 1000 without a lock file: $(cat "$WORK/hold-ro.err")"
         ok "no lock file can be made: the open is refused"
     fi
     kill -KILL "$h" 2> /dev/null
     wait "$h" 2> /dev/null
 else
-    log "skipped: the uid cases need root and setpriv"
+    log "skipped: the uid cases 8 and 9 need root and setpriv"
 fi
 
 # released at the exit: the server starts again

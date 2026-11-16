@@ -82,7 +82,9 @@ The lock file for operators (BTD-315): its name comes from the canonical path of
 database shares the lock. The first user creates it (mode 0644 less the umask) and owns it; later users of any uid
 lock it read-only if they may not write it, so a server running as uid 1000 locks a file that a GUI run as root
 made. If it is missing and cannot be created (the directory is not writable for that user), the open is refused
-with the directory named; only a user who cannot write the database goes on without a lock. **Do not delete the
+with the error code `database_lock_unavailable`, the directory and the fix named (make the directory writable, or
+create the lock file once with group read and write, chmod 664); only a user who cannot write the database goes on
+without a lock. **Do not delete the
 lock file while a server, a GUI or a command line has the database open**: the next user would create a new file
 and lock that one, and two holders would write the database. Delete it only when nothing has the database open.
 

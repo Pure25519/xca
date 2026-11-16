@@ -30,7 +30,8 @@
  *   needs write access. So a server as uid 1000 locks a file that a GUI
  *   run as root made, and the reverse;
  * - if it is missing and cannot be made (no write access to the
- *   directory), the open is refused with the directory named, because
+ *   directory), the open is refused (database_lock_unavailable, with the
+ *   directory and the fix named), because
  *   another uid could make it and hold it; only a user who cannot write
  *   the database goes on without a lock (read-only use);
  * - after the lock the holder checks that the path still names the locked
@@ -93,7 +94,11 @@ class DatabaseLock
 	/* The database_in_use message for a lock held by others */
 	QString inUse() const;
 	void release();
-	[[noreturn]] void refuse(const QString &detail);
+	/* code: database_in_use for a lock held by others,
+	 * database_lock_unavailable when the lock file cannot be used
+	 * (BTD-315) */
+	[[noreturn]] void refuse(const QString &detail,
+		const char *code = "database_lock_unavailable");
 };
 
 #endif

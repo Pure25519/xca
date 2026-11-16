@@ -101,7 +101,7 @@ DatabaseLock::DatabaseLock(const QString &db, Mode m)
 	if (!LockFileEx(h, flags, 0, 1, 0, &ov)) {
 		err = GetLastError();
 		if (err == ERROR_LOCK_VIOLATION || err == ERROR_IO_PENDING)
-			refuse(inUse());
+			refuse(inUse(), "database_in_use");
 		refuse(QObject::tr("The lock file '%1' of the database '%2' "
 			"cannot be locked: %3").arg(lock, database,
 			systemError(int(err))));
@@ -137,30 +137,36 @@ DatabaseLock::DatabaseLock(const QString &db, Mode m)
 				return;
 			if (fd < 0)
 				refuse(QObject::tr("The lock file '%1' of the "
-					"database '%2' cannot be made in '%3': "
-					"%4. The server, the GUI and the "
-					"command line need it to share the "
-					"database; let every user of the "
-					"database create files there, or "
-					"create the lock file once, readable "
-					"for all of them").arg(lock, database,
+					"database '%2' cannot be created: %4. "
+					"The server, the GUI and the command "
+					"line need it to share the database. "
+					"Make the directory '%3' writable for "
+					"this user, or create '%1' once with "
+					"read and write for the group of every "
+					"user of the database (chmod 664)")
+					.arg(lock, database,
 					QFileInfo(lock).absolutePath(),
 					systemError(err)));
 		}
 		if (fd < 0)
 			refuse(QObject::tr("The lock file '%1' of the database "
-				"'%2' cannot be opened: %3").arg(lock, database,
-				systemError(err)));
+				"'%2' cannot be opened: %3. Make it readable "
+				"for this user (chmod 644, or 664 with a group "
+				"of every user of the database)").arg(lock,
+				database, systemError(err)));
 		if (::flock(fd, (mode == Exclusive ? LOCK_EX : LOCK_SH) |
 				LOCK_NB) != 0) {
 			err = errno;
 			if (err == EWOULDBLOCK)
-				refuse(inUse());
+				refuse(inUse(), "database_in_use");
 			/* NFS emulates flock() with byte-range locks, which
 			 * need a writable descriptor for an exclusive lock */
 			refuse(QObject::tr("The lock file '%1' of the "
-				"database '%2' cannot be locked: %3").arg(lock,
-				database, systemError(err)));
+				"database '%2' cannot be locked: %3. On NFS "
+				"the lock file must be writable for every "
+				"user of the database (chmod 664 with a "
+				"common group)").arg(lock, database,
+				systemError(err)));
 		}
 		/* the path must still name the locked file: one deleted or
 		 * replaced between open and lock is tried again */
@@ -217,10 +223,10 @@ void DatabaseLock::release()
 #endif
 }
 
-void DatabaseLock::refuse(const QString &detail)
+void DatabaseLock::refuse(const QString &detail, const char *code)
 {
 	release();
-	throw serviceError("database_in_use", detail);
+	throw serviceError(code, detail);
 }
 
 QString DatabaseLock::inUse() const

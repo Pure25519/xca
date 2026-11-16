@@ -128,8 +128,12 @@ int serve(const Config &config, const OperationTable &operations)
 	try {
 		lock.reset(new DatabaseLock(config.databasePath,
 				DatabaseLock::Exclusive));
+	} catch (serviceError &e) {
+		/* database_in_use or database_lock_unavailable */
+		return fail(e.code, e.getString(), exitConfig);
 	} catch (errorEx &e) {
-		return fail("database_in_use", e.getString(), exitConfig);
+		return fail("database_lock_unavailable", e.getString(),
+			exitConfig);
 	}
 
 	QString tlsPointer, tlsMessage;
