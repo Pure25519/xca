@@ -60,7 +60,6 @@ class test_service_softhsm : public ServiceTestCase
 
 	ServiceContext ctx{ ServiceContext::cli, "os:service-test" };
 	SoftHsmToken token{};
-	QString skip{};
 
 	static db_key *keys()
 	{
@@ -170,9 +169,7 @@ void test_service_softhsm::initTestCase()
 {
 	ServiceTestCase::initTestCase();
 	SoftHsmToken::watchMessages();
-	skip = token.setUp();
-	if (!skip.isEmpty())
-		QSKIP(CCHAR(skip));
+	SOFTHSM_SET_UP(token);
 }
 
 void test_service_softhsm::init()
@@ -232,9 +229,9 @@ void test_service_softhsm::storeRsaKeyOnToken()
 	pki_scard card("BTD-126 rsa");
 	{
 		TokenPinScope pin;
-		EVP_PKEY *priv = soft->decryptKey();
-		TRY(card.store_token(token.slot(), priv));
-		EVP_PKEY_free(priv);
+		/* the store of Store on Security token: LeakSanitizer
+		 * reports a decrypted key that is not freed (BTD-307) */
+		TRY(card.store_token(token.slot(), soft));
 	}
 	QVERIFY(token.labels(CKO_PUBLIC_KEY).contains("BTD-126 rsa"));
 	QCOMPARE(EVP_PKEY_get_id(card.getPubKey()), EVP_PKEY_RSA);
@@ -249,9 +246,7 @@ void test_service_softhsm::storeEcKeyOnToken()
 	pki_scard card("BTD-126 ec");
 	{
 		TokenPinScope pin;
-		EVP_PKEY *priv = soft->decryptKey();
-		TRY(card.store_token(token.slot(), priv));
-		EVP_PKEY_free(priv);
+		TRY(card.store_token(token.slot(), soft));
 	}
 	QVERIFY(token.labels(CKO_PUBLIC_KEY).contains("BTD-126 ec"));
 	QCOMPARE(EVP_PKEY_get_id(card.getPubKey()), EVP_PKEY_EC);

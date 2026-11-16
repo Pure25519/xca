@@ -76,9 +76,7 @@ void test_main::storeOnTokenReplacesKey()
 {
 	SoftHsmToken token;
 	SoftHsmToken::watchMessages();
-	QString why = token.setUp();
-	if (!why.isEmpty())
-		QSKIP(CCHAR(why));
+	SOFTHSM_SET_UP(token);
 	try {
 		openDB();
 		pki_key *soft = currentSoftwareKey(token, "BTD-217 store");
@@ -105,9 +103,7 @@ void test_main::storeOnTokenFailureKeepsKey()
 {
 	SoftHsmToken token;
 	SoftHsmToken::watchMessages();
-	QString why = token.setUp();
-	if (!why.isEmpty())
-		QSKIP(CCHAR(why));
+	SOFTHSM_SET_UP(token);
 	try {
 		openDB();
 		pki_key *soft = currentSoftwareKey(token, "BTD-217 kept");

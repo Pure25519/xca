@@ -77,7 +77,10 @@ config() {
   "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
               "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false }
+  "auth": { "api_keys": false, "denied_per_minute": 100 },
+  "roles": [ { "name": "reader",
+               "client_certs": [ { "subject": "CN=client",
+                                   "issuer": "CN=xca-server lock test CA" } ] } ]
 }
 EOF
 }

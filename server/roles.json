@@ -1,0 +1,514 @@
+{
+  "source": "api/openapi.yaml@0aaef5bd",
+  "path_params": {
+    "collection": [
+      "keys",
+      "requests",
+      "certificates",
+      "crls"
+    ]
+  },
+  "operations": [
+    {
+      "operation_id": "listObjects",
+      "method": "GET",
+      "path": "/{collection}",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getObject",
+      "method": "GET",
+      "path": "/{collection}/{id}",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "deleteObject",
+      "method": "DELETE",
+      "path": "/{collection}/{id}",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "updateObject",
+      "method": "PATCH",
+      "path": "/{collection}/{id}",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "createKey",
+      "method": "POST",
+      "path": "/keys",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "setKeyPassword",
+      "method": "PUT",
+      "path": "/keys/{id}/password",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "resetKeyPassword",
+      "method": "DELETE",
+      "path": "/keys/{id}/password",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "createRequest",
+      "method": "POST",
+      "path": "/requests",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "markRequestSigned",
+      "method": "PUT",
+      "path": "/requests/{id}/signed",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "unmarkRequestSigned",
+      "method": "DELETE",
+      "path": "/requests/{id}/signed",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "issueCertificate",
+      "method": "POST",
+      "path": "/certificates",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": "body:issuer"
+    },
+    {
+      "operation_id": "renewCertificate",
+      "method": "POST",
+      "path": "/certificates/{id}/renew",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": "path:id#issuer"
+    },
+    {
+      "operation_id": "revokeCertificate",
+      "method": "POST",
+      "path": "/certificates/{id}/revoke",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": "path:id#issuer"
+    },
+    {
+      "operation_id": "unrevokeCertificate",
+      "method": "POST",
+      "path": "/certificates/{id}/unrevoke",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id#issuer"
+    },
+    {
+      "operation_id": "setRevocations",
+      "method": "PUT",
+      "path": "/certificates/{id}/revocations",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id"
+    },
+    {
+      "operation_id": "updateCaProperties",
+      "method": "PATCH",
+      "path": "/certificates/{id}/ca-properties",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id"
+    },
+    {
+      "operation_id": "setTlsAuthKey",
+      "method": "PUT",
+      "path": "/certificates/{id}/tls-auth-key",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id"
+    },
+    {
+      "operation_id": "assignDocument",
+      "method": "PUT",
+      "path": "/certificates/{id}/assignments",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id"
+    },
+    {
+      "operation_id": "unassignDocument",
+      "method": "DELETE",
+      "path": "/certificates/{id}/assignments",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "path:id"
+    },
+    {
+      "operation_id": "generateCrl",
+      "method": "POST",
+      "path": "/crls",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": "body:issuer"
+    },
+    {
+      "operation_id": "listProfiles",
+      "method": "GET",
+      "path": "/profiles",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "createProfile",
+      "method": "POST",
+      "path": "/profiles",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getProfile",
+      "method": "GET",
+      "path": "/profiles/{profileId}",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "updateProfile",
+      "method": "PUT",
+      "path": "/profiles/{profileId}",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "retireProfile",
+      "method": "POST",
+      "path": "/profiles/{profileId}/retire",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "listPolicies",
+      "method": "GET",
+      "path": "/policies",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "createPolicy",
+      "method": "POST",
+      "path": "/policies",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getPolicy",
+      "method": "GET",
+      "path": "/policies/{policyId}",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "updatePolicy",
+      "method": "PUT",
+      "path": "/policies/{policyId}",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "retirePolicy",
+      "method": "POST",
+      "path": "/policies/{policyId}/retire",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "importObjects",
+      "method": "POST",
+      "path": "/import",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "exportObjects",
+      "method": "POST",
+      "path": "/export",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "exportIndex",
+      "method": "GET",
+      "path": "/export/index",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "listTokens",
+      "method": "GET",
+      "path": "/tokens",
+      "roles": [
+        "reader",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "initToken",
+      "method": "POST",
+      "path": "/tokens/{slot}/init",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "changeTokenPin",
+      "method": "PUT",
+      "path": "/tokens/{slot}/pin",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "initTokenPin",
+      "method": "POST",
+      "path": "/tokens/{slot}/pin",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "changeTokenSoPin",
+      "method": "PUT",
+      "path": "/tokens/{slot}/so-pin",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "storeTokenObject",
+      "method": "POST",
+      "path": "/tokens/{slot}/objects",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "listTokenObjects",
+      "method": "POST",
+      "path": "/tokens/{slot}/inventory",
+      "roles": [
+        "reader",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "deleteTokenObject",
+      "method": "DELETE",
+      "path": "/tokens/{slot}/objects/{tokenObjectId}",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "renameTokenObject",
+      "method": "PATCH",
+      "path": "/tokens/{slot}/objects/{tokenObjectId}",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "exportAudit",
+      "method": "GET",
+      "path": "/audit",
+      "roles": [
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "verifyAudit",
+      "method": "GET",
+      "path": "/audit/verify",
+      "roles": [
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "adoptAudit",
+      "method": "POST",
+      "path": "/audit/adopt",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "listApprovals",
+      "method": "GET",
+      "path": "/approvals",
+      "roles": [
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getApproval",
+      "method": "GET",
+      "path": "/approvals/{approvalId}",
+      "roles": [
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "approveApproval",
+      "method": "POST",
+      "path": "/approvals/{approvalId}/approve",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "rejectApproval",
+      "method": "POST",
+      "path": "/approvals/{approvalId}/reject",
+      "roles": [
+        "ra_operator",
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "reloadConfiguration",
+      "method": "POST",
+      "path": "/reload",
+      "roles": [
+        "ca_admin"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getStatus",
+      "method": "GET",
+      "path": "/status",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    }
+  ]
+}

@@ -84,9 +84,25 @@ about 90 seconds), and with the mount option `nolock` the lock covers only one c
 the lock on the client. SQLite is not safe on such file systems either: keep the database on a local disk or
 on a volume of one host (one Docker host for the container).
 
+## Server state of BTD-155 (authentication and roles)
+
+| State | Where | Status |
+|---|---|---|
+| HMAC key of the API keys (`processKey`) | `server/auth.cpp` | written once (`std::call_once`) by `RoleTable::build()` at the start, before any thread; read-only afterwards; wiped at the end of `main()` |
+| Current roles (`RoleHolder`) | `server/auth.h` | thread-safe: a `shared_ptr` to an immutable `RoleTable` behind a mutex; a request takes a snapshot, `POST /v1/reload` swaps it on the DB worker |
+| Rate limit windows of `auth.denied` (`AuthAudit::windows`) | `server/auth.cpp` | thread-safe: guarded by its mutex; the entries are written on the DB worker |
+| Operation table (`OperationTable`) | `server/auth.cpp`, from `roles.json` | parsed in `main()` before the threads, read-only afterwards |
+| Per connection: the identities with `auth.login`, the verify error of a refused certificate | `server/tls.cpp` (`ConnState`, SSL ex_data) | per connection: only the connection's own thread uses it; freed with the SSL object |
+| Refusal hook of the TLS layer | `server/tls.cpp` | set before `listen_after_bind()`, cleared after it returned; read-only while connections run |
+| `current` (identity of the request between pre-routing and route) | `server/routes.cpp` | `thread_local`: per pool thread, one request at a time |
+| `PwDialogHeadless::readSource()` (the API keys, `tls.key_password`) | `lib/PwDialogCore.cpp` | at the start before the threads, and in the reload job on the DB worker; never on a request thread |
+
 ## Conclusion
 
 Work off the worker touches no unresolved item. The request threads of `server/routes.cpp` use only
-cpp-httplib, OpenSSL (`X509_digest` on the peer certificate of their own connection), Qt Core JSON and
-`JsonReport::error()`, which builds a JSON object from its arguments and reads no global state. The open items
+cpp-httplib, OpenSSL (`X509_digest` and the DNs of the peer certificate of their own connection, the HMAC of a
+presented API key), Qt Core JSON, the server's own state above, the immutable action names of `AuditLog`
+and `JsonReport::error()`, which builds a JSON object from its arguments and reads no global state. Audit
+entries (`auth.login`, `auth.denied`, `config.reload`) and the CA lookups of the CA scope are jobs on the
+worker. The open items
 (BTD-174, BTD-172, the settings) are worker only until a request thread or a second worker needs them.
