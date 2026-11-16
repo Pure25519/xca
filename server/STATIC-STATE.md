@@ -74,6 +74,7 @@ Constants (`static const`, `constexpr`, the action names of `AuditLog`) are immu
 | Rate limit windows of `auth.denied` (`AuthAudit::windows`) | `server/auth.cpp` | thread-safe: guarded by its mutex; the entries are written on the DB worker |
 | Operation table (`OperationTable`) | `server/auth.cpp`, from `roles.json` | parsed in `main()` before the threads, read-only afterwards |
 | Per connection: the identities with `auth.login`, the verify error of a refused certificate | `server/tls.cpp` (`ConnState`, SSL ex_data) | per connection: only the connection's own thread uses it; freed with the SSL object |
+| CRL snapshot of the client CAs (`ClientCrls`, BTD-313) | `server/tls.cpp` | thread-safe: a `shared_ptr` to an immutable CRL stack behind a mutex; each handshake takes a snapshot and hands it to `X509_verify_cert` (OpenSSL sorts a CRL's revoked list under the CRL's own lock), the start sets it before `listen_after_bind()`, `POST /v1/reload` swaps it on the DB worker; the `SSL_CTX` and its store never change at run time |
 | Refusal hook of the TLS layer | `server/tls.cpp` | set before `listen_after_bind()`, cleared after it returned; read-only while connections run |
 | `current` (identity of the request between pre-routing and route) | `server/routes.cpp` | `thread_local`: per pool thread, one request at a time |
 | `PwDialogHeadless::readSource()` (the API keys, `tls.key_password`) | `lib/PwDialogCore.cpp` | at the start before the threads, and in the reload job on the DB worker; never on a request thread |

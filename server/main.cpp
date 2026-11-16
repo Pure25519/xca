@@ -7,7 +7,9 @@
  *   xca-server --version
  *
  * Start: the configuration is checked, the API keys of the roles and the
- * password of an encrypted TLS key are read (BTD-155), the lock
+ * password of an encrypted TLS key are read (BTD-155), the CRLs of the
+ * client CAs are loaded and checked (BTD-313: one per client CA, signed
+ * by it, not expired; else invalid_config /tls/client_crl), the lock
  * <database>.lock is taken (database_in_use if another process holds it),
  * the TLS server is set up (tls.h: TLS 1.2 at least, the client CAs; mTLS:
  * no handshake without a client certificate of those CAs unless API keys
@@ -110,6 +112,12 @@ int serve(const Config &config, const OperationTable &operations)
 		/* the API keys: each one read, at least 32 bytes, kept as
 		 * HMAC only */
 		roles = RoleTable::build(config);
+		QString crlError;
+		std::shared_ptr<const ClientCrls> crls = loadClientCrls(
+			config.tlsClientCrl, config.tlsClientCa, &crlError);
+		if (!crls)
+			throw ConfigError("/tls/client_crl", crlError);
+		setClientCrls(crls);
 		if (!config.tlsKeyPassword.isEmpty()) {
 			try {
 				keyPassword = PwDialogHeadless::readSource(
@@ -177,8 +185,10 @@ int serve(const Config &config, const OperationTable &operations)
 		e.objectType = "connection";
 		e.params["peer_address"] = r.peer;
 		e.params["tls_alert"] = r.alert;
-		e.params["reason"] = r.verifyError.isEmpty() ? r.alert :
-					r.verifyError;
+		/* revoked, crl_missing, ... (BTD-313), else the OpenSSL
+		 * text of the verification error or the alert */
+		e.params["reason"] = !r.reason.isEmpty() ? r.reason :
+			r.verifyError.isEmpty() ? r.alert : r.verifyError;
 		if (!r.verifyError.isEmpty())
 			e.params["verify_error"] = r.verifyError;
 		if (!r.subject.isEmpty()) {

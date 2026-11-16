@@ -8,6 +8,9 @@
  * inject, op run), not by the server. A refused file gives a ConfigError
  * with the JSON pointer of the member.
  *
+ * BTD-313 adds the required tls.client_crl: the CRLs of the client CAs
+ * (tls.h, loadClientCrls()).
+ *
  * BTD-155 adds auth.denied_per_minute, the optional tls.key_password and
  * the roles (see RoleDef). Role names are those of the bootstrap schema
  * (reader, ra-operator, ca-admin, auditor); the OpenAPI document and
@@ -101,6 +104,8 @@ class Config
 	QString tlsCert{};
 	QString tlsKey{};
 	QString tlsClientCa{};
+	/* PEM file with one CRL per CA of tlsClientCa (BTD-313) */
+	QString tlsClientCrl{};
 	/* the password of an encrypted tls.key: a reference or empty */
 	QString tlsKeyPassword{};
 	Limits limits{};

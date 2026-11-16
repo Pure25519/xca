@@ -65,6 +65,29 @@ o x509 -req -in "$P/foreign.csr" -CA "$P/other.pem" -CAkey "$P/other.key" -CAcre
     -out "$P/foreign.pem" -days 2 -extfile "$P/client.ext"
 FP=$("$OPENSSL" x509 -in "$P/client.pem" -noout -fingerprint -sha256 | cut -d= -f2 |
     tr -d : | tr 'A-F' 'a-f')
+# crl <ca> <out> [openssl ca -gencrl options]: the CRL of <ca> with the
+# certificates revoked so far (revoke <ca> <cert>), via openssl ca (BTD-313)
+cadb() {
+    d="$P/$1.db"
+    if [ ! -d "$d" ]; then
+        mkdir -p "$d"
+        : > "$d/index.txt"
+        echo 01 > "$d/crlnumber"
+        printf '[ ca ]\ndefault_ca = d\n[ d ]\ndatabase = %s/index.txt\ncrlnumber = %s/crlnumber\ndefault_md = sha256\ndefault_crl_days = 2\n' \
+            "$d" "$d" > "$d/ca.cnf"
+    fi
+}
+revoke() {
+    cadb "$1"
+    o ca -config "$P/$1.db/ca.cnf" -keyfile "$P/$1.key" -cert "$P/$1.pem" -revoke "$P/$2.pem"
+}
+crl() {
+    ca=$1; out=$2; shift 2
+    cadb "$ca"
+    o ca -config "$P/$ca.db/ca.cnf" -keyfile "$P/$ca.key" -cert "$P/$ca.pem" -gencrl \
+        -out "$out" "$@"
+}
+crl ca "$P/ca-crl.pem"
 
 # 2. the database and the server
 "$BXC_PKI" init --db "$DB" --password env:XCA_SERVER_DB_PASSWORD \
@@ -76,7 +99,8 @@ config() {
   "schema": "urn:bxc-pki:schema:xca-server:v1",
   "listen": { "address": "127.0.0.1", "port": $1 },
   "database": { "path": "$DB", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem" },
+  "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem",
+           "client_crl": "$P/ca-crl.pem" },
   "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
               "job_timeout_s": 60, "queue_max": 64 },

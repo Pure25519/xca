@@ -22,7 +22,8 @@ set(VALID [=[
   "listen": { "address": "127.0.0.1", "port": 8443 },
   "database": { "path": "/data/bxc-pki.xdb", "password": "env:XCA_SERVER_DB_PASSWORD" },
   "tls": { "cert": "/etc/xca-server/server.pem", "key": "/etc/xca-server/server.key",
-           "client_ca": "/etc/xca-server/clients.pem" },
+           "client_ca": "/etc/xca-server/clients.pem",
+           "client_crl": "/etc/xca-server/clients-crl.pem" },
   "limits": { "payload_max_bytes": 1048576, "header_max_bytes": 8192,
               "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 100,
               "job_timeout_s": 60, "queue_max": 64 },
@@ -152,6 +153,12 @@ string(JSON j SET "${VALID}" tls key_password "\"env:XCA_SERVER_KEY_PASSWORD\"")
 check(key-password 0 "" "${j}")
 string(JSON j SET "${VALID}" tls key_password "\"hunter2\"")
 check(key-password-literal 2 "/tls/key_password" "${j}")
+# BTD-313: the CRLs of the client CAs are required (their content is
+# checked at start, server_auth.sh section G)
+string(JSON j REMOVE "${VALID}" tls client_crl)
+check(missing-client-crl 2 "/tls/client_crl" "${j}")
+string(JSON j SET "${VALID}" tls client_crl "\"\"")
+check(empty-client-crl 2 "/tls/client_crl" "${j}")
 
 if(failures)
   message(FATAL_ERROR "${failures}")

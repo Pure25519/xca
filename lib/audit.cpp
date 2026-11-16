@@ -179,6 +179,9 @@ const QStringList &AuditParams::allowList()
 		"actor_kind", "peer_address", "api_key_id", "operation_id",
 		"tls_alert", "verify_error", "ca_ref", "suppressed",
 		"window_start", "denied_per_minute", "changed",
+		/* the earliest nextUpdate of the client CRLs of xca-server
+		 * at its start and reload (BTD-313) */
+		"crl_next_update",
 	};
 	/* Signed checkpoints and the audit keys (BTD-37) */
 	static const QStringList withCheckpoints = list + QStringList {
