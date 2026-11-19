@@ -5,9 +5,46 @@
 #  - no server test script writes a configuration of its own: the schema id
 #    of xca-server.json appears only in the one base config
 #    server/test/config/base.json, which the tests change member by member.
-# cmake -DSERVER_DIR=<source>/server -P server_layout.cmake
+# cmake -DSERVER_DIR=<source>/server -DWORK=<dir> -P server_layout.cmake
+# With WORK set, a self-test runs first (BTD-321): the check against a
+# small tree that is clean (must pass) and against one copy per way of
+# registering a test in server/CMakeLists.txt (each must fail).
 
 cmake_minimum_required(VERSION 3.19)
+
+if(WORK)
+  file(REMOVE_RECURSE "${WORK}")
+  set(self_failures "")
+  set(clean "if(BUILD_TESTING)\n  include(\${SERVER_DIR}/test/ServerTests.cmake)\nendif()\n")
+  set(case_names clean add_test set_tests_properties set_property_test
+	set_property_test_spaced)
+  set(case_clean "${clean}")
+  set(case_add_test "${clean}add_test(NAME test_server_x COMMAND true)\n")
+  set(case_set_tests_properties
+	"${clean}set_tests_properties(test_server_x PROPERTIES LABELS server)\n")
+  set(case_set_property_test
+	"${clean}set_property(TEST test_server_x APPEND PROPERTY LABELS server)\n")
+  set(case_set_property_test_spaced
+	"${clean}SET_PROPERTY (\n\tTEST test_server_x PROPERTY LABELS server)\n")
+  foreach(case ${case_names})
+    set(tree "${WORK}/${case}")
+    file(WRITE "${tree}/CMakeLists.txt" "${case_${case}}")
+    file(WRITE "${tree}/test/server_x.test.cmake" "ServerTest(test_server_x)\n")
+    file(WRITE "${tree}/test/config/base.json" "{}\n")
+    execute_process(COMMAND ${CMAKE_COMMAND} -DSERVER_DIR=${tree}
+		-P ${CMAKE_CURRENT_LIST_FILE}
+	RESULT_VARIABLE rc OUTPUT_QUIET ERROR_VARIABLE err)
+    if(case STREQUAL "clean" AND NOT rc EQUAL 0)
+      string(APPEND self_failures "\nself-test: the clean tree fails: ${err}")
+    elseif(NOT case STREQUAL "clean" AND rc EQUAL 0)
+      string(APPEND self_failures "\nself-test: ${case} in server/CMakeLists.txt passes the check")
+    endif()
+  endforeach()
+  if(self_failures)
+    message(FATAL_ERROR "${self_failures}")
+  endif()
+  message(STATUS "ok: self-test, the check refuses every way of registering a test")
+endif()
 
 set(failures "")
 
