@@ -26,7 +26,9 @@ path_params lists the enums of the path parameters (e.g. collection), so the
 server matches /keys but not /profiles against /{collection}.
 
 SERVER_ONLY lists operations of the server that are not in the OpenAPI
-document: GET /status (BTD-154). They are appended after the document's.
+document; they are appended after the document's. It is empty: GET /status
+(BTD-154) is in the document now. A flow sequence ([a, b]) must stay on one
+line.
 
 Python 3 standard library only. The YAML parser below reads the subset the
 OpenAPI document uses: block mappings, block sequences, flow sequences
@@ -58,8 +60,7 @@ CA_PARAMS = {
 }
 
 SERVER_ONLY = [
-    {"operation_id": "getStatus", "method": "GET", "path": "/status",
-     "roles": list(ROLES), "ca_param": None},
+    # empty since getStatus is in the document (bxc-pki main, BTD-154 pin bump)
 ]
 
 

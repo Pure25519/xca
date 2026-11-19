@@ -175,6 +175,10 @@ if(CMAKE_NM)
 	${PROJECT_SOURCE_DIR}/lib/db_token.cpp
 	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp
 	${PROJECT_SOURCE_DIR}/lib/test_seams.cpp)
+  if(NOT WIN32)
+    # the seams of xca-server (BTD-163)
+    list(APPEND seam_sources ${PROJECT_SOURCE_DIR}/server/test_seams.cpp)
+  endif()
   get_target_property(core_all xcacore SOURCES)
   foreach(src IN LISTS core_all)
     if(src MATCHES "\\.cpp$" AND EXISTS "${src}")
@@ -189,10 +193,15 @@ if(CMAKE_NM)
   target_link_libraries(xcacore_release_seams PRIVATE
 	OpenSSL::Crypto ${QT}::Core ${QT}::Sql)
   add_dependencies(tests xcacore_release_seams)
+  # xca-server and its seams (server/test_seams.*, BTD-163) on POSIX hosts
+  set(release_server "")
+  if(NOT WIN32)
+    set(release_server -DSERVER=${PROJECT_BINARY_DIR}/xca-server)
+  endif()
   add_test(NAME test_release_no_seams
 	COMMAND ${CMAKE_COMMAND} -DNM=${CMAKE_NM}
 		"-DOBJECTS=$<JOIN:$<TARGET_OBJECTS:xcacore_release_seams>,|>"
-		-DCORE=$<TARGET_FILE:xcacore>
+		-DCORE=$<TARGET_FILE:xcacore> ${release_server}
 		-P ${SERVICE_TEST_DIR}/release_no_seams.cmake)
   set_tests_properties(test_release_no_seams PROPERTIES LABELS service)
 else()

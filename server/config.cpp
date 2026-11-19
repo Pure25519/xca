@@ -202,6 +202,38 @@ RoleDef role(const QJsonValue &v, const QString &p, bool apiKeys)
 	return r;
 }
 
+/* The optional health listener (BTD-163): loopback unless allow_remote is
+ * true; never the port of the TLS listener */
+HealthListener healthListener(const QJsonObject &root, int listenPort)
+{
+	QJsonObject o = object(root, "health", "", { "address", "port" },
+				{ "allow_remote" });
+	HealthListener h;
+	h.enabled = true;
+	h.address = string(o, "address", "/health");
+	h.port = int(integer(o, "port", "/health", 1, 65535));
+	if (o.contains("allow_remote")) {
+		if (!o.value("allow_remote").isBool())
+			throw ConfigError("/health/allow_remote",
+				tr("must be a boolean"));
+		h.allowRemote = o.value("allow_remote").toBool();
+	}
+	/* 127.0.0.0/8, ::1 and localhost; no Qt Network in the server */
+	static const QRegularExpression v4loop(
+		"^127\\.(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])(\\."
+		"(25[0-5]|2[0-4][0-9]|1?[0-9]?[0-9])){2}$");
+	bool loopback = h.address == "localhost" || h.address == "::1" ||
+			v4loop.match(h.address).hasMatch();
+	if (!loopback && !h.allowRemote)
+		throw ConfigError("/health/address", tr("must be a loopback "
+			"address (127.0.0.1, ::1) unless allow_remote is true: "
+			"the listener has no TLS and no authentication"));
+	if (h.port == listenPort)
+		throw ConfigError("/health/port", tr("must differ from the "
+			"port of the TLS listener (/listen/port)"));
+	return h;
+}
+
 /* The roles; one key id names one secret */
 QList<RoleDef> parseRoles(const QJsonObject &root, bool apiKeys)
 {
@@ -243,9 +275,9 @@ Config Config::load(const QString &file)
 			"'%1' is not a JSON object").arg(file));
 	QJsonObject root = doc.object();
 	const QStringList top { "schema", "listen", "database", "tls",
-				"limits", "auth", "roles" };
+				"limits", "auth", "metrics", "roles" };
 	for (const QString &key : root.keys())
-		if (!top.contains(key))
+		if (!top.contains(key) && key != "health")
 			throw ConfigError("/" + key, tr("unknown member"));
 	for (const QString &key : top)
 		if (!root.contains(key))
@@ -309,6 +341,16 @@ Config Config::load(const QString &file)
 	c.deniedTotalPerMinute = integer(auth, "denied_total_per_minute",
 					"/auth", 1, 1000000);
 	c.roles = parseRoles(root, c.apiKeys);
+
+	/* BTD-163: explicit limits of the metrics (condition 5) */
+	QJsonObject metrics = object(root, "metrics", "",
+				{ "certificates_max", "audit_cache_s" });
+	c.metrics.certificatesMax = integer(metrics, "certificates_max",
+					"/metrics", 0, 1000000);
+	c.metrics.auditCacheS = integer(metrics, "audit_cache_s", "/metrics",
+					0, 3600);
+	if (root.contains("health"))
+		c.health = healthListener(root, c.listenPort);
 	return c;
 }
 

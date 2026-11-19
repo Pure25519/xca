@@ -6,7 +6,7 @@
 # xcacore of this (test) build, CORE, so that the check cannot pass on a
 # pattern that matches nothing.
 # cmake -DNM=<nm> -DOBJECTS=<o1|o2|...> -DCORE=<libxcacore.a>
-#       -P release_no_seams.cmake
+#       [-DSERVER=<xca-server>] -P release_no_seams.cmake
 
 # the seams, as nm -C prints them
 set(SEAMS
@@ -21,6 +21,9 @@ set(GONE
   "DbTransaction::injected"
   "DbTransaction::injectNestedRollback"
   "DbTransaction::injectionPending")
+# the seams of xca-server (BTD-163): in the objects, and in the server
+# binary of this test build (SERVER) instead of xcacore
+set(SERVER_SEAMS "ServerTestSeams::")
 # test-only state outside this check, reported only (BTD-271 AC3)
 set(FINDINGS "certBuild::injected" "crlBuild::injected")
 
@@ -54,7 +57,7 @@ endif()
 set(found "")
 foreach(o IN LISTS OBJECTS)
   nm_lines("${o}" lines)
-  foreach(name IN LISTS SEAMS GONE)
+  foreach(name IN LISTS SEAMS GONE SERVER_SEAMS)
     matching(m "${name}" ${lines})
     foreach(l IN LISTS m)
       get_filename_component(n "${o}" NAME)
@@ -85,6 +88,17 @@ foreach(name IN LISTS GONE)
   endif()
 endforeach()
 message(STATUS "the seams are in the xcacore of this test build")
+if(SERVER)
+  nm_lines("${SERVER}" server)
+  foreach(name IN LISTS SERVER_SEAMS)
+    matching(m "${name}" ${server})
+    if(NOT m)
+      message(FATAL_ERROR "${name} is not in the xca-server of this test "
+        "build: the check would not see it")
+    endif()
+  endforeach()
+  message(STATUS "the seams are in the xca-server of this test build")
+endif()
 
 foreach(name IN LISTS FINDINGS)
   matching(m "${name}" ${core})

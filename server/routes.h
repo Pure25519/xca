@@ -32,6 +32,7 @@ namespace xcaserver {
 class AuthAudit;
 class Config;
 class DbWorker;
+class Metrics;
 class OperationTable;
 class RoleHolder;
 
@@ -42,7 +43,7 @@ std::string certActor(const httplib::Request &req);
  * all objects must outlive the server */
 void installRoutes(httplib::Server &srv, DbWorker &worker,
 		const Config &config, const OperationTable &operations,
-		RoleHolder &roles, AuthAudit &audit);
+		RoleHolder &roles, AuthAudit &audit, Metrics &metrics);
 
 }
 

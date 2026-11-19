@@ -298,7 +298,9 @@ if start a "$WORK/a.json"; then
             case ",$roles," in
             *",$role,"*)
                 case "$op" in
-                getStatus|reloadConfiguration) expect "$op as $role" "$out" 200 ;;
+                # the operations with a handler (getHealth, getMetrics: BTD-163)
+                getStatus|reloadConfiguration|getHealth|getMetrics)
+                    expect "$op as $role" "$out" 200 ;;
                 *) expect "$op as $role" "$out" 501 not_implemented ;;
                 esac
                 ;;
@@ -307,7 +309,7 @@ if start a "$WORK/a.json"; then
             table=$((table + 1))
         done
         # BTD-311: the role limited to ca-a, every CA in the request is ca-b:
-        # only getStatus (filtered by CA) passes, nothing else
+        # only getStatus (filtered by CA) and getHealth (no data) pass
         target=/v1$(printf '%s' "$path" | sed -e 's/{collection}/keys/' -e "s/{id}/$ID_B/" \
             -e 's/{profileId}/p1/' -e 's/{policyId}/p1/' -e 's/{slot}/0/' \
             -e 's/{tokenObjectId}/AB/' -e 's/{approvalId}/aaaaaaaaaaaaaaaaaaaaaaaaaa/')
@@ -315,7 +317,8 @@ if start a "$WORK/a.json"; then
         out="$R/t-$op-scoped"
         send "$out" scoped "$method" "$target" "$body" 'If-Match: "1"'
         case ",$roles,:$op" in
-        *",ca_admin,"*:getStatus) expect "$op as ca_admin of ca-a" "$out" 200 ;;
+        *",ca_admin,"*:getStatus|*",ca_admin,"*:getHealth)
+            expect "$op as ca_admin of ca-a" "$out" 200 ;;
         *) expect "$op as ca_admin of ca-a" "$out" 403 forbidden ;;
         esac
         table=$((table + 1))

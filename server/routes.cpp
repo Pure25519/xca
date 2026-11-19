@@ -3,6 +3,7 @@
  * The HTTP side of xca-server (BTD-154, BTD-155), see routes.h.
  */
 
+#include <chrono>
 #include <cstdio>
 #include <exception>
 #include <memory>
@@ -22,6 +23,7 @@
 
 #include "auth.h"
 #include "config.h"
+#include "metrics.h"
 #include "session.h"
 #include "tls.h"
 #include "worker.h"
@@ -119,6 +121,7 @@ class Context
 	const OperationTable &operations;
 	RoleHolder &roles;
 	AuthAudit &audit;
+	Metrics &metrics;
 	qint64 timeout;
 };
 
@@ -309,6 +312,19 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 	QMap<QString, QString> params = current.params;
 	current = Current();
 
+	/* the latency of the request per operation (BTD-163) */
+	struct Timer
+	{
+		Metrics &m;
+		QString id;
+		std::chrono::steady_clock::time_point t0;
+		~Timer()
+		{
+			m.observe(id, std::chrono::duration<double>(
+				std::chrono::steady_clock::now() - t0).count());
+		}
+	} timer{ ctx.metrics, op.id, std::chrono::steady_clock::now() };
+
 	/* the handlers that filter what they show by the CA scope; every
 	 * other read is refused for an identity limited to some CAs */
 	static const QStringList filtersByCa{ "getStatus" };
@@ -375,6 +391,23 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 		}, ctx.timeout));
 		return;
 	}
+	if (op.id == "getMetrics") {
+		/* the values of the database on the worker, those of the
+		 * process here (BTD-163) */
+		Metrics *m = &ctx.metrics;
+		JobResult r = ctx.worker.call([m]() {
+			return QJsonObject{ { "text", m->databaseText() } };
+		}, ctx.timeout);
+		if (r.state != JobResult::done) {
+			answer(res, r);
+			return;
+		}
+		res.status = 200;
+		res.set_content((r.body["text"].toString() +
+			ctx.metrics.processText(ctx.worker)).toStdString(),
+			"text/plain; version=0.0.4; charset=utf-8");
+		return;
+	}
 	if (op.id == "reloadConfiguration") {
 		reload(ctx, id, res);
 		return;
@@ -398,7 +431,7 @@ std::string certActor(const httplib::Request &req)
 
 void installRoutes(httplib::Server &srv, DbWorker &worker,
 		const Config &config, const OperationTable &operations,
-		RoleHolder &roles, AuthAudit &audit)
+		RoleHolder &roles, AuthAudit &audit, Metrics &metrics)
 {
 	const Limits limits = config.limits;
 	/* condition 5 of the architecture: every limit explicit */
@@ -408,7 +441,7 @@ void installRoutes(httplib::Server &srv, DbWorker &worker,
 	srv.set_keep_alive_max_count(size_t(limits.keepAliveMaxCount));
 
 	auto ctx = std::make_shared<Context>(Context{ worker, config,
-		operations, roles, audit, limits.jobTimeoutS });
+		operations, roles, audit, metrics, limits.jobTimeoutS });
 
 	srv.set_pre_routing_handler([ctx, limits](const httplib::Request &req,
 					httplib::Response &res) {

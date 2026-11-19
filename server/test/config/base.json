@@ -9,5 +9,6 @@
               "job_timeout_s": 60, "queue_max": 64 },
   "auth": { "api_keys": false, "denied_per_minute": 100, "denied_peers_max": 1024,
             "denied_total_per_minute": 600 },
+  "metrics": { "certificates_max": 1000, "audit_cache_s": 15 },
   "roles": []
 }

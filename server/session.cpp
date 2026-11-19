@@ -6,6 +6,8 @@
 
 #include "session.h"
 
+#include <atomic>
+
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QFileInfo>
@@ -98,8 +100,8 @@ qint64 countItems(const QList<enum pki_type> &types)
 			"type IN (%1)").arg(t.join(",")));
 }
 
-/* The bootstrap settings rows of kind ca: bootstrap CA id -> item id of
- * the CA certificate (written by bxc-pki bootstrap) */
+}
+
 QMap<QString, qint64> bootstrapCas()
 {
 	QMap<QString, qint64> cas;
@@ -116,6 +118,8 @@ QMap<QString, qint64> bootstrapCas()
 	}
 	return cas;
 }
+
+namespace {
 
 /* The item ids of the CA certificates of the bootstrap CA ids */
 QList<qint64> caItems(const QStringList &ids)
@@ -230,6 +234,29 @@ QJsonObject statusJob(const QString &actor, const CaScope &scope)
 	return status;
 }
 
+/* Whether the last audit entry of the server was written (BTD-163) */
+std::atomic<bool> auditWritten{ true };
+
+bool lastAuditWriteOk()
+{
+	return auditWritten.load();
+}
+
+QJsonObject readyJob()
+{
+	if (!Database.isOpen())
+		throw serviceError("no_database",
+			QObject::tr("No database is open"));
+	/* the write lock an audit entry needs; waits at most the busy
+	 * timeout of the connection while another process holds it */
+	XSqlQuery q;
+	SQL_PREPARE(q, "BEGIN IMMEDIATE");
+	execOrThrow(q, "readiness");
+	SQL_PREPARE(q, "ROLLBACK");
+	execOrThrow(q, "readiness");
+	return QJsonObject{ { "read_only", database_model::read_only } };
+}
+
 QJsonObject appendEntry(const QString &actor, const QString &action,
 		const QString &objectType, const QString &objectId,
 		const QVariantMap &params, const QString &result,
@@ -240,9 +267,16 @@ QJsonObject appendEntry(const QString &actor, const QString &action,
 			QObject::tr("No database is open"));
 	ServiceContext ctx = actor.isEmpty() ? serverContext() :
 			ServiceContext(ServiceContext::rest, actor);
-	AuditEntry e = AuditLog::append(ctx, action, objectType, objectId,
-			AuditParams::fromMap(params), result, errorCode);
-	return QJsonObject{ { "seq", e.seq } };
+	try {
+		AuditEntry e = AuditLog::append(ctx, action, objectType,
+				objectId, AuditParams::fromMap(params), result,
+				errorCode);
+		auditWritten = true;
+		return QJsonObject{ { "seq", e.seq } };
+	} catch (...) {
+		auditWritten = false;
+		throw;
+	}
 }
 
 QJsonObject caScopeJob(const QJsonValue &reference, bool issuerOf)

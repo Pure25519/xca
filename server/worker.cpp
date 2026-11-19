@@ -86,6 +86,18 @@ void DbWorker::run()
 	}
 }
 
+JobResult DbWorker::count(JobResult r)
+{
+	ended[r.state]++;
+	return r;
+}
+
+size_t DbWorker::queued()
+{
+	std::lock_guard<std::mutex> lock(mutex);
+	return queue.size();
+}
+
 JobResult DbWorker::call(Job job, qint64 timeoutS)
 {
 	JobResult r;
@@ -95,11 +107,11 @@ JobResult DbWorker::call(Job job, qint64 timeoutS)
 		std::lock_guard<std::mutex> lock(mutex);
 		if (stopping) {
 			r.state = JobResult::stopping;
-			return r;
+			return count(r);
 		}
 		if (queue.size() >= queueMax) {
 			r.state = JobResult::queueFull;
-			return r;
+			return count(r);
 		}
 		queue.push_back(Task{ std::move(job), promise });
 	}
@@ -109,9 +121,9 @@ JobResult DbWorker::call(Job job, qint64 timeoutS)
 		/* the job finishes on the worker; its promise is kept alive
 		 * by the task */
 		r.state = JobResult::timedOut;
-		return r;
+		return count(r);
 	}
-	return result.get();
+	return count(result.get());
 }
 
 JobResult DbWorker::shutdown(Job last)
