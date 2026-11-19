@@ -52,4 +52,18 @@ bool TestSeams::openFailsAfterModels()
 	return fail;
 }
 
+static unsigned long ecParamsFailure;
+
+void TestSeams::failNextEcParamsRead(unsigned long rv)
+{
+	ecParamsFailure = rv;
+}
+
+unsigned long TestSeams::ecParamsReadFailure()
+{
+	unsigned long rv = ecParamsFailure;
+	ecParamsFailure = 0;
+	return rv;
+}
+
 #endif
