@@ -27,14 +27,25 @@ xs_config() {
     return $xs_rc
 }
 
-# xs_str <text>: <text> as a JSON string (no quote or backslash in it)
+# xs_str <text>: <text> as a JSON string (BTD-321). A backslash, a quote, a
+# tab, a carriage return and a newline are escaped; any other control
+# character is refused, so a test never writes a different text than given.
 xs_str() {
-    printf '"%s"' "$1"
+    if printf '%s' "$1" | tr -d '\t\r\n' | LC_ALL=C grep -q '[[:cntrl:]]'; then
+        echo "xs_str: a control character other than tab, CR or newline" >&2
+        return 1
+    fi
+    printf '"'
+    printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' \
+        -e "s/$(printf '\t')/\\\\t/g" -e "s/$(printf '\r')/\\\\r/g" |
+        awk 'NR > 1 { printf "%s", "\\n" } { printf "%s", $0 }'
+    printf '"'
 }
 
 # xs_role <name> <members> [<cas>]: one role of "roles". <members> are its
 # other members as JSON without the braces ("client_certs": [...],
 # "api_keys": [...]); <cas> is a JSON array, every CA (["*"]) if left out.
 xs_role() {
-    printf '{ "name": "%s", %s, "cas": %s }' "$1" "$2" "${3:-[ \"*\" ]}"
+    xs_name=$(xs_str "$1") || return 1
+    printf '{ "name": %s, %s, "cas": %s }' "$xs_name" "$2" "${3:-[ \"*\" ]}"
 }
