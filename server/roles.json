@@ -1,5 +1,5 @@
 {
-  "source": "api/openapi.yaml@0aaef5bd",
+  "source": "api/openapi.yaml@a32bb2cb",
   "path_params": {
     "collection": [
       "keys",
@@ -9,6 +9,40 @@
     ]
   },
   "operations": [
+    {
+      "operation_id": "getHealth",
+      "method": "GET",
+      "path": "/health",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getStatus",
+      "method": "GET",
+      "path": "/status",
+      "roles": [
+        "reader",
+        "ra_operator",
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
+    {
+      "operation_id": "getMetrics",
+      "method": "GET",
+      "path": "/metrics",
+      "roles": [
+        "ca_admin",
+        "auditor"
+      ],
+      "ca_param": null
+    },
     {
       "operation_id": "listObjects",
       "method": "GET",
@@ -495,18 +529,6 @@
       "path": "/reload",
       "roles": [
         "ca_admin"
-      ],
-      "ca_param": null
-    },
-    {
-      "operation_id": "getStatus",
-      "method": "GET",
-      "path": "/status",
-      "roles": [
-        "reader",
-        "ra_operator",
-        "ca_admin",
-        "auditor"
       ],
       "ca_param": null
     }
