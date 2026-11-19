@@ -6,7 +6,7 @@
  */
 
 #include <QTest>
-#include <QFile>
+#include <QTemporaryDir>
 
 #include "database_model.h"
 #include "PwDialogCore.h"
@@ -16,7 +16,6 @@
 #include "sql.h"
 #include "oid.h"
 
-#define DBFILE "test_takey.xdb"
 
 static const char ca_pem[] =
 "-----BEGIN CERTIFICATE-----\n"
@@ -35,6 +34,10 @@ class test_takey: public QObject
 	Q_OBJECT
 
 	pki_x509 *ca{};
+	/* the database and its side files (lock file, journal) in a
+	 * directory of their own, removed with the test: a fixed path in
+	 * the build dir kept them for the next run (BTD-317) */
+	QTemporaryDir dir{};
 	static QByteArray taKeyPem(char fill);
 	QByteArray storedValue();
 
@@ -71,9 +74,9 @@ void test_takey::initTestCase()
 {
 	initOIDs();
 	xcaWarning::setGui(new xcaWarningCore());
-	QFile::remove(DBFILE);
+	QVERIFY(dir.isValid());
 	PwDialogCore::cmdline_passwd = "testdbpass";
-	Database.open(DBFILE);
+	Database.open(dir.filePath("test_takey.xdb"));
 	QVERIFY(Database.isOpen());
 
 	/* Database.insert() takes ownership of the pki_multi */
@@ -90,7 +93,6 @@ void test_takey::initTestCase()
 void test_takey::cleanupTestCase()
 {
 	Database.close();
-	QFile::remove(DBFILE);
 }
 
 void test_takey::importTwice()
