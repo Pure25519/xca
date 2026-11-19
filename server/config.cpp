@@ -5,6 +5,12 @@
 
 #include "config.h"
 
+/* set for the whole target in server/CMakeLists.txt, so that every
+ * translation unit sees the same value in httplib.h */
+#ifndef CPPHTTPLIB_HEADER_MAX_LENGTH
+#error "CPPHTTPLIB_HEADER_MAX_LENGTH is not set"
+#endif
+
 #include <cmath>
 #include <limits>
 
@@ -282,8 +288,11 @@ Config Config::load(const QString &file)
 	const qint64 max = std::numeric_limits<int>::max();
 	c.limits.payloadMaxBytes = integer(limits, "payload_max_bytes",
 					"/limits", 1, max);
+	/* at most the line limit cpp-httplib is built with: a longer
+	 * single line fails in the parser with 400 before the 431 check
+	 * (BTD-319) */
 	c.limits.headerMaxBytes = integer(limits, "header_max_bytes",
-					"/limits", 1, max);
+					"/limits", 1, CPPHTTPLIB_HEADER_MAX_LENGTH);
 	c.limits.readTimeoutS = integer(limits, "read_timeout_s",
 					"/limits", 1, 86400);
 	c.limits.writeTimeoutS = integer(limits, "write_timeout_s",

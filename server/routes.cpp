@@ -476,6 +476,30 @@ void installRoutes(httplib::Server &srv, DbWorker &worker,
 		return httplib::Server::HandlerResponse::Unhandled;
 	});
 
+	/* cpp-httplib's parser refuses a method outside its built-in set with
+	 * 400 before the pre-routing handler runs, unless a route is
+	 * registered for it (BTD-318). Registering the methods of the IANA
+	 * HTTP method registry lets the pre-routing handler answer them like
+	 * any undeclared method: 405 with the Allow header of the path (or
+	 * 401, 404 first). A token in no registry stays 400 (documented
+	 * deviation). The handler is only reached if the pre-routing handler
+	 * let a request through, which it does not for these methods. */
+	for (const char *m : { "ACL", "BASELINE-CONTROL", "BIND", "CHECKIN",
+			"CHECKOUT", "COPY", "LABEL", "LINK", "LOCK", "MERGE",
+			"MKACTIVITY", "MKCALENDAR", "MKCOL", "MKREDIRECTREF",
+			"MKWORKSPACE", "MOVE", "ORDERPATCH", "PROPFIND",
+			"PROPPATCH", "QUERY", "REBIND", "REPORT", "SEARCH",
+			"UNBIND", "UNCHECKOUT", "UNLINK", "UNLOCK", "UPDATE",
+			"UPDATEREDIRECTREF", "VERSION-CONTROL" }) {
+		srv.CustomRoute(m, ".*", [](const httplib::Request &req,
+					httplib::Response &res) {
+			problem(res, 405, "method_not_allowed", QObject::tr(
+				"%1 is not allowed on '%2'").arg(
+				QString::fromStdString(req.method),
+				QString::fromStdString(req.path)));
+		});
+	}
+
 	srv.Get("/v1/health", [](const httplib::Request &,
 					httplib::Response &res) {
 		json(res, QJsonObject{ { "status", "ok" } });

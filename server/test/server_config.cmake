@@ -77,6 +77,11 @@ string(JSON j SET "${VALID}" limits payload_max_bytes "\"1M\"")
 check(limit-type 2 "/limits/payload_max_bytes" "${j}")
 string(JSON j SET "${VALID}" limits header_max_bytes "0")
 check(limit-zero 2 "/limits/header_max_bytes" "${j}")
+# BTD-319: at most the line limit of cpp-httplib the server is built with
+string(JSON j SET "${VALID}" limits header_max_bytes "16385")
+check(header-max-above-line-limit 2 "/limits/header_max_bytes" "${j}")
+string(JSON j SET "${VALID}" limits header_max_bytes "16384")
+check(header-max-16384 0 "" "${j}")
 # a literal secret is refused, whatever it looks like
 string(JSON j SET "${VALID}" database password "\"hunter2\"")
 check(literal-secret 2 "/database/password" "${j}")
