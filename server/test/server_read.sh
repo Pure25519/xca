@@ -117,8 +117,8 @@ bxc req-orphan request-cert --cn orphan --key ec-p256
 bxc crl-a crl --ca "Scope CA A"
 bxc crl-b crl --ca "Scope CA B"
 ids_of() { sql "SELECT id FROM items WHERE del = 0 AND type IN ($1) ORDER BY id" | tr '\n' ' '; }
-# the item types (lib/pki_base.h): asym_key 1, x509_req 2, x509 3, revocation 4, smartCard 6
-ALL_KEYS=$(ids_of "1,6")
+# the item types (lib/pki_export.h): asym_key 1, x509_req 2, x509 3, revocation 4, smartCard 7
+ALL_KEYS=$(ids_of "1,7")
 ALL_REQS=$(ids_of "2")
 ALL_CERTS=$(ids_of "3")
 ALL_CRLS=$(ids_of "4")
