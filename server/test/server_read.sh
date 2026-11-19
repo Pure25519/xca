@@ -198,14 +198,17 @@ stop() {
 start read
 
 # === A. every read with every CA =====================================================
-for c in keys:$ALL_KEYS requests:$ALL_REQS certificates:$ALL_CERTS crls:$ALL_CRLS; do
-    coll=${c%%:*}
-    want=$(echo "${c#*:}" | tr -s ' ')
-    want=$(printf '%s' "$c" | sed 's/^[a-z]*://')
-    get "$R/l-$coll" admin "/v1/$coll"
-    expect "list $coll" "$R/l-$coll" 200 && same "list $coll" "$(list_ids "$R/l-$coll.body")" "$want"
-    grep -q '"next": *null' "$R/l-$coll.body" || fail "list $coll: next is not null: $(cat "$R/l-$coll.body")"
-done
+# list <cert> <collection> <expected ids>: one list in one page, next null
+list() {
+    get "$R/l-$1-$2" "$1" "/v1/$2"
+    expect "list $2 as $1" "$R/l-$1-$2" 200 || return 1
+    same "list $2 as $1" "$(list_ids "$R/l-$1-$2.body")" "$3"
+    grep -q '"next": *null' "$R/l-$1-$2.body" || fail "list $2 as $1: next is not null"
+}
+list admin keys "$ALL_KEYS"
+list admin requests "$ALL_REQS"
+list admin certificates "$ALL_CERTS"
+list admin crls "$ALL_CRLS"
 # paging of the certificates by 3: the pages joined are the list
 after=0 pages=0 joined=""
 while :; do
@@ -284,11 +287,10 @@ done
 ok "B no private key material ($(echo $ALL_KEYS | wc -w) keys)"
 
 # === C. the CA scope of a role limited to ca-a ==========================================
-for c in "keys:$A_KEYS" "requests:$A_REQS" "certificates:$A_CERTS" "crls:$A_CRLS"; do
-    coll=${c%%:*}
-    get "$R/s-$coll" scoped "/v1/$coll"
-    expect "scoped list $coll" "$R/s-$coll" 200 && same "scoped list $coll" "$(list_ids "$R/s-$coll.body")" "${c#*:}"
-done
+list scoped keys "$A_KEYS"
+list scoped requests "$A_REQS"
+list scoped certificates "$A_CERTS"
+list scoped crls "$A_CRLS"
 for id in $B_LEAF $ID_B $ORPHAN; do
     coll=certificates
     [ "$id" = "$ORPHAN" ] && coll=requests
