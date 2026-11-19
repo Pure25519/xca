@@ -50,6 +50,10 @@ class Limits
 	qint64 keepAliveMaxCount{};
 	qint64 jobTimeoutS{};
 	qint64 queueMax{};
+	/* the fixed threads of cpp-httplib and the bound of its accept
+	 * queue (BTD-304) */
+	qint64 workerThreads{};
+	qint64 acceptQueueMax{};
 };
 
 /* A client certificate of a role: its subject and issuer DN, exactly as

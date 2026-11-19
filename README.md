@@ -56,6 +56,11 @@ To build XCA you need:
  - Make: `cmake --build build -j5`
  - Install: `sudo cmake --install build`
  - Or install local and copy later as root: `DESTDIR=DEST cmake --install build --prefix /usr`
+ - The REST server `xca-server` is built, tested and installed by default
+   on Linux and macOS (`-DXCA_BUILD_SERVER=ON`). A build of the GUI and the
+   command line only, or a distribution package without the server, sets
+   `-DXCA_BUILD_SERVER=OFF`. On Windows the server is not set up and the
+   option is OFF.
 
 ### Apple macos
 

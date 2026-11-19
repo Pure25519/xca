@@ -117,12 +117,26 @@ grep -q '"on_worker": *true' "$WORK/status.txt" ||
     fail "/v1/status: the job did not run on the DB worker"
 ok "status over mTLS, actor cert:$FP"
 
-# 4. no client certificate, or a foreign one
-req /v1/status > "$WORK/nocert.txt"
+# 4. no client certificate, or a foreign one: refused in the handshake
+#    with the alert, and the server still answers (BTD-306; every refusal
+#    with its alert: test_server_tls). refused_req keeps the s_client
+#    errors, where the alert is
+refused_req() {
+    printf 'GET /v1/status HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n' |
+        timeout 30 "$OPENSSL" s_client -quiet -connect "127.0.0.1:$PORT" \
+            -CAfile "$P/ca.pem" "$@" 2>&1
+}
+refused_req > "$WORK/nocert.txt"
 grep -q '^HTTP/' "$WORK/nocert.txt" && fail "an answer without client certificate"
-req /v1/status "$P/foreign.pem" "$P/foreign.key" > "$WORK/foreign.txt"
+grep -qi 'alert certificate required' "$WORK/nocert.txt" ||
+    fail "no client certificate: not the alert certificate required: $(grep -i alert "$WORK/nocert.txt" | head -2)"
+refused_req -cert "$P/foreign.pem" -key "$P/foreign.key" > "$WORK/foreign.txt"
 grep -q '^HTTP/' "$WORK/foreign.txt" && fail "an answer to a certificate of a foreign CA"
-ok "no answer without a certificate of the client CA"
+grep -qi 'alert unknown ca' "$WORK/foreign.txt" ||
+    fail "foreign CA: not the alert unknown ca: $(grep -i alert "$WORK/foreign.txt" | head -2)"
+req /v1/health "$P/client.pem" "$P/client.key" | grep -q '^HTTP/1.1 200' ||
+    fail "the server does not answer after the refusals"
+ok "no answer without a certificate of the client CA: the alerts, the server alive"
 
 # 5. 50 requests at once
 mkdir -p "$WORK/load"

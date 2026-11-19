@@ -278,21 +278,27 @@ Config Config::load(const QString &file)
 	QJsonObject limits = object(root, "limits", "", {
 		"payload_max_bytes", "header_max_bytes", "read_timeout_s",
 		"write_timeout_s", "keep_alive_max_count", "job_timeout_s",
-		"queue_max" });
+		"queue_max", "worker_threads", "accept_queue_max" });
 	const qint64 max = std::numeric_limits<int>::max();
 	c.limits.payloadMaxBytes = integer(limits, "payload_max_bytes",
 					"/limits", 1, max);
 	c.limits.headerMaxBytes = integer(limits, "header_max_bytes",
 					"/limits", 1, max);
+	/* a slow client holds a thread at most this long (BTD-304) */
 	c.limits.readTimeoutS = integer(limits, "read_timeout_s",
-					"/limits", 1, 86400);
+					"/limits", 1, 300);
 	c.limits.writeTimeoutS = integer(limits, "write_timeout_s",
-					"/limits", 1, 86400);
+					"/limits", 1, 300);
 	c.limits.keepAliveMaxCount = integer(limits, "keep_alive_max_count",
 					"/limits", 1, max);
 	c.limits.jobTimeoutS = integer(limits, "job_timeout_s",
 					"/limits", 1, 86400);
 	c.limits.queueMax = integer(limits, "queue_max", "/limits", 1, max);
+	/* the threads of cpp-httplib and its accept queue (BTD-304) */
+	c.limits.workerThreads = integer(limits, "worker_threads", "/limits",
+					1, 64);
+	c.limits.acceptQueueMax = integer(limits, "accept_queue_max",
+					"/limits", 1, 1024);
 
 	QJsonObject auth = object(root, "auth", "",
 				{ "api_keys", "denied_per_minute",
