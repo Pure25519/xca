@@ -88,103 +88,14 @@ if(BUILD_TESTING)
   find_program(SERVER_SH sh)
   find_program(SERVER_OPENSSL openssl HINTS ${OPENSSL_ROOT_DIR}/bin)
 
-  # the binary links no Qt Gui, Widgets, Help or Network and only the
-  # libssl/libcrypto of OpenSSL 4 (architecture conditions 6 and 7)
-  add_test(NAME test_server_link
-	COMMAND ${CMAKE_COMMAND}
-		-DSERVER=${XCA_SERVER_BIN}
-		-DREADELF=${SERVER_READELF}
-		-DLDD=${SERVER_LDD}
-		-P ${SERVER_DIR}/test/server_link.cmake)
-  # xca-server.json: every rule of the schema, no literal secret
-  add_test(NAME test_server_config
-	COMMAND ${CMAKE_COMMAND}
-		-DSERVER=${XCA_SERVER_BIN}
-		-DWORK=${CMAKE_CURRENT_BINARY_DIR}/server_config
-		-P ${SERVER_DIR}/test/server_config.cmake)
-  # start, mTLS, the DB worker under load, the exclusive database, stop and
-  # the audit entries
-  add_test(NAME test_server_lifecycle
-	COMMAND ${CMAKE_COMMAND} -E env
-		SERVER=${XCA_SERVER_BIN}
-		BXC_PKI=$<TARGET_FILE:bxc-pki>
-		XCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		SQL_EXEC=$<TARGET_FILE:sql_exec>
-		OPENSSL=${SERVER_OPENSSL}
-		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lifecycle
-		${SERVER_SH} ${SERVER_DIR}/test/server_lifecycle.sh)
-  # The operation table of roles.json (BTD-155) as lines for the shell test:
-  # <operation_id> <METHOD> <path> <roles, comma separated> <ca_param or ->
-  string(JSON server_ops_n LENGTH "${server_roles_json}" operations)
-  math(EXPR server_ops_last "${server_ops_n} - 1")
-  set(server_roles_tsv "")
-  foreach(i RANGE ${server_ops_last})
-    string(JSON op GET "${server_roles_json}" operations ${i} operation_id)
-    string(JSON method GET "${server_roles_json}" operations ${i} method)
-    string(JSON path GET "${server_roles_json}" operations ${i} path)
-    string(JSON ca_type TYPE "${server_roles_json}" operations ${i} ca_param)
-    if(ca_type STREQUAL "NULL")
-      set(ca "-")
-    else()
-      string(JSON ca GET "${server_roles_json}" operations ${i} ca_param)
-    endif()
-    string(JSON roles_n LENGTH "${server_roles_json}" operations ${i} roles)
-    math(EXPR roles_last "${roles_n} - 1")
-    set(roles "")
-    foreach(j RANGE ${roles_last})
-      string(JSON role GET "${server_roles_json}" operations ${i} roles ${j})
-      list(APPEND roles ${role})
-    endforeach()
-    string(REPLACE ";" "," roles "${roles}")
-    string(APPEND server_roles_tsv "${op} ${method} ${path} ${roles} ${ca}\n")
+  # Every server test registers itself in server/test/<name>.test.cmake
+  # (BTD-320), read here in sorted order, so that branches that add a server
+  # test do not edit the same lines; the helpers are in
+  # server/test/ServerTests.cmake. How to add one: server/test/README.md.
+  include(${SERVER_DIR}/test/ServerTests.cmake)
+  file(GLOB server_test_files CONFIGURE_DEPENDS ${SERVER_DIR}/test/*.test.cmake)
+  list(SORT server_test_files)
+  foreach(server_test_file ${server_test_files})
+    include(${server_test_file})
   endforeach()
-  file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/server_roles.tsv "${server_roles_tsv}")
-  # TLS, mTLS or API keys, the roles of every operation, the CA scope, the
-  # audit entries auth.login and auth.denied with their rate limit, reload
-  add_test(NAME test_server_auth
-	COMMAND ${CMAKE_COMMAND} -E env
-		SERVER=${XCA_SERVER_BIN}
-		BXC_PKI=$<TARGET_FILE:bxc-pki>
-		XCA=$<TARGET_FILE:${CMAKE_PROJECT_NAME}>
-		SQL_EXEC=$<TARGET_FILE:sql_exec>
-		OPENSSL=${SERVER_OPENSSL}
-		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_auth
-		ROLES_TSV=${CMAKE_CURRENT_BINARY_DIR}/server_roles.tsv
-		${SERVER_SH} ${SERVER_DIR}/test/server_auth.sh)
-  # the database lock after kill -9, in a recreated container and with
-  # PID 1, and in both directions between the server and the GUI or the
-  # CLI (BTD-302, BTD-303); db_hold opens the database like them
-  add_test(NAME test_server_lock
-	COMMAND ${CMAKE_COMMAND} -E env
-		SERVER=${XCA_SERVER_BIN}
-		BXC_PKI=$<TARGET_FILE:bxc-pki>
-		DB_HOLD=$<TARGET_FILE:db_hold>
-		OPENSSL=${SERVER_OPENSSL}
-		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
-		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
-  # the rate limit of auth.denied with simulated peers and clock (BTD-314)
-  if(NOT WIN32)
-    add_executable(test_server_denied_limit
-	${SERVER_DIR}/test/test_denied_limit.cpp
-	${SERVER_DIR}/denied_limit.cpp ${SERVER_DIR}/denied_limit.h)
-    target_include_directories(test_server_denied_limit PRIVATE ${SERVER_DIR})
-    target_link_libraries(test_server_denied_limit PRIVATE
-	${QT}::Core ${QT}::Test ${ASAN_LIB})
-    set_target_properties(test_server_denied_limit PROPERTIES
-	MACOSX_BUNDLE FALSE)
-    add_dependencies(tests test_server_denied_limit)
-    add_test(NAME test_server_denied_limit COMMAND test_server_denied_limit)
-    set_tests_properties(test_server_denied_limit PROPERTIES LABELS server)
-  endif()
-  # the layout of the server tests (BTD-320)
-  add_test(NAME test_server_layout
-	COMMAND ${CMAKE_COMMAND} -DSERVER_DIR=${SERVER_DIR}
-		-P ${SERVER_DIR}/test/server_layout.cmake)
-  set_tests_properties(test_server_layout PROPERTIES LABELS server)
-  set_tests_properties(test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
-  set_property(TEST test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock
-	APPEND PROPERTY
-	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()
