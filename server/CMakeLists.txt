@@ -150,9 +150,21 @@ if(BUILD_TESTING)
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_auth
 		ROLES_TSV=${CMAKE_CURRENT_BINARY_DIR}/server_roles.tsv
 		${SERVER_SH} ${SERVER_DIR}/test/server_auth.sh)
+  # the database lock after kill -9, in a recreated container and with
+  # PID 1, and in both directions between the server and the GUI or the
+  # CLI (BTD-302, BTD-303); db_hold opens the database like them
+  add_test(NAME test_server_lock
+	COMMAND ${CMAKE_COMMAND} -E env
+		SERVER=${XCA_SERVER_BIN}
+		BXC_PKI=$<TARGET_FILE:bxc-pki>
+		DB_HOLD=$<TARGET_FILE:db_hold>
+		OPENSSL=${SERVER_OPENSSL}
+		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
+		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
   set_tests_properties(test_server_link test_server_config
-	test_server_lifecycle test_server_auth PROPERTIES LABELS server)
+	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
   set_property(TEST test_server_link test_server_config
-	test_server_lifecycle test_server_auth APPEND PROPERTY
+	test_server_lifecycle test_server_auth test_server_lock
+	APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()

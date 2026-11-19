@@ -8,6 +8,8 @@
 #ifndef __DATABASE_MODEL_H
 #define __DATABASE_MODEL_H
 
+#include <memory>
+
 #include <QList>
 #include <QObject>
 #include <QDebug>
@@ -18,6 +20,7 @@
 #include "db_base.h"
 #include "lib/Passwd.h"
 #include "lib/key_context.h"
+#include "lib/database_lock.h"
 #include "importexport.h"
 
 class ServiceContext;
@@ -38,6 +41,9 @@ class database_model: public QObject
 		qint64 openChangeCounter{-1};
 		/* database password and pwhash of this session (BTD-72) */
 		KeyContext keys{};
+		/* the shared lock of a local database while it is open
+		 * (BTD-303); released after the database is closed */
+		std::unique_ptr<DatabaseLock> lock{};
 		void endKeySession();
 		void pwhashUpgrade();
 		void openSqlDB();
