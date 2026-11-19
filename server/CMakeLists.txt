@@ -51,6 +51,7 @@ const char rolesJson[] = R\"xcaroles(@server_roles_json@)xcaroles\";
   add_executable(xca-server
 	${SERVER_DIR}/main.cpp
 	${SERVER_DIR}/auth.cpp ${SERVER_DIR}/auth.h
+	${SERVER_DIR}/denied_limit.cpp ${SERVER_DIR}/denied_limit.h
 	${SERVER_DIR}/tls.cpp ${SERVER_DIR}/tls.h
 	${PROJECT_BINARY_DIR}/xca_server_roles.cpp
 	${SERVER_DIR}/config.cpp ${SERVER_DIR}/config.h
@@ -161,6 +162,20 @@ if(BUILD_TESTING)
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
 		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
+  # the rate limit of auth.denied with simulated peers and clock (BTD-314)
+  if(NOT WIN32)
+    add_executable(test_server_denied_limit
+	${SERVER_DIR}/test/test_denied_limit.cpp
+	${SERVER_DIR}/denied_limit.cpp ${SERVER_DIR}/denied_limit.h)
+    target_include_directories(test_server_denied_limit PRIVATE ${SERVER_DIR})
+    target_link_libraries(test_server_denied_limit PRIVATE
+	${QT}::Core ${QT}::Test ${ASAN_LIB})
+    set_target_properties(test_server_denied_limit PROPERTIES
+	MACOSX_BUNDLE FALSE)
+    add_dependencies(tests test_server_denied_limit)
+    add_test(NAME test_server_denied_limit COMMAND test_server_denied_limit)
+    set_tests_properties(test_server_denied_limit PROPERTIES LABELS server)
+  endif()
   set_tests_properties(test_server_link test_server_config
 	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
   set_property(TEST test_server_link test_server_config

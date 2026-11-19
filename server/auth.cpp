@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <cstdio>
 #include <mutex>
-#include <vector>
 
 #include <openssl/crypto.h>
 #include <openssl/evp.h>
@@ -63,8 +62,6 @@ QByteArray mac(const char *data, size_t len)
 }
 
 }
-
-const std::chrono::seconds AuthAudit::window(60);
 
 QString openapiRole(const QString &configRole)
 {
@@ -284,7 +281,8 @@ void RoleTable::wipeProcessKey()
 	OPENSSL_cleanse(processKey, sizeof processKey);
 }
 
-Access authorize(const Identity &identity, const Operation &op)
+Access authorize(const Identity &identity, const Operation &op,
+		bool filtersByCa)
 {
 	Access a;
 	QList<Grant> granted;
@@ -306,10 +304,15 @@ Access authorize(const Identity &identity, const Operation &op)
 	}
 	if (!op.caParam.isEmpty())
 		a.result = Access::checkCa;
-	else if (op.method == "GET")
-		/* a read: the operation shows only the objects of a.cas */
+	else if (op.method != "GET")
+		/* a write that names no CA needs a role for every CA */
+		a.result = Access::forbidden;
+	else if (filtersByCa)
+		/* a read whose handler shows only the objects of a.cas */
 		a.result = Access::allow;
-	/* else a write that names no CA needs a role for every CA */
+	else
+		/* fail-closed: a read that does not filter by CA (BTD-311) */
+		a.result = Access::unfiltered;
 	return a;
 }
 
@@ -351,48 +354,33 @@ bool AuthAudit::login(const Identity &identity, const QString &peer)
 			QString(), p, "success", QString());
 }
 
-void AuthAudit::summary(const QString &peer, const Window &w)
+void AuthAudit::summaries(const QList<DeniedLimit::Summary> &ended)
 {
-	QVariantMap p;
-	p["peer_address"] = peer;
-	p["suppressed"] = w.suppressed;
-	p["window_start"] = w.startUtc;
-	p["denied_per_minute"] = perMinute;
-	write(QString(), AuditLog::actionAuthDenied, "connection", QString(),
-		p, "denied", "rate_limited");
+	for (const DeniedLimit::Summary &w : ended) {
+		QVariantMap p;
+		p["peer_address"] = w.peer;
+		p["suppressed"] = w.suppressed;
+		p["window_start"] = w.startUtc;
+		p["denied_per_minute"] = w.total ? limit.totalPerMinute :
+							limit.perPeer;
+		write(QString(), AuditLog::actionAuthDenied, "connection",
+			QString(), p, "denied", w.total ?
+			QString("rate_limited_total") : QString("rate_limited"));
+	}
 }
 
 void AuthAudit::denied(const DeniedEvent &e)
 {
-	QString peer = e.params.value("peer_address").toString();
-	auto now = std::chrono::steady_clock::now();
-	std::vector<std::pair<QString, Window>> ended;
-	bool single = false;
+	QList<DeniedLimit::Summary> ended;
+	bool single;
 	{
 		std::lock_guard<std::mutex> lock(mutex);
-		auto it = windows.find(peer);
-		if (it != windows.end() && now - it->second.start >= window) {
-			if (it->second.suppressed)
-				ended.emplace_back(peer, it->second);
-			windows.erase(it);
-			it = windows.end();
-		}
-		if (it == windows.end()) {
-			Window w;
-			w.start = now;
-			w.startUtc = QDateTime::currentDateTimeUtc()
-				.toString(Qt::ISODate);
-			it = windows.emplace(peer, w).first;
-		}
-		if (it->second.count < perMinute) {
-			it->second.count++;
-			single = true;
-		} else {
-			it->second.suppressed++;
-		}
+		single = limit.admit(e.params.value("peer_address").toString(),
+			DeniedLimit::Clock::now(),
+			QDateTime::currentDateTimeUtc().toString(Qt::ISODate),
+			&ended);
 	}
-	for (const auto &w : ended)
-		summary(w.first, w.second);
+	summaries(ended);
 	if (single)
 		write(e.actor, AuditLog::actionAuthDenied, e.objectType,
 			e.objectId, e.params, "denied", e.errorCode);
@@ -400,36 +388,22 @@ void AuthAudit::denied(const DeniedEvent &e)
 
 void AuthAudit::tick()
 {
-	auto now = std::chrono::steady_clock::now();
-	std::vector<std::pair<QString, Window>> ended;
+	QList<DeniedLimit::Summary> ended;
 	{
 		std::lock_guard<std::mutex> lock(mutex);
-		for (auto it = windows.begin(); it != windows.end();) {
-			if (now - it->second.start < window) {
-				++it;
-				continue;
-			}
-			if (it->second.suppressed)
-				ended.emplace_back(it->first, it->second);
-			it = windows.erase(it);
-		}
+		ended = limit.expire(DeniedLimit::Clock::now());
 	}
-	for (const auto &w : ended)
-		summary(w.first, w.second);
+	summaries(ended);
 }
 
 void AuthAudit::flush()
 {
-	std::vector<std::pair<QString, Window>> ended;
+	QList<DeniedLimit::Summary> ended;
 	{
 		std::lock_guard<std::mutex> lock(mutex);
-		for (const auto &w : windows)
-			if (w.second.suppressed)
-				ended.emplace_back(w.first, w.second);
-		windows.clear();
+		ended = limit.drain();
 	}
-	for (const auto &w : ended)
-		summary(w.first, w.second);
+	summaries(ended);
 }
 
 }
