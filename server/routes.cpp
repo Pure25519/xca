@@ -5,6 +5,7 @@
 
 #include <cstdio>
 #include <exception>
+#include <limits>
 #include <memory>
 
 #include <openssl/crypto.h>
@@ -21,6 +22,7 @@
 #include "lib/json_report.h"
 
 #include "auth.h"
+#include "read.h"
 #include "config.h"
 #include "session.h"
 #include "tls.h"
@@ -57,6 +59,13 @@ void json(httplib::Response &res, const QJsonObject &o)
 			.toStdString(), "application/json");
 }
 
+void jsonArray(httplib::Response &res, const QJsonArray &a)
+{
+	res.status = 200;
+	res.set_content(QJsonDocument(a).toJson(QJsonDocument::Compact)
+			.toStdString(), "application/json");
+}
+
 /* The code of a status the library itself answers with */
 QString statusCode(int status)
 {
@@ -80,6 +89,13 @@ int jobStatus(const QString &code)
 	if (code == "missing_password" || code == "password_rejected" ||
 	    code == "no_database")
 		return 503;
+	/* the read resources (BTD-156): an object or document that does
+	 * not exist, or is outside the CA scope, and a bad value */
+	if (code == "unknown_reference" || code == "wrong_object_type" ||
+	    code == "document_not_found")
+		return 404;
+	if (code == "invalid_value")
+		return 400;
 	return 500;
 }
 
@@ -293,6 +309,132 @@ void reload(Context &ctx, const Identity &id, httplib::Response &res)
 	answer(res, r);
 }
 
+/* An integer query parameter in [min, max], def when it is absent; false
+ * after a 400 invalid_value naming it */
+bool queryInt(const httplib::Request &req, httplib::Response &res,
+		const char *name, qint64 min, qint64 max, qint64 def,
+		qint64 *out)
+{
+	*out = def;
+	if (!req.has_param(name))
+		return true;
+	bool ok = false;
+	qint64 v = QString::fromStdString(req.get_param_value(name))
+			.toLongLong(&ok);
+	if (ok && v >= min && v <= max) {
+		*out = v;
+		return true;
+	}
+	problem(res, 400, "invalid_value", QObject::tr("%1 must be an "
+		"integer from %2 to %3").arg(name).arg(min).arg(max),
+		QJsonObject{ { "field", QString(name) } });
+	return false;
+}
+
+/* The read resources (BTD-156, read.h); false for another operation */
+bool readOperation(Context &ctx, const Operation &op,
+		const httplib::Request &req, httplib::Response &res,
+		const QMap<QString, QString> &params, const CaScope &scope,
+		const Identity &id)
+{
+	const QString &o = op.id;
+	JobResult r;
+	if (o == "listObjects") {
+		qint64 limit, after;
+		if (!queryInt(req, res, "limit", 1, 1000, 100, &limit) ||
+		    !queryInt(req, res, "after", 0,
+				std::numeric_limits<qint64>::max(), 0, &after))
+			return true;
+		QString collection = params.value("collection");
+		r = ctx.worker.call([collection, scope, after, limit]() {
+			return listObjectsJob(collection, scope, after,
+					int(limit));
+		}, ctx.timeout);
+	} else if (o == "getObject") {
+		QString collection = params.value("collection");
+		bool ok = false;
+		qint64 item = params.value("id").toLongLong(&ok);
+		if (!ok || item < 1) {
+			problem(res, 404, "unknown_reference", QObject::tr(
+				"No object with the id '%1'").arg(
+				params.value("id").left(64)));
+			return true;
+		}
+		r = ctx.worker.call([collection, item, scope]() {
+			return getObjectJob(collection, item, scope);
+		}, ctx.timeout);
+	} else if (o == "listProfiles" || o == "listPolicies") {
+		QString kind = o == "listProfiles" ? "profile" : "policy";
+		r = ctx.worker.call([kind, scope]() {
+			return listDocumentsJob(kind, scope);
+		}, ctx.timeout);
+		if (r.state == JobResult::done) {
+			jsonArray(res, r.body["documents"].toArray());
+			return true;
+		}
+	} else if (o == "getProfile" || o == "getPolicy") {
+		QString kind = o == "getProfile" ? "profile" : "policy";
+		QString name = params.value(o == "getProfile" ? "profileId" :
+				"policyId");
+		r = ctx.worker.call([kind, name, scope]() {
+			return getDocumentJob(kind, name, scope);
+		}, ctx.timeout);
+	} else if (o == "exportIndex") {
+		QString h = req.has_param("hierarchy") ? QString::fromStdString(
+			req.get_param_value("hierarchy")) : QString("false");
+		if (h != "true" && h != "false") {
+			problem(res, 400, "invalid_value", QObject::tr(
+				"hierarchy must be true or false"),
+				QJsonObject{ { "field", "hierarchy" } });
+			return true;
+		}
+		bool hierarchy = h == "true";
+		r = ctx.worker.call([hierarchy, scope]() {
+			return indexJob(hierarchy, scope);
+		}, ctx.timeout);
+	} else if (o == "listTokens") {
+		r = ctx.worker.call([]() { return tokensJob(); }, ctx.timeout);
+		if (r.state == JobResult::done) {
+			jsonArray(res, r.body["slots"].toArray());
+			return true;
+		}
+	} else if (o == "verifyAudit") {
+		r = ctx.worker.call([]() { return verifyAuditJob(); },
+				ctx.timeout);
+		if (r.state == JobResult::done) {
+			/* the bytes of --audit-verify */
+			res.status = 200;
+			res.set_content(r.body["report"].toString().toStdString(),
+					"application/json");
+			return true;
+		}
+	} else if (o == "exportAudit") {
+		qint64 after;
+		if (!queryInt(req, res, "after", 0,
+				std::numeric_limits<qint64>::max(), 0, &after))
+			return true;
+		QString actor = id.actor;
+		r = ctx.worker.call([actor, after]() {
+			return exportAuditJob(actor, after);
+		}, ctx.timeout);
+		if (r.state == JobResult::done) {
+			/* JSON Lines as --audit-export writes them; nothing
+			 * signed, the entries no checkpoint covers counted */
+			res.status = 200;
+			res.set_header("X-Unanchored-Entries", QString::number(
+				qint64(r.body["unanchored"].toDouble()))
+				.toStdString());
+			res.set_content(r.body["lines"].toString().toStdString(),
+					"application/x-ndjson");
+			return true;
+		}
+	} else {
+		return false;
+	}
+	answer(res, r);
+	return true;
+}
+
 /* The route of op: the role and CA check, then its handler */
 void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 		httplib::Response &res)
@@ -311,7 +453,10 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 
 	/* the handlers that filter what they show by the CA scope; every
 	 * other read is refused for an identity limited to some CAs */
-	static const QStringList filtersByCa{ "getStatus" };
+	static const QStringList filtersByCa{ "getStatus",
+		/* BTD-156: read.h filters every one of them */
+		"listObjects", "getObject", "listProfiles", "getProfile",
+		"listPolicies", "getPolicy", "exportIndex" };
 	Access access = authorize(id, op, filtersByCa.contains(op.id));
 	if (access.result == Access::forbidden) {
 		deny(ctx, req, res, 403, "forbidden", QObject::tr("The roles "
@@ -379,6 +524,9 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 		reload(ctx, id, res);
 		return;
 	}
+	if (readOperation(ctx, op, req, res, params,
+			CaScope{ access.allCas, access.cas }, id))
+		return;
 	/* BTD-155: the operations exist with their access rules, their
 	 * work comes with the tickets of the service functions */
 	problem(res, 501, "not_implemented", QObject::tr("%1 is not "

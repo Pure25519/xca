@@ -7,7 +7,8 @@
 #     (status 200, a stub 501), one without a role, the same subject under a
 #     second trusted client CA and a wrong sha256 pin get 403 + auth.denied;
 #     every operation of roles.json x every role is 403 or 501 (200 for the
-#     real handlers getStatus and reloadConfiguration), never another 2xx; an
+#     real handlers getStatus, reloadConfiguration and the reads of BTD-156,
+#     404 for a read of an object that does not exist), never another 2xx; an
 #     unknown path is 404, another method 405; a role with cas [ca-a] gets 403
 #     for an operation that names ca-b and 501 for ca-a; auth.login is written
 #     once per connection and identity (keep-alive); the TLS protocol and
@@ -298,7 +299,12 @@ if start a "$WORK/a.json"; then
             case ",$roles," in
             *",$role,"*)
                 case "$op" in
-                getStatus|reloadConfiguration) expect "$op as $role" "$out" 200 ;;
+                getStatus|reloadConfiguration|listObjects|listProfiles|listPolicies|exportIndex|listTokens|exportAudit|verifyAudit)
+                    expect "$op as $role" "$out" 200 ;;
+                # BTD-156: object 1 of keys may exist or not; p1 does not
+                getObject)
+                    case "$(status "$out")" in 200|404) ;; *) fail "$op as $role: $(status "$out")" ;; esac ;;
+                getProfile|getPolicy) expect "$op as $role" "$out" 404 document_not_found ;;
                 *) expect "$op as $role" "$out" 501 not_implemented ;;
                 esac
                 ;;
@@ -307,7 +313,8 @@ if start a "$WORK/a.json"; then
             table=$((table + 1))
         done
         # BTD-311: the role limited to ca-a, every CA in the request is ca-b:
-        # only getStatus (filtered by CA) passes, nothing else
+        # only the operations that filter by CA pass (getStatus and the reads
+        # of BTD-156), an object of ca-b is unknown to it (404)
         target=/v1$(printf '%s' "$path" | sed -e 's/{collection}/keys/' -e "s/{id}/$ID_B/" \
             -e 's/{profileId}/p1/' -e 's/{policyId}/p1/' -e 's/{slot}/0/' \
             -e 's/{tokenObjectId}/AB/' -e 's/{approvalId}/aaaaaaaaaaaaaaaaaaaaaaaaaa/')
@@ -315,7 +322,11 @@ if start a "$WORK/a.json"; then
         out="$R/t-$op-scoped"
         send "$out" scoped "$method" "$target" "$body" 'If-Match: "1"'
         case ",$roles,:$op" in
-        *",ca_admin,"*:getStatus) expect "$op as ca_admin of ca-a" "$out" 200 ;;
+        *",ca_admin,"*:getStatus|*",ca_admin,"*:listObjects|*",ca_admin,"*:listProfiles|*",ca_admin,"*:listPolicies|*",ca_admin,"*:exportIndex)
+            expect "$op as ca_admin of ca-a" "$out" 200 ;;
+        *",ca_admin,"*:getObject) expect "$op as ca_admin of ca-a" "$out" 404 unknown_reference ;;
+        *",ca_admin,"*:getProfile|*",ca_admin,"*:getPolicy)
+            expect "$op as ca_admin of ca-a" "$out" 404 document_not_found ;;
         *) expect "$op as ca_admin of ca-a" "$out" 403 forbidden ;;
         esac
         table=$((table + 1))
@@ -372,10 +383,13 @@ if start a "$WORK/a.json"; then
     [ "$got" = "$all_certs" ] || fail "status with cas [*]: '$got' certificates, expected $all_certs: $(tail -1 "$f")"
     grep -q '"ca_scope": *\["\*"\]' "$f" || fail "status with cas [*]: no ca_scope [*]: $(tail -1 "$f")"
     grep -q '"audit_entries"' "$f" || fail "status with cas [*]: no audit_entries: $(tail -1 "$f")"
+    # BTD-156: the reads filter by CA
     send "$R/a-scope-list" scoped GET /v1/certificates
-    expect "scoped listObjects" "$R/a-scope-list" 403 forbidden
+    expect "scoped listObjects" "$R/a-scope-list" 200 &&
+        { grep -q "\"id\": *$ID_A[,}]" "$R/a-scope-list" && ! grep -q "\"id\": *$ID_B[,}]" "$R/a-scope-list" ||
+            fail "scoped listObjects: not exactly the certificates of ca-a: $(tail -1 "$R/a-scope-list")"; }
     send "$R/a-scope-get" scoped GET "/v1/certificates/$ID_B"
-    expect "scoped getObject of ca-b" "$R/a-scope-get" 403 forbidden
+    expect "scoped getObject of ca-b" "$R/a-scope-get" 404 unknown_reference
     ok "A8 a role of ca-a sees nothing of ca-b"
 
     # A6: keep-alive, one connection with two requests
@@ -421,7 +435,8 @@ if start a "$WORK/a.json"; then
     have "pin mismatch" 1 "action = 'auth.denied' AND actor = 'cert:$(fp pinned)' AND $(pj reason) = 'role'"
     # 3 of A5 and 2 of the table test (generateCrl, setRevocations for ca-b)
     have "CA scope" 5 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope' AND $(pj operation_id) IN ('generateCrl', 'setRevocations')"
-    have "unfiltered reads of a scoped role" +2 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope_unfiltered' AND $(pj operation_id) IN ('listObjects', 'getObject')"
+    # the slots of the server belong to no CA (BTD-156: tokens and audit stay unfiltered)
+    have "unfiltered reads of a scoped role" +1 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'ca_scope_unfiltered' AND $(pj operation_id) = 'listTokens'"
     # 1 of A5 and 1 of the table test
     have "write without CA for a scoped role" 2 "action = 'auth.denied' AND actor = 'cert:$(fp scoped)' AND $(pj reason) = 'role' AND $(pj operation_id) = 'createProfile'"
     have "auth.login of ca-admin" +1 "action = 'auth.login' AND actor = 'cert:$(fp admin)' AND result = 'success' AND $(pj actor_kind) = 'cert' AND $(pj subject) = 'CN=admin' AND $(pj issuer) = '$CA1' AND $w_peer"
@@ -456,7 +471,7 @@ if start b "$WORK/b.json"; then
     send "$R/b-reader-crl" "" POST /v1/crls '{"issuer":"Scope CA A"}' "X-API-Key: $KEY_READER"
     expect "reader key, generateCrl" "$R/b-reader-crl" 403 forbidden
     send "$R/b-reader-prof" "" GET /v1/profiles "" "X-API-Key: $KEY_READER"
-    expect "reader key, listProfiles" "$R/b-reader-prof" 501 not_implemented
+    expect "reader key, listProfiles" "$R/b-reader-prof" 200
     send "$R/b-admin-key" "" POST /v1/crls '{"issuer":"Scope CA A"}' "X-API-Key: $KEY_ADMIN"
     expect "admin key from file:" "$R/b-admin-key" 501 not_implemented
     send "$R/b-admin-cert" admin GET /v1/status

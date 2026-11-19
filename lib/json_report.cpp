@@ -570,22 +570,24 @@ static QJsonObject indexEntry(pki_x509 *cert)
 	return o;
 }
 
-static QJsonArray indexEntries(const QList<pki_x509 *> &certs)
+static QJsonArray indexEntries(const QList<pki_x509 *> &certs,
+		const QSet<qint64> *only)
 {
 	QJsonArray a;
 	for (pki_x509 *cert : certs)
-		if (cert)
+		if (cert && (!only || only->contains(
+				cert->getSqlItemId().toLongLong())))
 			a.append(indexEntry(cert));
 	return a;
 }
 
-QJsonObject JsonReport::index()
+QJsonObject JsonReport::index(const QSet<qint64> *only)
 {
 	return list("index", indexEntries(Store.sqlSELECTpki<pki_x509>(
-				"SELECT item FROM certs")));
+				"SELECT item FROM certs"), only));
 }
 
-QJsonObject JsonReport::hierarchy()
+QJsonObject JsonReport::hierarchy(const QSet<qint64> *only)
 {
 	QJsonArray a;
 	QList<pki_x509 *> issuers = Store.sqlSELECTpki<pki_x509>(
@@ -597,7 +599,10 @@ QJsonObject JsonReport::hierarchy()
 		node["issuer"] = issuer;
 		node["entries"] = indexEntries(Store.sqlSELECTpki<pki_x509>(
 			"SELECT item FROM certs WHERE issuer=?",
-			QList<QVariant>() << QVariant(ca->getSqlItemId())));
+			QList<QVariant>() << QVariant(ca->getSqlItemId())), only);
+		/* a CA none of whose certificates is listed is left out */
+		if (only && node["entries"].toArray().isEmpty())
+			continue;
 		a.append(node);
 	}
 	return list("hierarchy", a);
