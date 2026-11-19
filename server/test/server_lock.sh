@@ -13,7 +13,14 @@
 #     refuses to start with database_in_use
 #  6. several GUI/CLI instances share the database: two db_hold and
 #     bxc-pki list at the same time
-# Environment: SERVER, BXC_PKI, DB_HOLD, OPENSSL, WORK, CMAKE, SERVER_TEST_DIR.
+#  7. a database opened through a symlink shares the lock of its target
+#  8. a lock file made by root: the server as uid 1000 locks it
+#  9. uid 1000 can neither find nor make the lock file but may write the
+#     database: the open is refused, not done without a lock
+#  (7 to 9: BTD-315; 8 and 9 need root and setpriv, else they are skipped
+#  with a message)
+# Environment: SERVER, BXC_PKI, DB_HOLD, OPENSSL, WORK, CMAKE, SERVER_TEST_DIR,
+# SETPRIV (optional).
 
 set -u
 for v in SERVER BXC_PKI DB_HOLD OPENSSL WORK CMAKE SERVER_TEST_DIR; do
@@ -214,6 +221,88 @@ else
     fail "a second db_hold: $(cat "$WORK/hold-second.err")"
 fi
 release_holds
+
+# 7. a database opened through a symlink shares the lock of its target
+#    (BTD-315)
+ln -s "$DB" "$WORK/link.xdb"
+before=$fails
+start_server symlink || die "xca-server does not start: $(cat "$WORK/server-symlink.err")"
+"$DB_HOLD" "$WORK/link.xdb" > "$WORK/hold-link.out" 2> "$WORK/hold-link.err" &
+h=$!
+for _ in $(seq 1 30); do
+    grep -q '^open$' "$WORK/hold-link.out" 2> /dev/null && break
+    kill -0 "$h" 2> /dev/null || break
+    sleep 1
+done
+if grep -q '^open$' "$WORK/hold-link.out"; then
+    fail "db_hold opened the database through a symlink while the server runs"
+else
+    grep -q '^database_in_use$' "$WORK/hold-link.err" ||
+        fail "db_hold through a symlink: $(cat "$WORK/hold-link.err")"
+fi
+kill -KILL "$h" 2> /dev/null
+wait "$h" 2> /dev/null
+stop_server
+[ "$fails" -eq "$before" ] && ok "a symlink to the database shares its lock"
+
+# 8. and 9. other uids (BTD-315), as root with setpriv only
+if [ "$(id -u)" = 0 ] && [ -n "${SETPRIV:-}" ] && [ -x "$SETPRIV" ]; then
+    as1000() { "$SETPRIV" --reuid=1000 --regid=1000 --clear-groups "$@"; }
+    chmod -R a+rwX "$WORK"
+    # 8. the lock file was made by root (a GUI run as root); the server
+    #    as uid 1000 can lock it all the same
+    rm -f "$LOCK"
+    hold uid0 || die "db_hold as root: $(cat "$WORK/hold-uid0.err")"
+    release_holds
+    ls -l "$LOCK" > "$WORK/lock-owner.txt"
+    as1000 "$SERVER" --config "$WORK/xca-server.json" \
+        > "$WORK/server-uid1000.out" 2> "$WORK/server-uid1000.err" &
+    PID=$!
+    up=0
+    for _ in $(seq 1 30); do
+        kill -0 "$PID" 2> /dev/null || break
+        if health; then up=1; break; fi
+        sleep 1
+    done
+    if [ "$up" = 1 ]; then
+        # and a root db_hold is refused by the uid 1000 server
+        if hold uid0-while; then
+            fail "db_hold as root opened the database of the uid 1000 server"
+            release_holds
+        fi
+        stop_server
+        ok "a lock file of root: the server as uid 1000 locks it"
+    else
+        PID=""
+        fail "the server as uid 1000 with a lock file of root: $(cat "$WORK/server-uid1000.err") ($(cat "$WORK/lock-owner.txt"))"
+    fi
+
+    # 9. no lock file and none can be made by uid 1000, but the
+    #    database is writable: the open is refused, not done without a
+    #    lock (another uid could hold one)
+    mkdir "$WORK/ro"
+    cp "$DB" "$WORK/ro/ro.xdb"
+    chmod 666 "$WORK/ro/ro.xdb"
+    chmod 755 "$WORK/ro"
+    as1000 "$DB_HOLD" "$WORK/ro/ro.xdb" > "$WORK/hold-ro.out" 2> "$WORK/hold-ro.err" &
+    h=$!
+    for _ in $(seq 1 30); do
+        grep -q '^open$' "$WORK/hold-ro.out" 2> /dev/null && break
+        kill -0 "$h" 2> /dev/null || break
+        sleep 1
+    done
+    if grep -q '^open$' "$WORK/hold-ro.out"; then
+        fail "uid 1000 opened a writable database without a lock file"
+    else
+        grep -q '^database_lock_unavailable$' "$WORK/hold-ro.err" ||
+            fail "uid 1000 without a lock file: $(cat "$WORK/hold-ro.err")"
+        ok "no lock file can be made: the open is refused"
+    fi
+    kill -KILL "$h" 2> /dev/null
+    wait "$h" 2> /dev/null
+else
+    log "skipped: the uid cases 8 and 9 need root and setpriv"
+fi
 
 # released at the exit: the server starts again
 if start_server final; then

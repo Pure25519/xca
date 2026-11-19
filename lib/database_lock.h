@@ -19,14 +19,35 @@
  *
  * The exclusive holder writes "<pid>\n<application>\n<host>\n" into the
  * file, only as a hint for the database_in_use message; a shared holder
- * clears a hint left by a server that is gone. The file itself stays: a
- * lock file that is removed while it is locked would let a second holder
- * lock a new file of the same name.
+ * clears a hint left by a server that is gone.
+ *
+ * The lock file (BTD-315):
+ * - its name comes from the canonical path of the database, so a database
+ *   opened through a symlink shares the lock of its target;
+ * - the first user creates it with mode 0644 (less the umask) and owns
+ *   it; later users of any uid open it read-write if they may, else
+ *   read-only: flock() locks a read-only descriptor too, only the hint
+ *   needs write access. So a server as uid 1000 locks a file that a GUI
+ *   run as root made, and the reverse;
+ * - if it is missing and cannot be made (no write access to the
+ *   directory), the open is refused (database_lock_unavailable, with the
+ *   directory and the fix named), because
+ *   another uid could make it and hold it; only a user who cannot write
+ *   the database goes on without a lock (read-only use);
+ * - after the lock the holder checks that the path still names the locked
+ *   file and tries again if it was replaced in between;
+ * - it stays. Deleting it while a holder runs is not supported: the next
+ *   user makes a new file and locks that one, and two holders then write
+ *   the database. Operators delete it only when no server, GUI or command
+ *   line has the database open.
  *
  * Network file systems: on NFS, Linux maps flock() to NFS byte-range
  * locks, which the NFS server coordinates between clients (NFSv4, or
  * NFSv3 with lockd); a client that dies keeps its lock until its lease
- * ends (NFSv4: about 90 seconds). With the mount option "nolock", or on
+ * ends (NFSv4: about 90 seconds). An exclusive byte-range lock needs a
+ * writable descriptor, so on NFS the lock file must be writable for every
+ * user of the database (else the server gets "cannot be locked"). With
+ * the mount option "nolock", or on
  * SMB/CIFS mounts that do not forward the lock to the server, the lock
  * only covers the processes of one client. SQLite itself is not safe on
  * such file systems either: keep the database on a local disk or a volume
@@ -73,7 +94,11 @@ class DatabaseLock
 	/* The database_in_use message for a lock held by others */
 	QString inUse() const;
 	void release();
-	[[noreturn]] void refuse(const QString &detail);
+	/* code: database_in_use for a lock held by others,
+	 * database_lock_unavailable when the lock file cannot be used
+	 * (BTD-315) */
+	[[noreturn]] void refuse(const QString &detail,
+		const char *code = "database_lock_unavailable");
 };
 
 #endif
