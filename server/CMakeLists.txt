@@ -63,6 +63,14 @@ const char rolesJson[] = R\"xcaroles(@server_roles_json@)xcaroles\";
   target_include_directories(xca-server SYSTEM PRIVATE ${SERVER_DIR}/third_party)
   # server code only, no httplib::Client is used (condition 4)
   target_compile_definitions(xca-server PRIVATE CPPHTTPLIB_OPENSSL_SUPPORT)
+  # One header line may be as long as limits.header_max_bytes allows (its
+  # maximum, server/config.cpp), so that a line over the configured limit
+  # gets 431 from the pre-routing handler, not 400 from the parser
+  # (BTD-319). cpp-httplib keeps up to 100 lines of a request before that
+  # check: 16 KiB bounds that at 1.6 MiB per connection. For the whole
+  # target, as every translation unit must see the same httplib.h.
+  target_compile_definitions(xca-server PRIVATE
+	CPPHTTPLIB_HEADER_MAX_LENGTH=16384)
   # GCC 14 with -fsanitize=address (dev.py asan) reports a false
   # -Wmaybe-uninitialized inside libstdc++'s std::regex, which the route
   # patterns of cpp-httplib instantiate in routes.cpp; SYSTEM does not
