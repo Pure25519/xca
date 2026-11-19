@@ -13,10 +13,10 @@
 #     refuses to start with database_in_use
 #  6. several GUI/CLI instances share the database: two db_hold and
 #     bxc-pki list at the same time
-# Environment: SERVER, BXC_PKI, DB_HOLD, OPENSSL, WORK.
+# Environment: SERVER, BXC_PKI, DB_HOLD, OPENSSL, WORK, CMAKE, SERVER_TEST_DIR.
 
 set -u
-for v in SERVER BXC_PKI DB_HOLD OPENSSL WORK; do
+for v in SERVER BXC_PKI DB_HOLD OPENSSL WORK CMAKE SERVER_TEST_DIR; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "FAIL: $v is not set" >&2; exit 1; }
 done
@@ -67,22 +67,13 @@ o x509 -req -in "$P/client.csr" -CA "$P/ca.pem" -CAkey "$P/ca.key" -CAcreateseri
 "$BXC_PKI" init --db "$DB" --password env:XCA_SERVER_DB_PASSWORD \
     --cn "Lock Test CA" --validity P1Y > "$WORK/init.json" 2> "$WORK/init.err" ||
     die "bxc-pki init failed: $(cat "$WORK/init.err")"
+# the base config of the server tests with this test's members (BTD-320)
+. "$SERVER_TEST_DIR/config/lib.sh"
 config() {
-    cat <<EOF
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": $1 },
-  "database": { "path": "$DB", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem" },
-  "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false, "denied_per_minute": 100 },
-  "roles": [ { "name": "reader",
-               "client_certs": [ { "subject": "CN=client",
-                                   "issuer": "CN=xca-server lock test CA" } ] } ]
-}
-EOF
+    xs_config listen/port "$1" database/path "$(xs_str "$DB")" \
+        tls/cert "$(xs_str "$P/server.pem")" tls/key "$(xs_str "$P/server.key")" \
+        tls/client_ca "$(xs_str "$P/ca.pem")" \
+        roles "[ $(xs_role reader '"client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server lock test CA" } ]') ]"
 }
 config "$PORT" > "$WORK/xca-server.json"
 config $((PORT + 1)) > "$WORK/second.json"

@@ -357,7 +357,10 @@ class AuditLog
 	 * subject and issuer of a refused certificate), unauthenticated (401)
 	 * or forbidden (403) with operation_id, reason and ca_ref, or
 	 * rate_limited for the summary of the entries left out per peer and
-	 * minute (suppressed, window_start, denied_per_minute); never a
+	 * minute (suppressed, window_start, denied_per_minute; peer_address
+	 * "*" for the peers beyond auth.denied_peers_max), or
+	 * rate_limited_total for those the cap over all peers left out
+	 * (peer_address "*", denied_per_minute the cap; BTD-314); never a
 	 * secret. config.reload: the result of POST /v1/reload (changed). */
 	static const char actionAuthLogin[];
 	static const char actionAuthDenied[];

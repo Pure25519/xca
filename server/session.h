@@ -10,6 +10,7 @@
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QString>
+#include <QStringList>
 #include <QVariantMap>
 
 namespace xcaserver {
@@ -26,9 +27,20 @@ void installHooks();
  * library). Throws errorEx (serviceError, secretError). */
 QJsonObject openSession(const Config &config,
 		const QString &httpLibrary);
-/* GET /v1/status: database, schema versions, object counts and whether
- * it ran on the DB worker; actor is the caller */
-QJsonObject statusJob(const QString &actor);
+/* The CA scope of a request (auth.h, Access): every CA, or the objects of
+ * these bootstrap CA ids */
+class CaScope
+{
+  public:
+	bool all{};
+	QStringList cas{};
+};
+/* GET /v1/status: database, schema versions, object counts, the CA scope
+ * and whether it ran on the DB worker; actor is the caller. For a scope of
+ * some CAs (BTD-311) the counts are those of their CA certificates, the
+ * certificates they issued, the keys of these and their CRLs; requests,
+ * templates and the audit log belong to no CA and are left out. */
+QJsonObject statusJob(const QString &actor, const CaScope &scope);
 /* One audit entry of the server on the channel rest (BTD-155: auth.login,
  * auth.denied, config.reload); an empty actor is the server's user. The
  * parameters go through the allow-list of AuditParams. */

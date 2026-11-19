@@ -309,11 +309,21 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 	QMap<QString, QString> params = current.params;
 	current = Current();
 
-	Access access = authorize(id, op);
+	/* the handlers that filter what they show by the CA scope; every
+	 * other read is refused for an identity limited to some CAs */
+	static const QStringList filtersByCa{ "getStatus" };
+	Access access = authorize(id, op, filtersByCa.contains(op.id));
 	if (access.result == Access::forbidden) {
 		deny(ctx, req, res, 403, "forbidden", QObject::tr("The roles "
 			"of %1 do not allow %2").arg(id.actor, op.id), id, &op,
 			"role");
+		return;
+	}
+	if (access.result == Access::unfiltered) {
+		deny(ctx, req, res, 403, "forbidden", QObject::tr("The roles "
+			"of %1 are limited to some CAs, and %2 does not filter "
+			"by CA yet").arg(id.actor, op.id), id, &op,
+			"ca_scope_unfiltered");
 		return;
 	}
 	if (access.result == Access::checkCa) {
@@ -359,8 +369,9 @@ void handle(Context &ctx, const Operation &op, const httplib::Request &req,
 
 	if (op.id == "getStatus") {
 		QString actor = id.actor;
-		answer(res, ctx.worker.call([actor]() {
-			return statusJob(actor);
+		CaScope scope{ access.allCas, access.cas };
+		answer(res, ctx.worker.call([actor, scope]() {
+			return statusJob(actor, scope);
 		}, ctx.timeout));
 		return;
 	}
