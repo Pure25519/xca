@@ -48,13 +48,21 @@ endif()
 
 set(failures "")
 
+# CMake commands are case-insensitive and may have blanks before "(";
+# comments do not count
 file(READ "${SERVER_DIR}/CMakeLists.txt" lists)
+string(TOLOWER "${lists}" lists)
+string(REGEX REPLACE "#[^\n]*" "" lists "${lists}")
+set(blank "[ \t\r\n]*")
+set(start "(^|[^a-z0-9_])")
 foreach(call add_test set_tests_properties)
-  string(FIND "${lists}" "${call}(" at)
-  if(NOT at EQUAL -1)
+  if(lists MATCHES "${start}${call}${blank}\\(")
     string(APPEND failures "\nserver/CMakeLists.txt registers tests itself (${call})")
   endif()
 endforeach()
+if(lists MATCHES "${start}set_property${blank}\\(${blank}test[ \t\r\n)]")
+  string(APPEND failures "\nserver/CMakeLists.txt registers tests itself (set_property(TEST))")
+endif()
 
 file(GLOB registrations "${SERVER_DIR}/test/*.test.cmake")
 if(NOT registrations)
