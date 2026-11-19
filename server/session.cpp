@@ -29,6 +29,7 @@
 #include "lib/XcaWarningCore.h"
 
 #include "config.h"
+#include "tls.h"
 #include "worker.h"
 
 namespace xcaserver {
@@ -136,6 +137,13 @@ void installHooks()
 	XcaProgress::setGui(new SilentProgress());
 }
 
+/* The earliest nextUpdate of the client CRLs in use (BTD-313) */
+static QString crlNextUpdate()
+{
+	std::shared_ptr<const ClientCrls> crls = clientCrls();
+	return crls ? crls->nextUpdate : QString();
+}
+
 QJsonObject openSession(const Config &config, const QString &httpLibrary)
 {
 	initObjects();
@@ -171,7 +179,8 @@ QJsonObject openSession(const Config &config, const QString &httpLibrary)
 				.set("listen_address", config.listenAddress)
 				.set("listen_port", config.listenPort)
 				.set("http_library", httpLibrary)
-				.set("pid", QCoreApplication::applicationPid()));
+				.set("pid", QCoreApplication::applicationPid())
+				.set("crl_next_update", crlNextUpdate()));
 	} catch (...) {
 		Database.close();
 		throw;

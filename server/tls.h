@@ -12,6 +12,16 @@
  * address, the alert, the verification error and the DNs of a refused
  * certificate, for the audit entry auth.denied.
  *
+ * Revocation (BTD-313): the leaf certificate of a client is checked against
+ * the CRLs of tls.client_crl, one per client CA. The CRLs in use are an
+ * immutable snapshot (ClientCrls) that a reload replaces as a whole; each
+ * handshake verifies with the snapshot it took, so a reload never changes
+ * the SSL_CTX or its store while handshakes run. Fail closed: a revoked
+ * certificate, a client CA without CRL and a CRL past its nextUpdate (or
+ * before its thisUpdate, or with a bad signature) all refuse the
+ * handshake; the refusal carries a short reason (revoked, crl_missing,
+ * crl_expired, crl_not_yet_valid, crl_invalid) for auth.denied.
+ *
  * Per connection, the identities that have an auth.login entry are kept
  * with the SSL object (loggedIn()).
  */
@@ -20,6 +30,7 @@
 #define __XCA_SERVER_TLS_H
 
 #include <functional>
+#include <memory>
 #include <string>
 
 #include <openssl/ssl.h>
@@ -39,9 +50,35 @@ class HandshakeRefusal
 	QString peer{};
 	QString alert{};
 	QString verifyError{};
+	/* revoked, crl_missing, ... for a revocation error, else empty */
+	QString reason{};
 	QString subject{};
 	QString issuer{};
 };
+
+/* The CRLs of the client CAs, as loaded and checked from one file */
+class ClientCrls
+{
+  public:
+	ClientCrls() = default;
+	ClientCrls(const ClientCrls &) = delete;
+	ClientCrls &operator=(const ClientCrls &) = delete;
+	~ClientCrls();
+	STACK_OF(X509_CRL) *crls{};
+	/* the earliest nextUpdate, ISO 8601 UTC (crl_next_update) */
+	QString nextUpdate{};
+};
+
+/* Reads the CRL file crlFile for the client CAs of caFile: every CRL
+ * parses, is signed by a CA of caFile, is within thisUpdate and
+ * nextUpdate now, and every CA has exactly one. nullptr with the message
+ * otherwise (the pointer is /tls/client_crl). */
+std::shared_ptr<const ClientCrls> loadClientCrls(const QString &crlFile,
+		const QString &caFile, QString *message);
+/* The snapshot the handshakes use; set before the server listens and by
+ * a reload */
+void setClientCrls(std::shared_ptr<const ClientCrls> crls);
+std::shared_ptr<const ClientCrls> clientCrls();
 
 /* Sets up ctx for config (keyPassword: the secret of tls.key_password or
  * empty); false with the JSON pointer and the message of the member at

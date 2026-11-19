@@ -244,22 +244,36 @@ bool caReference(const Operation &op, const httplib::Request &req,
 	return false;
 }
 
-/* POST /v1/reload: re-reads the roles of the configuration file on the
- * DB worker and writes config.reload with the result */
+/* POST /v1/reload: re-reads the roles and the CRLs of the client CAs
+ * (BTD-313) of the configuration file on the DB worker and writes
+ * config.reload with the result; the client CAs themselves need a
+ * restart */
 void reload(Context &ctx, const Identity &id, httplib::Response &res)
 {
 	QString file = ctx.config.file;
 	bool apiKeys = ctx.config.apiKeys;
+	QString clientCa = ctx.config.tlsClientCa;
 	RoleHolder *holder = &ctx.roles;
 	QString actor = id.actor;
-	JobResult r = ctx.worker.call([file, apiKeys, holder, actor]() {
+	JobResult r = ctx.worker.call([file, apiKeys, clientCa, holder,
+					actor]() {
 		try {
 			Config c = Config::load(file);
 			if (c.apiKeys != apiKeys)
 				throw ConfigError("/auth/api_keys", QObject::tr(
 					"a change of API keys needs a restart"));
+			if (c.tlsClientCa != clientCa)
+				throw ConfigError("/tls/client_ca", QObject::tr(
+					"a change of the client CAs needs a "
+					"restart"));
 			std::shared_ptr<const RoleTable> t =
 				RoleTable::build(c);
+			QString crlError;
+			std::shared_ptr<const ClientCrls> crls =
+				loadClientCrls(c.tlsClientCrl, clientCa,
+						&crlError);
+			if (!crls)
+				throw ConfigError("/tls/client_crl", crlError);
 			QJsonArray changed = t->changes(*holder->get());
 			QStringList text;
 			for (const QJsonValue &v : changed)
@@ -268,12 +282,15 @@ void reload(Context &ctx, const Identity &id, httplib::Response &res)
 			appendEntry(actor, AuditLog::actionConfigReload,
 				"configuration", file, QVariantMap{
 					{ "changed", text.join(',') },
-					{ "count", qint64(changed.size()) } },
+					{ "count", qint64(changed.size()) },
+					{ "crl_next_update", crls->nextUpdate } },
 				"success", QString());
 			/* applied after its entry, on the worker: a caller
 			 * that timed out still gets what the log says */
 			holder->set(t);
-			return QJsonObject{ { "changed", changed } };
+			setClientCrls(crls);
+			return QJsonObject{ { "changed", changed },
+				{ "crl_next_update", crls->nextUpdate } };
 		} catch (ConfigError &e) {
 			appendEntry(actor, AuditLog::actionConfigReload,
 				"configuration", file, QVariantMap{

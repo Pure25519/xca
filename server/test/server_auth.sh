@@ -23,6 +23,15 @@
 #     number left out (written at the stop at the latest)
 #  E. POST /v1/reload (ca_admin only) re-reads the roles, an invalid file
 #     changes nothing; one config.reload entry each
+#  G. revocation (BTD-313), tls.client_crl with one CRL per client CA: a
+#     revoked client certificate gets no answer (TLS alert certificate
+#     revoked) and auth.denied with reason revoked, a valid one passes;
+#     server.start names crl_next_update; POST /v1/reload takes a new CRL
+#     (the formerly valid certificate is then refused) and keeps the old
+#     one for an invalid file; the start is refused (exit 2, invalid_config
+#     /tls/client_crl) for an expired CRL, a client CA without CRL, a CRL
+#     of a foreign CA and a file that holds no CRL; a CRL that expires
+#     while the server runs refuses every handshake with crl_expired
 #  F. no key value in the server's output or the audit export; xca
 #     --audit-verify is ok
 # BTD-311, BTD-312, BTD-314:
@@ -98,6 +107,21 @@ for n in reader ra admin auditor norole pinned pinok scoped keepalive; do
 done
 leaf twin admin ca2 client
 leaf foreign foreign other client
+leaf revoked revoked ca client
+leaf rvalid rvalid ca client
+. "$SERVER_TEST_DIR/config/lib.sh"
+# the CRLs in use unless a section sets CRLFILE: none revoked
+xs_crl "$P" ca "$P/ca-crl.pem"
+xs_crl "$P" ca2 "$P/ca2-crl.pem"
+cat "$P/ca-crl.pem" "$P/ca2-crl.pem" > "$P/clients-crl.pem"
+CRLFILE="$P/clients-crl.pem"
+# withcrl <crl file> <config arguments>: config with another tls.client_crl
+withcrl() {
+    CRLFILE=$1
+    shift
+    config "$@"
+    CRLFILE="$P/clients-crl.pem"
+}
 CA1="CN=xca-server test CA"
 export XCA_TEST_TLS_KEY_PW="Tls-Key-Pw-155-0123"
 export XCA_TEST_TLS_KEY_WRONG="Not-The-Tls-Key-Pw-1"
@@ -144,7 +168,8 @@ config() {
         set -- tls/key "$(xs_str "$P/server.key")"
     fi
     xs_config listen/port "$port" database/path "$(xs_str "$DB")" \
-        tls/cert "$(xs_str "$P/server.pem")" tls/client_ca "$(xs_str "$P/clients.pem")" "$@" \
+        tls/cert "$(xs_str "$P/server.pem")" tls/client_ca "$(xs_str "$P/clients.pem")" \
+        tls/client_crl "$(xs_str "$CRLFILE")" "$@" \
         auth/api_keys "$keys" auth/denied_per_minute "$denied" \
         auth/denied_peers_max "$PEERS_MAX" auth/denied_total_per_minute "$TOTAL_MAX" \
         roles "$roles"
@@ -555,6 +580,108 @@ if start e "$WORK/e.json"; then
     have "reload entries" 1 "action = 'config.reload' AND result = 'success' AND actor = 'cert:$(fp admin)'"
     have "failed reload entry" 1 "action = 'config.reload' AND result = 'failure' AND error_code = 'invalid_config'"
     ok "E audit entries"
+fi
+
+# === G. revocation (BTD-313) ==========================================================
+# refused_start <label> <config file> <text in the detail>
+refused_start() {
+    timeout 60 "$SERVER" --config "$2" > "$WORK/srv/$1.out" 2> "$WORK/srv/$1.err"
+    rc=$?
+    if [ "$rc" = 2 ] && grep -q '"code": *"invalid_config"' "$WORK/srv/$1.err" &&
+        grep -q '/tls/client_crl' "$WORK/srv/$1.err" && grep -q "$3" "$WORK/srv/$1.err"; then
+        ok "G start refused: $1"
+    else
+        fail "$1: exit $rc, expected 2 with invalid_config /tls/client_crl ($3): $(cat "$WORK/srv/$1.err")"
+    fi
+}
+# revoked_alert <label> <out>: no HTTP answer, the client saw the alert
+revoked_alert() {
+    no_answer "$1" "$2" || return 1
+    grep -qi 'certificate revoked' "$2.tls" ||
+        { fail "$1: no TLS alert certificate revoked: $(tr '\n' ' ' < "$2.tls")"; return 1; }
+    return 0
+}
+ROLES_G="[ $(xs_role ca-admin "\"client_certs\": [ $(cc admin) ]"),
+  $(xs_role reader "\"client_certs\": [ $(cc revoked), $(cc rvalid) ]") ]"
+xs_revoke "$P" ca revoked
+xs_crl "$P" ca "$P/g-ca-crl.pem"
+cat "$P/g-ca-crl.pem" "$P/ca2-crl.pem" > "$P/g-crl.pem"
+PORT=$((BASE + 5))
+withcrl "$P/g-crl.pem" "$PORT" false 1000 "$ROLES_G" > "$WORK/g.json"
+if start g "$WORK/g.json"; then
+    # G1: the revoked certificate is refused in the handshake, the valid one passes
+    send "$R/g-revoked" revoked GET /v1/status
+    revoked_alert "revoked client certificate" "$R/g-revoked"
+    send "$R/g-valid" rvalid GET /v1/status
+    expect "valid client certificate" "$R/g-valid" 200
+    ok "G1 revoked certificate refused, valid one passes"
+
+    # G2: a reload takes a new CRL; an invalid CRL file changes nothing
+    xs_revoke "$P" ca rvalid
+    xs_crl "$P" ca "$P/g-ca-crl2.pem"
+    cat "$P/g-ca-crl2.pem" "$P/ca2-crl.pem" > "$P/g-crl.pem"
+    send "$R/g-still" rvalid GET /v1/status
+    expect "before the reload the old CRL holds" "$R/g-still" 200
+    send "$R/g-reload" admin POST /v1/reload
+    expect "reload with a new CRL" "$R/g-reload" 200 &&
+        { grep -q '"crl_next_update"' "$R/g-reload" ||
+            fail "reload: no crl_next_update: $(tail -1 "$R/g-reload")"; }
+    send "$R/g-after" rvalid GET /v1/status
+    revoked_alert "revoked after the reload" "$R/g-after"
+    printf 'no CRL here\n' > "$P/g-crl.pem"
+    send "$R/g-bad" admin POST /v1/reload
+    expect "reload of a file without CRL" "$R/g-bad" 422 invalid_config &&
+        { grep -q '/tls/client_crl' "$R/g-bad" || fail "invalid CRL reload: no pointer: $(tail -1 "$R/g-bad")"; }
+    send "$R/g-kept" admin GET /v1/status
+    expect "CRLs kept after an invalid reload" "$R/g-kept" 200
+    send "$R/g-kept2" rvalid GET /v1/status
+    revoked_alert "revocation kept after an invalid reload" "$R/g-kept2"
+    ok "G2 reload of the CRLs"
+    stop g
+    have "auth.denied revoked" +3 "action = 'auth.denied' AND error_code = 'tls_handshake_failed' AND $(pj reason) = 'revoked' AND $(pj subject) IN ('CN=revoked', 'CN=rvalid')"
+    # the run's own server.start is START itself (count() reads after it)
+    n=$("$SQL_EXEC" "$DB" -c "SELECT COUNT(*) FROM audit_log WHERE seq = $START AND action = 'server.start' AND $(pj crl_next_update) LIKE '20%Z'" 2>&1)
+    [ "$n" = 1 ] || fail "server.start of the run has no crl_next_update: $n"
+    have "reload with the CRL" 1 "action = 'config.reload' AND result = 'success' AND $(pj crl_next_update) LIKE '20%Z'"
+    have "failed CRL reload" 1 "action = 'config.reload' AND result = 'failure' AND $(pj reason) LIKE '/tls/client_crl:%'"
+    ok "G1/G2 audit entries"
+fi
+
+# G3: the start is refused for a CRL that cannot be used
+xs_crl "$P" ca "$P/g-old.pem" -crl_lastupdate 20200101000000Z -crl_nextupdate 20200102000000Z
+cat "$P/g-old.pem" "$P/ca2-crl.pem" > "$P/g3-expired.pem"
+withcrl "$P/g3-expired.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-expired.json"
+refused_start g3-expired "$WORK/g3-expired.json" "expired at 2020-01-02T00:00:00Z"
+withcrl "$P/ca-crl.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-missing.json"
+refused_start g3-missing "$WORK/g3-missing.json" "no CRL of the client CA 'CN=second client CA'"
+xs_crl "$P" other "$P/other-crl.pem"
+cat "$P/ca-crl.pem" "$P/ca2-crl.pem" "$P/other-crl.pem" > "$P/g3-foreign.pem"
+withcrl "$P/g3-foreign.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-foreign.json"
+refused_start g3-foreign "$WORK/g3-foreign.json" "CN=foreign CA' is not signed by a CA"
+cat "$P/ca-crl.pem" "$P/ca-crl.pem" "$P/ca2-crl.pem" > "$P/g3-twice.pem"
+withcrl "$P/g3-twice.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-twice.json"
+refused_start g3-twice "$WORK/g3-twice.json" "two CRLs of"
+cp "$P/server.pem" "$P/g3-nocrl.pem"
+withcrl "$P/g3-nocrl.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-nocrl.json"
+refused_start g3-nocrl "$WORK/g3-nocrl.json" "no CRL of the client CA"
+withcrl "$P/does-not-exist.pem" $((BASE + 6)) false 10 "$ROLES_G" > "$WORK/g3-absent.json"
+refused_start g3-absent "$WORK/g3-absent.json" "is not a readable file"
+
+# G4: a CRL that expires while the server runs: fail closed, crl_expired
+xs_crl "$P" ca "$P/g4-ca.pem" -crlsec 40
+xs_crl "$P" ca2 "$P/g4-ca2.pem" -crlsec 40
+G4_MADE=$(date +%s)
+cat "$P/g4-ca.pem" "$P/g4-ca2.pem" > "$P/g4-crl.pem"
+PORT=$((BASE + 7))
+withcrl "$P/g4-crl.pem" "$PORT" false 1000 "$ROLES_G" > "$WORK/g4.json"
+if start g4 "$WORK/g4.json"; then
+    left=$((G4_MADE + 42 - $(date +%s)))
+    [ "$left" -gt 0 ] && sleep "$left"
+    send "$R/g4-expired" admin GET /v1/status
+    no_answer "after the CRL expired" "$R/g4-expired"
+    stop g4
+    have "auth.denied crl_expired" +1 "action = 'auth.denied' AND $(pj reason) = 'crl_expired' AND $(pj subject) = 'CN=admin'"
+    ok "G4 an expired CRL refuses the handshake"
 fi
 
 # === F. no secret anywhere; the audit log verifies ===================================

@@ -73,10 +73,12 @@ FP=$("$OPENSSL" x509 -in "$P/client.pem" -noout -fingerprint -sha256 | cut -d= -
     die "bxc-pki init failed: $(cat "$WORK/init.err")"
 # the base config of the server tests with this test's members (BTD-320)
 . "$SERVER_TEST_DIR/config/lib.sh"
+# the CRL of the client CA, required by tls/client_crl (BTD-313)
+xs_crl "$P" ca "$P/ca-crl.pem" || die "the CRL of the test CA failed"
 config() {
     xs_config listen/port "$1" database/path "$(xs_str "$DB")" \
         tls/cert "$(xs_str "$P/server.pem")" tls/key "$(xs_str "$P/server.key")" \
-        tls/client_ca "$(xs_str "$P/ca.pem")" \
+        tls/client_ca "$(xs_str "$P/ca.pem")" tls/client_crl "$(xs_str "$P/ca-crl.pem")" \
         roles "[ $(xs_role reader '"client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server test CA" } ]') ]"
 }
 config "$PORT" > "$WORK/xca-server.json"

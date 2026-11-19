@@ -266,11 +266,12 @@ Config Config::load(const QString &file)
 	c.databasePassword = secretReference(db, "password", "/database");
 
 	QJsonObject tls = object(root, "tls", "",
-				{ "cert", "key", "client_ca" },
+				{ "cert", "key", "client_ca", "client_crl" },
 				{ "key_password" });
 	c.tlsCert = string(tls, "cert", "/tls");
 	c.tlsKey = string(tls, "key", "/tls");
 	c.tlsClientCa = string(tls, "client_ca", "/tls");
+	c.tlsClientCrl = string(tls, "client_crl", "/tls");
 	if (tls.contains("key_password"))
 		c.tlsKeyPassword = secretReference(tls, "key_password",
 						"/tls");
@@ -316,7 +317,8 @@ void Config::checkFiles() const
 {
 	const QList<QPair<QString, QString>> files {
 		{ "/tls/cert", tlsCert }, { "/tls/key", tlsKey },
-		{ "/tls/client_ca", tlsClientCa } };
+		{ "/tls/client_ca", tlsClientCa },
+		{ "/tls/client_crl", tlsClientCrl } };
 	for (const auto &f : files) {
 		QFileInfo fi(f.second);
 		if (!fi.isFile() || !fi.isReadable())
