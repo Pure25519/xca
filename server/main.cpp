@@ -32,7 +32,6 @@
 #include <thread>
 
 #include <QCoreApplication>
-#include <QLockFile>
 #include <QStringList>
 
 #include <openssl/crypto.h>
@@ -130,17 +129,15 @@ int serve(const Config &config, const OperationTable &operations)
 	} catch (ConfigError &e) {
 		return configError(e);
 	}
-	/* the database belongs to this process until it stops */
-	QLockFile lock(DatabaseLock::lockFileName(config.databasePath));
-	lock.setStaleLockTime(0);
-	if (!lock.tryLock(0)) {
-		if (lock.error() == QLockFile::LockFailedError)
-			return fail("database_in_use", DatabaseLock::inUseMessage(
-				config.databasePath), exitConfig);
-		return fail("database_in_use", QObject::tr(
-			"The lock file '%1' cannot be created")
-			.arg(DatabaseLock::lockFileName(config.databasePath)),
-			exitConfig);
+	/* the database belongs to this process until it stops; the kernel
+	 * releases the lock when the process ends, also after SIGKILL
+	 * (BTD-302) */
+	std::unique_ptr<DatabaseLock> lock;
+	try {
+		lock.reset(new DatabaseLock(config.databasePath,
+				DatabaseLock::Exclusive));
+	} catch (errorEx &e) {
+		return fail("database_in_use", e.getString(), exitConfig);
 	}
 
 	QString tlsPointer, tlsMessage;
@@ -157,8 +154,7 @@ int serve(const Config &config, const OperationTable &operations)
 	DbWorker worker(config.databasePassword,
 			size_t(config.limits.queueMax));
 	RoleHolder roleHolder(roles);
-	AuthAudit audit(worker, config.deniedPerMinute,
-			config.limits.jobTimeoutS);
+	AuthAudit audit(worker, config);
 	installRoutes(srv, worker, config, operations, roleHolder, audit);
 	if (!srv.bind_to_port(config.listenAddress.toStdString(),
 				config.listenPort))
@@ -224,7 +220,7 @@ int serve(const Config &config, const OperationTable &operations)
 	audit.flush();
 
 	JobResult closed = worker.shutdown([]() { return closeSession(); });
-	lock.unlock();
+	lock.reset();
 	if (closed.state != JobResult::done)
 		return fail(closed.code, closed.detail);
 	if (!ok && !stopSignal)

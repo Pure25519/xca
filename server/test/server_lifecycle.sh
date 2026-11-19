@@ -15,10 +15,11 @@
 #  8. SIGTERM: exit 0; the audit log has server.start and server.stop with
 #     the channel rest, xca --audit-verify is ok, and bxc-pki opens the
 #     database again
-# Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK.
+# Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK, CMAKE,
+# SERVER_TEST_DIR.
 
 set -u
-for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK; do
+for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK CMAKE SERVER_TEST_DIR; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "FAIL: $v is not set" >&2; exit 1; }
 done
@@ -65,50 +66,20 @@ o x509 -req -in "$P/foreign.csr" -CA "$P/other.pem" -CAkey "$P/other.key" -CAcre
     -out "$P/foreign.pem" -days 2 -extfile "$P/client.ext"
 FP=$("$OPENSSL" x509 -in "$P/client.pem" -noout -fingerprint -sha256 | cut -d= -f2 |
     tr -d : | tr 'A-F' 'a-f')
-# crl <ca> <out> [openssl ca -gencrl options]: the CRL of <ca> with the
-# certificates revoked so far (revoke <ca> <cert>), via openssl ca (BTD-313)
-cadb() {
-    d="$P/$1.db"
-    if [ ! -d "$d" ]; then
-        mkdir -p "$d"
-        : > "$d/index.txt"
-        echo 01 > "$d/crlnumber"
-        printf '[ ca ]\ndefault_ca = d\n[ d ]\ndatabase = %s/index.txt\ncrlnumber = %s/crlnumber\ndefault_md = sha256\ndefault_crl_days = 2\n' \
-            "$d" "$d" > "$d/ca.cnf"
-    fi
-}
-revoke() {
-    cadb "$1"
-    o ca -config "$P/$1.db/ca.cnf" -keyfile "$P/$1.key" -cert "$P/$1.pem" -revoke "$P/$2.pem"
-}
-crl() {
-    ca=$1; out=$2; shift 2
-    cadb "$ca"
-    o ca -config "$P/$ca.db/ca.cnf" -keyfile "$P/$ca.key" -cert "$P/$ca.pem" -gencrl \
-        -out "$out" "$@"
-}
-crl ca "$P/ca-crl.pem"
 
 # 2. the database and the server
 "$BXC_PKI" init --db "$DB" --password env:XCA_SERVER_DB_PASSWORD \
     --cn "Server Test CA" --validity P1Y > "$WORK/init.json" 2> "$WORK/init.err" ||
     die "bxc-pki init failed: $(cat "$WORK/init.err")"
+# the base config of the server tests with this test's members (BTD-320)
+. "$SERVER_TEST_DIR/config/lib.sh"
+# the CRL of the client CA, required by tls/client_crl (BTD-313)
+xs_crl "$P" ca "$P/ca-crl.pem" || die "the CRL of the test CA failed"
 config() {
-    cat <<EOF
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": $1 },
-  "database": { "path": "$DB", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem",
-           "client_crl": "$P/ca-crl.pem" },
-  "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false, "denied_per_minute": 100 },
-  "roles": [ { "name": "reader",
-               "client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server test CA" } ] } ]
-}
-EOF
+    xs_config listen/port "$1" database/path "$(xs_str "$DB")" \
+        tls/cert "$(xs_str "$P/server.pem")" tls/key "$(xs_str "$P/server.key")" \
+        tls/client_ca "$(xs_str "$P/ca.pem")" tls/client_crl "$(xs_str "$P/ca-crl.pem")" \
+        roles "[ $(xs_role reader '"client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server test CA" } ]') ]"
 }
 config "$PORT" > "$WORK/xca-server.json"
 "$SERVER" --config "$WORK/xca-server.json" > "$WORK/server.out" 2> "$WORK/server.err" &

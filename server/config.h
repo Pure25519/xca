@@ -12,7 +12,8 @@
  * (tls.h, loadClientCrls()).
  *
  * BTD-155 adds auth.denied_per_minute, the optional tls.key_password and
- * the roles (see RoleDef). Role names are those of the bootstrap schema
+ * the roles (see RoleDef); BTD-314 auth.denied_peers_max and
+ * auth.denied_total_per_minute. Role names are those of the bootstrap schema
  * (reader, ra-operator, ca-admin, auditor); the OpenAPI document and
  * roles.json name them reader, ra_operator, ca_admin, auditor (auth.h).
  */
@@ -78,16 +79,16 @@ class ApiKeyRef
 };
 
 /* One entry of "roles", the shape of $defs/role of the bootstrap schema
- * except client_certs (subject and issuer) and api_keys (id and secret).
- * Without "cas" the role applies to every CA; with it, only to these
- * bootstrap CA ids. */
+ * except client_certs (subject and issuer), api_keys (id and secret) and
+ * cas, which is required (BTD-312): ["*"] is every CA, else the role
+ * applies only to these bootstrap CA ids. */
 class RoleDef
 {
   public:
 	QString name{};
 	QList<ClientCertRule> clientCerts{};
 	QList<ApiKeyRef> apiKeys{};
-	bool allCas{ true };
+	bool allCas{};
 	QStringList cas{};
 };
 
@@ -114,6 +115,12 @@ class Config
 	/* auth.denied_per_minute: single auth.denied entries per peer
 	 * address and minute */
 	qint64 deniedPerMinute{};
+	/* auth.denied_peers_max: peers with a rate-limit window of their
+	 * own; the others share one (BTD-314) */
+	qint64 deniedPeersMax{};
+	/* auth.denied_total_per_minute: single auth.denied entries per
+	 * minute over all peers (BTD-314) */
+	qint64 deniedTotalPerMinute{};
 	QList<RoleDef> roles{};
 
 	/* Reads and checks the file; throws ConfigError */
