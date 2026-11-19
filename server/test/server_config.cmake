@@ -5,7 +5,8 @@
 # (BTD-155). xca-server --config <file> --check-config checks the
 # file without starting; a refused file gives exit 2 and one error object
 # with the code invalid_config and the JSON pointer of the member on stderr.
-# cmake -DSERVER=<xca-server> -DWORK=<dir> -P server_config.cmake
+# cmake -DSERVER=<xca-server> -DWORK=<dir> -DSERVER_TEST_DIR=<server/test>
+#   -P server_config.cmake
 
 cmake_minimum_required(VERSION 3.19)   # string(JSON)
 
@@ -16,19 +17,11 @@ file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")
 
-set(VALID [=[
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": 8443 },
-  "database": { "path": "/data/bxc-pki.xdb", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "/etc/xca-server/server.pem", "key": "/etc/xca-server/server.key",
-           "client_ca": "/etc/xca-server/clients.pem" },
-  "limits": { "payload_max_bytes": 1048576, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 100,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false, "denied_per_minute": 30, "denied_peers_max": 1024,
-            "denied_total_per_minute": 600 },
-  "roles": [
+# the base config of the server tests (BTD-320) with two roles; the role
+# members are this test's subject, so the roles are written out here
+file(READ "${SERVER_TEST_DIR}/config/base.json" VALID)
+string(JSON VALID SET "${VALID}" roles [=[
+  [
     { "name": "ca-admin",
       "client_certs": [ { "subject": "CN=admin,O=BxC", "issuer": "CN=Lab Client CA" } ],
       "cas": [ "ot-rsa-issuing" ] },
@@ -37,7 +30,6 @@ set(VALID [=[
         "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" } ],
       "cas": [ "*" ] }
   ]
-}
 ]=])
 
 set(failures "")

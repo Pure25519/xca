@@ -35,10 +35,11 @@
 #  D2. auth.denied_total_per_minute caps the single entries of all peers;
 #     what it holds back is one summary entry rate_limited_total (peer "*")
 # Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK, ROLES_TSV (the
-# operation table of server/roles.json, made by CMake). POSIX sh (dash).
+# operation table of server/roles.json, made by CMake), CMAKE and
+# SERVER_TEST_DIR (the base config, BTD-320). POSIX sh (dash).
 
 set -u
-for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK ROLES_TSV; do
+for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK ROLES_TSV CMAKE SERVER_TEST_DIR; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "FAIL: $v is not set" >&2; exit 1; }
 done
@@ -132,37 +133,31 @@ printf '%s\n' "$KEY_ADMIN" > "$WORK/admin-api.key"
 # lowers the total cap
 PEERS_MAX=1024
 TOTAL_MAX=100000
+# the base config of the server tests with this test's members (BTD-320)
+. "$SERVER_TEST_DIR/config/lib.sh"
 # config <port> <api_keys> <denied_per_minute> <roles JSON> [<tls key> <key_password>]
 config() {
+    port=$1 keys=$2 denied=$3 roles=$4
     if [ $# -ge 6 ]; then
-        tlskey="\"key\": \"$5\", \"key_password\": \"$6\""
+        set -- tls/key "$(xs_str "$5")" tls/key_password "$(xs_str "$6")"
     else
-        tlskey="\"key\": \"$P/server.key\""
+        set -- tls/key "$(xs_str "$P/server.key")"
     fi
-    cat <<EOF
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": $1 },
-  "database": { "path": "$DB", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "$P/server.pem", $tlskey, "client_ca": "$P/clients.pem" },
-  "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": $2, "denied_per_minute": $3, "denied_peers_max": $PEERS_MAX,
-            "denied_total_per_minute": $TOTAL_MAX },
-  "roles": $4
-}
-EOF
+    xs_config listen/port "$port" database/path "$(xs_str "$DB")" \
+        tls/cert "$(xs_str "$P/server.pem")" tls/client_ca "$(xs_str "$P/clients.pem")" "$@" \
+        auth/api_keys "$keys" auth/denied_per_minute "$denied" \
+        auth/denied_peers_max "$PEERS_MAX" auth/denied_total_per_minute "$TOTAL_MAX" \
+        roles "$roles"
 }
 cc() { printf '{ "subject": "CN=%s", "issuer": "%s" }' "$1" "$CA1"; }
 ROLES_A="[
-  { \"name\": \"reader\", \"client_certs\": [ $(cc reader), $(cc keepalive) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"ra-operator\", \"client_certs\": [ $(cc ra) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin),
+  $(xs_role reader "\"client_certs\": [ $(cc reader), $(cc keepalive) ]"),
+  $(xs_role ra-operator "\"client_certs\": [ $(cc ra) ]"),
+  $(xs_role ca-admin "\"client_certs\": [ $(cc admin),
       { \"subject\": \"CN=pinned\", \"issuer\": \"$CA1\", \"sha256\": \"$(printf '%064d' 0)\" },
-      { \"subject\": \"CN=pinok\", \"issuer\": \"$CA1\", \"sha256\": \"$(fp pinok)\" } ], \"cas\": [ \"*\" ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"ca-admin\", \"client_certs\": [ $(cc scoped) ], \"cas\": [ \"ca-a\" ] }
+      { \"subject\": \"CN=pinok\", \"issuer\": \"$CA1\", \"sha256\": \"$(fp pinok)\" } ]"),
+  $(xs_role auditor "\"client_certs\": [ $(cc auditor) ]"),
+  $(xs_role ca-admin "\"client_certs\": [ $(cc scoped) ]" '[ "ca-a" ]')
 ]"
 
 # --- requests ---------------------------------------------------------------------
@@ -210,7 +205,7 @@ no_answer() {
 # --- server start and stop ----------------------------------------------------------
 # start <label> <config file>; sets PID and PORT (from the file)
 start() {
-    PORT=$(sed -n 's/.*"port": \([0-9]*\).*/\1/p' "$2" | head -1)
+    PORT=$(sed -n 's/.*"port" *: *\([0-9]*\).*/\1/p' "$2" | head -1)
     "$SERVER" --config "$2" > "$WORK/srv/$1.out" 2> "$WORK/srv/$1.err" &
     PID=$!
     for _ in $(seq 1 60); do
@@ -438,9 +433,9 @@ fi
 # === B. auth.api_keys true ===========================================================
 PORT=$((BASE + 1))
 ROLES_B="[
-  { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"reader-key\", \"secret\": \"env:XCA_TEST_READER_KEY\" } ], \"cas\": [ \"*\" ] },
-  { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ],
-    \"api_keys\": [ { \"id\": \"admin-key\", \"secret\": \"file:$WORK/admin-api.key\" } ], \"cas\": [ \"*\" ] }
+  $(xs_role reader "\"api_keys\": [ { \"id\": \"reader-key\", \"secret\": \"env:XCA_TEST_READER_KEY\" } ]"),
+  $(xs_role ca-admin "\"client_certs\": [ $(cc admin) ],
+    \"api_keys\": [ { \"id\": \"admin-key\", \"secret\": \"file:$WORK/admin-api.key\" } ]")
 ]"
 config "$PORT" true 1000 "$ROLES_B" "$P/server-enc.key" env:XCA_TEST_TLS_KEY_PW > "$WORK/b.json"
 if start b "$WORK/b.json"; then
@@ -480,7 +475,7 @@ if start b "$WORK/b.json"; then
 fi
 
 # === C. start refused ===============================================================
-ROLES_C="[ { \"name\": \"reader\", \"api_keys\": [ { \"id\": \"short\", \"secret\": \"env:XCA_TEST_SHORT_KEY\" } ], \"cas\": [ \"*\" ] } ]"
+ROLES_C="[ $(xs_role reader "\"api_keys\": [ { \"id\": \"short\", \"secret\": \"env:XCA_TEST_SHORT_KEY\" } ]") ]"
 config $((BASE + 2)) true 10 "$ROLES_C" > "$WORK/c-short.json"
 timeout 60 "$SERVER" --config "$WORK/c-short.json" > "$WORK/srv/c-short.out" 2> "$WORK/srv/c-short.err"
 rc=$?
@@ -531,12 +526,12 @@ fi
 
 # === E. reload ======================================================================
 PORT=$((BASE + 4))
-ROLES_E1="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] } ]"
-ROLES_E2="[ { \"name\": \"ca-admin\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"auditor\", \"client_certs\": [ $(cc auditor) ], \"cas\": [ \"*\" ] },
-  { \"name\": \"reader\", \"client_certs\": [ $(cc norole) ], \"cas\": [ \"*\" ] } ]"
-ROLES_E3="[ { \"name\": \"boss\", \"client_certs\": [ $(cc admin) ], \"cas\": [ \"*\" ] } ]"
+ROLES_E1="[ $(xs_role ca-admin "\"client_certs\": [ $(cc admin) ]"),
+  $(xs_role auditor "\"client_certs\": [ $(cc auditor) ]") ]"
+ROLES_E2="[ $(xs_role ca-admin "\"client_certs\": [ $(cc admin) ]"),
+  $(xs_role auditor "\"client_certs\": [ $(cc auditor) ]"),
+  $(xs_role reader "\"client_certs\": [ $(cc norole) ]") ]"
+ROLES_E3="[ $(xs_role boss "\"client_certs\": [ $(cc admin) ]") ]"
 config "$PORT" false 1000 "$ROLES_E1" > "$WORK/e.json"
 if start e "$WORK/e.json"; then
     send "$R/e-before" norole GET /v1/status
