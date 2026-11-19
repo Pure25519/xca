@@ -176,6 +176,11 @@ if(BUILD_TESTING)
     add_test(NAME test_server_denied_limit COMMAND test_server_denied_limit)
     set_tests_properties(test_server_denied_limit PROPERTIES LABELS server)
   endif()
+  # the layout of the server tests (BTD-320)
+  add_test(NAME test_server_layout
+	COMMAND ${CMAKE_COMMAND} -DSERVER_DIR=${SERVER_DIR}
+		-P ${SERVER_DIR}/test/server_layout.cmake)
+  set_tests_properties(test_server_layout PROPERTIES LABELS server)
   set_tests_properties(test_server_link test_server_config
 	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
   set_property(TEST test_server_link test_server_config
