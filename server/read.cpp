@@ -196,7 +196,7 @@ QJsonObject getObjectJob(const QString &collection, qint64 id,
 	if (!q.next())
 		throw serviceError("unknown_reference", QObject::tr(
 			"No object with the id %1").arg(id));
-	if (!types.contains(enum pki_type(q.value(0).toInt())))
+	if (!types.contains(static_cast<enum pki_type>(q.value(0).toInt())))
 		throw serviceError("wrong_object_type", QObject::tr(
 			"The object %1 is not in %2").arg(id).arg(collection));
 	QString cond = scopeCondition(collection, scope);
@@ -247,7 +247,7 @@ QJsonObject indexJob(bool hierarchy, const CaScope &scope)
 QJsonObject tokensJob()
 {
 	needDatabase();
-	QJsonArray slots;
+	QJsonArray slotArray;
 	if (pkcs11::libraries.loaded()) {
 		pkcs11 p11;
 		for (const slotid &slot : pkcs11::getSlotList()) {
@@ -265,10 +265,10 @@ QJsonObject tokensJob()
 					s["serial"] = QString();
 				s["initialized"] = false;
 			}
-			slots.append(s);
+			slotArray.append(s);
 		}
 	}
-	return QJsonObject{ { "slots", slots } };
+	return QJsonObject{ { "slots", slotArray } };
 }
 
 QJsonObject verifyAuditJob()
