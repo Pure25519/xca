@@ -12,6 +12,7 @@
  * or in the audit log.
  */
 
+#include <QJsonObject>
 #include <QSqlQuery>
 
 #include <openssl/evp.h>
@@ -27,6 +28,7 @@
 #include "lib/pk11_attribute.h"
 #include "lib/pki_scard.h"
 #include "lib/pki_x509.h"
+#include "lib/test_seams.h"
 
 #include "test/SoftHsmToken.h"
 #include "ServiceTestCase.h"
@@ -159,6 +161,7 @@ class test_service_softhsm : public ServiceTestCase
 	void loadEd25519KeyFromToken();
 	void ecKeyWithBrokenParamsIsTokenError();
 	void ecKeyWithoutParams();
+	void ecParamsUnreadable();
 	void generateOnToken();
 	void renameKeyOnToken();
 	void renameCertificateOnToken();
@@ -458,7 +461,7 @@ void test_service_softhsm::wrongPinIsTokenError()
  * code of loading it as a token key, "created: <error>" if the token
  * refuses the object, or "" if it loads. */
 static QString loadEcObject(SoftHsmToken &token, const QByteArray &params,
-		bool withParams)
+		bool withParams, QJsonObject *details = nullptr)
 {
 	EVP_PKEY *soft = EVP_PKEY_Q_keygen(nullptr, nullptr, "EC", "P-256");
 	unsigned char *buf = nullptr;
@@ -492,6 +495,8 @@ static QString loadEcObject(SoftHsmToken &token, const QByteArray &params,
 		card.load_token(p11, h);
 	} catch (serviceError &err) {
 		code = err.code;
+		if (details)
+			*details = err.details;
 	} catch (errorEx &err) {
 		code = "untyped: " + err.getString();
 	}
@@ -507,17 +512,33 @@ void test_service_softhsm::ecKeyWithBrokenParamsIsTokenError()
 		true), QString("token_error"));
 }
 
-/* No CKA_EC_PARAMS at all: SoftHSM refuses such an object
- * (CKR_TEMPLATE_INCOMPLETE); a token that has one gives a typed error
- * (BTD-309) */
+/* No CKA_EC_PARAMS at all: SoftHSM refuses to create such an object
+ * (CKR_TEMPLATE_INCOMPLETE), asserted here (BTD-316); a token that has
+ * one, whose CKA_EC_PARAMS cannot be read, is ecParamsUnreadable */
 void test_service_softhsm::ecKeyWithoutParams()
 {
 	QString result = loadEcObject(token, QByteArray(), false);
-	if (result.startsWith("created: "))
-		qInfo("SoftHSM refuses an EC key without CKA_EC_PARAMS: %s",
-			CCHAR(result));
-	else
-		QCOMPARE(result, QString("token_error"));
+	QVERIFY2(result.startsWith("created: ") &&
+		result.contains("CKR_TEMPLATE_INCOMPLETE"), CCHAR(result));
+}
+
+/* CKA_EC_PARAMS that cannot be read (test seam, as a token without it):
+ * token_error with the cause as a structured member, the PKCS#11
+ * function and return value (BTD-316) */
+void test_service_softhsm::ecParamsUnreadable()
+{
+	/* OID 1.2.840.10045.3.1.7 (prime256v1) */
+	const char p256[] = "\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
+	QJsonObject details;
+	TestSeams::failNextEcParamsRead(CKR_ATTRIBUTE_TYPE_INVALID);
+	QCOMPARE(loadEcObject(token, QByteArray(p256, 10), true, &details),
+		QString("token_error"));
+	TestSeams::failNextEcParamsRead(0);
+	QJsonObject cause = details["cause"].toObject();
+	QCOMPARE(cause["pkcs11_rv"].toString(),
+		QString("CKR_ATTRIBUTE_TYPE_INVALID"));
+	QCOMPARE(cause["pkcs11_function"].toString(),
+		QString("C_GetAttributeValue(data)"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_softhsm)

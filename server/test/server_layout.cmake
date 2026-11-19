@@ -1,0 +1,46 @@
+# The layout of the server tests (BTD-320), so that parallel PRs that add a
+# server test or a required member of xca-server.json do not collide:
+#  - server/CMakeLists.txt registers no test itself; every server test has
+#    its own server/test/<name>.test.cmake;
+#  - no server test script writes a configuration of its own: the schema id
+#    of xca-server.json appears only in the one base config
+#    server/test/config/base.json, which the tests change member by member.
+# cmake -DSERVER_DIR=<source>/server -P server_layout.cmake
+
+cmake_minimum_required(VERSION 3.19)
+
+set(failures "")
+
+file(READ "${SERVER_DIR}/CMakeLists.txt" lists)
+foreach(call add_test set_tests_properties)
+  string(FIND "${lists}" "${call}(" at)
+  if(NOT at EQUAL -1)
+    string(APPEND failures "\nserver/CMakeLists.txt registers tests itself (${call})")
+  endif()
+endforeach()
+
+file(GLOB registrations "${SERVER_DIR}/test/*.test.cmake")
+if(NOT registrations)
+  string(APPEND failures "\nno server/test/*.test.cmake registers a test")
+endif()
+
+# the id is put together, so that this file does not carry it
+set(id "urn:bxc-pki:schema:")
+string(APPEND id "xca-server:v1")
+if(NOT EXISTS "${SERVER_DIR}/test/config/base.json")
+  string(APPEND failures "\nno base config server/test/config/base.json")
+endif()
+file(GLOB_RECURSE scripts "${SERVER_DIR}/test/*.sh" "${SERVER_DIR}/test/*.cmake")
+foreach(f ${scripts})
+  file(READ "${f}" text)
+  string(FIND "${text}" "${id}" at)
+  if(NOT at EQUAL -1)
+    file(RELATIVE_PATH rel "${SERVER_DIR}" "${f}")
+    string(APPEND failures "\nserver/${rel} writes a configuration of its own (${id})")
+  endif()
+endforeach()
+
+if(failures)
+  message(FATAL_ERROR "${failures}")
+endif()
+message(STATUS "ok: every server test registers itself, one base config")

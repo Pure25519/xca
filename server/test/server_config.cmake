@@ -5,7 +5,8 @@
 # (BTD-155). xca-server --config <file> --check-config checks the
 # file without starting; a refused file gives exit 2 and one error object
 # with the code invalid_config and the JSON pointer of the member on stderr.
-# cmake -DSERVER=<xca-server> -DWORK=<dir> -P server_config.cmake
+# cmake -DSERVER=<xca-server> -DWORK=<dir> -DSERVER_TEST_DIR=<server/test>
+#   -P server_config.cmake
 
 cmake_minimum_required(VERSION 3.19)   # string(JSON)
 
@@ -16,26 +17,19 @@ file(REMOVE_RECURSE "${WORK}")
 file(MAKE_DIRECTORY "${WORK}/home")
 set(ENV{HOME} "${WORK}/home")
 
-set(VALID [=[
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": 8443 },
-  "database": { "path": "/data/bxc-pki.xdb", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "/etc/xca-server/server.pem", "key": "/etc/xca-server/server.key",
-           "client_ca": "/etc/xca-server/clients.pem" },
-  "limits": { "payload_max_bytes": 1048576, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 100,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false, "denied_per_minute": 30 },
-  "roles": [
+# the base config of the server tests (BTD-320) with two roles; the role
+# members are this test's subject, so the roles are written out here
+file(READ "${SERVER_TEST_DIR}/config/base.json" VALID)
+string(JSON VALID SET "${VALID}" roles [=[
+  [
     { "name": "ca-admin",
       "client_certs": [ { "subject": "CN=admin,O=BxC", "issuer": "CN=Lab Client CA" } ],
       "cas": [ "ot-rsa-issuing" ] },
     { "name": "auditor",
       "client_certs": [ { "subject": "CN=audit", "issuer": "CN=Lab Client CA",
-        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" } ] }
+        "sha256": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" } ],
+      "cas": [ "*" ] }
   ]
-}
 ]=])
 
 set(failures "")
@@ -131,6 +125,28 @@ string(JSON j SET "${VALID}" roles 0 client_certs 0 extra "1")
 check(cert-unknown-member 2 "/roles/0/client_certs/0/extra" "${j}")
 string(JSON j SET "${VALID}" roles 0 cas 0 "\"Not An Id\"")
 check(cas-bad-id 2 "/roles/0/cas/0" "${j}")
+# BTD-312: the CA scope of a role is explicit; ["*"] alone is every CA
+string(JSON j REMOVE "${VALID}" roles 1 cas)
+check(cas-missing 2 "/roles/1/cas" "${j}")
+string(JSON j SET "${VALID}" roles 0 cas "[]")
+check(cas-empty 2 "/roles/0/cas" "${j}")
+string(JSON j SET "${VALID}" roles 0 cas "[\"*\", \"ot-rsa-issuing\"]")
+check(cas-star-and-id 2 "/roles/0/cas" "${j}")
+string(JSON j SET "${VALID}" roles 0 cas "[\"ot-rsa-issuing\", \"*\"]")
+check(cas-id-and-star 2 "/roles/0/cas" "${j}")
+string(JSON j SET "${VALID}" roles 0 cas "\"*\"")
+check(cas-star-not-array 2 "/roles/0/cas" "${j}")
+string(JSON j SET "${VALID}" roles 0 cas "[\"*\"]")
+check(cas-star 0 "" "${j}")
+# BTD-314: the bound of the peer table and the total cap are explicit
+string(JSON j REMOVE "${VALID}" auth denied_peers_max)
+check(missing-peers-max 2 "/auth/denied_peers_max" "${j}")
+string(JSON j SET "${VALID}" auth denied_peers_max "0")
+check(peers-max-zero 2 "/auth/denied_peers_max" "${j}")
+string(JSON j REMOVE "${VALID}" auth denied_total_per_minute)
+check(missing-total 2 "/auth/denied_total_per_minute" "${j}")
+string(JSON j SET "${VALID}" auth denied_total_per_minute "0")
+check(total-zero 2 "/auth/denied_total_per_minute" "${j}")
 # API keys only when they are switched on; secrets are references
 string(JSON j SET "${VALID}" roles 0 api_keys "[{\"id\":\"deploy\",\"secret\":\"env:XCA_KEY\"}]")
 check(api-key-while-off 2 "/roles/0/api_keys" "${j}")

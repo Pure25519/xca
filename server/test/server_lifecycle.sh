@@ -15,10 +15,11 @@
 #  8. SIGTERM: exit 0; the audit log has server.start and server.stop with
 #     the channel rest, xca --audit-verify is ok, and bxc-pki opens the
 #     database again
-# Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK.
+# Environment: SERVER, BXC_PKI, XCA, SQL_EXEC, OPENSSL, WORK, CMAKE,
+# SERVER_TEST_DIR.
 
 set -u
-for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK; do
+for v in SERVER BXC_PKI XCA SQL_EXEC OPENSSL WORK CMAKE SERVER_TEST_DIR; do
     eval "val=\${$v:-}"
     [ -n "$val" ] || { echo "FAIL: $v is not set" >&2; exit 1; }
 done
@@ -70,21 +71,13 @@ FP=$("$OPENSSL" x509 -in "$P/client.pem" -noout -fingerprint -sha256 | cut -d= -
 "$BXC_PKI" init --db "$DB" --password env:XCA_SERVER_DB_PASSWORD \
     --cn "Server Test CA" --validity P1Y > "$WORK/init.json" 2> "$WORK/init.err" ||
     die "bxc-pki init failed: $(cat "$WORK/init.err")"
+# the base config of the server tests with this test's members (BTD-320)
+. "$SERVER_TEST_DIR/config/lib.sh"
 config() {
-    cat <<EOF
-{
-  "schema": "urn:bxc-pki:schema:xca-server:v1",
-  "listen": { "address": "127.0.0.1", "port": $1 },
-  "database": { "path": "$DB", "password": "env:XCA_SERVER_DB_PASSWORD" },
-  "tls": { "cert": "$P/server.pem", "key": "$P/server.key", "client_ca": "$P/ca.pem" },
-  "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
-              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
-              "job_timeout_s": 60, "queue_max": 64 },
-  "auth": { "api_keys": false, "denied_per_minute": 100 },
-  "roles": [ { "name": "reader",
-               "client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server test CA" } ] } ]
-}
-EOF
+    xs_config listen/port "$1" database/path "$(xs_str "$DB")" \
+        tls/cert "$(xs_str "$P/server.pem")" tls/key "$(xs_str "$P/server.key")" \
+        tls/client_ca "$(xs_str "$P/ca.pem")" \
+        roles "[ $(xs_role reader '"client_certs": [ { "subject": "CN=client", "issuer": "CN=xca-server test CA" } ]') ]"
 }
 config "$PORT" > "$WORK/xca-server.json"
 "$SERVER" --config "$WORK/xca-server.json" > "$WORK/server.out" 2> "$WORK/server.err" &

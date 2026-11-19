@@ -101,7 +101,7 @@ on a volume of one host (one Docker host for the container).
 |---|---|---|
 | HMAC key of the API keys (`processKey`) | `server/auth.cpp` | written once (`std::call_once`) by `RoleTable::build()` at the start, before any thread; read-only afterwards; wiped at the end of `main()` |
 | Current roles (`RoleHolder`) | `server/auth.h` | thread-safe: a `shared_ptr` to an immutable `RoleTable` behind a mutex; a request takes a snapshot, `POST /v1/reload` swaps it on the DB worker |
-| Rate limit windows of `auth.denied` (`AuthAudit::windows`) | `server/auth.cpp` | thread-safe: guarded by its mutex; the entries are written on the DB worker |
+| Rate limit windows of `auth.denied` (`AuthAudit::limit`, a `DeniedLimit`: at most `auth.denied_peers_max` peer windows plus one overflow window and one total window, BTD-314) | `server/auth.cpp`, `server/denied_limit.cpp` | thread-safe: every call under the mutex of `AuthAudit`; the entries are written on the DB worker |
 | Operation table (`OperationTable`) | `server/auth.cpp`, from `roles.json` | parsed in `main()` before the threads, read-only afterwards |
 | Per connection: the identities with `auth.login`, the verify error of a refused certificate | `server/tls.cpp` (`ConnState`, SSL ex_data) | per connection: only the connection's own thread uses it; freed with the SSL object |
 | Refusal hook of the TLS layer | `server/tls.cpp` | set before `listen_after_bind()`, cleared after it returned; read-only while connections run |

@@ -11,6 +11,7 @@
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QMap>
 #include <QObject>
 #include <QRegularExpression>
 #include <QSet>
@@ -97,6 +98,36 @@ qint64 countItems(const QList<enum pki_type> &types)
 			"type IN (%1)").arg(t.join(",")));
 }
 
+/* The bootstrap settings rows of kind ca: bootstrap CA id -> item id of
+ * the CA certificate (written by bxc-pki bootstrap) */
+QMap<QString, qint64> bootstrapCas()
+{
+	QMap<QString, qint64> cas;
+	XSqlQuery q;
+	SQL_PREPARE(q, "SELECT value FROM settings WHERE key_ LIKE "
+		"'bootstrap_%'");
+	execOrThrow(q, "CA scope");
+	while (q.next()) {
+		QJsonObject row = QJsonDocument::fromJson(
+			q.value(0).toString().toUtf8()).object();
+		if (row.value("kind").toString() == "ca")
+			cas.insert(row.value("bootstrap_id").toString(),
+				qint64(row.value("item").toDouble()));
+	}
+	return cas;
+}
+
+/* The item ids of the CA certificates of the bootstrap CA ids */
+QList<qint64> caItems(const QStringList &ids)
+{
+	QMap<QString, qint64> cas = bootstrapCas();
+	QList<qint64> items;
+	for (const QString &id : ids)
+		if (cas.contains(id) && !items.contains(cas[id]))
+			items << cas[id];
+	return items;
+}
+
 }
 
 void installHooks()
@@ -148,19 +179,12 @@ QJsonObject openSession(const Config &config, const QString &httpLibrary)
 	return QJsonObject{ { "database", Database.name() } };
 }
 
-QJsonObject statusJob(const QString &actor)
+QJsonObject statusJob(const QString &actor, const CaScope &scope)
 {
 	if (!Database.isOpen())
 		throw serviceError("no_database",
 			QObject::tr("No database is open"));
-	QJsonObject objects {
-		{ "keys", countItems({ asym_key, smartCard }) },
-		{ "requests", countItems({ x509_req }) },
-		{ "certificates", countItems({ x509 }) },
-		{ "crls", countItems({ revocation }) },
-		{ "templates", countItems({ tmpl }) },
-	};
-	return QJsonObject {
+	QJsonObject status {
 		{ "actor", actor },
 		{ "channel", ServiceContext::channelName(
 					ServiceContext::rest) },
@@ -170,9 +194,40 @@ QJsonObject statusJob(const QString &actor)
 		{ "bxc_schema_version", count("SELECT value FROM settings "
 					"WHERE key_='bxc_schema'") },
 		{ "read_only", database_model::read_only },
-		{ "objects", objects },
-		{ "audit_entries", count("SELECT COUNT(*) FROM audit_log") },
 	};
+	if (scope.all) {
+		status["ca_scope"] = QJsonArray{ "*" };
+		status["objects"] = QJsonObject {
+			{ "keys", countItems({ asym_key, smartCard }) },
+			{ "requests", countItems({ x509_req }) },
+			{ "certificates", countItems({ x509 }) },
+			{ "crls", countItems({ revocation }) },
+			{ "templates", countItems({ tmpl }) },
+		};
+		status["audit_entries"] = count("SELECT COUNT(*) FROM audit_log");
+		return status;
+	}
+	/* item ids from the database only: numbers */
+	QStringList items;
+	for (qint64 item : caItems(scope.cas))
+		items << QString::number(item);
+	QString in = items.isEmpty() ? QString("NULL") : items.join(',');
+	QString ofCas = QString("items.del = 0 AND (certs.item IN (%1) OR "
+			"certs.issuer IN (%1))").arg(in);
+	status["ca_scope"] = QJsonArray::fromStringList(scope.cas);
+	status["objects"] = QJsonObject {
+		{ "keys", count("SELECT COUNT(DISTINCT x509super.pkey) FROM "
+			"certs JOIN items ON items.id = certs.item JOIN "
+			"x509super ON x509super.item = certs.item JOIN items k "
+			"ON k.id = x509super.pkey WHERE k.del = 0 AND " +
+			ofCas) },
+		{ "certificates", count("SELECT COUNT(*) FROM certs JOIN items "
+			"ON items.id = certs.item WHERE " + ofCas) },
+		{ "crls", count(QString("SELECT COUNT(*) FROM crls JOIN items "
+			"ON items.id = crls.item WHERE items.del = 0 AND "
+			"crls.issuer IN (%1)").arg(in)) },
+	};
+	return status;
 }
 
 QJsonObject appendEntry(const QString &actor, const QString &action,
@@ -244,16 +299,10 @@ QJsonObject caScopeJob(const QJsonValue &reference, bool issuerOf)
 		item = q.value(0).toLongLong();
 	}
 	QJsonArray ids;
-	SQL_PREPARE(q, "SELECT value FROM settings WHERE key_ LIKE "
-		"'bootstrap_%'");
-	execOrThrow(q, "CA scope");
-	while (q.next()) {
-		QJsonObject row = QJsonDocument::fromJson(
-			q.value(0).toString().toUtf8()).object();
-		if (row.value("kind").toString() == "ca" &&
-		    qint64(row.value("item").toDouble()) == item)
-			ids << row.value("bootstrap_id").toString();
-	}
+	QMap<QString, qint64> cas = bootstrapCas();
+	for (auto it = cas.begin(); it != cas.end(); ++it)
+		if (it.value() == item)
+			ids << it.key();
 	return QJsonObject{ { "item", item }, { "bootstrap_ids", ids } };
 }
 
