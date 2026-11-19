@@ -196,15 +196,16 @@ QJsonObject getObjectJob(const QString &collection, qint64 id,
 	if (!q.next())
 		throw serviceError("unknown_reference", QObject::tr(
 			"No object with the id %1").arg(id));
-	if (!types.contains(static_cast<enum pki_type>(q.value(0).toInt())))
-		throw serviceError("wrong_object_type", QObject::tr(
-			"The object %1 is not in %2").arg(id).arg(collection));
+	/* outside the scope: the same answer as for no object, before the
+	 * type, so that a restricted identity learns nothing of it */
 	QString cond = scopeCondition(collection, scope);
 	if (!cond.isEmpty() && ids(QString("SELECT items.id FROM items WHERE "
 			"items.id = ? AND %1").arg(cond), { id }).isEmpty())
-		/* outside the scope: the same answer as for no object */
 		throw serviceError("unknown_reference", QObject::tr(
 			"No object with the id %1").arg(id));
+	if (!types.contains(static_cast<enum pki_type>(q.value(0).toInt())))
+		throw serviceError("wrong_object_type", QObject::tr(
+			"The object %1 is not in %2").arg(id).arg(collection));
 	pki_base *pki = Store.lookupPki<pki_base>(QVariant(id));
 	if (!pki)
 		throw serviceError("unknown_reference", QObject::tr(
