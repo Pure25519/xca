@@ -117,7 +117,8 @@ QMap<QString, qint64> bootstrapCas()
 	return cas;
 }
 
-/* The item ids of the CA certificates of the bootstrap CA ids */
+}
+
 QList<qint64> caItems(const QStringList &ids)
 {
 	QMap<QString, qint64> cas = bootstrapCas();
@@ -126,8 +127,6 @@ QList<qint64> caItems(const QStringList &ids)
 		if (cas.contains(id) && !items.contains(cas[id]))
 			items << cas[id];
 	return items;
-}
-
 }
 
 void installHooks()

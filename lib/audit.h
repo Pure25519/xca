@@ -349,6 +349,10 @@ class AuditLog
 	 * SIGTERM or SIGINT before it is closed (pid); channel rest */
 	static const char actionServerStart[];
 	static const char actionServerStop[];
+	/* xca-server GET /audit (BTD-156): after, first_seq, last_seq,
+	 * count and unanchored_entries of the exported range; object type
+	 * database, channel rest */
+	static const char actionExport[];
 	/* xca-server authentication (BTD-155), channel rest:
 	 * auth.login once per TLS connection and identity (actor_kind,
 	 * subject and issuer of a certificate or api_key_id, peer_address);
@@ -473,10 +477,13 @@ class AuditLog
 	 * the missing password source (audit_key_unavailable). Throws
 	 * errorEx for an entry without a canonical form and serviceError
 	 * for a wrong password source (audit_password_rejected) or a
-	 * database error. */
+	 * database error. sign false never signs a checkpoint and writes
+	 * nothing: the export of xca-server's GET /audit (BTD-156), the
+	 * same lines as --audit-export without a password source. */
 	static QByteArray exportJsonLines(const ServiceContext &ctx,
 			qint64 *unsignedEntries = nullptr,
-			AuditSkippedCheckpoint *skipped = nullptr);
+			AuditSkippedCheckpoint *skipped = nullptr,
+			bool sign = true);
 	/* The same for the local user on the channel of this process */
 	static QByteArray exportJsonLines(qint64 *unsignedEntries = nullptr,
 			AuditSkippedCheckpoint *skipped = nullptr);

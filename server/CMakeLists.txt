@@ -57,6 +57,7 @@ const char rolesJson[] = R\"xcaroles(@server_roles_json@)xcaroles\";
 	${SERVER_DIR}/config.cpp ${SERVER_DIR}/config.h
 	${SERVER_DIR}/worker.cpp ${SERVER_DIR}/worker.h
 	${SERVER_DIR}/session.cpp ${SERVER_DIR}/session.h
+	${SERVER_DIR}/read.cpp ${SERVER_DIR}/read.h
 	${SERVER_DIR}/routes.cpp ${SERVER_DIR}/routes.h
 	${PROJECT_BINARY_DIR}/local.h)
   # SYSTEM: the OpenSSL 4.1 deprecations inside the header (condition 6)

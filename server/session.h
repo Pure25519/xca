@@ -8,6 +8,7 @@
 #define __XCA_SERVER_SESSION_H
 
 #include <QJsonObject>
+#include <QList>
 #include <QJsonValue>
 #include <QString>
 #include <QStringList>
@@ -35,6 +36,9 @@ class CaScope
 	bool all{};
 	QStringList cas{};
 };
+/* The item ids of the CA certificates of the bootstrap CA ids (settings
+ * rows bootstrap_<hash> of kind ca) */
+QList<qint64> caItems(const QStringList &ids);
 /* GET /v1/status: database, schema versions, object counts, the CA scope
  * and whether it ran on the DB worker; actor is the caller. For a scope of
  * some CAs (BTD-311) the counts are those of their CA certificates, the

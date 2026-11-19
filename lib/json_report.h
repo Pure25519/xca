@@ -34,6 +34,7 @@
 
 #include <QByteArray>
 #include <QJsonObject>
+#include <QSet>
 #include <QJsonValue>
 #include <QList>
 #include <QString>
@@ -76,8 +77,10 @@ class JsonReport
 	 * the open database like db_x509::writeIndex() does. */
 	static QJsonObject itemList(const QList<pki_base *> &items);
 	static QJsonObject issuerList(const QList<pki_x509 *> &issuers);
-	static QJsonObject index();
-	static QJsonObject hierarchy();
+	/* only: the item ids of the certificates to list (xca-server's CA
+	 * scope, BTD-156); every certificate without it */
+	static QJsonObject index(const QSet<qint64> *only = nullptr);
+	static QJsonObject hierarchy(const QSet<qint64> *only = nullptr);
 
 	/* Error object (error schema without the REST members status and
 	 * instance). The code of a serviceError; missing_password or

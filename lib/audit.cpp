@@ -38,6 +38,7 @@ const char AuditLog::actionSettingsUpdate[] = "settings.update";
 const char AuditLog::actionRowsSkipped[] = "database.rows_skipped";
 const char AuditLog::actionServerStart[] = "server.start";
 const char AuditLog::actionServerStop[] = "server.stop";
+const char AuditLog::actionExport[] = "audit.export";
 const char AuditLog::actionAuthLogin[] = "auth.login";
 const char AuditLog::actionAuthDenied[] = "auth.denied";
 const char AuditLog::actionConfigReload[] = "config.reload";
@@ -110,6 +111,8 @@ const QStringList &AuditParams::allowList()
 	static const QStringList list {
 		/* the thisUpdate checks a CRL overrode (BTD-220) */
 		"allow_stale",
+		/* the range of an audit.export of xca-server (BTD-156) */
+		"after", "first_seq", "last_seq", "unanchored_entries",
 		"authority_updated", "ca_id", "confirmed", "count",
 		"crl_number", "curve", "db_unlock_verified", "dependents",
 		"der_size", "encrypted", "file", "fingerprint", "format",
@@ -1115,13 +1118,15 @@ QByteArray AuditLog::exportJsonLines(qint64 *unsignedEntries,
 
 QByteArray AuditLog::exportJsonLines(const ServiceContext &ctx,
 				qint64 *unsignedEntries,
-				AuditSkippedCheckpoint *skipped)
+				AuditSkippedCheckpoint *skipped, bool sign)
 {
 	QByteArray out;
 	QList<AuditEntry> list = entries();
 	qint64 lastCheckpoint = 0;
 
-	if (!list.isEmpty() && list.last().action != actionCheckpoint &&
+	if (!sign) {
+		/* read-only by request (BTD-156): nothing signed */
+	} else if (!list.isEmpty() && list.last().action != actionCheckpoint &&
 	    database_model::read_only) {
 		/* nothing can be signed on a read-only database (BTD-214) */
 		if (skipped) {
