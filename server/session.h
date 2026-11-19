@@ -8,6 +8,7 @@
 #define __XCA_SERVER_SESSION_H
 
 #include <QJsonObject>
+#include <QMap>
 #include <QJsonValue>
 #include <QString>
 #include <QStringList>
@@ -56,6 +57,17 @@ QJsonObject appendEntry(const QString &actor, const QString &action,
  * (bootstrap_<hash>, kind ca) has that item. Throws unknown_reference or
  * ambiguous_reference. */
 QJsonObject caScopeJob(const QJsonValue &reference, bool issuerOf);
+/* The bootstrap settings rows of kind ca: bootstrap CA id -> item id of
+ * the CA certificate (written by bxc-pki bootstrap) */
+QMap<QString, qint64> bootstrapCas();
+/* GET /ready (BTD-163): takes and gives back the write lock an audit entry
+ * needs (BEGIN IMMEDIATE, ROLLBACK) and answers {read_only}; throws when
+ * the database is not open or another process holds its lock past the
+ * busy timeout */
+QJsonObject readyJob();
+/* Whether the last audit entry of the server (appendEntry) was written;
+ * any thread */
+bool lastAuditWriteOk();
 /* server.stop, then the database is closed, also when the entry fails;
  * throws its error then. Nothing without an open database. */
 QJsonObject closeSession();

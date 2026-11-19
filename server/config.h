@@ -89,6 +89,27 @@ class RoleDef
 	QStringList cas{};
 };
 
+/* The optional health listener (BTD-163): plain HTTP, GET /health and
+ * GET /ready only; loopback unless allowRemote */
+class HealthListener
+{
+  public:
+	bool enabled{};
+	QString address{};
+	int port{};
+	bool allowRemote{};
+};
+
+/* metrics (BTD-163), both required: per-certificate values up to
+ * certificatesMax certificates, the audit counters cached for
+ * auditCacheS seconds */
+class MetricsLimits
+{
+  public:
+	qint64 certificatesMax{};
+	qint64 auditCacheS{};
+};
+
 class Config
 {
   public:
@@ -117,6 +138,8 @@ class Config
 	 * minute over all peers (BTD-314) */
 	qint64 deniedTotalPerMinute{};
 	QList<RoleDef> roles{};
+	HealthListener health{};
+	MetricsLimits metrics{};
 
 	/* Reads and checks the file; throws ConfigError */
 	static Config load(const QString &file);

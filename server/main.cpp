@@ -50,6 +50,8 @@
 
 #include "auth.h"
 #include "config.h"
+#include "health.h"
+#include "metrics.h"
 #include "session.h"
 #include "tls.h"
 #include "worker.h"
@@ -147,12 +149,27 @@ int serve(const Config &config, const OperationTable &operations)
 			size_t(config.limits.queueMax));
 	RoleHolder roleHolder(roles);
 	AuthAudit audit(worker, config);
-	installRoutes(srv, worker, config, operations, roleHolder, audit);
+	Metrics metrics(config.metrics);
+	installRoutes(srv, worker, config, operations, roleHolder, audit,
+			metrics);
 	if (!srv.bind_to_port(config.listenAddress.toStdString(),
 				config.listenPort))
 		return fail("listen_failed", QObject::tr("Cannot listen on "
 			"%1:%2").arg(config.listenAddress)
 			.arg(config.listenPort));
+	/* the optional health listener, plain HTTP (BTD-163) */
+	Readiness readiness(worker, config.limits.jobTimeoutS);
+	std::unique_ptr<httplib::Server> health;
+	if (config.health.enabled) {
+		health.reset(new httplib::Server());
+		installHealth(*health, readiness, worker);
+		if (!health->bind_to_port(config.health.address.toStdString(),
+					config.health.port))
+			return fail("listen_failed", QObject::tr("Cannot "
+				"listen on %1:%2 (health)")
+				.arg(config.health.address)
+				.arg(config.health.port));
+	}
 
 	/* a stop signal during the open stops right after it */
 	std::signal(SIGTERM, onStopSignal);
@@ -184,10 +201,17 @@ int serve(const Config &config, const OperationTable &operations)
 		audit.denied(e);
 	});
 
+	readiness.setStarted();
+	std::thread healthThread;
+	if (health)
+		healthThread = std::thread([&health]() {
+			health->listen_after_bind();
+		});
+
 	std::atomic<bool> listening{ true };
 	/* stop() is not async-signal-safe: a thread watches the flag; it
 	 * also ends the minutes of the auth.denied rate limit */
-	std::thread watcher([&srv, &listening, &audit]() {
+	std::thread watcher([&srv, &listening, &audit, &health]() {
 		auto tick = std::chrono::steady_clock::now();
 		while (listening && !stopSignal) {
 			std::this_thread::sleep_for(
@@ -199,10 +223,14 @@ int serve(const Config &config, const OperationTable &operations)
 			}
 		}
 		srv.stop();
+		if (health)
+			health->stop();
 	});
 	bool ok = srv.listen_after_bind();
 	listening = false;
 	watcher.join();
+	if (healthThread.joinable())
+		healthThread.join();
 	setRefusalHook(nullptr);
 	std::signal(SIGTERM, SIG_DFL);
 	std::signal(SIGINT, SIG_DFL);

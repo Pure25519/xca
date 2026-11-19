@@ -18,6 +18,7 @@
 #ifndef __XCA_SERVER_WORKER_H
 #define __XCA_SERVER_WORKER_H
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
@@ -59,6 +60,9 @@ class DbWorker: public QThread
 	bool stopping{};
 	/* the thread id of the worker, for on_worker */
 	static thread_local bool onWorker;
+	/* how the calls ended, per JobResult::state (BTD-163 metrics) */
+	std::atomic<qint64> ended[5]{};
+	JobResult count(JobResult r);
 
 	void run() override;
 	static JobResult execute(const Job &job);
@@ -77,6 +81,13 @@ class DbWorker: public QThread
 	 * the running job finish, runs last on the worker and waits for the
 	 * end of the thread. Returns the result of last. */
 	JobResult shutdown(Job last);
+	/* The jobs waiting in the queue (BTD-163 metrics) */
+	size_t queued();
+	/* The calls that ended in state (BTD-163 metrics) */
+	qint64 calls(enum JobResult::state state) const
+	{
+		return ended[state].load();
+	}
 	/* true on the worker thread */
 	static bool isWorkerThread()
 	{

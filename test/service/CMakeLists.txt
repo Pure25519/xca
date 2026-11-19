@@ -175,6 +175,10 @@ if(CMAKE_NM)
 	${PROJECT_SOURCE_DIR}/lib/db_token.cpp
 	${PROJECT_SOURCE_DIR}/lib/staged_file.cpp
 	${PROJECT_SOURCE_DIR}/lib/test_seams.cpp)
+  if(NOT WIN32)
+    # the seams of xca-server (BTD-163)
+    list(APPEND seam_sources ${PROJECT_SOURCE_DIR}/server/test_seams.cpp)
+  endif()
   get_target_property(core_all xcacore SOURCES)
   foreach(src IN LISTS core_all)
     if(src MATCHES "\\.cpp$" AND EXISTS "${src}")

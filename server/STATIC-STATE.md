@@ -97,6 +97,17 @@ on a volume of one host (one Docker host for the container).
 | `current` (identity of the request between pre-routing and route) | `server/routes.cpp` | `thread_local`: per pool thread, one request at a time |
 | `PwDialogHeadless::readSource()` (the API keys, `tls.key_password`) | `lib/PwDialogCore.cpp` | at the start before the threads, and in the reload job on the DB worker; never on a request thread |
 
+## Server state of BTD-163 (health listener and metrics)
+
+| State | Where | Status |
+|---|---|---|
+| Audit counters, last counted seq, time of the last count (`Metrics::audit`, `auditSeq`, `auditAt`) | `server/metrics.cpp` | only touched on the DB worker (`databaseText()` runs in a worker job) |
+| Request latency histograms (`Metrics::latency`) | `server/metrics.cpp` | thread-safe: under `latencyMutex`; pool threads write, the metrics request reads |
+| Calls of the worker by how they ended (`DbWorker::ended`) | `server/worker.h` | thread-safe: `std::atomic` counters |
+| Readiness (`Readiness::started`, `pending`) | `server/health.cpp` | thread-safe: `std::atomic`; `pending` lets one readiness job wait at a time |
+| Last audit write of the server (`auditWritten`) | `server/session.cpp` | thread-safe: `std::atomic<bool>`, written on the DB worker, read by `/ready` |
+| Test seam `ServerTestSeams` (stall job) | `server/test_seams.cpp` | only with BXC_PKI_TEST_SEAMS and the environment variable `BXC_PKI_TEST_SEAMS=1`; queues a job, touches nothing else |
+
 ## Conclusion
 
 Work off the worker touches no unresolved item. The request threads of `server/routes.cpp` use only
