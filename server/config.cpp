@@ -164,8 +164,8 @@ ApiKeyRef apiKey(const QJsonValue &v, const QString &p)
 
 RoleDef role(const QJsonValue &v, const QString &p, bool apiKeys)
 {
-	QJsonObject o = members(v, p, { "name" },
-			{ "client_certs", "api_keys", "cas" });
+	QJsonObject o = members(v, p, { "name", "cas" },
+			{ "client_certs", "api_keys" });
 	RoleDef r;
 	r.name = o.value("name").toString();
 	if (!o.value("name").isString() || !roleNames.contains(r.name))
@@ -186,18 +186,18 @@ RoleDef role(const QJsonValue &v, const QString &p, bool apiKeys)
 			r.apiKeys << apiKey(keys[i], QString(
 				"%1/api_keys/%2").arg(p).arg(i));
 	}
-	if (o.contains("cas")) {
-		QJsonArray cas = array(o, "cas", p);
-		r.allCas = false;
-		for (int i = 0; i < cas.size(); i++) {
-			QString id = cas[i].toString();
-			if (!cas[i].isString() ||
-			    !caIdPattern.match(id).hasMatch())
-				throw ConfigError(QString("%1/cas/%2").arg(p)
-					.arg(i), tr("must be a CA id of the "
-					"bootstrap file"));
-			r.cas << id;
-		}
+	/* required and explicit (BTD-312): ["*"] alone is every CA */
+	QJsonArray cas = array(o, "cas", p);
+	if (cas.isEmpty() || (cas.contains(QJsonValue("*")) && cas.size() > 1))
+		throw ConfigError(p + "/cas", tr("must be [\"*\"] for every "
+			"CA or a list of CA ids of the bootstrap file"));
+	r.allCas = cas.first() == QJsonValue("*");
+	for (int i = 0; i < cas.size() && !r.allCas; i++) {
+		QString id = cas[i].toString();
+		if (!cas[i].isString() || !caIdPattern.match(id).hasMatch())
+			throw ConfigError(QString("%1/cas/%2").arg(p).arg(i),
+				tr("must be a CA id of the bootstrap file"));
+		r.cas << id;
 	}
 	return r;
 }
@@ -301,13 +301,19 @@ Config Config::load(const QString &file)
 					"/limits", 1, 1024);
 
 	QJsonObject auth = object(root, "auth", "",
-				{ "api_keys", "denied_per_minute" });
+				{ "api_keys", "denied_per_minute",
+				  "denied_peers_max",
+				  "denied_total_per_minute" });
 	QJsonValue apiKeys = auth.value("api_keys");
 	if (!apiKeys.isBool())
 		throw ConfigError("/auth/api_keys", tr("must be a boolean"));
 	c.apiKeys = apiKeys.toBool();
 	c.deniedPerMinute = integer(auth, "denied_per_minute", "/auth",
 					1, 1000000);
+	c.deniedPeersMax = integer(auth, "denied_peers_max", "/auth",
+					1, 1000000);
+	c.deniedTotalPerMinute = integer(auth, "denied_total_per_minute",
+					"/auth", 1, 1000000);
 	c.roles = parseRoles(root, c.apiKeys);
 	return c;
 }

@@ -1,6 +1,21 @@
 bxc-main (bxc-pki fork, unreleased)
 -----------------------------------
 
+ * BTD-298 (xca#196): the EC public key of a token that returns its point
+   without the DER wrapper is read correctly also when the point happens
+   to look like DER (about one P-256 key in 256).
+ * BTD-154 (xca#192): new binary xca-server, the skeleton of the REST
+   server: mTLS with the client certificate's SHA-256 as actor, one
+   database worker thread, xca-server.json with explicit limits and
+   secret references only, GET /v1/health and /v1/status, and the audit
+   entries server.start and server.stop. While it runs, the database is
+   its own: the GUI, xca --no-gui and bxc-pki refuse it with
+   database_in_use.
+ * BTD-293 (xca#194): Store on Security token no longer keeps the
+   decrypted private key in memory after storing it on the token.
+ * BTD-299 (xca#193): a database open that fails at any step after the
+   unlock closes its connection, frees what it loaded and clears the
+   settings, so the next open starts clean.
  * BTD-296 (xca#191): a database open that fails after the unlock no
    longer leaves a dangling pointer to the destroyed key context of the
    session.

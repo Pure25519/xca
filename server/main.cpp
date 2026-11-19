@@ -146,8 +146,7 @@ int serve(const Config &config, const OperationTable &operations)
 	DbWorker worker(config.databasePassword,
 			size_t(config.limits.queueMax));
 	RoleHolder roleHolder(roles);
-	AuthAudit audit(worker, config.deniedPerMinute,
-			config.limits.jobTimeoutS);
+	AuthAudit audit(worker, config);
 	installRoutes(srv, worker, config, operations, roleHolder, audit);
 	if (!srv.bind_to_port(config.listenAddress.toStdString(),
 				config.listenPort))

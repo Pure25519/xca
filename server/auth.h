@@ -9,7 +9,7 @@
  * subject and issuer DN are exactly those of a client_certs entry (and
  * whose SHA-256 is the entry's sha256, if given), and a key whose value is
  * that of an api_keys entry. Several roles of one identity add up; a role
- * with "cas" grants only for those CAs (Access).
+ * grants only for the CAs of its "cas" ("*": every CA; Access).
  *
  * API keys are read at the start (and by POST /v1/reload), must have at
  * least 32 bytes, and only their HMAC-SHA256 under a random key of this
@@ -32,21 +32,25 @@
  * bootstrap_<first 10 hex digits of SHA-256("ca:" + id)> that bxc-pki
  * bootstrap writes, whose member item is the item id of the CA certificate
  * (caScopeJob() in session.h). An operation without ca_param is granted by
- * a role with "cas" only when it reads (GET); its result is then to be
- * filtered to those CAs by the operation (Access::cas). A write without
- * ca_param needs a role for every CA.
+ * a role limited to some CAs only when it reads (GET) and its handler
+ * filters what it shows by the CA scope it receives (Access::cas; BTD-311);
+ * every other read is refused for such a role (Access::unfiltered), fail-
+ * closed. A write without ca_param needs a role for every CA. A role names
+ * its CAs explicitly: "cas": ["*"] is every CA (BTD-312).
  *
  * Audit: auth.login once per TLS connection and identity, auth.denied for
  * every refusal, at most auth.denied_per_minute single entries per peer
- * address and minute, then one summary entry with the number left out
- * (AuthAudit).
+ * address and minute, then one summary entry rate_limited with the number
+ * left out; at most auth.denied_peers_max peers have a window of their own,
+ * the others share the window of the peer "*"; at most
+ * auth.denied_total_per_minute single entries over all peers, then one
+ * summary entry rate_limited_total of the peer "*" (AuthAudit,
+ * DeniedLimit).
  */
 
 #ifndef __XCA_SERVER_AUTH_H
 #define __XCA_SERVER_AUTH_H
 
-#include <chrono>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -60,6 +64,7 @@
 #include <QVariantMap>
 
 #include "config.h"
+#include "denied_limit.h"
 
 namespace xcaserver {
 
@@ -113,7 +118,7 @@ class Grant
 {
   public:
 	QString role{};
-	bool allCas{ true };
+	bool allCas{};
 	QStringList cas{};
 };
 
@@ -196,15 +201,20 @@ class RoleHolder
 class Access
 {
   public:
-	enum result { allow, forbidden, checkCa };
+	/* unfiltered: a read without a CA in the request, for an identity
+	 * limited to some CAs, whose handler does not filter by CA */
+	enum result { allow, forbidden, checkCa, unfiltered };
 	enum result result{ forbidden };
-	/* allow without a CA restriction */
+	/* the CA scope the handler gets: every CA */
 	bool allCas{};
-	/* the bootstrap CA ids the identity may act on (checkCa) or see
-	 * (allow of a read with allCas false) */
+	/* else the bootstrap CA ids the identity may act on (checkCa) or see
+	 * (allow of a read) */
 	QStringList cas{};
 };
-Access authorize(const Identity &identity, const Operation &op);
+/* The role check of op for identity; filtersByCa: the handler of op shows
+ * only the objects of the CA scope it gets */
+Access authorize(const Identity &identity, const Operation &op,
+		bool filtersByCa);
 
 /* One refusal for auth.denied */
 class DeniedEvent
@@ -220,34 +230,25 @@ class DeniedEvent
 	QVariantMap params{};
 };
 
-/* auth.login and auth.denied, the latter rate-limited per peer address */
+/* auth.login and auth.denied, the latter rate-limited (DeniedLimit) */
 class AuthAudit
 {
-	class Window
-	{
-	  public:
-		std::chrono::steady_clock::time_point start{};
-		QString startUtc{};
-		qint64 count{};
-		qint64 suppressed{};
-	};
 	DbWorker &worker;
-	const qint64 perMinute;
 	const qint64 timeoutS;
 	std::mutex mutex{};
-	std::map<QString, Window> windows{};
+	DeniedLimit limit;
 
 	bool write(const QString &actor, const QString &action,
 		const QString &objectType, const QString &objectId,
 		const QVariantMap &params, const QString &result,
 		const QString &errorCode);
-	void summary(const QString &peer, const Window &w);
+	void summaries(const QList<DeniedLimit::Summary> &ended);
 
   public:
-	static const std::chrono::seconds window;
-
-	AuthAudit(DbWorker &w, qint64 deniedPerMinute, qint64 jobTimeoutS)
-		: worker(w), perMinute(deniedPerMinute), timeoutS(jobTimeoutS)
+	AuthAudit(DbWorker &w, const Config &config)
+		: worker(w), timeoutS(config.limits.jobTimeoutS),
+		  limit(config.deniedPerMinute, config.deniedPeersMax,
+			config.deniedTotalPerMinute)
 	{
 	}
 	/* auth.login; false if it could not be written */

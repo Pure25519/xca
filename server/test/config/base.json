@@ -1,0 +1,14 @@
+{
+  "schema": "urn:bxc-pki:schema:xca-server:v1",
+  "listen": { "address": "127.0.0.1", "port": 8443 },
+  "database": { "path": "/data/bxc-pki.xdb", "password": "env:XCA_SERVER_DB_PASSWORD" },
+  "tls": { "cert": "/etc/xca-server/server.pem", "key": "/etc/xca-server/server.key",
+           "client_ca": "/etc/xca-server/clients.pem" },
+  "limits": { "payload_max_bytes": 65536, "header_max_bytes": 8192,
+              "read_timeout_s": 10, "write_timeout_s": 10, "keep_alive_max_count": 10,
+              "job_timeout_s": 60, "queue_max": 64,
+              "worker_threads": 8, "accept_queue_max": 64 },
+  "auth": { "api_keys": false, "denied_per_minute": 100, "denied_peers_max": 1024,
+            "denied_total_per_minute": 600 },
+  "roles": []
+}
