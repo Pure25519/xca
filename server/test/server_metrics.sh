@@ -3,7 +3,8 @@
 # bootstrap CAs (ca-a, ca-b):
 #  1. before the start the command line issues a certificate of ca-a,
 #     revokes it and fails one issuance (unknown CA): the counters of the
-#     audit log show 1 issuance, 1 revocation and 1 error of the channel cli
+#     audit log show the issuances (the two CA certificates of the bootstrap
+#     and the one of ca-a), 1 revocation and 1 error of the channel cli
 #  2. the remaining lifetime of both CA certificates and of the issued
 #     certificate; labels hold ids, serials and fingerprints, no subject
 #  3. ca_admin and auditor read the metrics (text/plain); reader and a
@@ -86,6 +87,8 @@ sql() { "$SQL_EXEC" "$DB" -c "$1" 2>&1; }
 [ "$(sql "SELECT COUNT(*) FROM audit_log WHERE action = 'certificate.issue' AND result = 'failure' AND channel = 'cli'")" = 1 ] ||
     die "the failed issuance wrote no failure entry"
 SERIAL=$(sql "SELECT serial FROM certs JOIN items ON items.id = certs.item WHERE items.name = 'device'")
+# bxc-pki bootstrap issues the two CA certificates with certificate.issue too
+ISSUED=$(sql "SELECT COUNT(*) FROM audit_log WHERE action = 'certificate.issue' AND result = 'success' AND channel = 'cli'")
 [ -n "$SERIAL" ] || die "no serial of the issued certificate"
 
 # --- configuration, requests --------------------------------------------------------
@@ -109,9 +112,10 @@ send() {
             -cert "$P/$2.pem" -key "$P/$2.key" > "$1" 2> /dev/null
 }
 status() { head -1 "$1" | tr -d '\r' | cut -d' ' -f2; }
-# value <answer> <series>: the value of one series line, "" if absent
+# value <answer> <series>: the value of one series line, "" if absent; the
+# HELP lines are no series
 value() {
-    grep -F "$2 " "$1" | head -1 | sed 's/.* //' | tr -d '\r'
+    grep -v '^#' "$1" | grep -F "$2 " | head -1 | sed 's/.* //' | tr -d '\r'
 }
 start() {
     "$SERVER" --config "$WORK/xca-server.json" > "$WORK/server.out" 2> "$WORK/server.err" &
@@ -140,7 +144,7 @@ send "$R/status" admin /v1/status
 send "$R/m1" admin /v1/metrics
 [ "$(status "$R/m1")" = 200 ] || die "metrics as ca_admin: $(head -1 "$R/m1")"
 grep -qi '^content-type: text/plain' "$R/m1" || fail "metrics are not text/plain"
-for s in 'xca_issuances_total{channel="cli"} 1' 'xca_revocations_total{channel="cli"} 1' \
+for s in "xca_issuances_total{channel=\"cli\"} $ISSUED" 'xca_revocations_total{channel="cli"} 1' \
          'xca_errors_total{channel="cli",action="certificate.issue"} 1'; do
     grep -qF "$s" "$R/m1" || fail "no '$s': $(grep -E '^xca_(issuances|revocations|errors)' "$R/m1")"
 done
@@ -201,7 +205,7 @@ for s in 'xca_certificate_min_expiry_seconds{ca_id="ca-a"}' \
          'xca_certificates_expiring{ca_id="ca-a",within="30d"}'; do
     [ -n "$(value "$R/m5" "$s")" ] || fail "no $s"
 done
-grep -qF 'xca_issuances_total{channel="cli"} 1' "$R/m5" || fail "the issuance counter after the restart"
+grep -qF "xca_issuances_total{channel=\"cli\"} $ISSUED" "$R/m5" || fail "the issuance counter after the restart"
 sed -n '/^\r\{0,1\}$/,$p' "$R/m5" | tail -n +2 > "$WORK/metrics.txt"
 ok "5. certificates_max 1: per-CA aggregates, counters kept"
 stop
