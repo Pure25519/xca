@@ -161,10 +161,20 @@ if(BUILD_TESTING)
 		OPENSSL=${SERVER_OPENSSL}
 		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_lock
 		${SERVER_SH} ${SERVER_DIR}/test/server_lock.sh)
+  # methods outside cpp-httplib's built-in set and header lines over
+  # header_max_bytes get their contract answer (BTD-318, BTD-319)
+  add_test(NAME test_server_http
+	COMMAND ${CMAKE_COMMAND} -E env
+		SERVER=${XCA_SERVER_BIN}
+		BXC_PKI=$<TARGET_FILE:bxc-pki>
+		OPENSSL=${SERVER_OPENSSL}
+		WORK=${CMAKE_CURRENT_BINARY_DIR}/server_http
+		${SERVER_SH} ${SERVER_DIR}/test/server_http.sh)
   set_tests_properties(test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock PROPERTIES LABELS server)
+	test_server_lifecycle test_server_auth test_server_lock test_server_http
+	PROPERTIES LABELS server)
   set_property(TEST test_server_link test_server_config
-	test_server_lifecycle test_server_auth test_server_lock
+	test_server_lifecycle test_server_auth test_server_lock test_server_http
 	APPEND PROPERTY
 	ENVIRONMENT_MODIFICATION QT_QPA_PLATFORM=unset:)
 endif()
