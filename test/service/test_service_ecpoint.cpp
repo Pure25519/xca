@@ -10,8 +10,12 @@
  * need no token.
  */
 
-#include <openssl/evp.h>
+#include <functional>
 
+#include <openssl/evp.h>
+#include <openssl/obj_mac.h>
+
+#include "lib/exception.h"
 #include "lib/pki_scard.h"
 
 #include "ServiceTestCase.h"
@@ -32,7 +36,23 @@ class test_service_ecpoint : public ServiceTestCase
 	void bareLooksLikeDer();
 	void derLongLength();
 	void bareP521LooksLikeLongDer();
+	void curveFromNamedParams();
+	void curveFromEmptyParams();
+	void curveFromBrokenParams();
 };
+
+/* The error code of call, or "" (BTD-309) */
+static QString errorCode(std::function<void()> call)
+{
+	try {
+		call();
+	} catch (serviceError &err) {
+		return err.code;
+	} catch (errorEx &err) {
+		return "untyped: " + err.getString();
+	}
+	return QString();
+}
 
 /* The encoded public point of a new key on curve; with firstX >= 0, of
  * the first key whose X coordinate starts with that byte. The compressed
@@ -93,9 +113,11 @@ void test_service_ecpoint::derUncompressed()
 void test_service_ecpoint::bareUncompressed()
 {
 	QByteArray pt = point("P-256", false);
-	if ((unsigned char)pt[1] == 0x3f)
-		pt = point("P-256", false);
-	QVERIFY((unsigned char)pt[1] != 0x3f);
+	QCOMPARE(pt.size(), 65);
+	/* deterministic (BTD-308): X[0] fixed to a byte that is no
+	 * remaining length; the rule only looks at lengths, and the
+	 * 0x3f case is bareLooksLikeDer */
+	pt[1] = '\x01';
 	QCOMPARE(pki_scard::ecPointFromAttribute(pt, 32), pt);
 }
 
@@ -141,6 +163,40 @@ void test_service_ecpoint::bareP521LooksLikeLongDer()
 	pt[1] = '\x81';
 	pt[2] = '\x82';
 	QCOMPARE(pki_scard::ecPointFromAttribute(pt, 66), pt);
+}
+
+/* CKA_EC_PARAMS of a named curve: its NID and field size (BTD-309) */
+void test_service_ecpoint::curveFromNamedParams()
+{
+	/* OID 1.2.840.10045.3.1.7 (prime256v1) */
+	const char p256[] = "\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07";
+	int fieldBytes = 0, nid = 0;
+	try {
+		nid = pki_scard::ecCurveFromParams(QByteArray(p256, 10),
+						   &fieldBytes);
+	} catch (errorEx &err) {
+		QFAIL(CCHAR(err.getString()));
+	}
+	QCOMPARE(nid, NID_X9_62_prime256v1);
+	QCOMPARE(fieldBytes, 32);
+}
+
+/* No parameters: a typed error, no EC_GROUP_* call with NULL (BTD-309) */
+void test_service_ecpoint::curveFromEmptyParams()
+{
+	int fieldBytes = 0;
+	QCOMPARE(errorCode([&]() {
+		pki_scard::ecCurveFromParams(QByteArray(), &fieldBytes); }),
+		QString("token_error"));
+}
+
+/* Parameters that are no ECParameters: a typed error (BTD-309) */
+void test_service_ecpoint::curveFromBrokenParams()
+{
+	int fieldBytes = 0;
+	QCOMPARE(errorCode([&]() {
+		pki_scard::ecCurveFromParams(QByteArray("\x30\x03\x01\x02\x03",
+			5), &fieldBytes); }), QString("token_error"));
 }
 
 XCA_SERVICE_TEST_MAIN(test_service_ecpoint)

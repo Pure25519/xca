@@ -73,6 +73,10 @@ class pki_scard: public pki_key
 		 * curve with fieldBytes bytes per coordinate (BTD-298) */
 		static QByteArray ecPointFromAttribute(const QByteArray &attr,
 				int fieldBytes);
+		/* The curve (NID) of a CKA_EC_PARAMS attribute and its
+		 * field size in bytes per coordinate (BTD-309) */
+		static int ecCurveFromParams(const QByteArray &params,
+				int *fieldBytes);
 		QString scardLogin(pkcs11 &p11, bool so, bool force=false)const;
 		void changePin();
 		void initPin();
